@@ -3,32 +3,17 @@
  * Provides branded types for compile-time safety and runtime type guards for validation.
  */
 
-import { z } from "zod/v4";
-import type { WorkspacePath } from "../ipc";
+import type { ProjectId, WorkspaceName } from "../../intents/contract";
 
 // =============================================================================
-// Branded Type Symbols
+// Identifier Types (Branded) — re-exported type-only from the intent contract
 // =============================================================================
+// zod is the single source of truth for these brands (src/intents/contract). This is a
+// type-only re-export, erased at build, so renderer/preload keep importing ProjectId /
+// WorkspaceName from here without pulling zod into their bundles. Imported locally too so
+// the domain types below can reference them.
 
-declare const ProjectIdBrand: unique symbol;
-declare const WorkspaceNameBrand: unique symbol;
-
-// =============================================================================
-// Identifier Types (Branded)
-// =============================================================================
-
-/**
- * Unique identifier for a project.
- * Format: `<name>-<8-char-hex-hash>`
- * Example: "my-app-12345678"
- */
-export type ProjectId = string & { readonly [ProjectIdBrand]: true };
-
-/**
- * Name of a workspace within a project.
- * Typically matches the git branch name.
- */
-export type WorkspaceName = string & { readonly [WorkspaceNameBrand]: true };
+export type { ProjectId, WorkspaceName };
 
 // =============================================================================
 // Type Guards
@@ -161,291 +146,30 @@ export function extractTags(metadata: Readonly<Record<string, string>>): Workspa
 }
 
 // =============================================================================
-// Domain Types
+// Domain Types — re-exported type-only from the intent contract
 // =============================================================================
+// zod is the single source of truth for these (src/intents/contract). Type-only re-exports,
+// erased at build, so renderer/preload import them from here without pulling zod into their
+// bundles. The runtime helpers above (validateWorkspaceName, isValidMetadataKey, extractTags)
+// and WorkspaceTag stay here — they carry no zod.
 
-/**
- * A project in CodeHydra (represents a git repository).
- */
-export interface Project {
-  readonly id: ProjectId;
-  readonly name: string;
-  readonly path: string;
-  readonly workspaces: readonly Workspace[];
-  readonly defaultBaseBranch?: string;
-  /** Original git remote URL if project was cloned from URL */
-  readonly remoteUrl?: string;
-}
-
-/**
- * A workspace within a project (represents a git worktree).
- */
-export interface Workspace {
-  readonly projectId: ProjectId;
-  readonly name: WorkspaceName;
-  /** Current branch name, or null for detached HEAD state */
-  readonly branch: string | null;
-  /**
-   * Metadata for the workspace stored in git config.
-   * Always contains `base` key (with fallback to branch ?? name if not explicitly set).
-   * Additional keys can be added for custom workspace metadata.
-   */
-  readonly metadata: Readonly<Record<string, string>>;
-  readonly path: string;
-  /**
-   * code-server URL for embedding this workspace as an iframe.
-   * Absent for hibernated workspaces (no runtime) until they wake.
-   */
-  readonly url?: string;
-}
-
-/**
- * Reference to a workspace (includes path for efficiency).
- * Used in events so consumers don't need to resolve IDs.
- */
-export interface WorkspaceRef {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly path: string;
-}
-
-/**
- * Combined status of a workspace.
- */
-export interface WorkspaceStatus {
-  readonly isDirty: boolean;
-  readonly unmergedCommits: number;
-  readonly agent: AgentStatus;
-}
-
-/**
- * Agent status for a workspace.
- */
-export type AgentStatus =
-  | { readonly type: "none" }
-  | { readonly type: "idle"; readonly counts: AgentStatusCounts }
-  | { readonly type: "busy"; readonly counts: AgentStatusCounts }
-  | { readonly type: "mixed"; readonly counts: AgentStatusCounts };
-
-/**
- * Agent status counts for a workspace.
- */
-export interface AgentStatusCounts {
-  readonly idle: number;
-  readonly busy: number;
-  readonly total: number;
-}
-
-/**
- * Information about a base branch.
- */
-export interface BaseInfo {
-  /** Full branch reference (e.g., "main" or "origin/main") */
-  readonly name: string;
-  /** Whether this is a remote-tracking branch */
-  readonly isRemote: boolean;
-  /**
-   * Suggested base branch for creating a workspace from this branch.
-   * For local branches: codehydra.base config value, or matching origin/* branch if exists.
-   * For remote branches: the full ref itself (e.g., "origin/feature-x").
-   */
-  readonly base?: string;
-  /**
-   * Derivable workspace name if a workspace can be created from this branch.
-   * Set when:
-   * - Local branch without an existing worktree (derives = branch name)
-   * - Remote branch without a local counterpart (derives = name without remote prefix, e.g., "feature-x")
-   * Undefined when a workspace already exists or local counterpart exists.
-   */
-  readonly derives?: string;
-}
-
-/**
- * Agent types that can be selected by the user.
- */
-export type ConfigAgentType = "claude" | "opencode";
-
-// =============================================================================
-// Setup Screen Progress Types
-// =============================================================================
-
-/**
- * Identifiers for setup screen rows.
- * - "vscode": VSCode/code-server download and setup
- * - "agent": Agent binary (Claude/OpenCode) download
- * - "setup": Extensions and configuration
- */
-export type SetupRowId = "vscode" | "agent" | "setup";
-
-/**
- * Status of a setup row.
- */
-export type SetupRowStatus = "pending" | "running" | "done" | "failed";
-
-// =============================================================================
-// Blocking Process Types
-// =============================================================================
-
-/**
- * Information about a process blocking workspace deletion.
- * Used on Windows to identify processes holding file handles.
- */
-export interface BlockingProcess {
-  /** Process ID */
-  readonly pid: number;
-  /** Process name (e.g., "node.exe", "Code.exe") */
-  readonly name: string;
-  /** Full command line that started the process */
-  readonly commandLine: string;
-  /** Files locked by this process, relative to workspace (max 20) */
-  readonly files: readonly string[];
-  /** Current working directory relative to workspace, or null if CWD is outside workspace */
-  readonly cwd: string | null;
-}
-
-// =============================================================================
-// Deletion Progress Types
-// =============================================================================
-
-/**
- * Identifiers for deletion operations.
- */
-export type DeletionOperationId =
-  | "killing-blockers"
-  | "kill-terminals"
-  | "stop-server"
-  | "cleanup-vscode"
-  | "detecting-blockers"
-  | "cleanup-workspace";
-
-/**
- * Status of a deletion operation.
- */
-export type DeletionOperationStatus = "pending" | "in-progress" | "done" | "error";
-
-/**
- * A single operation in the deletion process.
- */
-export interface DeletionOperation {
-  readonly id: DeletionOperationId;
-  readonly label: string;
-  readonly status: DeletionOperationStatus;
-  readonly error?: string;
-}
-
-/**
- * Progress state for workspace deletion.
- * Contains the full state of all operations, emitted with each update.
- */
-export interface DeletionProgress {
-  readonly workspacePath: WorkspacePath;
-  readonly workspaceName: WorkspaceName;
-  readonly projectId: ProjectId;
-  readonly keepBranch: boolean;
-  readonly operations: readonly DeletionOperation[];
-  readonly completed: boolean;
-  readonly hasErrors: boolean;
-  /**
-   * Processes blocking workspace deletion (Windows only).
-   * Present when cleanup-workspace fails with EBUSY/EACCES/EPERM.
-   */
-  readonly blockingProcesses?: readonly BlockingProcess[];
-}
-
-// =============================================================================
-// Agent Spec Types
-// =============================================================================
-
-/**
- * Model identifier (provider + model id) carried by an agent spec.
- */
-export interface PromptModel {
-  readonly providerID: string;
-  readonly modelID: string;
-}
-
-/**
- * Agent specification for workspace creation — a discriminated union by backend.
- *
- * Carries both the prompt and the backend-specific launch config in one object,
- * so each backend only exposes the options it actually understands:
- * - "default": no backend chosen → resolved late from git metadata / config.
- *   Accepts a prompt only. To set a model, permission mode or named agent you
- *   must name the backend (a typed arm).
- * - "claude": Claude. Supports prompt, model, permissionMode (e.g. "plan"),
- *   and a named agent (--agent).
- * - "opencode": OpenCode. Supports prompt, model and a named agent (e.g.
- *   "build"). No permission mode (Claude-only concept).
- *
- * @example
- * // Just a prompt under whatever the resolved-default backend is
- * agent: { type: "default", prompt: "Implement the login feature" }
- *
- * // Read-only/plan mode on Claude
- * agent: { type: "claude", prompt: "Investigate the bug", permissionMode: "plan" }
- *
- * // OpenCode 'build' agent with an explicit model
- * agent: { type: "opencode", prompt: "Ship it", agentName: "build", model: { providerID: "anthropic", modelID: "claude-sonnet" } }
- */
-export type AgentSpec =
-  | { readonly type: "default"; readonly prompt?: string }
-  | {
-      readonly type: "claude";
-      readonly prompt?: string;
-      readonly model?: PromptModel;
-      readonly permissionMode?: string;
-      readonly agentName?: string;
-    }
-  | {
-      readonly type: "opencode";
-      readonly prompt?: string;
-      readonly model?: PromptModel;
-      readonly agentName?: string;
-    };
-
-/**
- * Zod schema for validating PromptModel.
- */
-const promptModelSchema = z.object({
-  providerID: z.string().min(1),
-  modelID: z.string().min(1),
-});
-
-/**
- * Zod schema for validating AgentSpec. Discriminated on `type` so each backend
- * only accepts the options it understands (e.g. permissionMode is Claude-only).
- */
-export const agentSpecSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("default"),
-    prompt: z.string().min(1).optional(),
-  }),
-  z.object({
-    type: z.literal("claude"),
-    prompt: z.string().min(1).optional(),
-    model: promptModelSchema.optional(),
-    permissionMode: z.string().min(1).optional(),
-    agentName: z.string().min(1).optional(),
-  }),
-  z.object({
-    type: z.literal("opencode"),
-    prompt: z.string().min(1).optional(),
-    model: promptModelSchema.optional(),
-    agentName: z.string().min(1).optional(),
-  }),
-]);
-
-// =============================================================================
-// Agent Session Types
-// =============================================================================
-
-/**
- * Agent session information for a workspace.
- * Used to track the primary session created/found when the agent server starts.
- */
-export interface AgentSession {
-  /** Port of the agent server */
-  readonly port: number;
-  /** Session ID of the primary session */
-  readonly sessionId: string;
-}
+export type {
+  Project,
+  Workspace,
+  WorkspaceRef,
+  WorkspaceStatus,
+  AgentStatus,
+  AgentStatusCounts,
+  BaseInfo,
+  ConfigAgentType,
+  SetupRowId,
+  SetupRowStatus,
+  BlockingProcess,
+  DeletionOperationId,
+  DeletionOperationStatus,
+  DeletionOperation,
+  DeletionProgress,
+  PromptModel,
+  AgentSpec,
+  AgentSession,
+} from "../../intents/contract";

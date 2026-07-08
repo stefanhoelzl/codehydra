@@ -14,10 +14,7 @@ import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import {
-  UpdateAgentStatusOperation,
-  INTENT_UPDATE_AGENT_STATUS,
-} from "../intents/update-agent-status";
+import { UpdateAgentStatusOperation } from "../intents/update-agent-status";
 import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
@@ -467,8 +464,8 @@ function createModuleTestSetup(): ModuleTestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, createDeleteEventOperation());
+  dispatcher.registerOperation(new UpdateAgentStatusOperation());
+  dispatcher.registerOperation(createDeleteEventOperation());
 
   // Every workspace path resolves; workspaceName derives from the path basename.
   registerTestInfrastructure(dispatcher, {
@@ -644,8 +641,9 @@ describe("BadgeModule Integration", () => {
 
       // Register shutdown operation and dispatch
       dispatcher.registerOperation(
-        INTENT_APP_SHUTDOWN,
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
       await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent);
 
@@ -665,8 +663,9 @@ describe("BadgeModule Integration", () => {
       });
 
       dispatcher.registerOperation(
-        INTENT_APP_SHUTDOWN,
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
 
       // Should not throw - collect() catches the error

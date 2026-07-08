@@ -7,55 +7,83 @@
  *
  * No provider dependencies - hook handlers do the actual work.
  * No domain events - this is a command pass-through operation.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
+ * result types are **derived** from that bundle via `IntentOf`/`z.infer` — never restated.
  */
 
-import type { Intent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { HookContext, OperationSchemas } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined } from "./lib/hook-helpers";
-
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface VscodeCommandPayload {
-  readonly workspacePath: string;
-  readonly command: string;
-  readonly args?: readonly unknown[] | undefined;
-}
-
-export interface VscodeCommandIntent extends Intent<unknown> {
-  readonly type: "vscode:command";
-  readonly payload: VscodeCommandPayload;
-}
+import { hookCtxSchema } from "./contract";
 
 export const INTENT_VSCODE_COMMAND = "vscode:command" as const;
-
-// =============================================================================
-// Hook Types
-// =============================================================================
-
 export const VSCODE_COMMAND_OPERATION_ID = "vscode-command";
 
-/** Input context for "execute" handlers. */
-export interface ExecuteHookInput extends HookContext {
-  readonly workspacePath: string;
-}
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const vscodeCommandPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    command: z.string(),
+    args: z.array(z.unknown()).readonly().optional(),
+  })
+  .readonly();
+
+/** Command results are pass-through — a command may legitimately return anything (or nothing). */
+export const vscodeCommandResultSchema = z.unknown();
 
 /** Per-handler result for the "execute" hook point. */
-export interface ExecuteHookResult {
-  readonly result?: unknown;
-}
+export const executeHookResultSchema = z
+  .object({
+    result: z.unknown().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "execute" hook point (beyond the base HookContext). */
+const executeEnrichmentSchema = z.object({ workspacePath: z.string() });
+
+/** Runtime whole-context validation schema for "execute". */
+export const executeHookInputSchema = hookCtxSchema(
+  vscodeCommandPayloadSchema,
+  executeEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_VSCODE_COMMAND,
+  payload: vscodeCommandPayloadSchema,
+  result: vscodeCommandResultSchema,
+  hooks: {
+    execute: { input: executeHookInputSchema, result: executeHookResultSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type VscodeCommandPayload = z.infer<typeof vscodeCommandPayloadSchema>;
+export type VscodeCommandIntent = IntentOf<typeof schemas>;
+export type ExecuteHookResult = z.infer<typeof executeHookResultSchema>;
+
+/** Whole input context for "execute" handlers: base envelope + inferred enrichment. */
+export type ExecuteHookInput = HookContext & z.infer<typeof executeEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
 export class VscodeCommandOperation extends WorkspaceHookOperation<
-  VscodeCommandIntent,
-  ExecuteHookResult,
-  unknown
+  typeof schemas,
+  ExecuteHookResult
 > {
+  readonly schemas = schemas;
+
   constructor() {
     super(VSCODE_COMMAND_OPERATION_ID, {
       hookPoint: "execute",

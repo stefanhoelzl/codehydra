@@ -38,19 +38,29 @@ import type { ConfigAgentType } from "../boundaries/platform/config";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
 import { createStateMigrationRegistry } from "./state-module";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import { z } from "zod/v4";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
 /** Minimal workspace:open operation that emits workspace:created. */
-class MinimalOpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, void> {
-  readonly id = "open-workspace";
-  constructor(private readonly eventPayload: WorkspaceCreatedPayload) {}
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<void> {
-    ctx.emit({ type: "workspace:created", payload: this.eventPayload });
-  }
+const minimalOpenWorkspaceSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
+function createMinimalOpenWorkspaceOperation(
+  eventPayload: WorkspaceCreatedPayload
+): Operation<typeof minimalOpenWorkspaceSchemas> {
+  return {
+    id: "open-workspace",
+    schemas: minimalOpenWorkspaceSchemas,
+    async execute(ctx) {
+      await ctx.emit({ type: "workspace:created", payload: eventPayload });
+    },
+  };
 }
 
 const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
@@ -120,15 +130,17 @@ function createTestSetup(overrides?: {
   });
 
   dispatcher.registerOperation(
-    INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, overrides?.startHookPoint ?? "start")
+    createMinimalOperation(
+      APP_START_OPERATION_ID,
+      INTENT_APP_START,
+      overrides?.startHookPoint ?? "start"
+    )
   );
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
   dispatcher.registerOperation(
-    INTENT_OPEN_WORKSPACE,
-    new MinimalOpenWorkspaceOperation(overrides?.workspacePayload ?? NEW_WORKSPACE_PAYLOAD)
+    createMinimalOpenWorkspaceOperation(overrides?.workspacePayload ?? NEW_WORKSPACE_PAYLOAD)
   );
-  dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+  dispatcher.registerOperation(new AppResumeOperation());
   dispatcher.registerModule(module);
 
   return { dispatcher, boundary, state };

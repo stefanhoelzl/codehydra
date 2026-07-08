@@ -12,11 +12,7 @@ import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 
-import {
-  UpdateAgentStatusOperation,
-  INTENT_UPDATE_AGENT_STATUS,
-  EVENT_AGENT_STATUS_UPDATED,
-} from "./update-agent-status";
+import { UpdateAgentStatusOperation, EVENT_AGENT_STATUS_UPDATED } from "./update-agent-status";
 import type { AgentStatusUpdatedEvent } from "./update-agent-status";
 import { registerTestInfrastructure, updateStatusIntent } from "./operations.test-utils";
 import type { DomainEvent } from "./lib/types";
@@ -39,7 +35,7 @@ const TEST_WORKSPACE_ENTRY = {
 function createTestSetup(): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+  dispatcher.registerOperation(new UpdateAgentStatusOperation());
 
   registerTestInfrastructure(dispatcher, {
     // Every workspace path used by the tests resolves to the same project.
@@ -124,7 +120,7 @@ describe("UpdateAgentStatus Operation", () => {
 
     it("silently returns when resolve hooks provide no projectPath", async () => {
       const dispatcher = createMockDispatcher();
-      dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+      dispatcher.registerOperation(new UpdateAgentStatusOperation());
 
       // Empty lookups — resolve operations will throw, and update-agent-status
       // catches the error and silently returns.

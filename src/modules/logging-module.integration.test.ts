@@ -7,9 +7,15 @@
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod/v4";
 
-import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
+import type {
+  Operation,
+  OperationContext,
+  HookContext,
+  OperationSchemas,
+  IntentOf,
+} from "../intents/lib/operation";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, InitHookContext, ConfigureResult } from "../intents/app-start";
 import { INTENT_APP_SHUTDOWN, APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
@@ -22,10 +28,16 @@ import { createMockConfig } from "../boundaries/platform/config.test-utils";
 // Minimal Test Operation
 // =============================================================================
 
+const appStartSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
 /** Runs "before-ready" and "init" hook points in sequence. */
-class MinimalAppStartOperation implements Operation<Intent, void> {
+class MinimalAppStartOperation implements Operation<typeof appStartSchemas> {
   readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
+  readonly schemas = appStartSchemas;
+  async execute(ctx: OperationContext<IntentOf<typeof appStartSchemas>>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
 
     const { errors: beforeReadyErrors } = await ctx.hooks.collect<ConfigureResult>(
@@ -44,10 +56,16 @@ class MinimalAppStartOperation implements Operation<Intent, void> {
   }
 }
 
+const appShutdownSchemas = {
+  type: INTENT_APP_SHUTDOWN,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
 /** Runs the "stop" hook for shutdown. */
-class MinimalAppShutdownOperation implements Operation<Intent, void> {
+class MinimalAppShutdownOperation implements Operation<typeof appShutdownSchemas> {
   readonly id = APP_SHUTDOWN_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
+  readonly schemas = appShutdownSchemas;
+  async execute(ctx: OperationContext<IntentOf<typeof appShutdownSchemas>>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
     await ctx.hooks.collect<void>("stop", hookCtx);
   }
@@ -129,7 +147,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({
@@ -150,7 +168,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({
@@ -165,7 +183,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({
@@ -186,7 +204,7 @@ describe("LoggingModule Integration", () => {
     });
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({
@@ -211,7 +229,7 @@ describe("LoggingModule Integration", () => {
     });
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({
@@ -232,7 +250,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
@@ -249,7 +267,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
@@ -266,7 +284,7 @@ describe("LoggingModule Integration", () => {
     deps.files.set("/logs/electron.log", oversize);
 
     const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
 
@@ -285,7 +303,7 @@ describe("LoggingModule Integration", () => {
     deps.files.set("/logs/electron.log", "small");
 
     const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
 
@@ -301,7 +319,7 @@ describe("LoggingModule Integration", () => {
     // No file seeded — readFile rejects with ENOENT
 
     const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
 
@@ -315,8 +333,8 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalAppShutdownOperation());
+    dispatcher.registerOperation(new MinimalAppStartOperation());
+    dispatcher.registerOperation(new MinimalAppShutdownOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);

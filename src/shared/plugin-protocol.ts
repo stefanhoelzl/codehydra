@@ -7,7 +7,8 @@
 
 import { z } from "zod/v4";
 import type { WorkspaceStatus, Workspace, AgentSpec, AgentSession } from "./api/types";
-import { METADATA_KEY_REGEX, isValidMetadataKey, agentSpecSchema } from "./api/types";
+import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
+import { agentSpecSchema } from "../intents/contract";
 
 // ============================================================================
 // Result Types

@@ -56,7 +56,7 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+  dispatcher.registerOperation(new GetAgentSessionOperation());
 
   registerTestInfrastructure(dispatcher, {
     workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },

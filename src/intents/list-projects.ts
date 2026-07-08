@@ -7,66 +7,108 @@
  *
  * Joins results by projectPath and converts internal types to IPC types
  * using existing toIpcWorkspaces().
+ *
+ * Contract schemas (item 2): zod is the single source of truth; the Intent, result,
+ * and hook types are derived from the `schemas` bundle.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { Project, ProjectId } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import type { Project } from "../shared/api/types";
+import type { Path } from "../utils/path/path";
 import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
+import { projectIdSchema, projectSchema } from "./contract";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
 export type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface ListProjectsIntent extends Intent<Project[]> {
-  readonly type: "project:list";
-  readonly payload: Record<string, never>;
-}
-
 export const INTENT_LIST_PROJECTS = "project:list" as const;
+export const LIST_PROJECTS_OPERATION_ID = "list-projects";
 
 // =============================================================================
-// Hook Result Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface ListProjectsHookEntry {
-  readonly projectId: ProjectId;
-  readonly name: string;
-  readonly path: string;
-}
+export const listProjectsPayloadSchema = z.object({}).readonly();
 
-export interface ListProjectsHookResult {
-  readonly projects?: readonly ListProjectsHookEntry[];
-}
+export const listProjectsResultSchema = z.array(projectSchema);
 
-export interface ListWorkspacesHookEntry {
-  readonly projectPath: string;
-  readonly workspaces: readonly InternalWorkspace[];
-  /**
-   * Per-project default base branch, computed once at project:open and cached
-   * by the contributing module. Carried here so the creation form can seed the
-   * base field synchronously on first paint instead of awaiting a git round-trip.
-   */
-  readonly defaultBaseBranch?: string;
-}
+export const listProjectsHookEntrySchema = z
+  .object({
+    projectId: projectIdSchema,
+    name: z.string(),
+    path: z.string(),
+  })
+  .readonly();
 
-export interface ListWorkspacesHookResult {
-  readonly entries?: readonly ListWorkspacesHookEntry[];
-}
+export const listProjectsHookResultSchema = z
+  .object({
+    projects: z.array(listProjectsHookEntrySchema).readonly().optional(),
+  })
+  .readonly();
+
+/**
+ * Local schema for the internal Workspace shape (from boundaries/git-types) — not in
+ * contract.ts because it carries a `Path` instance (a class), not an IPC string.
+ */
+const internalWorkspaceSchema = z
+  .object({
+    name: z.string(),
+    path: z.custom<Path>(),
+    branch: z.string().nullable(),
+    metadata: z.record(z.string(), z.string()).readonly(),
+  })
+  .readonly();
+
+export const listWorkspacesHookEntrySchema = z
+  .object({
+    projectPath: z.string(),
+    workspaces: z.array(internalWorkspaceSchema).readonly(),
+    /**
+     * Per-project default base branch, computed once at project:open and cached
+     * by the contributing module. Carried here so the creation form can seed the
+     * base field synchronously on first paint instead of awaiting a git round-trip.
+     */
+    defaultBaseBranch: z.string().optional(),
+  })
+  .readonly();
+
+export const listWorkspacesHookResultSchema = z
+  .object({
+    entries: z.array(listWorkspacesHookEntrySchema).readonly().optional(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_LIST_PROJECTS,
+  payload: listProjectsPayloadSchema,
+  result: listProjectsResultSchema,
+  hooks: {
+    "list-projects": { result: listProjectsHookResultSchema },
+    "list-workspaces": { result: listWorkspacesHookResultSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type ListProjectsIntent = IntentOf<typeof schemas>;
+export type ListProjectsHookEntry = z.infer<typeof listProjectsHookEntrySchema>;
+export type ListProjectsHookResult = z.infer<typeof listProjectsHookResultSchema>;
+export type ListWorkspacesHookEntry = z.infer<typeof listWorkspacesHookEntrySchema>;
+export type ListWorkspacesHookResult = z.infer<typeof listWorkspacesHookResultSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export const LIST_PROJECTS_OPERATION_ID = "list-projects";
-
-export class ListProjectsOperation implements Operation<ListProjectsIntent, Project[]> {
+export class ListProjectsOperation implements Operation<typeof schemas> {
   readonly id = LIST_PROJECTS_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<ListProjectsIntent>): Promise<Project[]> {
     const hookCtx: HookContext = {

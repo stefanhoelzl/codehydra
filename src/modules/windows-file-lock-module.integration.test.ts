@@ -9,12 +9,19 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import { z } from "zod/v4";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import type { WorkspaceName } from "../shared/api/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
   type DeleteWorkspaceIntent,
   type ReleaseHookResult,
   type DetectHookResult,
@@ -23,6 +30,7 @@ import {
 } from "../intents/delete-workspace";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
+  INTENT_HIBERNATE_WORKSPACE,
   type HibernateReleaseHookResult,
 } from "../intents/hibernate-workspace";
 import { createWindowsFileLockModule } from "./windows-file-lock-module";
@@ -75,8 +83,9 @@ function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>)
 // Minimal Test Operations
 // =============================================================================
 
-const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
+const releaseOperation = createMinimalOperation<ReleaseHookResult>(
   DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
   "release",
   {
     hookContext: (ctx) => ({
@@ -89,8 +98,9 @@ const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
   }
 );
 
-const detectOperation = createMinimalOperation<Intent, DetectHookResult>(
+const detectOperation = createMinimalOperation<DetectHookResult>(
   DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
   "detect",
   {
     hookContext: (ctx) => ({
@@ -106,12 +116,19 @@ const detectOperation = createMinimalOperation<Intent, DetectHookResult>(
 /**
  * Runs only the "flush" hook point with provided blockingPids.
  */
-class FlushOperation implements Operation<Intent, FlushHookResult> {
+const flushOpSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<FlushHookResult>(),
+} satisfies OperationSchemas;
+
+class FlushOperation implements Operation<typeof flushOpSchemas> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+  readonly schemas = flushOpSchemas;
 
   constructor(private readonly blockingPids: readonly number[]) {}
 
-  async execute(ctx: OperationContext<Intent>): Promise<FlushHookResult> {
+  async execute(ctx: OperationContext<IntentOf<typeof flushOpSchemas>>): Promise<FlushHookResult> {
     const flushCtx: FlushHookInput = {
       intent: ctx.intent,
       projectPath: "/projects/my-app",
@@ -137,7 +154,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
-  dispatcher.registerOperation("workspace:delete", releaseOperation);
+  dispatcher.registerOperation(releaseOperation);
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
@@ -154,7 +171,7 @@ function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
-  dispatcher.registerOperation("workspace:delete", detectOperation);
+  dispatcher.registerOperation(detectOperation);
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
@@ -175,7 +192,7 @@ function createFlushSetup(
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
-  dispatcher.registerOperation("workspace:delete", new FlushOperation(blockingPids));
+  dispatcher.registerOperation(new FlushOperation(blockingPids));
 
   const module = createWindowsFileLockModule({
     processRunner: runner,
@@ -365,8 +382,9 @@ describe("WindowsFileLockModule Integration", () => {
   });
 
   describe("hibernate-workspace -> release", () => {
-    const hibernateReleaseOperation = createMinimalOperation<Intent, HibernateReleaseHookResult>(
+    const hibernateReleaseOperation = createMinimalOperation<HibernateReleaseHookResult>(
       HIBERNATE_WORKSPACE_OPERATION_ID,
+      INTENT_HIBERNATE_WORKSPACE,
       "release",
       {
         hookContext: (ctx) => ({
@@ -385,7 +403,7 @@ describe("WindowsFileLockModule Integration", () => {
         logger: createMockLogger(),
         initialCapabilities: { platform: "win32" },
       });
-      dispatcher.registerOperation("workspace:hibernate", hibernateReleaseOperation);
+      dispatcher.registerOperation(hibernateReleaseOperation);
       dispatcher.registerModule(
         createWindowsFileLockModule({
           processRunner: r,

@@ -959,7 +959,7 @@ describe("PresentationModule - sidebar resize", () => {
 describe("PresentationModule - shutdown", () => {
   it("removes the ui:event listener on app:shutdown", async () => {
     const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+    dispatcher.registerOperation(new AppShutdownOperation());
 
     const deps = createDeps();
     const presentationModule = createPresentationModule(deps);

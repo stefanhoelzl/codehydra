@@ -165,14 +165,13 @@ async function createHarness(
   const dialogManager = { isModalOpen: vi.fn(() => modalIsOpen) };
 
   dispatcher.registerOperation(
-    INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "init", {
+    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
       hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "ui-ready": true } }),
     })
   );
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-  dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
-  dispatcher.registerOperation(INTENT_SET_SHORTCUT_ACTIVE, new SetShortcutActiveOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
+  dispatcher.registerOperation(new ShortcutKeyOperation());
+  dispatcher.registerOperation(new SetShortcutActiveOperation());
 
   const dispatchSpy = vi.fn((intent: { type: string; payload: unknown }) =>
     dispatcher.dispatch(intent)

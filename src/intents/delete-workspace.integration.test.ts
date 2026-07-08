@@ -58,7 +58,6 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import {
   SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
   selectNextWorkspace,
@@ -329,11 +328,11 @@ function createTestHarness(options?: {
   const workspaceFileService = createTestWorkspaceFileService();
 
   // Register operations
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+  dispatcher.registerOperation(new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(new ResolveProjectOperation());
+  dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();

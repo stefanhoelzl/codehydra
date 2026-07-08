@@ -135,8 +135,7 @@ async function registerCrashHandlers(
   try {
     const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(
-      INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "before-ready")
+      createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "before-ready")
     );
     dispatcher.registerModule(module);
     await dispatcher.dispatch({

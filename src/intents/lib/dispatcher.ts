@@ -15,10 +15,14 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { z } from "zod/v4";
 import type { Intent, IntentResult, DomainEvent } from "./types";
 import type {
   Operation,
   OperationContext,
+  OperationSchemas,
+  IntentOf,
+  HookPointSchemas,
   DispatchFn,
   ResolvedHooks,
   CollectOptions,
@@ -139,10 +143,14 @@ export interface IDispatcher {
 // =============================================================================
 
 export class Dispatcher implements IDispatcher {
-  private readonly operations = new Map<string, Operation<Intent, unknown>>();
+  private readonly operations = new Map<string, Operation>();
   private readonly interceptors: IntentInterceptor[] = [];
   private readonly causationContext = new AsyncLocalStorage<readonly string[]>();
   private readonly handlers = new Map<string, Map<string, HookHandler[]>>();
+  /** operationId → schemas (payload/result/hooks), indexed at registerOperation. */
+  private readonly operationSchemas = new Map<string, OperationSchemas>();
+  /** eventType → payload schema, folded from every operation's `schemas.events`. */
+  private readonly eventSchemas = new Map<string, z.ZodType>();
   private readonly initialCapabilities: Readonly<Record<string, unknown>>;
   private readonly logger: Logger;
 
@@ -161,11 +169,21 @@ export class Dispatcher implements IDispatcher {
    * Generic to accept operations with specific intent types. Type safety
    * is maintained by dispatch() matching intent.type to the correct operation.
    */
-  registerOperation<I extends Intent, R>(intentType: string, operation: Operation<I, R>): void {
+  registerOperation<S extends OperationSchemas>(operation: Operation<S>): void {
+    // The intent type is the operation's registration key — read from its schema bundle,
+    // so registration needs no separate intent-type argument.
+    const intentType = operation.schemas.type;
     if (this.operations.has(intentType)) {
       throw new Error(`Operation already registered for intent type: ${intentType}`);
     }
-    this.operations.set(intentType, operation as unknown as Operation<Intent, unknown>);
+    this.operations.set(intentType, operation as unknown as Operation);
+    this.operationSchemas.set(operation.id, operation.schemas);
+    for (const [eventType, schema] of Object.entries(operation.schemas.events ?? {})) {
+      if (this.eventSchemas.has(eventType)) {
+        throw new Error(`Event schema already registered for event type: ${eventType}`);
+      }
+      this.eventSchemas.set(eventType, schema);
+    }
     this.logger.debug("register operation", { intent: intentType });
   }
 
@@ -263,7 +281,8 @@ export class Dispatcher implements IDispatcher {
     hookHandlers: HookHandler[],
     inputCtx: HookContext,
     initialCaps: Readonly<Record<string, unknown>>,
-    onYield?: (frame: unknown) => void | Promise<void>
+    onYield?: (frame: unknown) => void | Promise<void>,
+    hookSchemas?: HookPointSchemas
   ): Promise<CollectResult<T>> {
     const capabilities: Record<string, unknown> = {
       ...initialCaps,
@@ -281,10 +300,15 @@ export class Dispatcher implements IDispatcher {
       for (const entry of pending) {
         const reqs = entry.requires ?? {};
         if (requirementsSatisfied(reqs, capabilities)) {
-          const frozenCtx = Object.freeze({
+          const frozenCtx: HookContext = Object.freeze({
             ...inputCtx,
             capabilities: Object.freeze({ ...capabilities }),
           });
+          // Whole-context validation (item 2): the input schema re-affirms the intent,
+          // shape-checks the scalar capability bag, and validates the enrichment. A failure
+          // here means the operation built a bad context — a framework bug — so it throws
+          // out of collect (not caught per-handler), aborting the operation → reject.
+          if (hookSchemas?.input) hookSchemas.input.parse(frozenCtx);
           try {
             // A handler returns a HookOutput (result and/or provided capabilities);
             // void is shorthand for an empty output. A streaming handler is an
@@ -297,13 +321,21 @@ export class Dispatcher implements IDispatcher {
                 ? await drainGenerator(invoked, onYield)
                 : await invoked) ?? {};
             if (output.result !== undefined && output.result !== null) {
-              results.push(output.result as T);
+              // Validate + normalize (strip) each handler's partial result. A failure is
+              // isolated to this handler (pushed to errors[]), like a throwing handler.
+              const validated = hookSchemas?.result
+                ? hookSchemas.result.parse(output.result)
+                : output.result;
+              results.push(validated as T);
             }
             // Merge provided capabilities from returned data (no host-side closure).
             // Skip undefined-valued keys: requires/ANY_VALUE test key *presence*, so a
             // key must only appear when it carries a defined value.
             if (output.provides) {
-              for (const [key, value] of Object.entries(output.provides)) {
+              const validated = hookSchemas?.provides
+                ? hookSchemas.provides.parse(output.provides)
+                : output.provides;
+              for (const [key, value] of Object.entries(validated)) {
                 if (value !== undefined) capabilities[key] = value;
               }
             }
@@ -346,6 +378,7 @@ export class Dispatcher implements IDispatcher {
 
   private resolveHooks(operationId: string): ResolvedHooks {
     const opMap = this.handlers.get(operationId);
+    const opHooks = this.operationSchemas.get(operationId)?.hooks;
     const initCaps = this.initialCapabilities;
     const logger = this.logger;
     return {
@@ -363,7 +396,8 @@ export class Dispatcher implements IDispatcher {
           hookHandlers,
           ctx,
           initCaps,
-          options?.onYield
+          options?.onYield,
+          opHooks?.[hookPointId]
         );
         const duration = Math.round(performance.now() - start);
 
@@ -404,9 +438,14 @@ export class Dispatcher implements IDispatcher {
   // ===========================================================================
 
   private async emitEvent(event: DomainEvent): Promise<void> {
+    // Validate + normalize the event payload (fail → throw at emit).
+    const schema = this.eventSchemas.get(event.type);
+    const validated: DomainEvent = schema
+      ? { ...event, payload: schema.parse(event.payload) }
+      : event;
     const eventOpId = `event:${event.type}`;
     const resolved = this.resolveHooks(eventOpId);
-    await resolved.collect("handle", { intent: event as unknown as Intent });
+    await resolved.collect("handle", { intent: validated as unknown as Intent });
   }
 
   private async runPipeline<I extends Intent>(
@@ -444,6 +483,13 @@ export class Dispatcher implements IDispatcher {
         throw new Error(`No operation registered for intent type: ${current.type}`);
       }
 
+      // Validate + normalize (strip) the intent payload; a failure rejects the dispatch
+      // via the outer catch. The parsed value is forwarded so downstream sees normalized data.
+      const opSchemas = this.operationSchemas.get(operation.id);
+      if (opSchemas?.payload) {
+        current = { ...current, payload: opSchemas.payload.parse(current.payload) };
+      }
+
       // Build causation chain using intent type
       const causationChain = [...(causation ?? []), current.type];
 
@@ -468,14 +514,23 @@ export class Dispatcher implements IDispatcher {
         causation: causationChain,
       };
 
-      // Execute operation within causation context so that any
-      // dispatcher.dispatch() calls from hooks inherit the chain.
-      const result = await this.causationContext.run(causationChain, () => operation.execute(ctx));
+      // Execute operation within causation context so that any dispatcher.dispatch() calls
+      // from hooks inherit the chain. The stored operation is erased to `Operation` (any
+      // schema); its `execute` is typed to its own IntentOf, so the generic `ctx` is bridged
+      // with a cast here (the intent's phantom result carrier never exists at runtime — the
+      // payload was already validated above). Call `execute` as a METHOD so `this` stays bound.
+      const opCtx = ctx as unknown as OperationContext<IntentOf<OperationSchemas>>;
+      const result = await this.causationContext.run(causationChain, () =>
+        operation.execute(opCtx)
+      );
+
+      // Validate + normalize the operation's return value (fail → reject via outer catch).
+      const validatedResult = opSchemas?.result ? opSchemas.result.parse(result) : result;
 
       const duration = Math.round(performance.now() - pipelineStart);
       this.logger.info("completed", { intent: current.type, ms: duration });
 
-      handle.resolve(result as IntentResult<I>);
+      handle.resolve(validatedResult as IntentResult<I>);
     } catch (e) {
       this.logger.error("failed", {
         intent: intent.type,

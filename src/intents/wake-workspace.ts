@@ -20,82 +20,119 @@
  * new view appears.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { projectIdSchema, workspaceNameSchema, workspaceSchema, hookCtxSchema } from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
-import {
-  INTENT_OPEN_WORKSPACE,
-  type OpenWorkspaceIntent,
-  type WorkspaceOpenSource,
-} from "./open-workspace";
+import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "./open-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface WakeWorkspacePayload {
-  readonly workspacePath: string;
-  /** Forwarded to the internal workspace:open. If true, switch to the woken
-   *  workspace; if false, bring it online in the background. Default
-   *  (undefined): switch — matching the pre-fold renderer behavior. */
-  readonly stealFocus?: boolean;
-  /** Forwarded to the internal workspace:open. Identifies the originating
-   *  surface so error-notification can skip non-interactive sources (e.g. mcp). */
-  readonly source?: WorkspaceOpenSource;
-}
-
-export interface WakeWorkspaceIntent extends Intent<Workspace> {
-  readonly type: "workspace:wake";
-  readonly payload: WakeWorkspacePayload;
-}
-
 export const INTENT_WAKE_WORKSPACE = "workspace:wake" as const;
 export const WAKE_WORKSPACE_OPERATION_ID = "wake-workspace";
+export const EVENT_WORKSPACE_WOKEN = "workspace:woken" as const;
+export const EVENT_WORKSPACE_WAKE_FAILED = "workspace:wake-failed" as const;
 
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface WorkspaceWokenPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly projectPath: string;
-}
+/**
+ * Which module dispatched a workspace:open intent. Local mirror of
+ * `WorkspaceOpenSource` from ./open-workspace (that module has no exported
+ * schema yet); kept in sync so wake can forward `source` to workspace:open.
+ */
+const workspaceOpenSourceSchema = z.enum([
+  "ui-ipc",
+  "mcp",
+  "plugin-server",
+  "auto-workspace",
+  "open-project",
+  "creation",
+]);
+
+export const wakeWorkspacePayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    /** Forwarded to the internal workspace:open. If true, switch to the woken
+     *  workspace; if false, bring it online in the background. Default
+     *  (undefined): switch — matching the pre-fold renderer behavior. */
+    stealFocus: z.boolean().optional(),
+    /** Forwarded to the internal workspace:open. Identifies the originating
+     *  surface so error-notification can skip non-interactive sources (e.g. mcp). */
+    source: workspaceOpenSourceSchema.optional(),
+  })
+  .readonly();
+
+export const workspaceWokenPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    workspacePath: z.string(),
+    projectPath: z.string(),
+  })
+  .readonly();
+
+export const workspaceWakeFailedPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    error: z.string(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "cleanup" hook point. */
+const wakePipelineEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  workspacePath: z.string(),
+  projectId: projectIdSchema,
+  workspaceName: workspaceNameSchema,
+});
+
+/** Runtime whole-context validation schema for the "cleanup" hook point. */
+export const wakePipelineHookInputSchema = hookCtxSchema(
+  wakeWorkspacePayloadSchema,
+  wakePipelineEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_WAKE_WORKSPACE,
+  payload: wakeWorkspacePayloadSchema,
+  result: workspaceSchema,
+  hooks: {
+    cleanup: { input: wakePipelineHookInputSchema, result: z.object({}).readonly() },
+  },
+  events: {
+    [EVENT_WORKSPACE_WOKEN]: workspaceWokenPayloadSchema,
+    [EVENT_WORKSPACE_WAKE_FAILED]: workspaceWakeFailedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type WakeWorkspacePayload = z.infer<typeof wakeWorkspacePayloadSchema>;
+export type WakeWorkspaceIntent = IntentOf<typeof schemas>;
+
+export type WorkspaceWokenPayload = z.infer<typeof workspaceWokenPayloadSchema>;
 
 export interface WorkspaceWokenEvent extends DomainEvent {
   readonly type: "workspace:woken";
   readonly payload: WorkspaceWokenPayload;
 }
 
-export const EVENT_WORKSPACE_WOKEN = "workspace:woken" as const;
-
-export interface WorkspaceWakeFailedPayload {
-  readonly workspacePath: string;
-  readonly error: string;
-}
+export type WorkspaceWakeFailedPayload = z.infer<typeof workspaceWakeFailedPayloadSchema>;
 
 export interface WorkspaceWakeFailedEvent extends DomainEvent {
   readonly type: "workspace:wake-failed";
   readonly payload: WorkspaceWakeFailedPayload;
 }
 
-export const EVENT_WORKSPACE_WAKE_FAILED = "workspace:wake-failed" as const;
-
-// =============================================================================
-// Hook Types
-// =============================================================================
-
-export interface WakePipelineHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly workspacePath: string;
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-}
+/** Input context for the "cleanup" hook point. */
+export type WakePipelineHookInput = HookContext & z.infer<typeof wakePipelineEnrichmentSchema>;
 
 export type CleanupHookResult = Record<string, never>;
 
@@ -103,10 +140,13 @@ export type CleanupHookResult = Record<string, never>;
 // Operation
 // =============================================================================
 
-export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, Workspace> {
+export class WakeWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = WAKE_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<WakeWorkspaceIntent>): Promise<Workspace> {
+  async execute(
+    ctx: OperationContext<WakeWorkspaceIntent>
+  ): Promise<z.infer<typeof workspaceSchema>> {
     const { payload } = ctx.intent;
 
     try {

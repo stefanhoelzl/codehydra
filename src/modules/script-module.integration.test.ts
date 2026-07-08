@@ -8,8 +8,7 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
+import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, InitHookContext } from "../intents/app-start";
 import { createScriptModule } from "./script-module";
@@ -21,23 +20,14 @@ import { Path } from "../utils/path/path";
 // =============================================================================
 
 /** Runs "init" hook point with InitHookContext. */
-class MinimalInitOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  private readonly scripts: readonly string[];
-
-  constructor(scripts: readonly string[] = ["ch-claude", "code"]) {
-    this.scripts = scripts;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const initCtx: InitHookContext = {
+function createMinimalInitOperation(scripts: readonly string[] = ["ch-claude", "code"]) {
+  return createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
+    hookContext: (ctx): InitHookContext => ({
       intent: ctx.intent,
-      requiredScripts: this.scripts,
+      requiredScripts: scripts,
       capabilities: { "app-ready": true },
-    };
-    const { errors } = await ctx.hooks.collect<void>("init", initCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
+    }),
+  });
 }
 
 // =============================================================================
@@ -61,7 +51,7 @@ describe("ScriptModule Integration", () => {
     const dispatcher = createMockDispatcher();
 
     const scripts = ["ch-claude", "ch-claude.cjs", "ch-claude.cmd", "code"];
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation(scripts));
+    dispatcher.registerOperation(createMinimalInitOperation(scripts));
 
     const module = createScriptModule({
       fileSystem: fileSystem as never,
@@ -121,7 +111,7 @@ describe("ScriptModule Integration", () => {
 
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation([]));
+    dispatcher.registerOperation(createMinimalInitOperation([]));
 
     const module = createScriptModule({
       fileSystem: fileSystem as never,

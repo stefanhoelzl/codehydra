@@ -85,11 +85,10 @@ async function runMigration(entries: Entries): Promise<{
   config.load();
 
   const dispatcher = createMockDispatcher();
+  // The state module's init handler requires the "app-ready" capability
+  // (provided in production by electron-lifecycle); seed it for the test.
   dispatcher.registerOperation(
-    INTENT_APP_START,
-    // The state module's init handler requires the "app-ready" capability
-    // (provided in production by electron-lifecycle); seed it for the test.
-    createMinimalOperation(APP_START_OPERATION_ID, "init", {
+    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
       hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
     })
   );

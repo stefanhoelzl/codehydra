@@ -9,60 +9,82 @@
  * No provider dependencies - hook handlers do the actual work.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 
+export const INTENT_SET_METADATA = "workspace:set-metadata" as const;
+export const EVENT_METADATA_CHANGED = "workspace:metadata-changed" as const;
+export const SET_METADATA_OPERATION_ID = "set-metadata";
+
 // =============================================================================
-// Intent + Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface SetMetadataPayload {
-  readonly workspacePath: string;
-  readonly key: string;
-  readonly value: string | null;
-}
+export const setMetadataPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    key: z.string(),
+    value: z.string().nullable(),
+  })
+  .readonly();
 
-export interface SetMetadataIntent extends Intent<void> {
-  readonly type: "workspace:set-metadata";
-  readonly payload: SetMetadataPayload;
-}
+export const metadataChangedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    workspacePath: z.string(),
+    key: z.string(),
+    value: z.string().nullable(),
+  })
+  .readonly();
 
-export interface MetadataChangedPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly key: string;
-  readonly value: string | null;
-}
+/** Operation-added enrichment for the "set" hook point (beyond the base HookContext). */
+const setEnrichmentSchema = z.object({ workspacePath: z.string() });
+
+/** Runtime whole-context validation schema for the "set" hook point. */
+export const setHookInputSchema = hookCtxSchema(
+  setMetadataPayloadSchema,
+  setEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_SET_METADATA,
+  payload: setMetadataPayloadSchema,
+  hooks: {
+    set: { input: setHookInputSchema },
+  },
+  events: {
+    [EVENT_METADATA_CHANGED]: metadataChangedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type SetMetadataPayload = z.infer<typeof setMetadataPayloadSchema>;
+export type SetMetadataIntent = IntentOf<typeof schemas>;
+export type MetadataChangedPayload = z.infer<typeof metadataChangedPayloadSchema>;
 
 export interface MetadataChangedEvent extends DomainEvent {
   readonly type: "workspace:metadata-changed";
   readonly payload: MetadataChangedPayload;
 }
 
-export const INTENT_SET_METADATA = "workspace:set-metadata" as const;
-export const EVENT_METADATA_CHANGED = "workspace:metadata-changed" as const;
-
-// =============================================================================
-// Hook Types
-// =============================================================================
-
-export const SET_METADATA_OPERATION_ID = "set-metadata";
-
-/**
- * Input context for "set" handlers — built from resolve results.
- */
-export interface SetHookInput extends HookContext {
-  readonly workspacePath: string;
-}
+/** Input context for "set" handlers — built from resolve results. */
+export type SetHookInput = HookContext & z.infer<typeof setEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class SetMetadataOperation extends WorkspaceHookOperation<SetMetadataIntent, void, void> {
+export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas, void> {
+  readonly schemas = schemas;
+
   constructor() {
     super(SET_METADATA_OPERATION_ID, {
       hookPoint: "set",

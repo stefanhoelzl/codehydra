@@ -25,11 +25,7 @@ import {
   EVENT_METADATA_CHANGED,
 } from "./set-metadata";
 import type { SetMetadataIntent, MetadataChangedEvent, SetHookInput } from "./set-metadata";
-import {
-  GetMetadataOperation,
-  GET_METADATA_OPERATION_ID,
-  INTENT_GET_METADATA,
-} from "./get-metadata";
+import { GetMetadataOperation, GET_METADATA_OPERATION_ID } from "./get-metadata";
 import type { GetMetadataHookResult, GetHookInput } from "./get-metadata";
 import { registerTestInfrastructure } from "./operations.test-utils";
 import { Path } from "../utils/path/path";
@@ -70,8 +66,8 @@ function createTestSetup(): TestSetup {
   const dispatcher = createMockDispatcher();
 
   // Register operations
-  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new GetMetadataOperation());
 
   // Register infrastructure operations (resolve-workspace, resolve-project, etc.)
   registerTestInfrastructure(dispatcher, {

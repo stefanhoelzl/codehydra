@@ -11,7 +11,14 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 
-import type { Operation, OperationContext, HookContext } from "../../intents/lib/operation";
+import { z } from "zod/v4";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+  HookContext,
+} from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import {
   APP_START_OPERATION_ID,
@@ -44,7 +51,7 @@ import {
   type GetProjectBasesResult,
 } from "../../intents/get-project-bases";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
+import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import {
   createFileSystemMock,
   file,
@@ -66,10 +73,16 @@ function entriesOf(state: MockStateService): Record<string, StateEntry | null> {
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalActivateOperation implements Operation<AppStartIntent, void> {
-  readonly id = APP_START_OPERATION_ID;
+const activateSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
+class MinimalActivateOperation implements Operation<typeof activateSchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = activateSchemas;
+
+  async execute(ctx: OperationContext<IntentOf<typeof activateSchemas>>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
     const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -78,11 +91,18 @@ class MinimalActivateOperation implements Operation<AppStartIntent, void> {
   }
 }
 
-class TrackingOpenProjectOperation implements Operation<OpenProjectIntent, Project> {
-  readonly id = "open-project";
-  readonly dispatched: OpenProjectIntent[] = [];
+const openProjectSchemas = {
+  type: INTENT_OPEN_PROJECT,
+  payload: z.custom<OpenProjectIntent["payload"]>(),
+  result: z.custom<Project>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
+class TrackingOpenProjectOperation implements Operation<typeof openProjectSchemas> {
+  readonly id = "open-project";
+  readonly schemas = openProjectSchemas;
+  readonly dispatched: IntentOf<typeof openProjectSchemas>[] = [];
+
+  async execute(ctx: OperationContext<IntentOf<typeof openProjectSchemas>>): Promise<Project> {
     this.dispatched.push(ctx.intent);
     const gitUrl = ctx.intent.payload.git ?? "";
     const pathStr = ctx.intent.payload.path?.toString() ?? "";
@@ -97,26 +117,28 @@ class TrackingOpenProjectOperation implements Operation<OpenProjectIntent, Proje
   }
 }
 
-class TrackingOpenWorkspaceOperation implements Operation<
-  OpenWorkspaceIntent,
-  {
-    projectId: string;
-    name: string;
-    path: string;
-    branch: string;
-    metadata: Record<string, string>;
-  }
-> {
-  readonly id = "open-workspace";
-  readonly dispatched: OpenWorkspaceIntent[] = [];
+interface OpenWorkspaceTestResult {
+  projectId: string;
+  name: string;
+  path: string;
+  branch: string;
+  metadata: Record<string, string>;
+}
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<{
-    projectId: string;
-    name: string;
-    path: string;
-    branch: string;
-    metadata: Record<string, string>;
-  }> {
+const openWorkspaceSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.custom<OpenWorkspaceIntent["payload"]>(),
+  result: z.custom<OpenWorkspaceTestResult>(),
+} satisfies OperationSchemas;
+
+class TrackingOpenWorkspaceOperation implements Operation<typeof openWorkspaceSchemas> {
+  readonly id = "open-workspace";
+  readonly schemas = openWorkspaceSchemas;
+  readonly dispatched: IntentOf<typeof openWorkspaceSchemas>[] = [];
+
+  async execute(
+    ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>>
+  ): Promise<OpenWorkspaceTestResult> {
     this.dispatched.push(ctx.intent);
     return {
       projectId: "project-1",
@@ -128,15 +150,21 @@ class TrackingOpenWorkspaceOperation implements Operation<
   }
 }
 
-class TrackingDeleteWorkspaceOperation implements Operation<
-  DeleteWorkspaceIntent,
-  { started: true }
-> {
+const deleteWorkspaceSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
+  result: z.custom<{ started: true }>(),
+} satisfies OperationSchemas;
+
+class TrackingDeleteWorkspaceOperation implements Operation<typeof deleteWorkspaceSchemas> {
   readonly id = "delete-workspace";
-  readonly dispatched: DeleteWorkspaceIntent[] = [];
+  readonly schemas = deleteWorkspaceSchemas;
+  readonly dispatched: IntentOf<typeof deleteWorkspaceSchemas>[] = [];
   readonly failForPaths = new Set<string>();
 
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof deleteWorkspaceSchemas>>
+  ): Promise<{ started: true }> {
     this.dispatched.push(ctx.intent);
     if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
       const failedEvent: WorkspaceDeleteFailedEvent = {
@@ -161,12 +189,18 @@ class TrackingDeleteWorkspaceOperation implements Operation<
   }
 }
 
-class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void> {
+const setMetadataSchemas = {
+  type: INTENT_SET_METADATA,
+  payload: z.custom<SetMetadataIntent["payload"]>(),
+} satisfies OperationSchemas;
+
+class TrackingSetMetadataOperation implements Operation<typeof setMetadataSchemas> {
   readonly id = "set-metadata";
-  readonly dispatched: SetMetadataIntent[] = [];
+  readonly schemas = setMetadataSchemas;
+  readonly dispatched: IntentOf<typeof setMetadataSchemas>[] = [];
   readonly failForPaths = new Set<string>();
 
-  async execute(ctx: OperationContext<SetMetadataIntent>): Promise<void> {
+  async execute(ctx: OperationContext<IntentOf<typeof setMetadataSchemas>>): Promise<void> {
     this.dispatched.push(ctx.intent);
     if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
       throw new Error(`Workspace not found: ${ctx.intent.payload.workspacePath}`);
@@ -174,8 +208,15 @@ class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void>
   }
 }
 
-class TrackingListProjectsOperation implements Operation<ListProjectsIntent, Project[]> {
+const listProjectsSchemas = {
+  type: INTENT_LIST_PROJECTS,
+  payload: z.unknown(),
+  result: z.custom<Project[]>(),
+} satisfies OperationSchemas;
+
+class TrackingListProjectsOperation implements Operation<typeof listProjectsSchemas> {
   readonly id = "list-projects";
+  readonly schemas = listProjectsSchemas;
   projects: Project[] = [];
 
   async execute(): Promise<Project[]> {
@@ -183,31 +224,41 @@ class TrackingListProjectsOperation implements Operation<ListProjectsIntent, Pro
   }
 }
 
-class TrackingResolveWorkspaceOperation implements Operation<
-  ResolveWorkspaceIntent,
-  { projectPath: string; workspaceName: WorkspaceName }
-> {
+const resolveWorkspaceSchemas = {
+  type: INTENT_RESOLVE_WORKSPACE,
+  payload: z.custom<ResolveWorkspaceIntent["payload"]>(),
+  result: z.custom<{ projectPath: string; workspaceName: WorkspaceName }>(),
+} satisfies OperationSchemas;
+
+class TrackingResolveWorkspaceOperation implements Operation<typeof resolveWorkspaceSchemas> {
   readonly id = "resolve-workspace";
-  readonly dispatched: ResolveWorkspaceIntent[] = [];
+  readonly schemas = resolveWorkspaceSchemas;
+  readonly dispatched: IntentOf<typeof resolveWorkspaceSchemas>[] = [];
   projectPath = "/home/user/projects/repo";
 
   async execute(
-    ctx: OperationContext<ResolveWorkspaceIntent>
+    ctx: OperationContext<IntentOf<typeof resolveWorkspaceSchemas>>
   ): Promise<{ projectPath: string; workspaceName: WorkspaceName }> {
     this.dispatched.push(ctx.intent);
     return { projectPath: this.projectPath, workspaceName: "auto-ws" as WorkspaceName };
   }
 }
 
-class TrackingGetProjectBasesOperation implements Operation<
-  GetProjectBasesIntent,
-  GetProjectBasesResult
-> {
+const getProjectBasesSchemas = {
+  type: INTENT_GET_PROJECT_BASES,
+  payload: z.custom<GetProjectBasesIntent["payload"]>(),
+  result: z.custom<GetProjectBasesResult>(),
+} satisfies OperationSchemas;
+
+class TrackingGetProjectBasesOperation implements Operation<typeof getProjectBasesSchemas> {
   readonly id = "get-project-bases";
-  readonly dispatched: GetProjectBasesIntent[] = [];
+  readonly schemas = getProjectBasesSchemas;
+  readonly dispatched: IntentOf<typeof getProjectBasesSchemas>[] = [];
   shouldFail = false;
 
-  async execute(ctx: OperationContext<GetProjectBasesIntent>): Promise<GetProjectBasesResult> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof getProjectBasesSchemas>>
+  ): Promise<GetProjectBasesResult> {
     this.dispatched.push(ctx.intent);
     if (this.shouldFail) throw new Error("fetch failed");
     return {
@@ -366,15 +417,15 @@ function createTestSetup(options?: {
 
   const mockConfig = createMockConfig({ defaults: configValues });
 
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-  dispatcher.registerOperation(INTENT_OPEN_PROJECT, openProjectOp);
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
-  dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
-  dispatcher.registerOperation(INTENT_LIST_PROJECTS, listProjectsOp);
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, resolveWorkspaceOp);
-  dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, getProjectBasesOp);
+  dispatcher.registerOperation(new MinimalActivateOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
+  dispatcher.registerOperation(openProjectOp);
+  dispatcher.registerOperation(openWorkspaceOp);
+  dispatcher.registerOperation(deleteWorkspaceOp);
+  dispatcher.registerOperation(setMetadataOp);
+  dispatcher.registerOperation(listProjectsOp);
+  dispatcher.registerOperation(resolveWorkspaceOp);
+  dispatcher.registerOperation(getProjectBasesOp);
 
   const module = createAutoWorkspaceModule({
     fs,

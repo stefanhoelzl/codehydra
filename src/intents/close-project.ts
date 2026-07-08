@@ -16,51 +16,24 @@
  * without closing") so the per-key idempotency guard resets.
  *
  * No provider dependencies - hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/hook/event
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
+ * result types are **derived** from that bundle via `IntentOf`/`z.infer` — never restated.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { projectIdSchema, hookCtxSchema } from "./contract";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface CloseProjectPayload {
-  readonly projectPath: string;
-  readonly removeLocalRepo?: boolean;
-  /**
-   * The dispatch is user-interactive: the "confirm" hook point runs after
-   * resolve, parking the dispatch on a confirmation dialog that contributes
-   * removeAll/removeLocalRepo or cancels. Programmatic callers omit it and
-   * never see a dialog.
-   */
-  readonly interactive?: boolean;
-}
-
-export interface CloseProjectIntent extends Intent<void> {
-  readonly type: "project:close";
-  readonly payload: CloseProjectPayload;
-}
-
 export const INTENT_CLOSE_PROJECT = "project:close" as const;
-
-// =============================================================================
-// Event Types
-// =============================================================================
-
-export interface ProjectClosedPayload {
-  readonly projectId: ProjectId;
-}
-
-export interface ProjectClosedEvent extends DomainEvent {
-  readonly type: "project:closed";
-  readonly payload: ProjectClosedPayload;
-}
+export const CLOSE_PROJECT_OPERATION_ID = "close-project";
 
 export const EVENT_PROJECT_CLOSED = "project:closed" as const;
 
@@ -72,8 +45,152 @@ export const EVENT_PROJECT_CLOSED = "project:closed" as const;
  */
 export const EVENT_PROJECT_CLOSE_FAILED = "project:close-failed" as const;
 
-export interface ProjectCloseFailedPayload {
-  readonly projectPath: string;
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const closeProjectPayloadSchema = z
+  .object({
+    projectPath: z.string(),
+    removeLocalRepo: z.boolean().optional(),
+    /**
+     * The dispatch is user-interactive: the "confirm" hook point runs after
+     * resolve, parking the dispatch on a confirmation dialog that contributes
+     * removeAll/removeLocalRepo or cancels. Programmatic callers omit it and
+     * never see a dialog.
+     */
+    interactive: z.boolean().optional(),
+  })
+  .readonly();
+
+// -----------------------------------------------------------------------------
+// Event payload schemas (events this file owns)
+// -----------------------------------------------------------------------------
+
+export const projectClosedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+  })
+  .readonly();
+
+export const projectCloseFailedPayloadSchema = z
+  .object({
+    projectPath: z.string(),
+  })
+  .readonly();
+
+// -----------------------------------------------------------------------------
+// Hook result schemas
+// -----------------------------------------------------------------------------
+
+/** Per-handler result contract for the "resolve" hook point. */
+export const closeResolveHookResultSchema = z
+  .object({
+    remoteUrl: z.string().optional(),
+    workspaces: z
+      .array(z.object({ path: z.string() }))
+      .readonly()
+      .optional(),
+  })
+  .readonly();
+
+/**
+ * Per-handler result for the "confirm" hook point. canceled aborts the
+ * dispatch (project:close-failed is emitted so the idempotency guard resets);
+ * otherwise removeAll upgrades the per-workspace teardown to full deletion
+ * and removeLocalRepo overrides the payload.
+ */
+export const closeConfirmHookResultSchema = z
+  .object({
+    canceled: z.boolean().optional(),
+    removeAll: z.boolean().optional(),
+    removeLocalRepo: z.boolean().optional(),
+  })
+  .readonly();
+
+/**
+ * Per-handler result contract for the "close" hook point.
+ * Side-effect handlers return `{}`.
+ */
+export const closeHookResultSchema = z
+  .object({
+    otherProjectsExist: z.boolean().optional(),
+  })
+  .readonly();
+
+// -----------------------------------------------------------------------------
+// Hook input enrichment + whole-context schemas
+// -----------------------------------------------------------------------------
+
+/** Operation-added enrichment for the "confirm" hook point (interactive dispatches only). */
+const closeConfirmEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  remoteUrl: z.string().optional(),
+  workspaces: z.array(z.object({ path: z.string() })).readonly(),
+});
+
+/** Runtime whole-context validation schema for "confirm". */
+export const closeConfirmHookInputSchema = hookCtxSchema(
+  closeProjectPayloadSchema,
+  closeConfirmEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "close" hook point. */
+const closeEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  remoteUrl: z.string().optional(),
+  removeLocalRepo: z.boolean(),
+});
+
+/** Runtime whole-context validation schema for "close". */
+export const closeHookInputSchema = hookCtxSchema(
+  closeProjectPayloadSchema,
+  closeEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_CLOSE_PROJECT,
+  payload: closeProjectPayloadSchema,
+  hooks: {
+    resolve: { result: closeResolveHookResultSchema },
+    confirm: { input: closeConfirmHookInputSchema, result: closeConfirmHookResultSchema },
+    close: { input: closeHookInputSchema, result: closeHookResultSchema },
+  },
+  events: {
+    [EVENT_PROJECT_CLOSED]: projectClosedPayloadSchema,
+    [EVENT_PROJECT_CLOSE_FAILED]: projectCloseFailedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type CloseProjectPayload = z.infer<typeof closeProjectPayloadSchema>;
+export type CloseProjectIntent = IntentOf<typeof schemas>;
+
+export type ProjectClosedPayload = z.infer<typeof projectClosedPayloadSchema>;
+export type ProjectCloseFailedPayload = z.infer<typeof projectCloseFailedPayloadSchema>;
+
+export type CloseResolveHookResult = z.infer<typeof closeResolveHookResultSchema>;
+export type CloseConfirmHookResult = z.infer<typeof closeConfirmHookResultSchema>;
+export type CloseHookResult = z.infer<typeof closeHookResultSchema>;
+
+/**
+ * Input context for the "confirm" hook handler (interactive dispatches only)
+ * — built by the operation from resolve results, carrying what the
+ * confirmation dialog renders.
+ */
+export type CloseConfirmHookInput = HookContext & z.infer<typeof closeConfirmEnrichmentSchema>;
+
+/**
+ * Input context for "close" hook handlers — built by the operation from resolve results.
+ */
+export type CloseHookInput = HookContext & z.infer<typeof closeEnrichmentSchema>;
+
+export interface ProjectClosedEvent extends DomainEvent {
+  readonly type: typeof EVENT_PROJECT_CLOSED;
+  readonly payload: ProjectClosedPayload;
 }
 
 export interface ProjectCloseFailedEvent extends DomainEvent {
@@ -82,65 +199,12 @@ export interface ProjectCloseFailedEvent extends DomainEvent {
 }
 
 // =============================================================================
-// Hook Context
-// =============================================================================
-
-export const CLOSE_PROJECT_OPERATION_ID = "close-project";
-
-/**
- * Per-handler result contract for the "resolve" hook point.
- */
-export interface CloseResolveHookResult {
-  readonly remoteUrl?: string;
-  readonly workspaces?: ReadonlyArray<{ path: string }>;
-}
-
-/**
- * Input context for the "confirm" hook handler (interactive dispatches only)
- * — built by the operation from resolve results, carrying what the
- * confirmation dialog renders.
- */
-export interface CloseConfirmHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly remoteUrl?: string;
-  readonly workspaces: ReadonlyArray<{ path: string }>;
-}
-
-/**
- * Per-handler result for the "confirm" hook point. canceled aborts the
- * dispatch (project:close-failed is emitted so the idempotency guard resets);
- * otherwise removeAll upgrades the per-workspace teardown to full deletion
- * and removeLocalRepo overrides the payload.
- */
-export interface CloseConfirmHookResult {
-  readonly canceled?: boolean;
-  readonly removeAll?: boolean;
-  readonly removeLocalRepo?: boolean;
-}
-
-/**
- * Input context for "close" hook handlers — built by the operation from resolve results.
- */
-export interface CloseHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly remoteUrl?: string;
-  readonly removeLocalRepo: boolean;
-}
-
-/**
- * Per-handler result contract for the "close" hook point.
- * Side-effect handlers return `{}`.
- */
-export interface CloseHookResult {
-  readonly otherProjectsExist?: boolean;
-}
-
-// =============================================================================
 // Operation
 // =============================================================================
 
-export class CloseProjectOperation implements Operation<CloseProjectIntent, void> {
+export class CloseProjectOperation implements Operation<typeof schemas> {
   readonly id = CLOSE_PROJECT_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<CloseProjectIntent>): Promise<void> {
     const { payload } = ctx.intent;

@@ -18,8 +18,16 @@
  * class names so registration in main.ts and tests is unchanged.
  */
 
+import type { z } from "zod/v4";
 import type { Intent, DomainEvent } from "./types";
-import type { Operation, OperationContext, HookContext } from "./operation";
+import type {
+  Operation,
+  OperationContext,
+  HookContext,
+  OperationSchemas,
+  IntentOf,
+  ResultOf,
+} from "./operation";
 import { throwHookErrors } from "./hook-helpers";
 import {
   INTENT_RESOLVE_WORKSPACE,
@@ -35,6 +43,11 @@ import {
 /** An intent whose payload carries the target workspace path. */
 export type WorkspaceScopedIntent<R> = Intent<R> & {
   readonly payload: { readonly workspacePath: string };
+};
+
+/** Operation schemas whose payload carries the target workspace path. */
+export type WorkspaceScopedSchemas = OperationSchemas & {
+  readonly payload: z.ZodType<{ readonly workspacePath: string }>;
 };
 
 /** Input context passed to the hook point — matches the per-op input interfaces. */
@@ -61,16 +74,17 @@ export interface WorkspaceHookSpec<I extends WorkspaceScopedIntent<R>, THook, R>
 }
 
 export abstract class WorkspaceHookOperation<
-  I extends WorkspaceScopedIntent<R>,
+  S extends WorkspaceScopedSchemas,
   THook,
-  R,
-> implements Operation<I, R> {
+> implements Operation<S> {
+  abstract readonly schemas: S;
+
   protected constructor(
     readonly id: string,
-    private readonly spec: WorkspaceHookSpec<I, THook, R>
+    private readonly spec: WorkspaceHookSpec<IntentOf<S>, THook, ResultOf<S>>
   ) {}
 
-  async execute(ctx: OperationContext<I>): Promise<R> {
+  async execute(ctx: OperationContext<IntentOf<S>>): Promise<ResultOf<S>> {
     const { workspacePath } = ctx.intent.payload;
 
     // 1. Dispatch shared workspace resolution

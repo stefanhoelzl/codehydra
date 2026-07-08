@@ -13,11 +13,13 @@ import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
   type DeleteWorkspaceIntent,
   type ReleaseHookResult,
 } from "../intents/delete-workspace";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
+  INTENT_HIBERNATE_WORKSPACE,
   type HibernateReleaseHookResult,
 } from "../intents/hibernate-workspace";
 import {
@@ -50,8 +52,9 @@ function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>)
   } as unknown as Intent;
 }
 
-const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
+const releaseOperation = createMinimalOperation<ReleaseHookResult>(
   DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
   "release",
   {
     hookContext: (ctx) => ({
@@ -69,7 +72,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
     logger: createMockLogger(),
     initialCapabilities: { posix: true },
   });
-  dispatcher.registerOperation("workspace:delete", releaseOperation);
+  dispatcher.registerOperation(releaseOperation);
 
   const module = createPosixProcessCleanupModule({
     processRunner: runner,
@@ -372,8 +375,9 @@ describe("PosixProcessCleanupModule Integration", () => {
   });
 
   describe("hibernate-workspace -> release", () => {
-    const hibernateReleaseOperation = createMinimalOperation<Intent, HibernateReleaseHookResult>(
+    const hibernateReleaseOperation = createMinimalOperation<HibernateReleaseHookResult>(
       HIBERNATE_WORKSPACE_OPERATION_ID,
+      INTENT_HIBERNATE_WORKSPACE,
       "release",
       {
         hookContext: (ctx) => ({
@@ -392,7 +396,7 @@ describe("PosixProcessCleanupModule Integration", () => {
         logger: createMockLogger(),
         initialCapabilities: { posix: true },
       });
-      dispatcher.registerOperation("workspace:hibernate", hibernateReleaseOperation);
+      dispatcher.registerOperation(hibernateReleaseOperation);
       dispatcher.registerModule(
         createPosixProcessCleanupModule({ processRunner: r, logger: SILENT_LOGGER })
       );

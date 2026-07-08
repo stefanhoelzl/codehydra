@@ -79,8 +79,8 @@ function createTestSetup(): TestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new GetMetadataOperation());
 
   registerTestInfrastructure(dispatcher, {
     workspaces: {

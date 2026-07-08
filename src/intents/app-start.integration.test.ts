@@ -47,19 +47,25 @@ import type {
   InitResult,
 } from "./app-start";
 import { INTENT_SETUP } from "./setup";
-import type { SetupIntent } from "./setup";
 import type { IntentModule } from "./lib/module";
+import { z } from "zod/v4";
 import {
   ANY_VALUE,
   type HookContext,
   type HookOutput,
   type Operation,
-  type OperationContext,
+  type OperationSchemas,
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+
+/** Permissive schemas for the stub setup operation (app:setup dispatched during checks). */
+const setupStubSchemas = {
+  type: INTENT_SETUP,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
 /** Mock accessor that seeds the configured agent. Pass null to leave it unset. */
 function createMockAgentAccessor(
@@ -234,10 +240,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(
-    INTENT_APP_START,
-    new AppStartOperation(createMockAgentAccessor(), () => true)
-  );
+  dispatcher.registerOperation(new AppStartOperation(createMockAgentAccessor(), () => true));
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -434,10 +437,11 @@ describe("AppStart Operation", () => {
     }
 
     /** Stub setup operation that records dispatch and succeeds. */
-    function createSetupStub(state: TestState): Operation<SetupIntent, void> {
+    function createSetupStub(state: TestState): Operation<typeof setupStubSchemas> {
       return {
         id: "setup",
-        async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
+        schemas: setupStubSchemas,
+        async execute(ctx): Promise<void> {
           state.executionOrder.push("setup");
           void ctx;
         },
@@ -447,7 +451,7 @@ describe("AppStart Operation", () => {
     function createCheckTestSetup(
       modules: IntentModule[],
       options?: {
-        setupStub?: Operation<SetupIntent, void>;
+        setupStub?: Operation<typeof setupStubSchemas>;
         configuredAgent?: ConfigAgentType | null;
       }
     ): { dispatcher: Dispatcher } {
@@ -460,11 +464,10 @@ describe("AppStart Operation", () => {
       const wasConfigured = configured !== null;
       const agent: ConfigAgentType = configured && configured !== null ? configured : "opencode";
       dispatcher.registerOperation(
-        INTENT_APP_START,
         new AppStartOperation(createMockAgentAccessor(agent), () => wasConfigured)
       );
       if (options?.setupStub) {
-        dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
+        dispatcher.registerOperation(options.setupStub);
       }
       for (const m of modules) dispatcher.registerModule(m);
 

@@ -186,8 +186,9 @@ describe("McpModule Integration", () => {
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 
       dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+          throwOnError: false,
+        })
       );
 
       const mcpModule = createMcpModule({
@@ -214,10 +215,11 @@ describe("McpModule Integration", () => {
       const portManager = createPortManagerMock([9999]);
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 
-      shutdownDispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+      shutdownDispatcher.registerOperation(new AppShutdownOperation());
       shutdownDispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+          throwOnError: false,
+        })
       );
 
       const mcpModule = createMcpModule({

@@ -58,7 +58,7 @@ function createTestSetup(
 ): TestSetup {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_LIST_PROJECTS, new ListProjectsOperation());
+  dispatcher.registerOperation(new ListProjectsOperation());
 
   const projectModule: IntentModule = {
     name: "test-projects",

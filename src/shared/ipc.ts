@@ -7,19 +7,11 @@
  */
 
 // ============ Branded Path Types ============
+// zod is the single source of truth for these brands (src/intents/contract). This is a
+// type-only re-export, erased at build, so this browser-safe module pulls no zod at runtime
+// and renderer/preload keep importing ProjectPath/WorkspacePath from here unchanged.
 
-declare const ProjectPathBrand: unique symbol;
-declare const WorkspacePathBrand: unique symbol;
-
-/**
- * Branded type for project paths (git repository root directories).
- */
-export type ProjectPath = string & { readonly [ProjectPathBrand]: true };
-
-/**
- * Branded type for workspace paths (git worktree directories).
- */
-export type WorkspacePath = string & { readonly [WorkspacePathBrand]: true };
+export type { ProjectPath, WorkspacePath } from "../intents/contract";
 
 // ============ Domain Types ============
 

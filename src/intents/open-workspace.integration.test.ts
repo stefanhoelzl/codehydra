@@ -185,7 +185,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation());
 
   // Tracks known project paths for project:resolve resolution.
   // Only PROJECT_ROOT is known by default; tests can add more.
@@ -931,7 +931,7 @@ describe("OpenWorkspace Operation", () => {
       // Re-create setup with the extra module
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+      dispatcher.registerOperation(new OpenWorkspaceOperation());
 
       registerTestInfrastructure(dispatcher, {
         workspaces: (wsPath) => ({

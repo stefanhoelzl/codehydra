@@ -22,131 +22,184 @@
  * No provider dependencies - the hook handlers do the actual work.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import type { WorkspacePath } from "../shared/ipc";
+import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
+export const INTENT_SWITCH_WORKSPACE = "workspace:switch" as const;
+export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
+export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
+
 // =============================================================================
-// Intent Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
 /** Specific-target payload: switch to a known workspace, or deselect.
  *  `workspacePath: null` deselects the active workspace — no workspace is
  *  active afterwards and the creation panel becomes the main view (it is the
  *  ground state when nothing is selected). `focus` is ignored for null. */
-export interface SwitchWorkspaceTargetPayload {
-  readonly workspacePath: string | null;
-  readonly focus?: boolean;
-}
+export const switchWorkspaceTargetPayloadSchema = z
+  .object({
+    workspacePath: z.string().nullable(),
+    focus: z.boolean().optional(),
+  })
+  .readonly();
 
 /** Auto-select payload: find the best workspace after deletion. */
-export interface SwitchWorkspaceAutoPayload {
-  readonly auto: true;
-  readonly currentPath: string;
-  readonly focus?: boolean;
-  /** When true, if no other candidate is selectable, switch to currentPath
-   *  instead of emitting workspace:switched(null). Used by hibernate so the
-   *  user lands on the hibernation overlay rather than the empty backdrop
-   *  when the only workspace was just hibernated. */
-  readonly fallbackToCurrent?: boolean;
-}
+export const switchWorkspaceAutoPayloadSchema = z
+  .object({
+    auto: z.literal(true),
+    currentPath: z.string(),
+    focus: z.boolean().optional(),
+    /** When true, if no other candidate is selectable, switch to currentPath
+     *  instead of emitting workspace:switched(null). Used by hibernate so the
+     *  user lands on the hibernation overlay rather than the empty backdrop
+     *  when the only workspace was just hibernated. */
+    fallbackToCurrent: z.boolean().optional(),
+  })
+  .readonly();
 
-export type SwitchWorkspacePayload = SwitchWorkspaceTargetPayload | SwitchWorkspaceAutoPayload;
+export const switchWorkspacePayloadSchema = z.union([
+  switchWorkspaceTargetPayloadSchema,
+  switchWorkspaceAutoPayloadSchema,
+]);
 
-/** Type guard for auto-select mode. */
-function isAutoSwitch(payload: SwitchWorkspacePayload): payload is SwitchWorkspaceAutoPayload {
-  return "auto" in payload && payload.auto === true;
-}
+/** A workspace candidate returned by the "find-candidates" hook. */
+export const workspaceCandidateSchema = z
+  .object({
+    projectPath: z.string(),
+    projectName: z.string(),
+    workspacePath: z.string(),
+    /** Stored workspace name (original case) — used for alphabetical ordering. */
+    workspaceName: z.string(),
+    /** True when the candidate is hibernated. Hibernated candidates are excluded
+     *  from auto-switch — hibernation is always opt-in to wake. */
+    hibernated: z.boolean().optional(),
+  })
+  .readonly();
 
-export interface SwitchWorkspaceIntent extends Intent<void> {
-  readonly type: "workspace:switch";
-  readonly payload: SwitchWorkspacePayload;
-}
-
-export const INTENT_SWITCH_WORKSPACE = "workspace:switch" as const;
-
-// =============================================================================
-// Event Types
-// =============================================================================
-
-export interface WorkspaceSwitchedPayload {
-  readonly projectId: ProjectId;
-  readonly projectName: string;
-  readonly projectPath: string;
-  readonly workspaceName: WorkspaceName;
-  readonly path: string;
-}
-
-export interface WorkspaceSwitchedEvent extends DomainEvent {
-  readonly type: "workspace:switched";
-  readonly payload: WorkspaceSwitchedPayload | null;
-}
-
-export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
-
-// =============================================================================
-// Hook Result & Input Types
-// =============================================================================
-
-export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
-
-/** Input context for the "activate" hook point. `workspacePath: null` =
- *  deselect (clear the active workspace). */
-export interface ActivateHookInput extends HookContext {
-  readonly workspacePath: string | null;
-  readonly active: boolean;
-}
+export const workspaceSwitchedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    projectName: z.string(),
+    projectPath: z.string(),
+    workspaceName: workspaceNameSchema,
+    path: z.string(),
+  })
+  .readonly();
 
 /**
  * Per-handler result contract for the "activate" hook point.
  * Each handler returns its contribution — the operation merges them.
  * Empty `{}` for no-op case (workspace already active).
  */
-export interface SwitchWorkspaceHookResult {
-  readonly resolvedPath?: string;
-}
-
-// =============================================================================
-// Auto-Select Types
-// =============================================================================
-
-/** A workspace candidate returned by the "find-candidates" hook. */
-export interface WorkspaceCandidate {
-  readonly projectPath: string;
-  readonly projectName: string;
-  readonly workspacePath: string;
-  /** Stored workspace name (original case) — used for alphabetical ordering. */
-  readonly workspaceName: string;
-  /** True when the candidate is hibernated. Hibernated candidates are excluded
-   *  from auto-switch — hibernation is always opt-in to wake. */
-  readonly hibernated?: boolean;
-}
+export const switchWorkspaceHookResultSchema = z
+  .object({
+    resolvedPath: z.string().optional(),
+  })
+  .readonly();
 
 /** Per-handler result for the "find-candidates" hook point. */
-export interface FindCandidatesHookResult {
-  readonly candidates?: readonly WorkspaceCandidate[];
-}
-
-/** Input context for the "select-next" hook point. */
-export interface SelectNextHookInput extends HookContext {
-  readonly currentPath: string;
-  readonly candidates: readonly WorkspaceCandidate[];
-}
+export const findCandidatesHookResultSchema = z
+  .object({
+    candidates: z.array(workspaceCandidateSchema).readonly().optional(),
+  })
+  .readonly();
 
 /** Per-handler result for the "select-next" hook point. */
-export interface SelectNextHookResult {
-  readonly selected?: WorkspaceCandidate;
+export const selectNextHookResultSchema = z
+  .object({
+    selected: workspaceCandidateSchema.optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "activate" hook point. `workspacePath: null`
+ *  = deselect (clear the active workspace). */
+const activateEnrichmentSchema = z.object({
+  workspacePath: z.string().nullable(),
+  active: z.boolean(),
+});
+
+/** Runtime whole-context validation schema for the "activate" hook point. */
+export const activateHookInputSchema = hookCtxSchema(
+  switchWorkspacePayloadSchema,
+  activateEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "select-next" hook point. */
+const selectNextEnrichmentSchema = z.object({
+  currentPath: z.string(),
+  candidates: z.array(workspaceCandidateSchema).readonly(),
+});
+
+/** Runtime whole-context validation schema for the "select-next" hook point. */
+export const selectNextHookInputSchema = hookCtxSchema(
+  switchWorkspacePayloadSchema,
+  selectNextEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_SWITCH_WORKSPACE,
+  payload: switchWorkspacePayloadSchema,
+  hooks: {
+    activate: { input: activateHookInputSchema, result: switchWorkspaceHookResultSchema },
+    "find-candidates": { result: findCandidatesHookResultSchema },
+    "select-next": { input: selectNextHookInputSchema, result: selectNextHookResultSchema },
+  },
+  events: {
+    [EVENT_WORKSPACE_SWITCHED]: workspaceSwitchedPayloadSchema.nullable(),
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type SwitchWorkspaceTargetPayload = z.infer<typeof switchWorkspaceTargetPayloadSchema>;
+export type SwitchWorkspaceAutoPayload = z.infer<typeof switchWorkspaceAutoPayloadSchema>;
+export type SwitchWorkspacePayload = z.infer<typeof switchWorkspacePayloadSchema>;
+export type SwitchWorkspaceIntent = IntentOf<typeof schemas>;
+
+export type WorkspaceSwitchedPayload = z.infer<typeof workspaceSwitchedPayloadSchema>;
+
+export interface WorkspaceSwitchedEvent extends DomainEvent {
+  readonly type: "workspace:switched";
+  readonly payload: WorkspaceSwitchedPayload | null;
 }
+
+/** A workspace candidate returned by the "find-candidates" hook. */
+export type WorkspaceCandidate = z.infer<typeof workspaceCandidateSchema>;
+
+/** Per-handler result for the "activate" hook point. */
+export type SwitchWorkspaceHookResult = z.infer<typeof switchWorkspaceHookResultSchema>;
+/** Per-handler result for the "find-candidates" hook point. */
+export type FindCandidatesHookResult = z.infer<typeof findCandidatesHookResultSchema>;
+/** Per-handler result for the "select-next" hook point. */
+export type SelectNextHookResult = z.infer<typeof selectNextHookResultSchema>;
+
+/** Input context for the "activate" hook point. `workspacePath: null` =
+ *  deselect (clear the active workspace). */
+export type ActivateHookInput = HookContext & z.infer<typeof activateEnrichmentSchema>;
+
+/** Input context for the "select-next" hook point. */
+export type SelectNextHookInput = HookContext & z.infer<typeof selectNextEnrichmentSchema>;
 
 /**
  * Agent status scorer function. Given a workspace path, returns a numeric score:
  * 0 = idle (preferred), 1 = busy, 2 = none/unknown.
  */
 export type AgentStatusScorer = (workspacePath: WorkspacePath) => number;
+
+/** Type guard for auto-select mode. */
+function isAutoSwitch(payload: SwitchWorkspacePayload): payload is SwitchWorkspaceAutoPayload {
+  return "auto" in payload && payload.auto === true;
+}
 
 // =============================================================================
 // Selection Algorithm
@@ -223,8 +276,9 @@ export function selectNextWorkspace(
 // Operation
 // =============================================================================
 
-export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent, void> {
+export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
     const { payload } = ctx.intent;

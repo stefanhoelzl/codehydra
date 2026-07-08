@@ -15,17 +15,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("./watcher-shim", () => ({ applyWatcherShim: vi.fn().mockResolvedValue(1) }));
 import { delimiter, join } from "node:path";
 
-import type { Operation, OperationContext } from "../../intents/lib/operation";
-import type { Intent } from "../../intents/lib/types";
+import { z } from "zod/v4";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../../intents/lib/operation";
 import type { IntentModule } from "../../intents/lib/module";
 import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { APP_START_OPERATION_ID, INTENT_APP_START } from "../../intents/app-start";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
 } from "../../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../../intents/app-shutdown";
 import {
   AppResumeOperation,
   INTENT_APP_RESUME,
@@ -34,15 +39,18 @@ import {
   EVENT_IDE_SERVER_RESTARTED,
 } from "../../intents/app-resume";
 import type { DomainEvent } from "../../intents/lib/types";
-import { SETUP_OPERATION_ID } from "../../intents/setup";
+import { SETUP_OPERATION_ID, INTENT_SETUP } from "../../intents/setup";
 import type {
   BinaryHookInput,
   ExtensionsHookInput,
   SetupProgressPayload,
 } from "../../intents/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+} from "../../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
@@ -68,10 +76,19 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalBeforeReadyOperation implements Operation<Intent, readonly ConfigureResult[]> {
-  readonly id = APP_START_OPERATION_ID;
+const beforeReadySchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<readonly ConfigureResult[]>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
+class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = beforeReadySchemas;
+
+  async execute(
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+  ): Promise<readonly ConfigureResult[]> {
     const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
@@ -80,15 +97,24 @@ class MinimalBeforeReadyOperation implements Operation<Intent, readonly Configur
   }
 }
 
-class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
+const checkDepsSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<CheckDepsResult>(),
+} satisfies OperationSchemas;
+
+class MinimalCheckDepsOperation implements Operation<typeof checkDepsSchemas> {
   readonly id = APP_START_OPERATION_ID;
+  readonly schemas = checkDepsSchemas;
   private readonly extensionRequirements: readonly ExtensionRequirement[];
 
   constructor(extensionRequirements: readonly ExtensionRequirement[] = []) {
     this.extensionRequirements = extensionRequirements;
   }
 
-  async execute(ctx: OperationContext<Intent>): Promise<CheckDepsResult> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof checkDepsSchemas>>
+  ): Promise<CheckDepsResult> {
     const hookCtx: CheckDepsHookContext = {
       intent: ctx.intent,
       configuredAgent: "claude",
@@ -115,10 +141,17 @@ class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
   }
 }
 
-class MinimalStartOperation implements Operation<Intent, number | undefined> {
-  readonly id = APP_START_OPERATION_ID;
+const startSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<number | undefined>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<number | undefined> {
+class MinimalStartOperation implements Operation<typeof startSchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = startSchemas;
+
+  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | undefined> {
     const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
@@ -127,8 +160,15 @@ class MinimalStartOperation implements Operation<Intent, number | undefined> {
   }
 }
 
-class MinimalBinaryOperation implements Operation<Intent, void> {
+const binarySchemas = {
+  type: INTENT_SETUP,
+  payload: z.unknown(),
+  result: z.custom<void>(),
+} satisfies OperationSchemas;
+
+class MinimalBinaryOperation implements Operation<typeof binarySchemas> {
   readonly id = SETUP_OPERATION_ID;
+  readonly schemas = binarySchemas;
   private readonly hookInput: Partial<BinaryHookInput>;
   /** Progress frames yielded by the streaming binary handler. */
   readonly frames: SetupProgressPayload[] = [];
@@ -137,7 +177,7 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
+  async execute(ctx: OperationContext<IntentOf<typeof binarySchemas>>): Promise<void> {
     const { errors } = await ctx.hooks.collect(
       "binary",
       { intent: ctx.intent, ...this.hookInput },
@@ -151,8 +191,15 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalExtensionsOperation implements Operation<Intent, void> {
+const extensionsSchemas = {
+  type: INTENT_SETUP,
+  payload: z.unknown(),
+  result: z.custom<void>(),
+} satisfies OperationSchemas;
+
+class MinimalExtensionsOperation implements Operation<typeof extensionsSchemas> {
   readonly id = SETUP_OPERATION_ID;
+  readonly schemas = extensionsSchemas;
   private readonly hookInput: Partial<ExtensionsHookInput>;
   /** Progress frames yielded by the streaming extensions handler. */
   readonly frames: SetupProgressPayload[] = [];
@@ -161,7 +208,7 @@ class MinimalExtensionsOperation implements Operation<Intent, void> {
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
+  async execute(ctx: OperationContext<IntentOf<typeof extensionsSchemas>>): Promise<void> {
     const { errors } = await ctx.hooks.collect(
       "extensions",
       { intent: ctx.intent, ...this.hookInput },
@@ -175,15 +222,24 @@ class MinimalExtensionsOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string | undefined> {
+const finalizeSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<string | undefined>(),
+} satisfies OperationSchemas;
+
+class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
+  readonly schemas = finalizeSchemas;
   private readonly hookInput: Partial<FinalizeHookInput>;
 
   constructor(hookInput: Partial<FinalizeHookInput> = {}) {
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<string | undefined> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof finalizeSchemas>>
+  ): Promise<string | undefined> {
     const { errors, results } = await ctx.hooks.collect<string>("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
@@ -197,15 +253,16 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string 
 }
 
 /** Runs the "delete" hook point with a canned delete-pipeline context. */
-function createMinimalDeleteOperation(): Operation<DeleteWorkspaceIntent, DeleteHookResult> {
-  return createMinimalOperation<DeleteWorkspaceIntent, DeleteHookResult>(
+function createMinimalDeleteOperation() {
+  return createMinimalOperation<DeleteHookResult>(
     DELETE_WORKSPACE_OPERATION_ID,
+    INTENT_DELETE_WORKSPACE,
     "delete",
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
         projectPath: "/projects/test",
-        workspacePath: ctx.intent.payload.workspacePath ?? "",
+        workspacePath: (ctx.intent as DeleteWorkspaceIntent).payload.workspacePath ?? "",
         workspaceName: "test-workspace" as WorkspaceName,
         active: false,
       }),
@@ -324,7 +381,7 @@ describe("CodeServerModule", () => {
     it("declares code-server wrapper scripts", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
@@ -348,7 +405,7 @@ describe("CodeServerModule", () => {
         new FileSystemError("ENOENT", "/bundles/code-server", "not found")
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(new MinimalCheckDepsOperation());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -361,7 +418,7 @@ describe("CodeServerModule", () => {
     it("returns empty missingBinaries when up-to-date", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(new MinimalCheckDepsOperation());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -376,7 +433,7 @@ describe("CodeServerModule", () => {
       delete (allDeps as unknown as Record<string, unknown>).archiveExtractor;
       const deps = allDeps;
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(new MinimalCheckDepsOperation());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -396,7 +453,7 @@ describe("CodeServerModule", () => {
         { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
         { id: "ext.two", version: "2.0.0", vsixPath: "/path/ext-two.vsix" },
       ];
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -422,7 +479,7 @@ describe("CodeServerModule", () => {
       const requirements: ExtensionRequirement[] = [
         { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
       ];
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -447,7 +504,7 @@ describe("CodeServerModule", () => {
       const requirements: ExtensionRequirement[] = [
         { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
       ];
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -460,7 +517,7 @@ describe("CodeServerModule", () => {
     it("returns empty install plan when no requirements provided", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation([]));
+      dispatcher.registerOperation(new MinimalCheckDepsOperation([]));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -479,7 +536,7 @@ describe("CodeServerModule", () => {
     it("starts code-server and returns port", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       const codeServerPort = (await dispatcher.dispatch({
         type: "app:start",
@@ -494,7 +551,7 @@ describe("CodeServerModule", () => {
     it("ensures required directories exist", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -504,7 +561,7 @@ describe("CodeServerModule", () => {
     it("checks port availability before spawning", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -514,7 +571,7 @@ describe("CodeServerModule", () => {
     it("spawns code-server with correct arguments", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -553,7 +610,7 @@ describe("CodeServerModule", () => {
     it("spawns codium-server with reh-web arguments on the vscodium port", async () => {
       const deps = vscodiumDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -579,7 +636,7 @@ describe("CodeServerModule", () => {
     it("points the wrappers at the vscodium remote-cli and root-level node", async () => {
       const deps = vscodiumDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -602,13 +659,14 @@ describe("CodeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start first
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Then stop
       dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -670,9 +728,9 @@ describe("CodeServerModule", () => {
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(archiveExtractor.$.extractions.length).toBeGreaterThan(0);
       expect(op.frames).toContainEqual({ id: "vscode", status: "done" });
@@ -683,9 +741,9 @@ describe("CodeServerModule", () => {
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: [] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(archiveExtractor).toHaveNoExtractions();
       expect(op.frames).toContainEqual({ id: "vscode", status: "done" });
@@ -702,9 +760,9 @@ describe("CodeServerModule", () => {
       });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(op.frames).toContainEqual({
         id: "vscode",
@@ -731,9 +789,9 @@ describe("CodeServerModule", () => {
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(op.frames).toContainEqual({
         id: "vscode",
@@ -756,9 +814,11 @@ describe("CodeServerModule", () => {
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
+      await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
+        SetupError
+      );
       expect(op.frames).toContainEqual(
         expect.objectContaining({
           id: "vscode",
@@ -777,9 +837,9 @@ describe("CodeServerModule", () => {
       });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(applyWatcherShim).toHaveBeenCalledWith(
         expect.objectContaining({ fileSystemLayer: deps.fileSystemLayer }),
@@ -792,9 +852,9 @@ describe("CodeServerModule", () => {
       const deps = createDownloadDeps({ archiveExtractor: createArchiveExtractorMock() });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(applyWatcherShim).not.toHaveBeenCalled();
     });
@@ -812,9 +872,9 @@ describe("CodeServerModule", () => {
         { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(asMockRunner(deps)).toHaveSpawned([
         {
@@ -843,9 +903,9 @@ describe("CodeServerModule", () => {
         { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       // Should remove old directory
       expect(deps.fileSystemLayer.rm).toHaveBeenCalledWith(
@@ -858,9 +918,9 @@ describe("CodeServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalExtensionsOperation();
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(() => asMockRunner(deps).$.spawned(0)).toThrow();
       expect(op.frames).toContainEqual({ id: "setup", status: "done" });
@@ -884,9 +944,11 @@ describe("CodeServerModule", () => {
         { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
-      await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
+      await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
+        SetupError
+      );
       expect(op.frames).toContainEqual(
         expect.objectContaining({
           id: "setup",
@@ -912,12 +974,11 @@ describe("CodeServerModule", () => {
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Now register finalize operation and test it
       dispatcher.registerOperation(
-        "workspace:open",
         new MinimalFinalizeOperation({
           workspacePath: "/test/project/.worktrees/feature-1",
           envVars: { OPENCODE_PORT: "8080" },
@@ -970,12 +1031,11 @@ describe("CodeServerModule", () => {
       dispatcher.registerModule(module);
 
       // Start to set port
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Finalize
       dispatcher.registerOperation(
-        "workspace:open",
         new MinimalFinalizeOperation({
           workspacePath: "/test/project/.worktrees/feature-1",
           envVars: {},
@@ -1004,7 +1064,7 @@ describe("CodeServerModule", () => {
     it("deletes workspace file", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       await dispatcher.dispatch({
         type: "workspace:delete",
@@ -1040,7 +1100,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       // Should not throw
       const result = (await dispatcher.dispatch({
@@ -1074,7 +1134,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       await expect(
         dispatcher.dispatch({
@@ -1102,7 +1162,7 @@ describe("CodeServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps, 9876);
 
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
@@ -1139,7 +1199,7 @@ describe("CodeServerModule", () => {
 
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1152,7 +1212,7 @@ describe("CodeServerModule", () => {
     it("includes EDITOR with absolute path and flags", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1169,7 +1229,7 @@ describe("CodeServerModule", () => {
     it("includes GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1186,7 +1246,7 @@ describe("CodeServerModule", () => {
 
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1200,7 +1260,7 @@ describe("CodeServerModule", () => {
     it("sets VSCODE_PROXY_URI to empty string", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1212,7 +1272,7 @@ describe("CodeServerModule", () => {
     it("omits _CH_PLUGIN_PORT when plugin port not set", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1224,7 +1284,7 @@ describe("CodeServerModule", () => {
     it("points the wrappers at the code-server remote-cli/node, plus opencode dir", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1249,7 +1309,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1268,7 +1328,7 @@ describe("CodeServerModule", () => {
           },
         });
         const { dispatcher } = createTestSetup(deps);
-        dispatcher.registerOperation("app:start", new MinimalStartOperation());
+        dispatcher.registerOperation(new MinimalStartOperation());
 
         let caughtError: unknown;
         const startPromise = dispatcher
@@ -1302,9 +1362,9 @@ describe("CodeServerModule", () => {
       deps: IdeServerModuleDeps
     ): Promise<{ dispatcher: ReturnType<typeof createTestSetup>["dispatcher"] }> {
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
-      dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+      dispatcher.registerOperation(new AppResumeOperation());
       return { dispatcher };
     }
 
@@ -1412,7 +1472,7 @@ describe("CodeServerModule", () => {
     it("skips probe when code-server was never started", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+      dispatcher.registerOperation(new AppResumeOperation());
 
       const fetchMock = deps.httpClient.fetch as ReturnType<typeof vi.fn>;
       fetchMock.mockClear();

@@ -16,6 +16,7 @@
     "../env.d.ts",
     "./**/*",
     "../shared/**/*",
+    "../intents/contract.ts",
     "../test/**/*",
     "../services/test-utils.ts"
   ],

@@ -12,9 +12,15 @@
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod/v4";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import type { Operation, OperationContext, HookOutput } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+  HookOutput,
+} from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
@@ -81,11 +87,17 @@ function createMockShellLayers() {
 // Minimal Test Operations
 // =============================================================================
 
+const switchOpSchemas = {
+  type: INTENT_SWITCH_WORKSPACE,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
+
 /** Runs "activate" hook point + emits workspace:switched event. */
-class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
+class MinimalSwitchOperation implements Operation<typeof switchOpSchemas> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
+  readonly schemas = switchOpSchemas;
   constructor(private readonly active: boolean = false) {}
-  async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
+  async execute(ctx: OperationContext<IntentOf<typeof switchOpSchemas>>): Promise<void> {
     const workspacePath = (ctx.intent.payload as { workspacePath: string }).workspacePath;
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
@@ -119,12 +131,21 @@ class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
   }
 }
 
+const deleteOpSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<ShutdownHookResult>(),
+} satisfies OperationSchemas;
+
 /** Runs "shutdown" hook point only. */
-class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, ShutdownHookResult> {
+class MinimalDeleteOperation implements Operation<typeof deleteOpSchemas> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+  readonly schemas = deleteOpSchemas;
   constructor(private readonly active: boolean = false) {}
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<ShutdownHookResult> {
-    const { payload } = ctx.intent;
+  async execute(
+    ctx: OperationContext<IntentOf<typeof deleteOpSchemas>>
+  ): Promise<ShutdownHookResult> {
+    const payload = ctx.intent.payload as DeleteWorkspaceIntent["payload"];
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
       projectPath: "/projects/test",
@@ -143,10 +164,19 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
   }
 }
 
+const selectFolderOpSchemas = {
+  type: INTENT_OPEN_PROJECT,
+  payload: z.unknown(),
+  result: z.custom<SelectFolderHookResult | null>(),
+} satisfies OperationSchemas;
+
 /** Runs "select-folder" hook point (matches OpenProjectOperation's conditional hook). */
-class MinimalSelectFolderOperation implements Operation<Intent, SelectFolderHookResult | null> {
+class MinimalSelectFolderOperation implements Operation<typeof selectFolderOpSchemas> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<SelectFolderHookResult | null> {
+  readonly schemas = selectFolderOpSchemas;
+  async execute(
+    ctx: OperationContext<IntentOf<typeof selectFolderOpSchemas>>
+  ): Promise<SelectFolderHookResult | null> {
     const { results, errors } = await ctx.hooks.collect<SelectFolderHookResult>("select-folder", {
       intent: ctx.intent,
     });
@@ -170,8 +200,8 @@ interface TestSetup {
   module: IntentModule;
 }
 
-function createTestSetup(
-  operationOverride?: { intentType: string; operation: Operation<Intent, unknown> },
+function createTestSetup<S extends OperationSchemas = OperationSchemas>(
+  operationOverride?: { intentType: string; operation: Operation<S> },
   options?: {
     nullLayers?: boolean;
     dialogLayer?: ViewModuleDeps["dialogLayer"];
@@ -200,7 +230,7 @@ function createTestSetup(
   const module = createViewModule(deps);
 
   if (operationOverride) {
-    dispatcher.registerOperation(operationOverride.intentType, operationOverride.operation);
+    dispatcher.registerOperation(operationOverride.operation);
   }
 
   dispatcher.registerModule(module);
@@ -272,7 +302,7 @@ describe("ViewModule Integration", () => {
         intentType: INTENT_SWITCH_WORKSPACE,
         operation: new MinimalSwitchOperation(),
       });
-      dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation(true));
+      dispatcher.registerOperation(new MinimalDeleteOperation(true));
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
@@ -346,7 +376,7 @@ describe("ViewModule Integration", () => {
       });
 
       // Register get-active-workspace so we can verify the cache
-      dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+      dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
       // Switch to ws1 first to populate cache
       await dispatcher.dispatch({
@@ -366,9 +396,14 @@ describe("ViewModule Integration", () => {
       // Now emit workspace:switched with null payload by dispatching delete
       // that triggers auto-switch. Instead, manually fire the event through dispatcher.
       // We use a custom operation to emit the null event.
-      const nullSwitchOp: Operation<Intent, void> = {
+      const nullSwitchSchemas = {
+        type: "test:emit-null-switch",
+        payload: z.unknown(),
+      } satisfies OperationSchemas;
+      const nullSwitchOp: Operation<typeof nullSwitchSchemas> = {
         id: "emit-null-switch",
-        async execute(ctx: OperationContext<Intent>): Promise<void> {
+        schemas: nullSwitchSchemas,
+        async execute(ctx): Promise<void> {
           const event: WorkspaceSwitchedEvent = {
             type: EVENT_WORKSPACE_SWITCHED,
             payload: null,
@@ -376,7 +411,7 @@ describe("ViewModule Integration", () => {
           ctx.emit(event);
         },
       };
-      dispatcher.registerOperation("test:emit-null-switch", nullSwitchOp);
+      dispatcher.registerOperation(nullSwitchOp);
       await dispatcher.dispatch({
         type: "test:emit-null-switch",
         payload: {},
@@ -404,7 +439,7 @@ describe("ViewModule Integration", () => {
         operation: new MinimalSwitchOperation(),
       });
 
-      dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+      dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
@@ -445,7 +480,7 @@ describe("ViewModule Integration", () => {
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+      dispatcher.registerOperation(new AppShutdownOperation());
 
       const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
@@ -487,7 +522,7 @@ describe("ViewModule Integration", () => {
       const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
 
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+      dispatcher.registerOperation(new AppShutdownOperation());
 
       const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
@@ -519,8 +554,7 @@ describe("ViewModule Integration", () => {
       const layers = createMockShellLayers();
 
       dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "init", {
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
           hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
         })
       );
@@ -564,8 +598,7 @@ describe("ViewModule Integration", () => {
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "init", {
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
           hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
         })
       );

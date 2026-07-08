@@ -12,12 +12,19 @@
  * After hooks, dispatches workspace:open per discovered workspace (best-effort)
  * and emits project:opened. View activation is handled by the projectViewModule
  * event handler (registered in bootstrap).
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/event
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
+ * result types are **derived** from that bundle via `IntentOf`/`z.infer` — never restated.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import type { ProjectId, Project } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
+import { projectSchema, projectIdSchema, hookCtxSchema } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
@@ -30,104 +37,212 @@ import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
 import { throwHookErrors } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface OpenProjectPayload {
-  /** Absolute local filesystem path. Set by projects.open. */
-  readonly path?: Path;
-  /** Git URL or shorthand (e.g. "org/repo"). Set by the creation module's clone sub-dialog. */
-  readonly git?: string;
-}
-
-export interface OpenProjectIntent extends Intent<Project> {
-  readonly type: "project:open";
-  readonly payload: OpenProjectPayload;
-}
-
 export const INTENT_OPEN_PROJECT = "project:open" as const;
+export const OPEN_PROJECT_OPERATION_ID = "open-project";
+
+export const EVENT_PROJECT_OPENED = "project:opened" as const;
+export const EVENT_PROJECT_OPEN_FAILED = "project:open-failed" as const;
+export const EVENT_CLONE_PROGRESS = "clone:progress" as const;
 
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface ProjectOpenedPayload {
-  readonly project: Project;
-  /** Original intent path, for idempotency reset. */
-  readonly path?: Path;
-  /** Original intent git URL, for idempotency reset. */
-  readonly git?: string;
-}
+export const openProjectPayloadSchema = z
+  .object({
+    /** Absolute local filesystem path. Set by projects.open. */
+    path: z.instanceof(Path).optional(),
+    /** Git URL or shorthand (e.g. "org/repo"). Set by the creation module's clone sub-dialog. */
+    git: z.string().optional(),
+  })
+  .readonly();
+
+/** `null` result = user canceled the folder dialog (select-folder returned no path). */
+export const openProjectResultSchema = projectSchema.nullable();
+
+// -----------------------------------------------------------------------------
+// Internal (git-types) Workspace — local schema (no contract equivalent: the
+// contract's workspaceSchema is the IPC form with a string path; discover
+// results carry the internal form with a `Path` instance).
+// -----------------------------------------------------------------------------
+
+const internalWorkspaceSchema = z
+  .object({
+    name: z.string(),
+    path: z.instanceof(Path),
+    branch: z.string().nullable(),
+    metadata: z.record(z.string(), z.string()).readonly(),
+  })
+  .readonly();
+
+// -----------------------------------------------------------------------------
+// Hook result schemas
+// -----------------------------------------------------------------------------
+
+/** Result returned by handlers on the "select-folder" hook point. */
+export const selectFolderHookResultSchema = z
+  .object({
+    folderPath: z.string().nullable(),
+  })
+  .readonly();
+
+/** Result returned by handlers on the "prepare" hook point. */
+export const prepareHookResultSchema = z
+  .object({
+    /** If true, user canceled — abort the open operation. */
+    canceled: z.boolean().optional(),
+  })
+  .readonly();
+
+/** Result returned by handlers on the "resolve" hook point. */
+export const resolveHookResultSchema = z
+  .object({
+    /** Optional when using collect() — handler may skip via self-selection. */
+    projectPath: z.string().optional(),
+    remoteUrl: z.string().optional(),
+    /** If true, the project is already open — skip workspace:open and event emission. */
+    alreadyOpen: z.boolean().optional(),
+  })
+  .readonly();
+
+/** Result returned by handlers on the "discover" hook point. */
+export const discoverHookResultSchema = z
+  .object({
+    workspaces: z.array(internalWorkspaceSchema).readonly(),
+    defaultBaseBranch: z.string().optional(),
+  })
+  .readonly();
+
+/** Result returned by handlers on the "register" hook point. */
+export const registerHookResultSchema = z
+  .object({
+    /** Optional when using collect() — handler may skip via self-selection. */
+    projectId: projectIdSchema.optional(),
+    name: z.string().optional(),
+    /** If true, the project is already open — skip workspace:open and event emission. */
+    alreadyOpen: z.boolean().optional(),
+  })
+  .readonly();
+
+// -----------------------------------------------------------------------------
+// Hook input enrichment + whole-context schemas
+// -----------------------------------------------------------------------------
+
+/** Operation-added enrichment for the "discover" hook point. */
+const discoverEnrichmentSchema = z.object({ projectPath: z.string() });
+
+/** Runtime whole-context validation schema for "discover". */
+export const discoverHookInputSchema = hookCtxSchema(
+  openProjectPayloadSchema,
+  discoverEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "register" hook point. */
+const registerEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  remoteUrl: z.string().optional(),
+});
+
+/** Runtime whole-context validation schema for "register". */
+export const registerHookInputSchema = hookCtxSchema(
+  openProjectPayloadSchema,
+  registerEnrichmentSchema.shape
+);
+
+// -----------------------------------------------------------------------------
+// Event payload schemas (events this file owns)
+// -----------------------------------------------------------------------------
+
+export const projectOpenedPayloadSchema = z
+  .object({
+    project: projectSchema,
+    /** Original intent path, for idempotency reset. */
+    path: z.instanceof(Path).optional(),
+    /** Original intent git URL, for idempotency reset. */
+    git: z.string().optional(),
+  })
+  .readonly();
+
+export const projectOpenFailedPayloadSchema = z
+  .object({
+    /** Original intent path, for idempotency reset. */
+    path: z.instanceof(Path).optional(),
+    /** Original intent git URL, for idempotency reset. */
+    git: z.string().optional(),
+    /** Reason the open failed (error message or "already-open"). */
+    reason: z.string(),
+  })
+  .readonly();
+
+export const cloneProgressPayloadSchema = z
+  .object({
+    stage: z.string(),
+    progress: z.number(),
+    name: z.string(),
+    url: z.string(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_OPEN_PROJECT,
+  payload: openProjectPayloadSchema,
+  result: openProjectResultSchema,
+  hooks: {
+    "select-folder": { result: selectFolderHookResultSchema },
+    prepare: { result: prepareHookResultSchema },
+    resolve: { result: resolveHookResultSchema },
+    register: { input: registerHookInputSchema, result: registerHookResultSchema },
+    discover: { input: discoverHookInputSchema, result: discoverHookResultSchema },
+  },
+  events: {
+    [EVENT_PROJECT_OPENED]: projectOpenedPayloadSchema,
+    [EVENT_PROJECT_OPEN_FAILED]: projectOpenFailedPayloadSchema,
+    [EVENT_CLONE_PROGRESS]: cloneProgressPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type OpenProjectPayload = z.infer<typeof openProjectPayloadSchema>;
+export type OpenProjectIntent = IntentOf<typeof schemas>;
+
+export type SelectFolderHookResult = z.infer<typeof selectFolderHookResultSchema>;
+export type PrepareHookResult = z.infer<typeof prepareHookResultSchema>;
+export type ResolveHookResult = z.infer<typeof resolveHookResultSchema>;
+export type DiscoverHookResult = z.infer<typeof discoverHookResultSchema>;
+export type RegisterHookResult = z.infer<typeof registerHookResultSchema>;
+
+/** Input context for the "discover" hook point. */
+export type DiscoverHookInput = HookContext & z.infer<typeof discoverEnrichmentSchema>;
+
+/** Input context for the "register" hook point. */
+export type RegisterHookInput = HookContext & z.infer<typeof registerEnrichmentSchema>;
+
+export type ProjectOpenedPayload = z.infer<typeof projectOpenedPayloadSchema>;
+export type ProjectOpenFailedPayload = z.infer<typeof projectOpenFailedPayloadSchema>;
+export type CloneProgressPayload = z.infer<typeof cloneProgressPayloadSchema>;
 
 export interface ProjectOpenedEvent extends DomainEvent {
   readonly type: "project:opened";
   readonly payload: ProjectOpenedPayload;
 }
 
-export const EVENT_PROJECT_OPENED = "project:opened" as const;
-
-export interface ProjectOpenFailedPayload {
-  /** Original intent path, for idempotency reset. */
-  readonly path?: Path;
-  /** Original intent git URL, for idempotency reset. */
-  readonly git?: string;
-  /** Reason the open failed (error message or "already-open"). */
-  readonly reason: string;
-}
-
 export interface ProjectOpenFailedEvent extends DomainEvent {
-  readonly type: "project:open-failed";
+  readonly type: typeof EVENT_PROJECT_OPEN_FAILED;
   readonly payload: ProjectOpenFailedPayload;
 }
 
-export const EVENT_PROJECT_OPEN_FAILED = "project:open-failed" as const;
+export interface CloneProgressEvent extends DomainEvent {
+  readonly type: typeof EVENT_CLONE_PROGRESS;
+  readonly payload: CloneProgressPayload;
+}
 
 // =============================================================================
-// Hook Result & Input Types
+// Clone progress streaming frame (yielded by the "resolve" hook; not schematized —
+// yield frames are pure data forwarded to onYield, not validated at the boundary).
 // =============================================================================
-
-export const OPEN_PROJECT_OPERATION_ID = "open-project";
-
-/** Result returned by handlers on the "select-folder" hook point. */
-export interface SelectFolderHookResult {
-  readonly folderPath: string | null;
-}
-
-/** Result returned by handlers on the "prepare" hook point. */
-export interface PrepareHookResult {
-  /** If true, user canceled — abort the open operation. */
-  readonly canceled?: boolean;
-}
-
-/** Result returned by handlers on the "resolve" hook point. */
-export interface ResolveHookResult {
-  /** Optional when using collect() — handler may skip via self-selection. */
-  readonly projectPath?: string;
-  readonly remoteUrl?: string;
-  /** If true, the project is already open — skip workspace:open and event emission. */
-  readonly alreadyOpen?: boolean;
-}
-
-/** Result returned by handlers on the "discover" hook point. */
-export interface DiscoverHookResult {
-  readonly workspaces: readonly InternalWorkspace[];
-  readonly defaultBaseBranch?: string;
-}
-
-/** Result returned by handlers on the "register" hook point. */
-export interface RegisterHookResult {
-  /** Optional when using collect() — handler may skip via self-selection. */
-  readonly projectId?: ProjectId;
-  readonly name?: string;
-  /** If true, the project is already open — skip workspace:open and event emission. */
-  readonly alreadyOpen?: boolean;
-}
-
-/** Input context for the "discover" hook point. */
-export interface DiscoverHookInput extends HookContext {
-  readonly projectPath: string;
-}
 
 /**
  * Progress frame yielded by the "resolve" hook while cloning (data only, no closure).
@@ -154,35 +269,12 @@ export function isCloneProgressFrame(frame: unknown): frame is CloneProgressFram
 }
 
 // =============================================================================
-// Clone Progress Event Types
-// =============================================================================
-
-export const EVENT_CLONE_PROGRESS = "clone:progress" as const;
-
-export interface CloneProgressPayload {
-  readonly stage: string;
-  readonly progress: number;
-  readonly name: string;
-  readonly url: string;
-}
-
-export interface CloneProgressEvent extends DomainEvent {
-  readonly type: typeof EVENT_CLONE_PROGRESS;
-  readonly payload: CloneProgressPayload;
-}
-
-/** Input context for the "register" hook point. */
-export interface RegisterHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly remoteUrl?: string;
-}
-
-// =============================================================================
 // Operation
 // =============================================================================
 
-export class OpenProjectOperation implements Operation<OpenProjectIntent, Project | null> {
+export class OpenProjectOperation implements Operation<typeof schemas> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project | null> {
     const { intent } = ctx;

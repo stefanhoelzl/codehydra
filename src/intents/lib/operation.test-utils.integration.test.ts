@@ -45,11 +45,12 @@ describe("createMinimalOperation", () => {
       },
     });
 
-    const op = createMinimalOperation<Intent, { value: number }>(
+    const op = createMinimalOperation<{ value: number }>(
       TEST_OPERATION_ID,
+      TEST_INTENT_TYPE,
       TEST_HOOK_POINT
     );
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    dispatcher.registerOperation(op);
 
     const result = await dispatcher.dispatch(testIntent());
 
@@ -59,8 +60,8 @@ describe("createMinimalOperation", () => {
   it("returns undefined when no results (void operation)", async () => {
     const { dispatcher } = createTestSetup();
 
-    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_HOOK_POINT);
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_INTENT_TYPE, TEST_HOOK_POINT);
+    dispatcher.registerOperation(op);
 
     const result = await dispatcher.dispatch(testIntent());
 
@@ -82,8 +83,8 @@ describe("createMinimalOperation", () => {
       },
     });
 
-    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_HOOK_POINT);
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_INTENT_TYPE, TEST_HOOK_POINT);
+    dispatcher.registerOperation(op);
 
     await expect(dispatcher.dispatch(testIntent())).rejects.toThrow("hook failed");
   });
@@ -103,10 +104,10 @@ describe("createMinimalOperation", () => {
       },
     });
 
-    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_INTENT_TYPE, TEST_HOOK_POINT, {
       throwOnError: false,
     });
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    dispatcher.registerOperation(op);
 
     await expect(dispatcher.dispatch(testIntent())).resolves.toBeUndefined();
   });
@@ -133,13 +134,18 @@ describe("createMinimalOperation", () => {
       readonly workspacePath: string;
     }
 
-    const op = createMinimalOperation<Intent, string>(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      hookContext: (ctx) => ({
-        intent: ctx.intent,
-        workspacePath: "/test/workspace",
-      }),
-    });
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    const op = createMinimalOperation<string>(
+      TEST_OPERATION_ID,
+      TEST_INTENT_TYPE,
+      TEST_HOOK_POINT,
+      {
+        hookContext: (ctx) => ({
+          intent: ctx.intent,
+          workspacePath: "/test/workspace",
+        }),
+      }
+    );
+    dispatcher.registerOperation(op);
 
     await dispatcher.dispatch(testIntent());
 
@@ -163,8 +169,8 @@ describe("createMinimalOperation", () => {
       },
     });
 
-    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_HOOK_POINT);
-    dispatcher.registerOperation(TEST_INTENT_TYPE, op);
+    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_INTENT_TYPE, TEST_HOOK_POINT);
+    dispatcher.registerOperation(op);
 
     const intent = testIntent();
     await dispatcher.dispatch(intent);
