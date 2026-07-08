@@ -116,7 +116,14 @@ function compressAndTrim(raw: string): { compressed: string; rawBytesKept: numbe
   return { compressed, rawBytesKept: kept.length };
 }
 
-function buildDialogConfig(): DialogConfig {
+/**
+ * Build the bug-report dialog config. When `busy` is set (after the user hits
+ * Send / Ctrl+Enter), the primary button shows a spinner label and the form is
+ * frozen — the report can't hide instantly because it first reads the log files
+ * off disk, so the button carries that in-flight state until the dialog closes.
+ */
+function buildDialogConfig(options?: { busy?: boolean }): DialogConfig {
+  const busy = options?.busy ?? false;
   return {
     sections: [
       { type: "text", content: "Report a Bug", style: "heading", icon: "bug" },
@@ -127,6 +134,7 @@ function buildDialogConfig(): DialogConfig {
         multiline: true,
         initialValue: DESCRIPTION_INITIAL,
         selectInitialValue: true,
+        disabled: busy,
       },
       {
         type: "text",
@@ -136,8 +144,22 @@ function buildDialogConfig(): DialogConfig {
       {
         type: "group",
         items: [
-          { type: "button", id: "send", label: "Send", variant: "primary" },
-          { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
+          {
+            type: "button",
+            id: "send",
+            label: "Send",
+            variant: "primary",
+            busy,
+            busyLabel: "Sending...",
+          },
+          {
+            type: "button",
+            id: "cancel",
+            label: "Cancel",
+            variant: "secondary",
+            role: "cancel",
+            disabled: busy,
+          },
         ],
       },
     ],
@@ -401,8 +423,19 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
     const handle = deps.ui.dialog(buildDialogConfig());
     activeHandle = handle;
 
+    // Guards against a second Send firing while the first is in flight (e.g. a
+    // double Ctrl+Enter before the busy config reaches the renderer).
+    let sending = false;
+
     handle.onEvent((event) => {
       if (event.actionId === "send") {
+        if (sending) return;
+        sending = true;
+        // Reflect the in-flight send on the primary button (spinner label) and
+        // freeze the form until the dialog closes — the log reads below can take
+        // a perceptible moment, so the button must not look unresponsive.
+        handle.update(buildDialogConfig({ busy: true }));
+
         void (async () => {
           const [logs, electronLogs] = await Promise.all([
             readLogContent(),

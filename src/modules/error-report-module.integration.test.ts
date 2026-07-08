@@ -209,6 +209,38 @@ describe("ErrorReportModule — bug report dialog", () => {
     expect(handle.handle.close).toHaveBeenCalled();
   });
 
+  it("marks the Send button busy before the dialog closes", async () => {
+    const { module, handle } = setup();
+    await emitKey(module, "b");
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
+
+    // A busy config is pushed synchronously on click (before the async log
+    // reads resolve and close the dialog), so the primary button shows its
+    // in-flight state until the window hides.
+    const busyConfig = handle.configs.find((c) =>
+      c.sections.some(
+        (s) =>
+          s.type === "group" &&
+          s.items.some((i) => i.type === "button" && i.id === "send" && i.busy === true)
+      )
+    );
+    expect(busyConfig).toBeDefined();
+    expect(handle.handle.update).toHaveBeenCalled();
+    expect(handle.handle.close).not.toHaveBeenCalled();
+
+    await vi.waitFor(() => expect(handle.handle.close).toHaveBeenCalled());
+  });
+
+  it("ignores a second 'send' while the first is in flight", async () => {
+    const { module, deps, handle } = setup();
+    await emitKey(module, "b");
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
+
+    await vi.waitFor(() => expect(handle.handle.close).toHaveBeenCalled());
+    expect(deps.dispatcher.dispatch).toHaveBeenCalledOnce();
+  });
+
   it("closes without dispatching on 'cancel'", async () => {
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
