@@ -861,8 +861,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 "claudeCode.claudeProcessWrapper": deps.wrapperPath,
                 "claudeCode.environmentVariables": envVarsArray,
                 "chat.agent.enabled": false,
-                "extensions.autoUpdate": false,
-                "extensions.autoCheckUpdates": false,
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
               workspaceUrl = ide.urlForWorkspace(ideServerPort, wsFilePath.toString());
