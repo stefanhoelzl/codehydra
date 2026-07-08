@@ -74,7 +74,7 @@ function createTestSetup(opts: {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+  dispatcher.registerOperation(new GetWorkspaceStatusOperation());
 
   registerTestInfrastructure(dispatcher, {
     workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
@@ -220,7 +220,7 @@ describe("GetWorkspaceStatus Operation", () => {
       const dispatcher = createMockDispatcher();
       const workspaceName = "feature-x" as WorkspaceName;
 
-      dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+      dispatcher.registerOperation(new GetWorkspaceStatusOperation());
 
       registerTestInfrastructure(dispatcher, {
         workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },

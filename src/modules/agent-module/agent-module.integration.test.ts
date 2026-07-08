@@ -9,11 +9,16 @@
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { z } from "zod/v4";
 import { Dispatcher } from "../../intents/lib/dispatcher";
-import type { Operation, OperationContext, HookContext } from "../../intents/lib/operation";
-import type { Intent } from "../../intents/lib/types";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../../intents/lib/operation";
 import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { APP_START_OPERATION_ID, INTENT_APP_START } from "../../intents/app-start";
 import {
   AgentLaunchOptionsOperation,
   INTENT_GET_LAUNCH_OPTIONS,
@@ -23,7 +28,7 @@ import type {
   CheckDepsResult,
   CheckDepsHookContext,
 } from "../../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import type {
   RegisterAgentResult,
@@ -31,25 +36,37 @@ import type {
   BinaryHookInput,
   SetupProgressPayload,
 } from "../../intents/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
 import type {
   SetupHookResult,
   SetupHookInput,
   OpenWorkspaceIntent,
 } from "../../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+} from "../../intents/delete-workspace";
 import type {
   ShutdownHookResult,
   DeletePipelineHookInput,
   DeleteWorkspaceIntent,
 } from "../../intents/delete-workspace";
-import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-status";
+import {
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  INTENT_GET_WORKSPACE_STATUS,
+} from "../../intents/get-workspace-status";
 import type { GetStatusHookResult } from "../../intents/get-workspace-status";
-import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session";
+import {
+  GET_AGENT_SESSION_OPERATION_ID,
+  INTENT_GET_AGENT_SESSION,
+} from "../../intents/get-agent-session";
 import type { GetAgentSessionHookResult } from "../../intents/get-agent-session";
-import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
+import { RESTART_AGENT_OPERATION_ID, INTENT_RESTART_AGENT } from "../../intents/restart-agent";
 import type { RestartAgentHookResult } from "../../intents/restart-agent";
-import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
+import {
+  AGENT_LIFECYCLE_OPERATION_ID,
+  INTENT_AGENT_LIFECYCLE,
+} from "../../intents/agent-lifecycle";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
@@ -112,10 +129,19 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalBeforeReadyOperation implements Operation<Intent, readonly ConfigureResult[]> {
-  readonly id = APP_START_OPERATION_ID;
+const beforeReadySchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<readonly ConfigureResult[]>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<readonly ConfigureResult[]> {
+class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = beforeReadySchemas;
+
+  async execute(
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+  ): Promise<readonly ConfigureResult[]> {
     const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
@@ -124,70 +150,62 @@ class MinimalBeforeReadyOperation implements Operation<Intent, readonly Configur
   }
 }
 
-class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
-  readonly id = APP_START_OPERATION_ID;
-  private readonly configuredAgent: string | null;
+const checkDepsSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<CheckDepsResult>(),
+} satisfies OperationSchemas;
 
-  constructor(configuredAgent: string | null = "claude") {
-    this.configuredAgent = configuredAgent;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<CheckDepsResult> {
-    const hookCtx: CheckDepsHookContext = {
-      intent: ctx.intent,
-      configuredAgent: this.configuredAgent as CheckDepsHookContext["configuredAgent"],
-      extensionRequirements: [],
-    };
-    const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
-    const merged: CheckDepsResult = {};
-    for (const r of results) {
-      if (r.missingBinaries) {
-        (merged as Record<string, unknown>).missingBinaries = [
-          ...((merged.missingBinaries as string[]) ?? []),
-          ...r.missingBinaries,
-        ];
+function minimalCheckDeps(
+  configuredAgent: string | null = "claude"
+): Operation<typeof checkDepsSchemas> {
+  return {
+    id: APP_START_OPERATION_ID,
+    schemas: checkDepsSchemas,
+    async execute(ctx): Promise<CheckDepsResult> {
+      const hookCtx: CheckDepsHookContext = {
+        intent: ctx.intent,
+        configuredAgent: configuredAgent as CheckDepsHookContext["configuredAgent"],
+        extensionRequirements: [],
+      };
+      const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
+      const merged: CheckDepsResult = {};
+      for (const r of results) {
+        if (r.missingBinaries) {
+          (merged as Record<string, unknown>).missingBinaries = [
+            ...((merged.missingBinaries as string[]) ?? []),
+            ...r.missingBinaries,
+          ];
+        }
       }
-    }
-    return merged;
-  }
+      return merged;
+    },
+  };
 }
 
-class MinimalStartOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-      capabilities: { mcpPort: null },
-    };
-    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
+/**
+ * Minimal app:start operation that runs the "start" hook point with `mcpPort` seeded as a
+ * capability (defaults to null). Replaces the old MinimalStart / MinimalStartWithMcpPort classes.
+ */
+function minimalStart(mcpPort: number | null = null): Operation<OperationSchemas> {
+  return createMinimalOperation<void>(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+    hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { mcpPort } }),
+  });
 }
 
-class MinimalStartWithMcpPortOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  private readonly mcpPort: number | null;
+const registerAgentsSchemas = {
+  type: "setup",
+  payload: z.unknown(),
+  result: z.custom<readonly RegisterAgentResult[]>(),
+} satisfies OperationSchemas;
 
-  constructor(mcpPort: number | null = null) {
-    this.mcpPort = mcpPort;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    // Run start with mcpPort as a pre-populated capability
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-      capabilities: { mcpPort: this.mcpPort },
-    };
-    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
-}
-
-class MinimalRegisterAgentsOperation implements Operation<Intent, readonly RegisterAgentResult[]> {
+class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsSchemas> {
   readonly id = SETUP_OPERATION_ID;
+  readonly schemas = registerAgentsSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<readonly RegisterAgentResult[]> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof registerAgentsSchemas>>
+  ): Promise<readonly RegisterAgentResult[]> {
     const { results, errors } = await ctx.hooks.collect<RegisterAgentResult>("register-agents", {
       intent: ctx.intent,
     });
@@ -196,49 +214,48 @@ class MinimalRegisterAgentsOperation implements Operation<Intent, readonly Regis
   }
 }
 
-class MinimalSaveAgentOperation implements Operation<Intent, void> {
-  readonly id = SETUP_OPERATION_ID;
-  private readonly selectedAgent: string;
-
-  constructor(selectedAgent: string) {
-    this.selectedAgent = selectedAgent;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const hookCtx: SaveAgentHookInput = {
+/** Minimal setup operation that runs the "save-agent" hook point with `selectedAgent` seeded. */
+function minimalSaveAgent(selectedAgent: string): Operation<OperationSchemas> {
+  return createMinimalOperation<void>(SETUP_OPERATION_ID, "setup", "save-agent", {
+    hookContext: (ctx): SaveAgentHookInput => ({
       intent: ctx.intent,
-      selectedAgent: this.selectedAgent as SaveAgentHookInput["selectedAgent"],
-    };
-    const { errors } = await ctx.hooks.collect("save-agent", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
+      selectedAgent: selectedAgent as SaveAgentHookInput["selectedAgent"],
+    }),
+  });
 }
 
-class MinimalBinaryOperation implements Operation<Intent, void> {
-  readonly id = SETUP_OPERATION_ID;
-  private readonly hookInput: Partial<BinaryHookInput>;
-  /** Progress frames yielded by the streaming binary handler. */
-  readonly frames: SetupProgressPayload[] = [];
+const binarySchemas = {
+  type: "setup",
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  constructor(hookInput: Partial<BinaryHookInput> = {}) {
-    this.hookInput = hookInput;
-  }
+/** Bespoke binary operation exposing the streamed progress `frames` for assertions. */
+type MinimalBinaryOperation = Operation<typeof binarySchemas> & {
+  readonly frames: SetupProgressPayload[];
+};
 
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect(
-      "binary",
-      {
-        intent: ctx.intent,
-        ...this.hookInput,
-      },
-      {
-        onYield: (frame) => {
-          this.frames.push(frame as SetupProgressPayload);
+function minimalBinary(hookInput: Partial<BinaryHookInput> = {}): MinimalBinaryOperation {
+  const frames: SetupProgressPayload[] = [];
+  return {
+    id: SETUP_OPERATION_ID,
+    schemas: binarySchemas,
+    frames,
+    async execute(ctx): Promise<void> {
+      const { errors } = await ctx.hooks.collect(
+        "binary",
+        {
+          intent: ctx.intent,
+          ...hookInput,
         },
-      }
-    );
-    if (errors.length > 0) throw errors[0]!;
-  }
+        {
+          onYield: (frame) => {
+            frames.push(frame as SetupProgressPayload);
+          },
+        }
+      );
+      if (errors.length > 0) throw errors[0]!;
+    },
+  };
 }
 
 interface SetupOperationResult {
@@ -246,73 +263,65 @@ interface SetupOperationResult {
   agentType?: string;
 }
 
-class MinimalSetupOperation implements Operation<
-  OpenWorkspaceIntent,
-  SetupOperationResult | undefined
-> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-  private readonly hookInput: Partial<SetupHookInput>;
-  private readonly agentCapability: string | null;
+const setupSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<SetupOperationResult | undefined>(),
+} satisfies OperationSchemas;
 
-  constructor(hookInput: Partial<SetupHookInput> = {}, agentCapability: string | null = "claude") {
-    this.hookInput = hookInput;
-    this.agentCapability = agentCapability;
-  }
-
-  async execute(
-    ctx: OperationContext<OpenWorkspaceIntent>
-  ): Promise<SetupOperationResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-      projectPath: "/test/project",
-      ...this.hookInput,
-      ...(this.agentCapability !== null && {
-        capabilities: { agent: this.agentCapability },
-      }),
-    });
-    if (errors.length > 0) throw errors[0]!;
-    const result = results[0];
-    if (result === undefined) return undefined;
-    return {
-      ...(result.envVars !== undefined && { envVars: result.envVars }),
-      ...(result.agentType != null && { agentType: result.agentType }),
-    };
-  }
+function minimalSetup(
+  hookInput: Partial<SetupHookInput> = {},
+  agentCapability: string | null = "claude"
+): Operation<typeof setupSchemas> {
+  return {
+    id: OPEN_WORKSPACE_OPERATION_ID,
+    schemas: setupSchemas,
+    async execute(ctx): Promise<SetupOperationResult | undefined> {
+      const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
+        intent: ctx.intent,
+        workspacePath: "/test/workspace",
+        projectPath: "/test/project",
+        ...hookInput,
+        ...(agentCapability !== null && {
+          capabilities: { agent: agentCapability },
+        }),
+      });
+      if (errors.length > 0) throw errors[0]!;
+      const result = results[0];
+      if (result === undefined) return undefined;
+      return {
+        ...(result.envVars !== undefined && { envVars: result.envVars }),
+        ...(result.agentType != null && { agentType: result.agentType }),
+      };
+    },
+  };
 }
 
-class MinimalShutdownOperation implements Operation<
-  DeleteWorkspaceIntent,
-  ShutdownHookResult | undefined
-> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-  private readonly agentCapability: string | null;
-
-  constructor(agentCapability: string | null = "claude") {
-    this.agentCapability = agentCapability;
-  }
-
-  async execute(
-    ctx: OperationContext<DeleteWorkspaceIntent>
-  ): Promise<ShutdownHookResult | undefined> {
-    const { payload } = ctx.intent;
-    const hookCtx: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectPath: "/test/project",
-      workspacePath: payload.workspacePath ?? "/test/workspace",
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: false,
-      ...(this.agentCapability !== null && {
-        capabilities: { agent: this.agentCapability },
-      }),
-    };
-    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult | undefined>(
-      "shutdown",
-      hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
+/**
+ * Minimal delete operation that runs the "shutdown" hook point, seeding the delete pipeline
+ * context (with `agentCapability` as the agent capability) and returning the first hook result.
+ */
+function minimalShutdown(agentCapability: string | null = "claude"): Operation<OperationSchemas> {
+  return createMinimalOperation<ShutdownHookResult | undefined>(
+    DELETE_WORKSPACE_OPERATION_ID,
+    INTENT_DELETE_WORKSPACE,
+    "shutdown",
+    {
+      hookContext: (ctx): DeletePipelineHookInput => {
+        const payload = ctx.intent.payload as { workspacePath?: string };
+        return {
+          intent: ctx.intent,
+          projectPath: "/test/project",
+          workspacePath: payload.workspacePath ?? "/test/workspace",
+          workspaceName: "test-workspace" as WorkspaceName,
+          active: false,
+          ...(agentCapability !== null && {
+            capabilities: { agent: agentCapability },
+          }),
+        };
+      },
+    }
+  );
 }
 
 // =============================================================================
@@ -349,7 +358,7 @@ async function activateModule(
   agentConfig: PersistedAccessor<ConfigAgentType>
 ): Promise<void> {
   await agentConfig.set("claude");
-  dispatcher.registerOperation("app:start", new MinimalStartOperation());
+  dispatcher.registerOperation(minimalStart());
   await dispatcher.dispatch({ type: "app:start", payload: {} });
 }
 
@@ -372,7 +381,7 @@ describe("createAgentModule", () => {
         type: "claude",
         getLaunchOptions: async () => ({ permissionModes: ["plan", "acceptEdits"] }),
       });
-      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+      dispatcher.registerOperation(new AgentLaunchOptionsOperation());
 
       const result = await dispatcher.dispatch({
         type: INTENT_GET_LAUNCH_OPTIONS,
@@ -387,7 +396,7 @@ describe("createAgentModule", () => {
         type: "claude",
         getLaunchOptions: async () => ({ permissionModes: ["plan"] }),
       });
-      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+      dispatcher.registerOperation(new AgentLaunchOptionsOperation());
 
       const result = await dispatcher.dispatch({
         type: INTENT_GET_LAUNCH_OPTIONS,
@@ -399,7 +408,7 @@ describe("createAgentModule", () => {
 
     it("returns empty when the provider exposes no launch options", async () => {
       const { dispatcher } = createTestSetup({ type: "claude" });
-      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+      dispatcher.registerOperation(new AgentLaunchOptionsOperation());
 
       const result = await dispatcher.dispatch({
         type: INTENT_GET_LAUNCH_OPTIONS,
@@ -433,7 +442,7 @@ describe("createAgentModule", () => {
   describe("before-ready", () => {
     it("returns provider scripts", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
@@ -470,7 +479,7 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup({
         preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: true }),
       });
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation("claude"));
+      dispatcher.registerOperation(minimalCheckDeps("claude"));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -482,7 +491,7 @@ describe("createAgentModule", () => {
 
     it("returns empty when configuredAgent does not match", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation("opencode"));
+      dispatcher.registerOperation(minimalCheckDeps("opencode"));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -494,7 +503,7 @@ describe("createAgentModule", () => {
 
     it("returns empty missingBinaries when download not needed", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation("claude"));
+      dispatcher.registerOperation(minimalCheckDeps("claude"));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -512,7 +521,7 @@ describe("createAgentModule", () => {
   describe("start", () => {
     it("does not initialize provider during app:start (lazy init)", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -528,12 +537,11 @@ describe("createAgentModule", () => {
   describe("lazy init", () => {
     it("initializes provider with captured mcpPort on first workspace:open", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -554,12 +562,11 @@ describe("createAgentModule", () => {
 
     it("passes null mcpConfig when no mcpPort was captured", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(null));
+      dispatcher.registerOperation(minimalStart(null));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -579,12 +586,11 @@ describe("createAgentModule", () => {
 
     it("only initializes once across multiple workspace:open calls", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -604,12 +610,11 @@ describe("createAgentModule", () => {
 
     it("dispatches INTENT_UPDATE_AGENT_STATUS when onStatusChange fires", async () => {
       const { dispatcher, moduleDeps } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -636,12 +641,11 @@ describe("createAgentModule", () => {
 
     it("does not initialize when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation(
+        minimalSetup(
           {
             workspacePath: "/test/workspace",
             projectPath: "/test/project",
@@ -666,7 +670,7 @@ describe("createAgentModule", () => {
   describe("register-agents", () => {
     it("returns provider agent info", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation("setup", new MinimalRegisterAgentsOperation());
+      dispatcher.registerOperation(new MinimalRegisterAgentsOperation());
 
       const results = (await dispatcher.dispatch({
         type: "setup",
@@ -690,7 +694,7 @@ describe("createAgentModule", () => {
     it("calls configService.set when selectedAgent matches provider type", async () => {
       const { dispatcher, agentConfig } = createTestSetup();
       const setSpy = vi.spyOn(agentConfig, "set");
-      dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
+      dispatcher.registerOperation(minimalSaveAgent("claude"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -700,7 +704,7 @@ describe("createAgentModule", () => {
     it("skips when selectedAgent does not match provider type", async () => {
       const { dispatcher, agentConfig } = createTestSetup();
       const setSpy = vi.spyOn(agentConfig, "set");
-      dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("opencode"));
+      dispatcher.registerOperation(minimalSaveAgent("opencode"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -710,7 +714,7 @@ describe("createAgentModule", () => {
     it("throws SetupError on config save failure", async () => {
       const { dispatcher, agentConfig } = createTestSetup();
       vi.spyOn(agentConfig, "set").mockRejectedValue(new Error("disk full"));
-      dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
+      dispatcher.registerOperation(minimalSaveAgent("claude"));
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
     });
@@ -723,11 +727,11 @@ describe("createAgentModule", () => {
   describe("binary download", () => {
     it("downloads when agent type matches and binary is missing", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: ["claude"],
         selectedAgent: "claude",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -737,11 +741,11 @@ describe("createAgentModule", () => {
 
     it("reports done when agent matches but binary not missing", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: [],
         selectedAgent: "claude",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -751,11 +755,11 @@ describe("createAgentModule", () => {
 
     it("skips download and report when agent does not match", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: ["claude"],
         selectedAgent: "opencode",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -776,11 +780,11 @@ describe("createAgentModule", () => {
             }
           ),
       });
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: ["claude"],
         selectedAgent: "claude",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -802,11 +806,11 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup({
         downloadBinary: vi.fn().mockRejectedValue(new Error("network error")),
       });
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: ["claude"],
         selectedAgent: "claude",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
       expect(op.frames).toContainEqual({ id: "agent", status: "failed", error: "network error" });
@@ -814,11 +818,11 @@ describe("createAgentModule", () => {
 
     it("uses configuredAgent when selectedAgent not provided", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      const op = new MinimalBinaryOperation({
+      const op = minimalBinary({
         missingBinaries: ["claude"],
         configuredAgent: "claude",
       });
-      dispatcher.registerOperation("setup", op);
+      dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
@@ -836,8 +840,7 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -865,8 +868,7 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -893,8 +895,7 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -924,8 +925,7 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation(
+        minimalSetup(
           {
             workspacePath: "/test/workspace",
             projectPath: "/test/project",
@@ -957,7 +957,7 @@ describe("createAgentModule", () => {
       const { dispatcher, agentConfig, mockProvider } = createTestSetup();
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
+      dispatcher.registerOperation(minimalShutdown());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -978,7 +978,7 @@ describe("createAgentModule", () => {
       const { dispatcher, agentConfig, mockProvider } = createTestSetup();
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
+      dispatcher.registerOperation(minimalShutdown());
 
       await dispatcher.dispatch({
         type: "workspace:delete",
@@ -999,7 +999,7 @@ describe("createAgentModule", () => {
       });
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
+      dispatcher.registerOperation(minimalShutdown());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -1021,7 +1021,7 @@ describe("createAgentModule", () => {
       });
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
+      dispatcher.registerOperation(minimalShutdown());
 
       await expect(
         dispatcher.dispatch({
@@ -1039,7 +1039,7 @@ describe("createAgentModule", () => {
     it("does not run when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation("opencode"));
+      dispatcher.registerOperation(minimalShutdown("opencode"));
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -1072,9 +1072,9 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "workspace:get-status",
-        createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+        createMinimalOperation<GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
+          INTENT_GET_WORKSPACE_STATUS,
           "get",
           {
             hookContext: (ctx) => ({
@@ -1099,9 +1099,9 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
-        "workspace:get-status",
-        createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+        createMinimalOperation<GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
+          INTENT_GET_WORKSPACE_STATUS,
           "get",
           {
             hookContext: (ctx) => ({
@@ -1132,9 +1132,9 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "agent:get-session",
-        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+        createMinimalOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
+          INTENT_GET_AGENT_SESSION,
           "get",
           {
             hookContext: (ctx) => ({
@@ -1162,9 +1162,9 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "agent:get-session",
-        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+        createMinimalOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
+          INTENT_GET_AGENT_SESSION,
           "get",
           {
             hookContext: (ctx) => ({
@@ -1189,9 +1189,9 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
-        "agent:get-session",
-        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+        createMinimalOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
+          INTENT_GET_AGENT_SESSION,
           "get",
           {
             hookContext: (ctx) => ({
@@ -1222,9 +1222,9 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "agent:restart",
-        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+        createMinimalOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
+          INTENT_RESTART_AGENT,
           "restart",
           {
             hookContext: (ctx) => ({
@@ -1256,9 +1256,9 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        "agent:restart",
-        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+        createMinimalOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
+          INTENT_RESTART_AGENT,
           "restart",
           {
             hookContext: (ctx) => ({
@@ -1282,9 +1282,9 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
       dispatcher.registerOperation(
-        "agent:restart",
-        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+        createMinimalOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
+          INTENT_RESTART_AGENT,
           "restart",
           {
             hookContext: (ctx) => ({
@@ -1313,15 +1313,19 @@ describe("createAgentModule", () => {
   describe("lifecycle", () => {
     function registerLifecycleOp(dispatcher: Dispatcher, agent: string): void {
       dispatcher.registerOperation(
-        "agent:lifecycle",
-        createMinimalOperation<Intent, void>(AGENT_LIFECYCLE_OPERATION_ID, "lifecycle", {
-          hookContext: (ctx) => ({
-            intent: ctx.intent,
-            workspacePath: (ctx.intent.payload as { workspacePath: string }).workspacePath,
-            event: (ctx.intent.payload as { event: "open" | "close" }).event,
-            capabilities: { agent },
-          }),
-        })
+        createMinimalOperation<void>(
+          AGENT_LIFECYCLE_OPERATION_ID,
+          INTENT_AGENT_LIFECYCLE,
+          "lifecycle",
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: (ctx.intent.payload as { workspacePath: string }).workspacePath,
+              event: (ctx.intent.payload as { event: "open" | "close" }).event,
+              capabilities: { agent },
+            }),
+          }
+        )
       );
     }
 
@@ -1375,11 +1379,10 @@ describe("createAgentModule", () => {
         onStatusChange: vi.fn().mockReturnValue(cleanupFn),
       });
       // Initialize provider via lazy path so dispose has something to clean up.
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -1390,8 +1393,9 @@ describe("createAgentModule", () => {
       } as unknown as OpenWorkspaceIntent);
 
       dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
@@ -1402,12 +1406,13 @@ describe("createAgentModule", () => {
 
     it("skips dispose when provider was never initialized", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
@@ -1420,11 +1425,10 @@ describe("createAgentModule", () => {
         dispose: vi.fn().mockRejectedValue(new Error("dispose failed")),
       });
       // Initialize first so dispose runs
-      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
+        minimalSetup({
           workspacePath: "/test/workspace",
           projectPath: "/test/project",
         })
@@ -1435,8 +1439,9 @@ describe("createAgentModule", () => {
       } as unknown as OpenWorkspaceIntent);
 
       dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
 
       await expect(

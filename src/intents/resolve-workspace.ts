@@ -9,64 +9,88 @@
  * 1. "resolve" — collected from modules (e.g., gitWorktreeWorkspaceModule)
  *
  * Throws if no handler returns projectPath or workspaceName.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
+ * result types are **derived** from that bundle via `IntentOf`/`z.infer` — never restated.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { WorkspaceName } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { workspaceNameSchema, hookCtxSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface ResolveWorkspacePayload {
-  readonly workspacePath: string;
-}
-
-export interface ResolveWorkspaceResult {
-  readonly projectPath: string;
-  readonly workspaceName: WorkspaceName;
-  readonly active: boolean;
-  /** Current branch name, or null for detached HEAD. */
-  readonly branch: string | null;
-}
-
-export interface ResolveWorkspaceIntent extends Intent<ResolveWorkspaceResult> {
-  readonly type: "workspace:resolve";
-  readonly payload: ResolveWorkspacePayload;
-}
-
 export const INTENT_RESOLVE_WORKSPACE = "workspace:resolve" as const;
-
-// =============================================================================
-// Hook Types
-// =============================================================================
-
 export const RESOLVE_WORKSPACE_OPERATION_ID = "resolve-workspace";
 
-/** Input context for "resolve" handlers. */
-export interface ResolveHookInput extends HookContext {
-  readonly workspacePath: string;
-}
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
 
-/** Per-handler result for "resolve" hook point. */
-export interface ResolveHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-  readonly active?: boolean;
-  readonly branch?: string | null;
-}
+export const resolveWorkspacePayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+  })
+  .readonly();
+
+export const resolveWorkspaceResultSchema = z
+  .object({
+    projectPath: z.string(),
+    workspaceName: workspaceNameSchema,
+    active: z.boolean(),
+    /** Current branch name, or null for detached HEAD. */
+    branch: z.string().nullable(),
+  })
+  .readonly();
+
+/** Per-handler result for "resolve" (fields optional — each handler contributes a subset). */
+export const resolveHookResultSchema = z
+  .object({
+    projectPath: z.string().optional(),
+    workspaceName: workspaceNameSchema.optional(),
+    active: z.boolean().optional(),
+    branch: z.string().nullable().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "resolve" hook point (beyond the base HookContext). */
+const resolveEnrichmentSchema = z.object({ workspacePath: z.string() });
+
+/** Runtime whole-context validation schema for "resolve" (its inferred type isn't the ctx type). */
+export const resolveHookInputSchema = hookCtxSchema(
+  resolveWorkspacePayloadSchema,
+  resolveEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_RESOLVE_WORKSPACE,
+  payload: resolveWorkspacePayloadSchema,
+  result: resolveWorkspaceResultSchema,
+  hooks: {
+    resolve: { input: resolveHookInputSchema, result: resolveHookResultSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type ResolveWorkspacePayload = z.infer<typeof resolveWorkspacePayloadSchema>;
+export type ResolveWorkspaceResult = z.infer<typeof resolveWorkspaceResultSchema>;
+export type ResolveWorkspaceIntent = IntentOf<typeof schemas>;
+export type ResolveHookResult = z.infer<typeof resolveHookResultSchema>;
+
+/** Whole input context for "resolve" handlers: base envelope + inferred enrichment. */
+export type ResolveHookInput = HookContext & z.infer<typeof resolveEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class ResolveWorkspaceOperation implements Operation<
-  ResolveWorkspaceIntent,
-  ResolveWorkspaceResult
-> {
+export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = RESOLVE_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<ResolveWorkspaceIntent>): Promise<ResolveWorkspaceResult> {
     const { payload } = ctx.intent;
@@ -79,7 +103,7 @@ export class ResolveWorkspaceOperation implements Operation<
     throwHookErrors(errors, "workspace:resolve hooks failed");
 
     let projectPath: string | undefined;
-    let workspaceName: WorkspaceName | undefined;
+    let workspaceName: ResolveWorkspaceResult["workspaceName"] | undefined;
     let active = false;
     // branch can legitimately be null (detached HEAD), so track "provided"
     // separately from the null value.

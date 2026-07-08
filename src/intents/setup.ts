@@ -14,119 +14,201 @@
  * On failure, emits setup:error domain event for renderer error UI.
  *
  * No provider dependencies - hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/hook/event
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent`, hook,
+ * and event types are **derived** from that bundle — never restated.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../shared/api/types";
-import type { BinaryType } from "../utils/binary-resolution/types";
-import type { ExtensionInstallEntry } from "./app-start";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import type { ConfigAgentType } from "../shared/api/types";
+import {
+  configAgentTypeSchema,
+  setupRowIdSchema,
+  setupRowStatusSchema,
+  hookCtxSchema,
+} from "./contract";
 import type { LifecycleAgentType } from "../shared/ipc";
 import { throwHookErrors } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface SetupPayload {
-  /** True if agent selection is needed */
-  readonly needsAgentSelection?: boolean;
-  /** True if binary download is needed */
-  readonly needsBinaryDownload?: boolean;
-  /** List of binaries that need download */
-  readonly missingBinaries?: readonly BinaryType[];
-  /** True if extensions need install */
-  readonly needsExtensions?: boolean;
-  /** Extensions to install (from check-deps install plan) */
-  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
-  /** Currently configured agent (may be null) */
-  readonly configuredAgent?: ConfigAgentType | null;
-}
-
-export interface SetupIntent extends Intent<void> {
-  readonly type: "app:setup";
-  readonly payload: SetupPayload;
-}
-
 export const INTENT_SETUP = "app:setup" as const;
-
-// =============================================================================
-// Hook Context
-// =============================================================================
-
 export const SETUP_OPERATION_ID = "setup";
+
+export const EVENT_SETUP_PROGRESS = "setup:progress" as const;
+export const EVENT_SETUP_ERROR = "setup:error" as const;
+
+// =============================================================================
+// Local schemas (types missing from the shared contract)
+// =============================================================================
+
+/** Binaries the setup flow can download. Local schema; mirrors binary-resolution's BinaryType. */
+const binaryTypeSchema = z.enum(["code-server", "vscodium", "opencode", "claude"]);
+
+/** Selectable agent backend. Local schema; mirrors shared/ipc's LifecycleAgentType. */
+const lifecycleAgentTypeSchema = z.enum(["opencode", "claude"]);
+
+/** What needs to be installed. Local schema; mirrors app-start's ExtensionInstallEntry. */
+const extensionInstallEntrySchema = z
+  .object({
+    id: z.string(),
+    vsixPath: z.string(),
+  })
+  .readonly();
+
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const setupPayloadSchema = z
+  .object({
+    /** True if agent selection is needed */
+    needsAgentSelection: z.boolean().optional(),
+    /** True if binary download is needed */
+    needsBinaryDownload: z.boolean().optional(),
+    /** List of binaries that need download */
+    missingBinaries: z.array(binaryTypeSchema).readonly().optional(),
+    /** True if extensions need install */
+    needsExtensions: z.boolean().optional(),
+    /** Extensions to install (from check-deps install plan) */
+    extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
+    /** Currently configured agent (may be null) */
+    configuredAgent: configAgentTypeSchema.nullable().optional(),
+  })
+  .readonly();
+
+// =============================================================================
+// Per-hook-point schemas
+// =============================================================================
 
 /**
  * Per-handler result contract for the "register-agents" hook point.
  * Each per-agent module returns its agent info for the selection UI.
  */
-export interface RegisterAgentResult {
-  readonly agent: LifecycleAgentType;
-  readonly label: string;
-  readonly icon: string;
-}
+export const registerAgentResultSchema = z
+  .object({
+    agent: lifecycleAgentTypeSchema,
+    label: z.string(),
+    icon: z.string(),
+  })
+  .readonly();
 
 // selectedAgent is the agent-selection hook *result* (operation-consumed, not a
 // capability — nothing in the hook point requires it).
 
+/** Operation-added enrichment for the "agent-selection" hook (available agents from register-agents). */
+const agentSelectionEnrichmentSchema = z.object({
+  availableAgents: z.array(registerAgentResultSchema).readonly(),
+});
+const agentSelectionInputSchema = hookCtxSchema(
+  setupPayloadSchema,
+  agentSelectionEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "save-agent" hook (selectedAgent from agent-selection). */
+const saveAgentEnrichmentSchema = z.object({ selectedAgent: configAgentTypeSchema });
+const saveAgentInputSchema = hookCtxSchema(setupPayloadSchema, saveAgentEnrichmentSchema.shape);
+
+/**
+ * Operation-added enrichment for the "binary" hook (agent + binary info from payload/selection).
+ * Progress is streamed by the handler (an async generator that yields `SetupProgressPayload`
+ * frames); the operation emits `setup:progress` for each — no `report` closure in the context.
+ */
+const binaryEnrichmentSchema = z.object({
+  selectedAgent: configAgentTypeSchema.optional(),
+  configuredAgent: configAgentTypeSchema.nullable().optional(),
+  missingBinaries: z.array(binaryTypeSchema).readonly().optional(),
+});
+const binaryInputSchema = hookCtxSchema(setupPayloadSchema, binaryEnrichmentSchema.shape);
+
+/**
+ * Operation-added enrichment for the "extensions" hook (install plan from payload).
+ * Progress streams the same way as the "binary" hook (yielded frames, not a closure).
+ */
+const extensionsEnrichmentSchema = z.object({
+  extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
+});
+const extensionsInputSchema = hookCtxSchema(setupPayloadSchema, extensionsEnrichmentSchema.shape);
+
+// =============================================================================
+// Event payload schemas (events defined in this file)
+// =============================================================================
+
+const setupProgressSchema = z
+  .object({
+    id: setupRowIdSchema,
+    status: setupRowStatusSchema,
+    message: z.string().optional(),
+    error: z.string().optional(),
+    progress: z.number().optional(),
+  })
+  .readonly();
+
+const setupErrorSchema = z
+  .object({
+    message: z.string(),
+    code: z.string().optional(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_SETUP,
+  payload: setupPayloadSchema,
+  hooks: {
+    "register-agents": { result: registerAgentResultSchema },
+    "agent-selection": {
+      input: agentSelectionInputSchema,
+      result: lifecycleAgentTypeSchema,
+    },
+    "save-agent": { input: saveAgentInputSchema },
+    binary: { input: binaryInputSchema },
+    extensions: { input: extensionsInputSchema },
+  },
+  events: {
+    [EVENT_SETUP_PROGRESS]: setupProgressSchema,
+    [EVENT_SETUP_ERROR]: setupErrorSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type SetupPayload = z.infer<typeof setupPayloadSchema>;
+export type SetupIntent = IntentOf<typeof schemas>;
+
+export type RegisterAgentResult = z.infer<typeof registerAgentResultSchema>;
+
 /**
  * Input context for the "agent-selection" hook — carries available agents from register-agents.
  */
-export interface AgentSelectionHookContext extends HookContext {
-  readonly availableAgents: readonly RegisterAgentResult[];
-}
+export type AgentSelectionHookContext = HookContext &
+  z.infer<typeof agentSelectionEnrichmentSchema>;
 
 /**
  * Input context for the "save-agent" hook — carries selectedAgent from agent-selection.
  */
-export interface SaveAgentHookInput extends HookContext {
-  readonly selectedAgent: ConfigAgentType;
-}
+export type SaveAgentHookInput = HookContext & z.infer<typeof saveAgentEnrichmentSchema>;
 
 /**
  * Input context for the "binary" hook — carries agent and binary info from payload/selection.
- * Progress is streamed by the handler (an async generator that yields `SetupProgressPayload`
- * frames); the operation emits `setup:progress` for each — no `report` closure in the context.
  */
-export interface BinaryHookInput extends HookContext {
-  readonly selectedAgent?: ConfigAgentType;
-  readonly configuredAgent?: ConfigAgentType | null;
-  readonly missingBinaries?: readonly BinaryType[];
-}
+export type BinaryHookInput = HookContext & z.infer<typeof binaryEnrichmentSchema>;
 
 /**
  * Input context for the "extensions" hook — carries install plan from payload.
- * Progress streams the same way as the "binary" hook (yielded frames, not a closure).
  */
-export interface ExtensionsHookInput extends HookContext {
-  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
-}
+export type ExtensionsHookInput = HookContext & z.infer<typeof extensionsEnrichmentSchema>;
 
-// =============================================================================
-// Domain Events
-// =============================================================================
-
-export const EVENT_SETUP_PROGRESS = "setup:progress" as const;
-
-export interface SetupProgressPayload {
-  readonly id: SetupRowId;
-  readonly status: SetupRowStatus;
-  readonly message?: string;
-  readonly error?: string;
-  readonly progress?: number;
-}
+export type SetupProgressPayload = z.infer<typeof setupProgressSchema>;
 
 export interface SetupProgressEvent {
   readonly type: typeof EVENT_SETUP_PROGRESS;
   readonly payload: SetupProgressPayload;
 }
 
-export const EVENT_SETUP_ERROR = "setup:error" as const;
-
-export interface SetupErrorPayload {
-  readonly message: string;
-  readonly code?: string;
-}
+export type SetupErrorPayload = z.infer<typeof setupErrorSchema>;
 
 export interface SetupErrorEvent {
   readonly type: typeof EVENT_SETUP_ERROR;
@@ -137,8 +219,9 @@ export interface SetupErrorEvent {
 // Operation
 // =============================================================================
 
-export class SetupOperation implements Operation<SetupIntent, void> {
+export class SetupOperation implements Operation<typeof schemas> {
   readonly id = SETUP_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
     const { payload } = ctx.intent;

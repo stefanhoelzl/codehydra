@@ -30,51 +30,27 @@
  * Aborts on error in any hook. Services that are optional must handle
  * their own errors internally (e.g., PluginServer graceful degradation in
  * CodeServerModule).
+ *
+ * Contract schemas (item 2): zod is the single source of truth. Payload, per-hook-point
+ * (result/input) schemas are declared once and hung on the operation's `schemas` field; the
+ * `Intent`, result, and hook-input-context types are **derived** via `IntentOf`/`z.infer`.
+ * The "start" and "await-retry" hook points return void (no schema). `BinaryType` is a shared
+ * binary-resolution type modeled with `z.custom` so its exact named type flows through.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { configAgentTypeSchema, hookCtxSchema } from "./contract";
 import type { ConfigAgentType } from "../shared/api/types";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { BinaryType } from "../utils/binary-resolution/types";
-
-/** Re-exported for use by operation integration tests (avoids direct service import). */
-export type { BinaryType } from "../utils/binary-resolution/types";
-
-// =============================================================================
-// Extension Types (operation contract types for check-deps and setup hooks)
-// =============================================================================
-
-/** What the manifest declares — produced by extension-module, consumed by ide-server-module. */
-export interface ExtensionRequirement {
-  readonly id: string;
-  readonly version: string;
-  /** Native path to the .vsix file. */
-  readonly vsixPath: string;
-}
-
-/** What needs to be installed — produced by ide-server-module check-deps, consumed by setup. */
-export interface ExtensionInstallEntry {
-  readonly id: string;
-  readonly vsixPath: string;
-}
 import { INTENT_SETUP } from "./setup";
 import { INTENT_APP_READY, type AppReadyIntent } from "./app-ready";
 import { throwHookErrors } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface AppStartPayload {
-  /** No payload needed - startup configuration comes from module closures. */
-  readonly [key: string]: never;
-}
-
-export interface AppStartIntent extends Intent<void> {
-  readonly type: "app:start";
-  readonly payload: AppStartPayload;
-}
+/** Re-exported for use by operation integration tests (avoids direct service import). */
+export type { BinaryType } from "../utils/binary-resolution/types";
 
 export const INTENT_APP_START = "app:start" as const;
 
@@ -84,38 +60,66 @@ export const INTENT_APP_START = "app:start" as const;
 
 export const APP_START_OPERATION_ID = "app-start";
 
-/** Input context for "check-deps". Agent modules use their own isActive flag. */
-export interface CheckDepsHookContext extends HookContext {
-  readonly configuredAgent: ConfigAgentType | null;
-  readonly extensionRequirements: readonly ExtensionRequirement[];
-}
+/** The app:start hook point that runs when startup fails fatally. */
+export const APP_START_ERROR_HOOK = "error" as const;
 
-/** Per-handler result for "check-deps" hook point. Arrays only -- booleans derived by operation. */
-export interface CheckDepsResult {
-  readonly missingBinaries?: readonly BinaryType[];
-  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
-}
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const appStartPayloadSchema = z.object({}).readonly();
+
+/** What the manifest declares — produced by extension-module, consumed by ide-server-module. */
+export const extensionRequirementSchema = z
+  .object({
+    id: z.string(),
+    version: z.string(),
+    /** Native path to the .vsix file. */
+    vsixPath: z.string(),
+  })
+  .readonly();
+
+/** What needs to be installed — produced by ide-server-module check-deps, consumed by setup. */
+export const extensionInstallEntrySchema = z
+  .object({
+    id: z.string(),
+    vsixPath: z.string(),
+  })
+  .readonly();
+
+/**
+ * The startup phase in which a fatal error occurred. Mirrors the hook-point
+ * sequence, plus "setup" for the app:setup sub-operation region. Attached to the
+ * startup failure report so a crash can be attributed to a phase.
+ */
+export const appStartPhaseSchema = z.enum([
+  "before-ready",
+  "init",
+  "show-ui",
+  "check-deps",
+  "setup",
+  "start",
+]);
 
 /**
  * Per-handler result for "before-ready" hook point.
  * Returns optional script declarations to be copied to bin directory.
  */
-export interface ConfigureResult {
-  readonly scripts?: readonly string[];
-}
-
-/** Input context for "init" -- carries requiredScripts collected from before-ready results. */
-export interface InitHookContext extends HookContext {
-  readonly requiredScripts: readonly string[];
-}
+export const configureResultSchema = z
+  .object({
+    scripts: z.array(z.string()).readonly().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for "init" hook point.
  * Extension module returns extensionRequirements. Other init handlers return `{}`.
  */
-export interface InitResult {
-  readonly extensionRequirements?: readonly ExtensionRequirement[];
-}
+export const initResultSchema = z
+  .object({
+    extensionRequirements: z.array(extensionRequirementSchema).readonly().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for "show-ui" hook point.
@@ -124,19 +128,82 @@ export interface InitResult {
  * is a separate `await-retry` hook point (the handler blocks internally and returns data),
  * not a closure handed back to the operation.
  */
-export interface ShowUIHookResult {
-  readonly retrySupported?: boolean;
-}
+export const showUIHookResultSchema = z
+  .object({
+    retrySupported: z.boolean().optional(),
+  })
+  .readonly();
 
-/** The app:start hook point that runs when startup fails fatally. */
-export const APP_START_ERROR_HOOK = "error" as const;
+/** Per-handler result for "check-deps" hook point. Arrays only -- booleans derived by operation. */
+export const checkDepsResultSchema = z
+  .object({
+    missingBinaries: z.array(z.custom<BinaryType>()).readonly().optional(),
+    extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for "init" -- carries requiredScripts from before-ready results. */
+const initEnrichmentSchema = z.object({
+  requiredScripts: z.array(z.string()).readonly(),
+});
+const initHookInputSchema = hookCtxSchema(appStartPayloadSchema, initEnrichmentSchema.shape);
+
+/** Operation-added enrichment for "check-deps". Agent modules use their own isActive flag. */
+const checkDepsEnrichmentSchema = z.object({
+  configuredAgent: configAgentTypeSchema.nullable(),
+  extensionRequirements: z.array(extensionRequirementSchema).readonly(),
+});
+const checkDepsHookInputSchema = hookCtxSchema(
+  appStartPayloadSchema,
+  checkDepsEnrichmentSchema.shape
+);
 
 /**
- * The startup phase in which a fatal error occurred. Mirrors the hook-point
- * sequence, plus "setup" for the app:setup sub-operation region. Attached to the
- * startup failure report so a crash can be attributed to a phase.
+ * Operation-added enrichment for the "error" hook point. Carries the live fatal error
+ * (a real Error instance — host-only) and the phase it occurred in.
  */
-export type AppStartPhase = "before-ready" | "init" | "show-ui" | "check-deps" | "setup" | "start";
+const appStartErrorEnrichmentSchema = z.object({
+  error: z.instanceof(Error),
+  phase: appStartPhaseSchema,
+});
+const appStartErrorHookInputSchema = hookCtxSchema(
+  appStartPayloadSchema,
+  appStartErrorEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_APP_START,
+  payload: appStartPayloadSchema,
+  hooks: {
+    "before-ready": { result: configureResultSchema },
+    init: { input: initHookInputSchema, result: initResultSchema },
+    "show-ui": { result: showUIHookResultSchema },
+    "check-deps": { input: checkDepsHookInputSchema, result: checkDepsResultSchema },
+    [APP_START_ERROR_HOOK]: { input: appStartErrorHookInputSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type AppStartPayload = z.infer<typeof appStartPayloadSchema>;
+export type AppStartIntent = IntentOf<typeof schemas>;
+
+export type ExtensionRequirement = z.infer<typeof extensionRequirementSchema>;
+export type ExtensionInstallEntry = z.infer<typeof extensionInstallEntrySchema>;
+export type AppStartPhase = z.infer<typeof appStartPhaseSchema>;
+
+export type ConfigureResult = z.infer<typeof configureResultSchema>;
+export type InitResult = z.infer<typeof initResultSchema>;
+export type ShowUIHookResult = z.infer<typeof showUIHookResultSchema>;
+export type CheckDepsResult = z.infer<typeof checkDepsResultSchema>;
+
+/** Input context for "init" -- carries requiredScripts collected from before-ready results. */
+export type InitHookContext = HookContext & z.infer<typeof initEnrichmentSchema>;
+
+/** Input context for "check-deps". Agent modules use their own isActive flag. */
+export type CheckDepsHookContext = HookContext & z.infer<typeof checkDepsEnrichmentSchema>;
 
 /**
  * Input context for the "error" hook point. Carries the fatal error and the
@@ -144,10 +211,7 @@ export type AppStartPhase = "before-ready" | "init" | "show-ui" | "check-deps" |
  * report + flush — before the operation re-throws to the composition root, which
  * shows the native failure box and quits.
  */
-export interface AppStartErrorHookContext extends HookContext {
-  readonly error: Error;
-  readonly phase: AppStartPhase;
-}
+export type AppStartErrorHookContext = HookContext & z.infer<typeof appStartErrorEnrichmentSchema>;
 
 // ActivateHookContext removed — ports are now read from capabilities within the "start" hook point.
 
@@ -166,8 +230,9 @@ interface CheckResult {
 // Operation
 // =============================================================================
 
-export class AppStartOperation implements Operation<AppStartIntent, void> {
+export class AppStartOperation implements Operation<typeof schemas> {
   readonly id = APP_START_OPERATION_ID;
+  readonly schemas = schemas;
 
   constructor(
     private readonly agentConfig: PersistedAccessor<ConfigAgentType>,

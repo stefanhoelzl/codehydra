@@ -14,9 +14,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
+import { z } from "zod/v4";
 import type {
   Operation,
-  OperationContext,
+  OperationSchemas,
   HookContext,
   HookOutput,
 } from "../intents/lib/operation";
@@ -26,26 +27,40 @@ import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-pr
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import type { Workspace } from "../boundaries/platform/git-types";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
 import type { DiscoverHookResult } from "../intents/open-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
+import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../intents/close-project";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type { CreateHookResult } from "../intents/open-workspace";
-import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
+import {
+  GET_PROJECT_BASES_OPERATION_ID,
+  INTENT_GET_PROJECT_BASES,
+} from "../intents/get-project-bases";
 import type { ListBasesHookResult } from "../intents/get-project-bases";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+} from "../intents/delete-workspace";
 import type { DeleteWorkspaceIntent, DeletePipelineHookInput } from "../intents/delete-workspace";
 import type { DeleteHookResult, PreflightHookResult } from "../intents/delete-workspace";
-import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../intents/get-workspace-status";
+import {
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  INTENT_GET_WORKSPACE_STATUS,
+} from "../intents/get-workspace-status";
 import type { GetStatusHookInput, GetStatusHookResult } from "../intents/get-workspace-status";
-import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
+import {
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../intents/resolve-workspace";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
+  INTENT_SWITCH_WORKSPACE,
   type FindCandidatesHookResult,
 } from "../intents/switch-workspace";
 import {
   LIST_PROJECTS_OPERATION_ID,
+  INTENT_LIST_PROJECTS,
   type ListWorkspacesHookResult,
 } from "../intents/list-projects";
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
@@ -80,8 +95,9 @@ function createMockGitWorktreeProvider() {
 // Minimal Test Operations
 // =============================================================================
 
-const openProjectOperation = createMinimalOperation<Intent, DiscoverHookResult>(
+const openProjectOperation = createMinimalOperation<DiscoverHookResult>(
   OPEN_PROJECT_OPERATION_ID,
+  INTENT_OPEN_PROJECT,
   "discover",
   {
     hookContext: (ctx) => ({
@@ -91,8 +107,9 @@ const openProjectOperation = createMinimalOperation<Intent, DiscoverHookResult>(
   }
 );
 
-const closeProjectOperation = createMinimalOperation<Intent, Record<string, never>>(
+const closeProjectOperation = createMinimalOperation<Record<string, never>>(
   CLOSE_PROJECT_OPERATION_ID,
+  INTENT_CLOSE_PROJECT,
   "close",
   {
     hookContext: (ctx) => ({
@@ -103,8 +120,9 @@ const closeProjectOperation = createMinimalOperation<Intent, Record<string, neve
   }
 );
 
-const openWorkspaceOperation = createMinimalOperation<OpenWorkspaceIntent, CreateHookResult>(
+const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
   OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
   "create",
   {
     hookContext: (ctx) => ({
@@ -116,18 +134,24 @@ const openWorkspaceOperation = createMinimalOperation<OpenWorkspaceIntent, Creat
 
 /** Preflight result from the delete-workspace preflight hook. */
 interface PreflightResult {
-  readonly isDirty?: boolean;
-  readonly unmergedCommits?: number;
-  readonly error?: string;
+  readonly isDirty?: boolean | undefined;
+  readonly unmergedCommits?: number | undefined;
+  readonly error?: string | undefined;
 }
 
 /**
  * Preflight-only operation: dispatches workspace:resolve then runs "preflight" hook point.
  */
-class MinimalPreflightOperation implements Operation<DeleteWorkspaceIntent, PreflightResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
+const preflightSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
+  result: z.custom<PreflightResult>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<PreflightResult> {
+const minimalPreflightOperation: Operation<typeof preflightSchemas> = {
+  id: DELETE_WORKSPACE_OPERATION_ID,
+  schemas: preflightSchemas,
+  async execute(ctx): Promise<PreflightResult> {
     const { payload } = ctx.intent;
 
     let resolvedProjectPath = "";
@@ -154,8 +178,8 @@ class MinimalPreflightOperation implements Operation<DeleteWorkspaceIntent, Pref
     );
     if (errors.length > 0) return { error: errors[0]!.message };
     return results[0] ?? {};
-  }
-}
+  },
+};
 
 /** Extended delete result that includes the resolved path and possible error. */
 interface DeleteResult extends DeleteHookResult {
@@ -165,10 +189,16 @@ interface DeleteResult extends DeleteHookResult {
 /**
  * Delete-workspace operation: dispatches workspace:resolve then runs "delete" hook point.
  */
-class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent, DeleteResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
+const deleteWorkspaceSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
+  result: z.custom<DeleteResult>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteResult> {
+const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> = {
+  id: DELETE_WORKSPACE_OPERATION_ID,
+  schemas: deleteWorkspaceSchemas,
+  async execute(ctx): Promise<DeleteResult> {
     const { payload } = ctx.intent;
 
     // Dispatch workspace:resolve (matching real operation)
@@ -199,8 +229,8 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
       ...deleteResults[0],
       ...(resolvedProjectPath !== "" && { resolvedPath: payload.workspacePath }),
     };
-  }
-}
+  },
+};
 
 /** Result from workspace path resolution (reverse lookup: workspacePath → projectPath + workspaceName). */
 interface ResolveResult {
@@ -215,10 +245,16 @@ interface ResolveResult {
  * resolve hook under that operation. Accepts workspacePath and reverse-looks
  * up projectPath + workspaceName.
  */
-class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResult> {
-  readonly id = RESOLVE_WORKSPACE_OPERATION_ID;
+const resolveWorkspaceSchemas = {
+  type: INTENT_RESOLVE_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<ResolveResult>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<ResolveResult> {
+const minimalResolveWorkspaceOperation: Operation<typeof resolveWorkspaceSchemas> = {
+  id: RESOLVE_WORKSPACE_OPERATION_ID,
+  schemas: resolveWorkspaceSchemas,
+  async execute(ctx): Promise<ResolveResult> {
     const payload = ctx.intent.payload as { workspacePath: string };
     const resolveInput = {
       intent: ctx.intent,
@@ -231,24 +267,30 @@ class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResul
     const projectPath = resolveResults[0]?.projectPath;
     const workspaceName = resolveResults[0]?.workspaceName;
     return projectPath ? { projectPath, workspaceName } : {};
-  }
-}
+  },
+};
 
 /** Result from get-project-bases list + refresh dispatch. */
 interface GetProjectBasesTestResult {
-  readonly bases?: readonly { name: string; isRemote: boolean }[];
-  readonly defaultBaseBranch?: string;
-  readonly refreshed?: boolean;
+  readonly bases?: readonly { name: string; isRemote: boolean }[] | undefined;
+  readonly defaultBaseBranch?: string | undefined;
+  readonly refreshed?: boolean | undefined;
 }
 
 /**
  * Minimal get-project-bases operation: calls "list" hook, then optionally "refresh".
  * The intent payload controls which hooks to run via a `hookPoint` field.
  */
-class MinimalGetProjectBasesOperation implements Operation<Intent, GetProjectBasesTestResult> {
-  readonly id = GET_PROJECT_BASES_OPERATION_ID;
+const getProjectBasesSchemas = {
+  type: INTENT_GET_PROJECT_BASES,
+  payload: z.unknown(),
+  result: z.custom<GetProjectBasesTestResult>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<GetProjectBasesTestResult> {
+const minimalGetProjectBasesOperation: Operation<typeof getProjectBasesSchemas> = {
+  id: GET_PROJECT_BASES_OPERATION_ID,
+  schemas: getProjectBasesSchemas,
+  async execute(ctx): Promise<GetProjectBasesTestResult> {
     const payload = ctx.intent.payload as {
       projectPath: string;
       hookPoint?: "list" | "refresh";
@@ -265,8 +307,8 @@ class MinimalGetProjectBasesOperation implements Operation<Intent, GetProjectBas
     const { results, errors } = await ctx.hooks.collect<ListBasesHookResult>("list", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
-  }
-}
+  },
+};
 
 /** Result from get-workspace-status: resolve-workspace + get. */
 interface GetStatusResult {
@@ -278,10 +320,16 @@ interface GetStatusResult {
  * Get-workspace-status operation: dispatches workspace:resolve then runs "get" hook point.
  * Mirrors the real GetWorkspaceStatusOperation.
  */
-class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
-  readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
+const getStatusSchemas = {
+  type: INTENT_GET_WORKSPACE_STATUS,
+  payload: z.unknown(),
+  result: z.custom<GetStatusResult>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<GetStatusResult> {
+const minimalGetStatusOperation: Operation<typeof getStatusSchemas> = {
+  id: GET_WORKSPACE_STATUS_OPERATION_ID,
+  schemas: getStatusSchemas,
+  async execute(ctx): Promise<GetStatusResult> {
     const payload = ctx.intent.payload as { workspacePath: string };
 
     // Dispatch workspace:resolve (matching real operation)
@@ -310,29 +358,36 @@ class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
       }
     }
     return { isDirty, unmergedCommits };
-  }
-}
+  },
+};
 
 /**
  * Emit-event operation: emits a domain event from within an operation context.
  * Used to trigger event subscriptions registered by modules.
  */
-class MinimalEmitEventOperation implements Operation<Intent, void> {
-  readonly id = "emit-event";
+const emitEventSchemas = {
+  type: "emit-event",
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
+const minimalEmitEventOperation: Operation<typeof emitEventSchemas> = {
+  id: "emit-event",
+  schemas: emitEventSchemas,
+  async execute(ctx): Promise<void> {
     const event = ctx.intent.payload as DomainEvent;
     ctx.emit(event);
-  }
-}
+  },
+};
 
-const switchWorkspaceOperation = createMinimalOperation<Intent, FindCandidatesHookResult>(
+const switchWorkspaceOperation = createMinimalOperation<FindCandidatesHookResult>(
   SWITCH_WORKSPACE_OPERATION_ID,
+  INTENT_SWITCH_WORKSPACE,
   "find-candidates"
 );
 
-const listProjectsOperation = createMinimalOperation<Intent, ListWorkspacesHookResult>(
+const listProjectsOperation = createMinimalOperation<ListWorkspacesHookResult>(
   LIST_PROJECTS_OPERATION_ID,
+  INTENT_LIST_PROJECTS,
   "list-workspaces"
 );
 
@@ -356,16 +411,16 @@ function createTestSetup(): TestSetup {
   const dispatcher = createMockDispatcher();
 
   // Register operations
-  dispatcher.registerOperation("project:open", openProjectOperation);
-  dispatcher.registerOperation("project:close", closeProjectOperation);
-  dispatcher.registerOperation("workspace:open", openWorkspaceOperation);
-  dispatcher.registerOperation("workspace:delete", new MinimalDeleteWorkspaceOperation());
-  dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
-  dispatcher.registerOperation("project:get-bases", new MinimalGetProjectBasesOperation());
-  dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
-  dispatcher.registerOperation("emit-event", new MinimalEmitEventOperation());
-  dispatcher.registerOperation("workspace:switch", switchWorkspaceOperation);
-  dispatcher.registerOperation("project:list", listProjectsOperation);
+  dispatcher.registerOperation(openProjectOperation);
+  dispatcher.registerOperation(closeProjectOperation);
+  dispatcher.registerOperation(openWorkspaceOperation);
+  dispatcher.registerOperation(minimalDeleteWorkspaceOperation);
+  dispatcher.registerOperation(minimalResolveWorkspaceOperation);
+  dispatcher.registerOperation(minimalGetProjectBasesOperation);
+  dispatcher.registerOperation(minimalGetStatusOperation);
+  dispatcher.registerOperation(minimalEmitEventOperation);
+  dispatcher.registerOperation(switchWorkspaceOperation);
+  dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test
   const module = createGitWorktreeWorkspaceModule(
@@ -386,9 +441,9 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation("project:open", openProjectOperation);
-  dispatcher.registerOperation("workspace:delete", new MinimalPreflightOperation());
-  dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
+  dispatcher.registerOperation(openProjectOperation);
+  dispatcher.registerOperation(minimalPreflightOperation);
+  dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,

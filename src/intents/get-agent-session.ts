@@ -7,58 +7,85 @@
  *
  * No provider dependencies - the hook handlers do the actual work.
  * No domain events - this is a query operation.
+ *
+ * Contract schemas (item 2): zod is the single source of truth; the Intent and hook
+ * result/input types are derived from the `schemas` bundle.
  */
 
-import type { Intent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
-import type { AgentSession } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { HookContext, OperationSchemas } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { agentSessionSchema, hookCtxSchema } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface GetAgentSessionPayload {
-  readonly workspacePath: string;
-}
-
-export interface GetAgentSessionIntent extends Intent<AgentSession | null> {
-  readonly type: "agent:get-session";
-  readonly payload: GetAgentSessionPayload;
-}
-
 export const INTENT_GET_AGENT_SESSION = "agent:get-session" as const;
-
-// =============================================================================
-// Hook Result & Input Types
-// =============================================================================
-
 export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
 
-/** Input context for the "get" hook point. */
-export interface GetAgentSessionHookInput extends HookContext {
-  readonly workspacePath: string;
-}
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const getAgentSessionPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+  })
+  .readonly();
+
+export const getAgentSessionResultSchema = agentSessionSchema.nullable();
 
 /**
  * Per-handler result contract for the "get" hook point.
  * Each handler returns its contribution — the operation merges them.
  * `null` is a valid result (no session exists).
  */
-export interface GetAgentSessionHookResult {
-  readonly session: AgentSession | null;
-}
+export const getAgentSessionHookResultSchema = z
+  .object({
+    session: agentSessionSchema.nullable().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
+const getAgentSessionEnrichmentSchema = z.object({ workspacePath: z.string() });
+
+/** Runtime whole-context validation schema for "get". */
+export const getAgentSessionHookInputSchema = hookCtxSchema(
+  getAgentSessionPayloadSchema,
+  getAgentSessionEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_GET_AGENT_SESSION,
+  payload: getAgentSessionPayloadSchema,
+  result: getAgentSessionResultSchema,
+  hooks: {
+    get: { input: getAgentSessionHookInputSchema, result: getAgentSessionHookResultSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type GetAgentSessionPayload = z.infer<typeof getAgentSessionPayloadSchema>;
+export type GetAgentSessionResult = z.infer<typeof getAgentSessionResultSchema>;
+export type GetAgentSessionIntent = IntentOf<typeof schemas>;
+export type GetAgentSessionHookResult = z.infer<typeof getAgentSessionHookResultSchema>;
+
+/** Whole input context for "get" handlers: base envelope + inferred enrichment. */
+export type GetAgentSessionHookInput = HookContext &
+  z.infer<typeof getAgentSessionEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
 export class GetAgentSessionOperation extends WorkspaceHookOperation<
-  GetAgentSessionIntent,
-  GetAgentSessionHookResult,
-  AgentSession | null
+  typeof schemas,
+  GetAgentSessionHookResult
 > {
+  readonly schemas = schemas;
+
   constructor() {
     super(GET_AGENT_SESSION_OPERATION_ID, {
       hookPoint: "get",

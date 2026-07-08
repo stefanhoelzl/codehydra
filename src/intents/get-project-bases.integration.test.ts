@@ -28,11 +28,7 @@ import type {
   ListBasesHookResult,
   BasesUpdatedEvent,
 } from "./get-project-bases";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
+import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "./resolve-project";
 import type {
   ResolveHookResult as ResolveProjectHookResult,
   ResolveHookInput as ResolveProjectHookInput,
@@ -78,8 +74,8 @@ interface TestSetup {
 function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-  dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
+  dispatcher.registerOperation(new ResolveProjectOperation());
+  dispatcher.registerOperation(new GetProjectBasesOperation());
 
   // Shared project:resolve module
   const resolveProjectModule: IntentModule = {

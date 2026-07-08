@@ -13,24 +13,16 @@
  * and do not prevent other modules from disposing.
  *
  * No provider dependencies - hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload schema is
+ * declared once and hung on the operation's `schemas` field; the `Intent` and payload
+ * types are **derived** from that bundle via `IntentOf`/`z.infer`. Both hook points
+ * ("stop", "quit") return void, so no per-hook-point schema is declared.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface AppShutdownPayload {
-  /** If true, install a downloaded update after shutdown cleanup. */
-  readonly installUpdate?: boolean;
-}
-
-export interface AppShutdownIntent extends Intent<void> {
-  readonly type: "app:shutdown";
-  readonly payload: AppShutdownPayload;
-}
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 
 export const INTENT_APP_SHUTDOWN = "app:shutdown" as const;
 
@@ -41,11 +33,35 @@ export const INTENT_APP_SHUTDOWN = "app:shutdown" as const;
 export const APP_SHUTDOWN_OPERATION_ID = "app-shutdown";
 
 // =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const appShutdownPayloadSchema = z
+  .object({
+    /** If true, install a downloaded update after shutdown cleanup. */
+    installUpdate: z.boolean().optional(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_APP_SHUTDOWN,
+  payload: appShutdownPayloadSchema,
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type AppShutdownPayload = z.infer<typeof appShutdownPayloadSchema>;
+export type AppShutdownIntent = IntentOf<typeof schemas>;
+
+// =============================================================================
 // Operation
 // =============================================================================
 
-export class AppShutdownOperation implements Operation<AppShutdownIntent, void> {
+export class AppShutdownOperation implements Operation<typeof schemas> {
   readonly id = APP_SHUTDOWN_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<AppShutdownIntent>): Promise<void> {
     const hookCtx: HookContext = {

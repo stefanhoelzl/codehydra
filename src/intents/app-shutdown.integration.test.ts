@@ -203,7 +203,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
 
   if (options?.withIdempotency) {
     const idempotencyModule = createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]);

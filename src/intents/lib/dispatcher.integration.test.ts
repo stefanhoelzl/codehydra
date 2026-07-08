@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod/v4";
 import { Dispatcher, IntentHandle } from "./dispatcher";
 import type { IntentInterceptor } from "./dispatcher";
 import type { IntentModule } from "./module";
@@ -14,6 +15,7 @@ import type { Intent, DomainEvent } from "./types";
 import type {
   Operation,
   OperationContext,
+  OperationSchemas,
   HookContext,
   HookHandler,
   HookResult,
@@ -33,18 +35,36 @@ function createQueryIntent(): Intent {
   return { type: "test:query", payload: { question: "meaning" } };
 }
 
+/**
+ * Wrap an inline `{ id, execute }` spec into an Operation carrying a permissive
+ * schema whose `type` is the dispatcher registration key (the intent type it handles).
+ */
+function defineOp(
+  intentType: string,
+  spec: { id: string; execute: (ctx: OperationContext<Intent>) => Promise<unknown> }
+) {
+  const schemas = {
+    type: intentType,
+    payload: z.unknown(),
+    result: z.custom<unknown>(),
+  } satisfies OperationSchemas;
+  const op: Operation<typeof schemas> = { id: spec.id, schemas, execute: spec.execute };
+  return op;
+}
+
 function createTestOperation<R>(
   id: string,
   returnValue: R,
+  intentType = "test:action",
   sideEffect?: (ctx: OperationContext<Intent>) => void
-): Operation<Intent, R> {
-  return {
+) {
+  return defineOp(intentType, {
     id,
     execute: async (ctx) => {
       sideEffect?.(ctx);
       return returnValue;
     },
-  };
+  });
 }
 
 function createMockLogger(): Logger & {
@@ -86,8 +106,8 @@ describe("Dispatcher", () => {
     const dispatcher = createDispatcher();
 
     const result = { answer: 42 };
-    const operation = createTestOperation("query-op", result);
-    dispatcher.registerOperation("test:query", operation);
+    const operation = createTestOperation("query-op", result, "test:query");
+    dispatcher.registerOperation(operation);
 
     const actual = await dispatcher.dispatch(createQueryIntent());
 
@@ -106,9 +126,9 @@ describe("Dispatcher", () => {
     const dispatcher = createDispatcher();
 
     const operation = createTestOperation("op", undefined);
-    dispatcher.registerOperation("test:action", operation);
+    dispatcher.registerOperation(operation);
 
-    expect(() => dispatcher.registerOperation("test:action", operation)).toThrow(
+    expect(() => dispatcher.registerOperation(operation)).toThrow(
       "Operation already registered for intent type: test:action"
     );
   });
@@ -117,10 +137,12 @@ describe("Dispatcher", () => {
     const dispatcher = createDispatcher();
 
     const executeSpy = vi.fn().mockResolvedValue(undefined);
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: executeSpy,
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: executeSpy,
+      })
+    );
 
     const cancelInterceptor: IntentInterceptor = {
       id: "cancel-all",
@@ -140,12 +162,14 @@ describe("Dispatcher", () => {
     const dispatcher = createDispatcher();
 
     let capturedIntent: Intent | undefined;
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async (ctx) => {
-        capturedIntent = ctx.intent;
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          capturedIntent = ctx.intent;
+        },
+      })
+    );
 
     const modifyInterceptor: IntentInterceptor = {
       id: "modify-payload",
@@ -169,10 +193,12 @@ describe("Dispatcher", () => {
 
     const order: string[] = [];
 
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async () => undefined,
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async () => undefined,
+      })
+    );
 
     dispatcher.addInterceptor({
       id: "first",
@@ -203,12 +229,14 @@ describe("Dispatcher", () => {
       payload: { id: "123" },
     };
 
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async (ctx) => {
-        ctx.emit(testEvent);
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          ctx.emit(testEvent);
+        },
+      })
+    );
 
     const receivedEvents: DomainEvent[] = [];
     dispatcher.subscribe("test:completed", (event) => {
@@ -224,12 +252,14 @@ describe("Dispatcher", () => {
   it("unsubscribe removes event handler", async () => {
     const dispatcher = createDispatcher();
 
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async (ctx) => {
-        ctx.emit({ type: "test:completed", payload: {} });
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          ctx.emit({ type: "test:completed", payload: {} });
+        },
+      })
+    );
 
     const receivedEvents: DomainEvent[] = [];
     const unsubscribe = dispatcher.subscribe("test:completed", (event) => {
@@ -248,21 +278,25 @@ describe("Dispatcher", () => {
     const capturedCausations: (readonly string[])[] = [];
 
     // Register an action operation that triggers a query
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async (ctx) => {
-        capturedCausations.push(ctx.causation);
-        await ctx.dispatch(createQueryIntent());
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          capturedCausations.push(ctx.causation);
+          await ctx.dispatch(createQueryIntent());
+        },
+      })
+    );
 
-    dispatcher.registerOperation("test:query", {
-      id: "query-op",
-      execute: async (ctx) => {
-        capturedCausations.push(ctx.causation);
-        return { answer: 42 };
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:query", {
+        id: "query-op",
+        execute: async (ctx) => {
+          capturedCausations.push(ctx.causation);
+          return { answer: 42 };
+        },
+      })
+    );
 
     await dispatcher.dispatch(createActionIntent());
 
@@ -276,13 +310,15 @@ describe("Dispatcher", () => {
   it("events emitted inline even if operation later throws", async () => {
     const dispatcher = createDispatcher();
 
-    dispatcher.registerOperation("test:action", {
-      id: "action-op",
-      execute: async (ctx) => {
-        ctx.emit({ type: "test:completed", payload: {} });
-        throw new Error("operation failed");
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          ctx.emit({ type: "test:completed", payload: {} });
+          throw new Error("operation failed");
+        },
+      })
+    );
 
     const receivedEvents: DomainEvent[] = [];
     dispatcher.subscribe("test:completed", (event) => {
@@ -314,14 +350,16 @@ describe("Dispatcher", () => {
       },
     });
 
-    dispatcher.registerOperation("test:query", {
-      id: "query-op",
-      execute: async (ctx) => {
-        const hookCtx: HookContext = { intent: ctx.intent };
-        await ctx.hooks.collect("get", hookCtx);
-        return { answer: 42 };
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:query", {
+        id: "query-op",
+        execute: async (ctx) => {
+          const hookCtx: HookContext = { intent: ctx.intent };
+          await ctx.hooks.collect("get", hookCtx);
+          return { answer: 42 };
+        },
+      })
+    );
 
     const result = await dispatcher.dispatch(createQueryIntent());
 
@@ -332,7 +370,7 @@ describe("Dispatcher", () => {
   it("dispatch returns IntentHandle", () => {
     const dispatcher = createDispatcher();
 
-    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+    dispatcher.registerOperation(createTestOperation("op", undefined));
 
     const handle = dispatcher.dispatch(createActionIntent());
 
@@ -342,7 +380,7 @@ describe("Dispatcher", () => {
   it("accepted resolves to true when no interceptors cancel", async () => {
     const dispatcher = createDispatcher();
 
-    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+    dispatcher.registerOperation(createTestOperation("op", undefined));
 
     const handle = dispatcher.dispatch(createActionIntent());
     const accepted = await handle.accepted;
@@ -353,7 +391,7 @@ describe("Dispatcher", () => {
   it("accepted resolves to false when interceptor cancels", async () => {
     const dispatcher = createDispatcher();
 
-    dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+    dispatcher.registerOperation(createTestOperation("op", undefined));
 
     dispatcher.addInterceptor({
       id: "cancel",
@@ -378,15 +416,17 @@ describe("Dispatcher", () => {
     });
     let operationFinished = false;
 
-    dispatcher.registerOperation("test:action", {
-      id: "slow-op",
-      execute: async () => {
-        resolveOperation();
-        // Wait for an extra microtask tick to simulate slow work
-        await new Promise<void>((r) => setTimeout(r, 10));
-        operationFinished = true;
-      },
-    });
+    dispatcher.registerOperation(
+      defineOp("test:action", {
+        id: "slow-op",
+        execute: async () => {
+          resolveOperation();
+          // Wait for an extra microtask tick to simulate slow work
+          await new Promise<void>((r) => setTimeout(r, 10));
+          operationFinished = true;
+        },
+      })
+    );
 
     const handle = dispatcher.dispatch(createActionIntent());
 
@@ -421,12 +461,14 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("execute", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("execute", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -446,13 +488,13 @@ describe("Dispatcher", () => {
 
       dispatcher.registerModule(testModule);
 
-      const operation: Operation<Intent, void> = {
+      const operation = defineOp("test:action", {
         id: "action-op",
         execute: async (ctx: OperationContext<Intent>) => {
           ctx.emit({ type: "test:completed", payload: { id: "123" } });
         },
-      };
-      dispatcher.registerOperation("test:action", operation);
+      });
+      dispatcher.registerOperation(operation);
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -483,13 +525,13 @@ describe("Dispatcher", () => {
 
       dispatcher.registerModule(testModule);
 
-      const operation: Operation<Intent, void> = {
+      const operation = defineOp("test:action", {
         id: "action-op",
         execute: async () => {
           operationExecuted();
         },
-      };
-      dispatcher.registerOperation("test:action", operation);
+      });
+      dispatcher.registerOperation(operation);
 
       const result = await dispatcher.dispatch(createActionIntent());
 
@@ -536,12 +578,14 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -580,12 +624,14 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -625,12 +671,14 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -671,12 +719,14 @@ describe("Dispatcher", () => {
       dispatcher.registerModule(moduleA);
       dispatcher.registerModule(moduleB);
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("execute", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("execute", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -702,13 +752,15 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
-          collected = errors;
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
+            collected = errors;
+          },
+        })
+      );
 
       await expect(dispatcher.dispatch(createActionIntent())).resolves.toBeUndefined();
       expect(collected).toHaveLength(1);
@@ -723,20 +775,24 @@ describe("Dispatcher", () => {
 
       // Child operation captures its causation
       const capturedCausation: (readonly string[])[] = [];
-      dispatcher.registerOperation("test:child", {
-        id: "child-op",
-        execute: async (ctx) => {
-          capturedCausation.push(ctx.causation);
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:child", {
+          id: "child-op",
+          execute: async (ctx) => {
+            capturedCausation.push(ctx.causation);
+          },
+        })
+      );
 
       // Parent operation with a hook point
-      dispatcher.registerOperation("test:parent", {
-        id: "parent-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       // Hook handler dispatches directly on the dispatcher (not via ctx.dispatch)
       // — simulating what hook modules do in practice
@@ -775,19 +831,23 @@ describe("Dispatcher", () => {
       const dispatcher = createDispatcher();
 
       const capturedCausation: (readonly string[])[] = [];
-      dispatcher.registerOperation("test:child", {
-        id: "child-op",
-        execute: async (ctx) => {
-          capturedCausation.push(ctx.causation);
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:child", {
+          id: "child-op",
+          execute: async (ctx) => {
+            capturedCausation.push(ctx.causation);
+          },
+        })
+      );
 
-      dispatcher.registerOperation("test:parent", {
-        id: "parent-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       // Hook handler passes explicit causation — should override ALS
       const hookModule: IntentModule = {
@@ -817,7 +877,7 @@ describe("Dispatcher", () => {
       const logger = createMockLogger();
       const dispatcher = createDispatcher({ logger });
 
-      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      dispatcher.registerOperation(createTestOperation("op", undefined));
       await dispatcher.dispatch(createActionIntent());
 
       const dispatchLog = logger.calls.find((c) => c.level === "info" && c.message === "dispatch");
@@ -831,7 +891,7 @@ describe("Dispatcher", () => {
       const logger = createMockLogger();
       const dispatcher = createDispatcher({ logger });
 
-      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      dispatcher.registerOperation(createTestOperation("op", undefined));
       await dispatcher.dispatch(createActionIntent());
 
       const completedLog = logger.calls.find(
@@ -847,12 +907,14 @@ describe("Dispatcher", () => {
       const logger = createMockLogger();
       const dispatcher = createDispatcher({ logger });
 
-      dispatcher.registerOperation("test:action", {
-        id: "op",
-        execute: async () => {
-          throw new Error("boom");
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "op",
+          execute: async () => {
+            throw new Error("boom");
+          },
+        })
+      );
 
       await expect(dispatcher.dispatch(createActionIntent())).rejects.toThrow("boom");
 
@@ -867,7 +929,7 @@ describe("Dispatcher", () => {
       const logger = createMockLogger();
       const dispatcher = createDispatcher({ logger });
 
-      dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+      dispatcher.registerOperation(createTestOperation("op", undefined));
       dispatcher.addInterceptor({
         id: "block-it",
         async before() {
@@ -900,12 +962,14 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -951,12 +1015,14 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -982,12 +1048,14 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1022,12 +1090,14 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          await ctx.hooks.collect("run", { intent: ctx.intent });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1056,12 +1126,14 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => {
-          ctx.emit({ type: "test:completed", payload: {} });
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            ctx.emit({ type: "test:completed", payload: {} });
+          },
+        })
+      );
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1087,7 +1159,7 @@ describe("Dispatcher", () => {
         const logger = createMockLogger();
         const dispatcher = createDispatcher({ logger });
 
-        dispatcher.registerOperation("test:action", createTestOperation("op", undefined));
+        dispatcher.registerOperation(createTestOperation("op", undefined));
 
         const registerLog = logger.calls.find(
           (c) => c.level === "debug" && c.message === "register operation"
@@ -1249,23 +1321,27 @@ describe("Dispatcher", () => {
         })
       );
       let hookResult!: HookResult;
-      dispatcher.registerOperation("test:collect", {
-        id: "test-op",
-        execute: async (opCtx) => {
-          hookResult = await opCtx.hooks.collect("test-hook", ctx);
-          return hookResult;
-        },
-      });
+      dispatcher.registerOperation(
+        defineOp("test:collect", {
+          id: "test-op",
+          execute: async (opCtx) => {
+            hookResult = await opCtx.hooks.collect("test-hook", ctx);
+            return hookResult;
+          },
+        })
+      );
       await dispatcher.dispatch({ type: "test:collect", payload: {} });
       return hookResult;
     }
 
     it("empty hook point returns empty results and errors", async () => {
       const dispatcher = createDispatcher();
-      dispatcher.registerOperation("test:action", {
-        id: "action-op",
-        execute: async (ctx) => ctx.hooks.collect("nonexistent", { intent: ctx.intent }),
-      });
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => ctx.hooks.collect("nonexistent", { intent: ctx.intent }),
+        })
+      );
 
       const result = (await dispatcher.dispatch(createActionIntent())) as HookResult;
 
@@ -1668,10 +1744,12 @@ describe("Dispatcher", () => {
           },
         },
       });
-      dispatcher.registerOperation("test:collect", {
-        id: "test-op",
-        execute: async (ctx) => ctx.hooks.collect("test-hook", { intent: ctx.intent }),
-      });
+      dispatcher.registerOperation(
+        defineOp("test:collect", {
+          id: "test-op",
+          execute: async (ctx) => ctx.hooks.collect("test-hook", { intent: ctx.intent }),
+        })
+      );
 
       await dispatcher.dispatch({ type: "test:collect", payload: {} });
 

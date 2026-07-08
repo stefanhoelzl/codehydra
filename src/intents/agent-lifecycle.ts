@@ -11,47 +11,77 @@
  * event is emitted here — the provider's own status change propagates via
  * agent:update-status. The "lifecycle" hook is resolved per-workspace agent by
  * the workspace-agent resolver, then handled by the matching agent module.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/hook input
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` type is
+ * **derived** from that bundle via `IntentOf` — never restated. The result is void.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { AgentLifecycleEvent } from "../shared/plugin-protocol";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { hookCtxSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
-
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface AgentLifecyclePayload {
-  readonly workspacePath: string;
-  readonly event: AgentLifecycleEvent;
-}
-
-export interface AgentLifecycleIntent extends Intent<void> {
-  readonly type: "agent:lifecycle";
-  readonly payload: AgentLifecyclePayload;
-}
 
 export const INTENT_AGENT_LIFECYCLE = "agent:lifecycle" as const;
 
-// =============================================================================
-// Hook Input Types
-// =============================================================================
-
 export const AGENT_LIFECYCLE_OPERATION_ID = "agent-lifecycle";
 
-/** Input context for the "lifecycle" hook point. */
-export interface AgentLifecycleHookInput extends HookContext {
-  readonly workspacePath: string;
-  readonly event: AgentLifecycleEvent;
-}
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+/**
+ * Local schema for `AgentLifecycleEvent` (`"open" | "close"`, from shared/plugin-protocol).
+ * That shared type is not part of the intent `contract` vocabulary, so it is defined here;
+ * its inferred type is structurally identical to `AgentLifecycleEvent`.
+ */
+const agentLifecycleEventSchema = z.enum(["open", "close"]);
+
+export const agentLifecyclePayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    event: agentLifecycleEventSchema,
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "lifecycle" hook point (beyond the base HookContext). */
+const lifecycleEnrichmentSchema = z.object({
+  workspacePath: z.string(),
+  event: agentLifecycleEventSchema,
+});
+
+/** Runtime whole-context validation schema for "lifecycle". */
+export const lifecycleHookInputSchema = hookCtxSchema(
+  agentLifecyclePayloadSchema,
+  lifecycleEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_AGENT_LIFECYCLE,
+  payload: agentLifecyclePayloadSchema,
+  hooks: {
+    lifecycle: { input: lifecycleHookInputSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type AgentLifecyclePayload = z.infer<typeof agentLifecyclePayloadSchema>;
+export type AgentLifecycleIntent = IntentOf<typeof schemas>;
+
+/** Input context for the "lifecycle" hook point: base envelope + inferred enrichment. */
+export type AgentLifecycleHookInput = HookContext & z.infer<typeof lifecycleEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class AgentLifecycleOperation implements Operation<AgentLifecycleIntent, void> {
+export class AgentLifecycleOperation implements Operation<typeof schemas> {
   readonly id = AGENT_LIFECYCLE_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<AgentLifecycleIntent>): Promise<void> {
     const { payload } = ctx.intent;

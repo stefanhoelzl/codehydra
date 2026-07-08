@@ -13,22 +13,15 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { z } from "zod/v4";
 import { createMockDispatcher } from "./dispatcher.test-utils";
 import { WorkspaceHookOperation } from "./workspace-operation";
 import { lastDefined, requireResult } from "./hook-helpers";
 import type { Intent, DomainEvent } from "./types";
-import type { HookHandler, HookOutput } from "./operation";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "../resolve-workspace";
+import type { HookHandler, HookOutput, OperationSchemas } from "./operation";
+import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "../resolve-workspace";
 import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "../resolve-project";
+import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "../resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "../resolve-project";
 import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
@@ -55,7 +48,15 @@ interface TestHookResult {
   readonly value?: string;
 }
 
-class TestOperation extends WorkspaceHookOperation<TestIntent, TestHookResult, string> {
+const testSchemas = {
+  type: INTENT_TEST,
+  payload: z.object({ workspacePath: z.string() }).readonly(),
+  result: z.string(),
+} satisfies OperationSchemas;
+
+class TestOperation extends WorkspaceHookOperation<typeof testSchemas, TestHookResult> {
+  readonly schemas = testSchemas;
+
   constructor(opts?: { resolveProject?: boolean; emitEvent?: boolean }) {
     super(TEST_OPERATION_ID, {
       hookPoint: "work",
@@ -91,10 +92,10 @@ function createSetup(opts: {
   registerProject?: boolean;
 }): { dispatcher: ReturnType<typeof createMockDispatcher>; hookRuns: () => number } {
   const dispatcher = createMockDispatcher();
-  dispatcher.registerOperation(INTENT_TEST, opts.operation);
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(opts.operation);
+  dispatcher.registerOperation(new ResolveWorkspaceOperation());
   if (opts.registerProject) {
-    dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+    dispatcher.registerOperation(new ResolveProjectOperation());
   }
 
   const resolveModule: IntentModule = {

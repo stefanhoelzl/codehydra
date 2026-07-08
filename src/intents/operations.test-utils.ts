@@ -22,17 +22,9 @@ import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
 import type { UpdateAgentStatusIntent } from "./update-agent-status";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
+import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "./resolve-workspace";
 import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
+import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "./resolve-project";
 import type {
   ResolveHookResult as ResolveProjectHookResult,
   ResolveHookInput as ResolveProjectHookInput,
@@ -40,14 +32,9 @@ import type {
 import {
   GetActiveWorkspaceOperation,
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
-  INTENT_GET_ACTIVE_WORKSPACE,
 } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
-import {
-  SwitchWorkspaceOperation,
-  SWITCH_WORKSPACE_OPERATION_ID,
-  INTENT_SWITCH_WORKSPACE,
-} from "./switch-workspace";
+import { SwitchWorkspaceOperation, SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
@@ -319,10 +306,10 @@ export function registerTestInfrastructure(
   dispatcher: Dispatcher,
   config: TestMockConfig
 ): { mockModule: IntentModule } {
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(new ResolveProjectOperation());
+  dispatcher.registerOperation(new GetActiveWorkspaceOperation());
+  dispatcher.registerOperation(new SwitchWorkspaceOperation());
 
   const mockModule = createTestMockModule(config);
   dispatcher.registerModule(mockModule);

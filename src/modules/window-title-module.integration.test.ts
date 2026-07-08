@@ -12,9 +12,10 @@ import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
+import { z } from "zod/v4";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { Intent } from "../intents/lib/types";
 import {
@@ -43,11 +44,16 @@ interface MinimalSwitchIntent extends Intent<void> {
   readonly payload: MinimalSwitchPayload | null;
 }
 
-class MinimalSwitchOperation implements Operation<MinimalSwitchIntent, void> {
-  readonly id = "switch-workspace";
+const minimalSwitchSchemas = {
+  type: INTENT_MINIMAL_SWITCH,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<MinimalSwitchIntent>): Promise<void> {
-    const { payload } = ctx.intent;
+const minimalSwitchOperation: Operation<typeof minimalSwitchSchemas> = {
+  id: "switch-workspace",
+  schemas: minimalSwitchSchemas,
+  async execute(ctx): Promise<void> {
+    const payload = ctx.intent.payload as MinimalSwitchPayload | null;
 
     const event: WorkspaceSwitchedEvent = {
       type: EVENT_WORKSPACE_SWITCHED,
@@ -62,8 +68,8 @@ class MinimalSwitchOperation implements Operation<MinimalSwitchIntent, void> {
         : null,
     };
     ctx.emit(event);
-  }
-}
+  },
+};
 
 // =============================================================================
 // Test Setup
@@ -79,10 +85,9 @@ function createTestSetup(titleVersion?: string): TestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_MINIMAL_SWITCH, new MinimalSwitchOperation());
+  dispatcher.registerOperation(minimalSwitchOperation);
   dispatcher.registerOperation(
-    INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "start")
+    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
   );
 
   const windowTitleModule = createWindowTitleModule({
@@ -158,8 +163,7 @@ describe("WindowTitleModule Integration", () => {
     const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
-      INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "start")
+      createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
     );
 
     const windowTitleModule = createWindowTitleModule({

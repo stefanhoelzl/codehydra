@@ -216,9 +216,11 @@ Remote workspaces run their agent + code-server on the box, so failures originat
 The value surface (intent payloads, hook results, capability values, event payloads) is
 overwhelmingly plain serializable data — no structural blockers, given the **data-only
 contract invariant** (item 2a) that forbids the few remaining function fields. What remains
-is a bounded, sequenced list. Sequencing rationale unchanged: the handler/capability
-**contract** first, then the **wire schemas** against the final shape, then the leaky-module
-**splits**.
+is a bounded list. The original sequencing was contract → wire schemas → splits; in practice
+the handler/capability **contract** (item 1) and the leaky-module **splits** (item 3) both
+**landed first** — item 3 because it is a self-contained local refactor needing no transport —
+leaving **validation** (item 2, reframed below from "wire schemas" to a first-class
+intent-system feature) as the next code step, ahead of the transport items 4/5.
 
 **1. Reshape the capability contract — ✅ DONE** (commit `d871aea6`, pre-session).
 Handlers return a `HookOutput { result?, provides? }`; the merge loop is wire-ready. Rule
@@ -226,48 +228,87 @@ recorded in `docs/INTENTS.md` (_a value is a capability iff a sibling handler `r
 it; everything else consumed is a `result`_). `workspaceUrl`/`agentType` migrated from
 capabilities to results. `requires` stays host-evaluated; `ANY_VALUE` never crosses the wire.
 
-**2. Wire codecs + zod validation (decided design).** The seam is **asymmetric**, and
-the untrusted direction is **remote→host**, which carries **three** independently-defined
-type families — not just intents: **intent payloads** (a remote handler dispatches),
-**hook results** (`HookOutput.result`, which _ride the invocation response_ back — 6+ per
-op, e.g. `delete-workspace`), and **provided data** (`HookOutput.provides`). Event payloads
-travel host→remote (trusted). Today the dispatcher does **zero** validation
-(`dispatcher.ts:397`): intent payloads are `unknown`, hook results are merged via an
-unchecked `output.result as T` cast (`dispatcher.ts:290`), and capability values are read
-via `as number` casts (`code-server-module.ts:706`, `agent-module.ts:211`). So "just
-schematize intents" under-scopes the actual attack surface.
+**2. Validation as a first-class intent-system feature (decided design).** Reframed from
+"wire codecs": the contract surface is **already plain serializable data** — every path in an
+intent payload / hook result is a **branded string** (`WorkspacePath = string & brand`,
+`ProjectId`, `WorkspaceName`), not a `Path` instance (`Path` lives _inside_ modules and is
+stringified before it reaches `collect`/`dispatch`), and the only non-serializable carrier is
+`AppStartErrorHookContext.error: Error`, a **host-only** hook that never crosses a wire. So the
+`Path↔string` / `Error↔object` transform machinery the earlier revision leaned on is largely
+theoretical, and **codecs are deferred until a wire actually exists**. What is real and durable
+_now_ is **runtime validation**: the dispatcher does **zero** today (`dispatcher.ts`), so intent
+payloads are `unknown`, hook results merge via an unchecked `output.result as T` cast
+(`dispatcher.ts:300`), the operation return value is cast `as IntentResult<I>` (`:478`), and
+capability values are read via `as number` casts. Item 2 replaces all of these with
+`schema.parse` — a first-class intent-system feature, applied on **every dispatch whether or not
+a wire is ever built** (aligned with CLAUDE.md's no-assertions rule). Wire-readiness falls out as
+a byproduct; it is not the driver.
 
 Resolved design:
 
-- **Schemas live on the Operation.** Each operation declares zod schemas for its intent
-  payload, its per-hook-point results, its provided-data, and its events — colocated with
-  the `*_OPERATION_ID` / hook-point / `EVENT_*` definitions it already owns. TS types
-  become `z.infer<schema>`, so the schema is the single source of truth (no separate
-  hand-synced registry like today's `plugin-protocol.ts`).
-- **Data-only contract (global invariant — see item 2a).** With no functions anywhere in
-  the contract, the _entire_ operation surface is schematizable; scope is not bounded by
-  serializability.
-- **Validate + transform anywhere.** Every dispatch runs `schema.parse` — validation _and_
-  `Path↔string` / `Error↔object` transforms — whether or not the message crosses the wire.
-  **One code path, no local-vs-wire branch**, so the wire path is exercised on every local
-  dispatch and a remote-only serialization bug cannot hide. This is safe because `Path` is a
-  value object compared via `.equals()` / `.toString()` (never by reference) and
-  `HookResult.errors` are data-only reports — a `Path` round-tripped through `string` back to
-  a fresh `new Path()`, or an `Error` through `{message,stack}`, is _equivalent_; instance
-  identity never mattered. _(Doc note for implementers: don't rely on `Path`/`Error`
-  instance identity or live `Error` prototypes across a dispatch — reconstructed instances
-  are equivalent by value only.)_
-- **The dispatcher is the validation home** — "the intent system handles validation,"
-  literally. This replaces the unsafe `as` casts everywhere (aligned with CLAUDE.md's
-  no-assertions rule), not only at the wire.
-- **`requires` stays host-evaluated** with the `ANY_VALUE` sentinel — it never needs a value
-  schema and never crosses the wire; only `provides` _data_ is schematized.
+- **zod is the single source of truth.** Schemas are what you write; types are `z.infer<schema>`
+  (no hand-synced registry like today's `plugin-protocol.ts`). Branded ids become
+  `z.string().brand<…>()`. The generic **envelopes** (`Intent<R>`, `DomainEvent`, `HookContext`)
+  stay hand-written — zod can't model the phantom result-type param — while everything they
+  _carry_ (payloads, results, provides, contexts) is zod-derived. `readonly` is preserved via
+  `.readonly()` so inferred types match today's deeply-`readonly` contracts.
+- **zod is confined to the intent system.** The shared contract vocabulary (branded ids,
+  `agentSpecSchema`, `Workspace`, metadata) is _defined inside_ `src/intents/` (a `contract/`
+  module; per-operation schemas stay colocated on their operations). `shared/api/types.ts` and
+  `shared/ipc.ts` become **type-only re-export façades** (`export type { … } from "…/intents/…"`),
+  so renderer / preload / services keep their import paths **unchanged** — those imports are
+  already `import type` and thus erased at build. (This is already why zod stays out of the
+  renderer bundle today despite `shared/api/types.ts:5` importing `zod/v4`: `renderer/lib/api`
+  imports these names type-only.) A **boundary lint forbids `zod` imports under `src/renderer`,
+  `src/preload`, `src/shared`**, making the confinement structural, not a tree-shaking accident.
+  The one runtime zod consumer in `shared/` today — `plugin-protocol.ts`'s `agentSpecSchema.safeParse`
+  (main-only) — value-imports the schema from the intents `contract/` module (an accepted, main-only
+  `shared→intents` runtime edge; alternatively that guard relocates into the contract module).
+- **Schemas hung on the Operation.** A `schemas` field —
+  `{ payload, result, hooks: { <point>: { input, result, provides } }, events: { <type> } }` —
+  colocated with the op's `*_OPERATION_ID` / hook-point / `EVENT_*` defs. The dispatcher indexes
+  it at `registerOperation` (payload/hook/result reachable via the operations map; event schemas
+  folded into an event→schema lookup for `emitEvent`). Modules registering a handler import the
+  point's schema to conform.
+- **Five validated carriers** — everything crossing the intent-system boundary, in **both**
+  directions:
 
-Cost: a `schema.parse` per dispatch, including the hot path (`project:resolve`) — mitigated
-by the item-4 host-cached projections; zod v4 (already imported for `agentSpecSchema`) is
-fast. Still do the full sweep for other non-JSON leaks (Maps/Sets/Buffers/class instances)
-so every carrier has a transform.
-→ research workspace `research-wire-codecs`.
+  | Carrier                                                       | Where                                 | On failure                                                         |
+  | ------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+  | Intent payload                                                | `dispatch()` entry                    | reject the dispatch                                                |
+  | Hook input context (whole ctx)                                | into each handler                     | throw (operation built a bad ctx — a framework bug)                |
+  | Hook result                                                   | `collectHookResults:300`, per handler | push to `collect`'s `errors[]` (isolated, like a throwing handler) |
+  | Provides — a **scalar bag** (`string\|number\|boolean\|null`) | merge at `:305`                       | push to `errors[]`                                                 |
+  | Event payload                                                 | `emit()`                              | throw                                                              |
+  | Operation return value                                        | before `handle.resolve` (`:478`)      | reject the dispatch                                                |
+
+- **`.strip()`, not strict.** Unknown keys are silently dropped and the dispatcher **forwards the
+  parsed (stripped) value** so normalization takes effect and a future wire can't leak stray
+  fields; known keys are still fully type-checked (so the `as number` capability reads are
+  protected — only extra-key _detection_ is traded away).
+- **Whole-context validation** at every hook point: the enrichment fields are validated strictly,
+  the `intent` portion re-affirmed against the op's own payload schema, and `capabilities` is a
+  **shape check** (`z.record` of scalars) — each capability value was already validated against its
+  `provides` schema at merge time, so its values aren't re-parsed. All current capability values
+  are already scalar (ports=number, `app-ready`/`ui-ready`=boolean, `agent`=`AgentType` string), so
+  the scalar constraint holds against the whole codebase without a provider refactor.
+- **`requires` stays host-evaluated** with the `ANY_VALUE` sentinel — it tests key _presence_, never
+  needs a value schema, and never crosses a wire; only `provides` _data_ is schematized.
+
+**Rollout: one atomic big-bang PR.** All ~30 operations get schemas + the shared branded-type
+rewrite (`shared/api/types.ts`, `ipc.ts`) + mandatory validation from day one; CI proves the whole
+surface at once (no half-validated window). Shared value schemas (`AgentSpec` — reuse the existing
+`agentSpecSchema` — `Workspace`, metadata) live in a shared `schemas.ts` that operation schemas
+compose; each event type has exactly one owning operation file and registration rejects a duplicate
+event-schema.
+
+Cost: a `schema.parse` per dispatch **and** per hook point, including the hot paths
+(`project:resolve`, `switch`, `get-active-workspace`) — and the item-4 host-cached projections that
+would mitigate it don't exist yet (they need the transport work). Posture: **accept it, measure,
+optimize only on a real regression** — zod v4 (already imported for `agentSpecSchema`) is fast and
+payloads are small; add a `project:resolve`/`switch` benchmark to the PR so the cost is visible.
+Implementation residue (no decision): a per-brand constructor helper for building branded values at
+runtime, and integration tests that lean on extra/invalid fields (mostly absorbed by `.strip()`).
 
 **2a. Enforce the data-only handler contract.** _Both a handler's `HookContext` (in) and its
 `HookOutput` (result + provides) — and every event payload — must be pure data: no
@@ -385,11 +426,30 @@ Separable, buildable/de-riskable independently.
 
 ## 10. Next steps
 
-- **Recommended spike:** prove the reverse channel by hand — run code-server + one agent
-  on a remote box with `ssh -L`/`-R`, confirm the Claude bridge callback and the OpenCode
-  MCP round-trip both work through the tunnel — before committing.
-- **Then:** fold `research-wire-codecs` + `research-leaky-*` findings into a phased
-  implementation plan (2 → 3, then 4/5), with the data-plane spike alongside.
+Progress: **item 1 done** (capability contract), **item 3 done** (single-tier handlers +
+streaming framework), and **item 2 done** (validation as a first-class intent-system feature —
+implemented and green). `research-wire-codecs`, `research-leaky-*`, and
+`research-provides-closures` are all **moot**.
+
+Item 2 as landed: the contract vocabulary (branded ids, AgentSpec, domain value objects) lives
+in `src/intents/contract.ts` (zod = single source of truth), with `shared/api/types.ts` +
+`shared/ipc.ts` as **type-only re-export façades** and an eslint boundary rule confining zod to
+the intent system (legacy exceptions: `ui-event.ts`, `plugin-protocol.ts`). The dispatcher
+validates all five carriers (intent payload, hook input ctx, hook result, provides, event, +
+operation result) via schemas hung on each `Operation`. **`Operation` is parameterized by its
+schema bundle** — `Operation<S extends OperationSchemas>` with required `schemas: S` and
+`execute(ctx: OperationContext<IntentOf<S>>): Promise<ResultOf<S>>` — so a production op is just
+`implements Operation<typeof schemas>` and its Intent/result derive from the bundle (`IntentOf` /
+`ResultOf`), never restated. `registerOperation(op)` is single-arg (key = `op.schemas.type`). Test
+mocks were consolidated onto a single generic helper (`createMinimalOperation(id, intentType,
+hookPoint, opts)` → `Operation<S>` with a permissive `z.unknown()` payload + `z.custom<R>()` result
+that keeps dispatched results typed); a few genuinely-custom mocks stay bespoke `Operation<typeof
+schemas>` objects. **Deferred polish** (not blocking): tightening the few `z.custom<T>()` escapes
+(AgentInfo / BinaryType / Path-carrying internal types) to structural schemas.
+
+- **Next code step:** the transport work (items 4/5) + the §10 reverse-channel spike.
+- **Recommended spike (in parallel):** prove the reverse channel by hand — run code-server + one
+  agent on a remote box with `ssh -L`/`-R`, confirm the Claude bridge callback and the OpenCode
+  MCP round-trip both work through the tunnel — before committing to the transport (items 4/5).
 - **Open details not yet drilled:** the exact config-injection key list (§5), the
-  connection/registration lifecycle mechanics (§8 item 5), and the data-plane tunnel choice
-  (§9). `research-provides-closures` is **moot** (item 1 done) and can be discarded.
+  connection/registration lifecycle mechanics (§8 item 5), and the data-plane tunnel choice (§9).

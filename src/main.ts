@@ -78,26 +78,20 @@ import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdow
 import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
 import type { AppShutdownIntent } from "./intents/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
-import { SetMetadataOperation, INTENT_SET_METADATA } from "./intents/set-metadata";
-import { GetMetadataOperation, INTENT_GET_METADATA } from "./intents/get-metadata";
+import { SetMetadataOperation } from "./intents/set-metadata";
+import { GetMetadataOperation } from "./intents/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   INTENT_GET_WORKSPACE_STATUS,
 } from "./intents/get-workspace-status";
-import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./intents/get-agent-session";
-import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/restart-agent";
-import { AgentLifecycleOperation, INTENT_AGENT_LIFECYCLE } from "./intents/agent-lifecycle";
-import {
-  GetActiveWorkspaceOperation,
-  INTENT_GET_ACTIVE_WORKSPACE,
-} from "./intents/get-active-workspace";
-import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/list-projects";
-import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/open-workspace";
-import { GetProjectBasesOperation, INTENT_GET_PROJECT_BASES } from "./intents/get-project-bases";
-import {
-  AgentLaunchOptionsOperation,
-  INTENT_GET_LAUNCH_OPTIONS,
-} from "./intents/agent-launch-options";
+import { GetAgentSessionOperation } from "./intents/get-agent-session";
+import { RestartAgentOperation } from "./intents/restart-agent";
+import { AgentLifecycleOperation } from "./intents/agent-lifecycle";
+import { GetActiveWorkspaceOperation } from "./intents/get-active-workspace";
+import { ListProjectsOperation } from "./intents/list-projects";
+import { OpenWorkspaceOperation } from "./intents/open-workspace";
+import { GetProjectBasesOperation } from "./intents/get-project-bases";
+import { AgentLaunchOptionsOperation } from "./intents/agent-launch-options";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
@@ -134,32 +128,21 @@ import {
   EVENT_PROJECT_CLOSE_FAILED,
   type CloseProjectPayload,
 } from "./intents/close-project";
-import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-  EVENT_WORKSPACE_SWITCHED,
-} from "./intents/switch-workspace";
+import { SwitchWorkspaceOperation, EVENT_WORKSPACE_SWITCHED } from "./intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "./intents/switch-workspace";
 import type { GetWorkspaceStatusIntent } from "./intents/get-workspace-status";
 import {
   UpdateAgentStatusOperation,
-  INTENT_UPDATE_AGENT_STATUS,
   EVENT_AGENT_STATUS_UPDATED,
 } from "./intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "./intents/update-agent-status";
-import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
-import {
-  SetShortcutActiveOperation,
-  INTENT_SET_SHORTCUT_ACTIVE,
-} from "./intents/set-shortcut-active";
-import { SubmitBugReportOperation, INTENT_SUBMIT_BUG_REPORT } from "./intents/submit-bug-report";
-import {
-  VscodeShowMessageOperation,
-  INTENT_VSCODE_SHOW_MESSAGE,
-} from "./intents/vscode-show-message";
+import { ShortcutKeyOperation } from "./intents/shortcut-key";
+import { SetShortcutActiveOperation } from "./intents/set-shortcut-active";
+import { SubmitBugReportOperation } from "./intents/submit-bug-report";
+import { VscodeShowMessageOperation } from "./intents/vscode-show-message";
 import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
-import { ResolveWorkspaceOperation, INTENT_RESOLVE_WORKSPACE } from "./intents/resolve-workspace";
-import { ResolveProjectOperation, INTENT_RESOLVE_PROJECT } from "./intents/resolve-project";
+import { ResolveWorkspaceOperation } from "./intents/resolve-workspace";
+import { ResolveProjectOperation } from "./intents/resolve-project";
 // Modules
 import { createExtensionModule } from "./modules/extension-module";
 import { createViewModule } from "./modules/view-module";
@@ -797,43 +780,42 @@ const errorReportModule = createErrorReportModule({
 
 // 8. Operation registration
 
-dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+dispatcher.registerOperation(new AppShutdownOperation());
+dispatcher.registerOperation(new AppResumeOperation());
 dispatcher.registerOperation(
-  INTENT_APP_START,
   new AppStartOperation(agentConfig, () => configService.wasConfigured())
 );
-dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(agentConfig));
+dispatcher.registerOperation(new AppReadyOperation(agentConfig));
 // config:set-values operation removed — config is now a plain service
-dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
-dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
-dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
-dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
-dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
-dispatcher.registerOperation(INTENT_AGENT_LIFECYCLE, new AgentLifecycleOperation());
-dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
-dispatcher.registerOperation(INTENT_LIST_PROJECTS, new ListProjectsOperation());
-dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
-dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+dispatcher.registerOperation(new ResolveWorkspaceOperation());
+dispatcher.registerOperation(new ResolveProjectOperation());
+dispatcher.registerOperation(new SetupOperation());
+dispatcher.registerOperation(new SetMetadataOperation());
+dispatcher.registerOperation(new GetMetadataOperation());
+dispatcher.registerOperation(new GetWorkspaceStatusOperation());
+dispatcher.registerOperation(new GetAgentSessionOperation());
+dispatcher.registerOperation(new RestartAgentOperation());
+dispatcher.registerOperation(new AgentLifecycleOperation());
+dispatcher.registerOperation(new GetActiveWorkspaceOperation());
+dispatcher.registerOperation(new ListProjectsOperation());
+dispatcher.registerOperation(new OpenWorkspaceOperation());
+dispatcher.registerOperation(new GetProjectBasesOperation());
+dispatcher.registerOperation(new AgentLaunchOptionsOperation());
 
-dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
-dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
-dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
+dispatcher.registerOperation(new DeleteWorkspaceOperation());
+dispatcher.registerOperation(new HibernateWorkspaceOperation());
+dispatcher.registerOperation(new WakeWorkspaceOperation());
 
-dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
-dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
+dispatcher.registerOperation(new OpenProjectOperation());
+dispatcher.registerOperation(new CloseProjectOperation());
 
-dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
-dispatcher.registerOperation(INTENT_SET_SHORTCUT_ACTIVE, new SetShortcutActiveOperation());
-dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
-dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
-dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
+dispatcher.registerOperation(new SwitchWorkspaceOperation());
+dispatcher.registerOperation(new UpdateAgentStatusOperation());
+dispatcher.registerOperation(new ShortcutKeyOperation());
+dispatcher.registerOperation(new SetShortcutActiveOperation());
+dispatcher.registerOperation(new SubmitBugReportOperation());
+dispatcher.registerOperation(new VscodeShowMessageOperation());
+dispatcher.registerOperation(new VscodeCommandOperation());
 
 // Initial terminal focus for a workspace, fired exactly once per session
 // per workspace (tracked in firstFocused). After the first focus, the

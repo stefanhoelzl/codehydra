@@ -11,41 +11,22 @@
  * After collecting paths, dispatches project:open for each saved project
  * (best-effort, skips invalid projects). Once all dispatches complete,
  * emits an `app:started` domain event so the renderer knows startup is done.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/
+ * event schemas are declared once and hung on the operation's `schemas` field; the `Intent`
+ * and result types are **derived** via `IntentOf`/`z.infer`. `AgentInfo`/`LifecycleAgentType`
+ * are shared IPC types modeled with `z.custom` so their exact named types flow through.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../utils/path/path";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import { throwHookErrors } from "./lib/hook-helpers";
-
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface AppReadyPayload {
-  /** No payload needed. */
-  readonly [key: string]: never;
-}
-
-/**
- * Result of app:ready. No longer sent to the renderer (the ui-connected
- * handshake is fire-and-forget); retained as the operation's typed result.
- */
-export interface AppReadyResult {
-  /** Global default agent (config.agent). Null when not yet chosen (first-run pending). */
-  readonly defaultAgent: LifecycleAgentType | null;
-  /** Agents whose binaries are currently present on disk. */
-  readonly availableAgents: readonly AgentInfo[];
-}
-
-export interface AppReadyIntent extends Intent<AppReadyResult> {
-  readonly type: "app:ready";
-  readonly payload: AppReadyPayload;
-}
 
 export const INTENT_APP_READY = "app:ready" as const;
 
@@ -62,28 +43,78 @@ export const EVENT_APP_STARTED = "app:started" as const;
 
 export const APP_READY_OPERATION_ID = "app-ready";
 
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const appReadyPayloadSchema = z.object({}).readonly();
+
+/**
+ * Result of app:ready. No longer sent to the renderer (the ui-connected
+ * handshake is fire-and-forget); retained as the operation's typed result.
+ */
+export const appReadyResultSchema = z
+  .object({
+    /** Global default agent (config.agent). Null when not yet chosen (first-run pending). */
+    defaultAgent: z.custom<LifecycleAgentType>().nullable(),
+    /** Agents whose binaries are currently present on disk. */
+    availableAgents: z.array(z.custom<AgentInfo>()).readonly(),
+  })
+  .readonly();
+
 /**
  * Per-handler result for "load-projects" hook point.
  * Modules return paths to saved projects that should be opened on startup.
  */
-export interface LoadProjectsResult {
-  readonly projectPaths?: readonly string[];
-}
+export const loadProjectsResultSchema = z
+  .object({
+    projectPaths: z.array(z.string()).readonly().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for the "available-agents" hook point.
  * Each agent module returns its `AgentInfo` only if its binary is present.
  */
-export interface AvailableAgentsResult {
-  readonly agent?: AgentInfo;
-}
+export const availableAgentsResultSchema = z
+  .object({
+    agent: z.custom<AgentInfo>().optional(),
+  })
+  .readonly();
+
+/** Payload emitted by `app:started`. */
+export const appStartedPayloadSchema = z.object({}).readonly();
+
+const schemas = {
+  type: INTENT_APP_READY,
+  payload: appReadyPayloadSchema,
+  result: appReadyResultSchema,
+  hooks: {
+    "load-projects": { result: loadProjectsResultSchema },
+    "available-agents": { result: availableAgentsResultSchema },
+  },
+  events: {
+    [EVENT_APP_STARTED]: appStartedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type AppReadyPayload = z.infer<typeof appReadyPayloadSchema>;
+export type AppReadyResult = z.infer<typeof appReadyResultSchema>;
+export type AppReadyIntent = IntentOf<typeof schemas>;
+export type LoadProjectsResult = z.infer<typeof loadProjectsResultSchema>;
+export type AvailableAgentsResult = z.infer<typeof availableAgentsResultSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResult> {
+export class AppReadyOperation implements Operation<typeof schemas> {
   readonly id = APP_READY_OPERATION_ID;
+  readonly schemas = schemas;
 
   constructor(private readonly agentConfig: PersistedAccessor<ConfigAgentType>) {}
 

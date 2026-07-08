@@ -12,7 +12,11 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { OPEN_WORKSPACE_OPERATION_ID, type SetupHookResult } from "../intents/open-workspace";
+import {
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
+  type SetupHookResult,
+} from "../intents/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
@@ -43,17 +47,21 @@ function createTestSetup(
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(
-    "workspace:open",
-    createMinimalOperation<Intent, SetupHookResult>(OPEN_WORKSPACE_OPERATION_ID, "setup", {
-      hookContext: (ctx) => {
-        const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
-        return {
-          intent: ctx.intent,
-          projectPath: payload.projectPath,
-          workspacePath: payload.workspacePath,
-        };
-      },
-    })
+    createMinimalOperation<SetupHookResult>(
+      OPEN_WORKSPACE_OPERATION_ID,
+      INTENT_OPEN_WORKSPACE,
+      "setup",
+      {
+        hookContext: (ctx) => {
+          const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
+          return {
+            intent: ctx.intent,
+            projectPath: payload.projectPath,
+            workspacePath: payload.workspacePath,
+          };
+        },
+      }
+    )
   );
 
   const module = createKeepFilesModule({
@@ -109,17 +117,21 @@ describe("KeepFilesModule Integration", () => {
       const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
-        "workspace:open",
-        createMinimalOperation<Intent, SetupHookResult>(OPEN_WORKSPACE_OPERATION_ID, "setup", {
-          hookContext: (ctx) => {
-            const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
-            return {
-              intent: ctx.intent,
-              projectPath: payload.projectPath,
-              workspacePath: payload.workspacePath,
-            };
-          },
-        })
+        createMinimalOperation<SetupHookResult>(
+          OPEN_WORKSPACE_OPERATION_ID,
+          INTENT_OPEN_WORKSPACE,
+          "setup",
+          {
+            hookContext: (ctx) => {
+              const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
+              return {
+                intent: ctx.intent,
+                projectPath: payload.projectPath,
+                workspacePath: payload.workspacePath,
+              };
+            },
+          }
+        )
       );
 
       const module = createKeepFilesModule({

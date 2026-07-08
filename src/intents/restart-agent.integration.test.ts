@@ -76,7 +76,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+  dispatcher.registerOperation(new RestartAgentOperation());
 
   registerTestInfrastructure(dispatcher, {
     workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },

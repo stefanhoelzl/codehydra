@@ -11,8 +11,13 @@ import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
+import { z } from "zod/v4";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, ConfigureResult } from "../intents/app-start";
@@ -29,10 +34,19 @@ import { createMockConfig } from "../boundaries/platform/config.test-utils";
 // Minimal Test Operations
 // =============================================================================
 
+const beforeReadySchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<ConfigureResult>(),
+} satisfies OperationSchemas;
+
 /** Runs "before-ready" hook point only. */
-class MinimalBeforeReadyOperation implements Operation<Intent, ConfigureResult> {
+class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
   readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
+  readonly schemas = beforeReadySchemas;
+  async execute(
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+  ): Promise<ConfigureResult> {
     const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
       intent: ctx.intent,
     });
@@ -88,8 +102,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
-      INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "init")
+      createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init")
     );
 
     const module = createElectronLifecycleModule(
@@ -114,8 +127,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
-      INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "init")
+      createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init")
     );
 
     const module = createElectronLifecycleModule(
@@ -138,7 +150,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+    dispatcher.registerOperation(new AppShutdownOperation());
 
     const module = createElectronLifecycleModule(
       createDeps({
@@ -163,7 +175,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -191,7 +203,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const mockPathProvider = {
         dataPath: (subpath: string) => new Path(`/data/${subpath}`),
@@ -233,7 +245,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -262,7 +274,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -288,7 +300,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -311,7 +323,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -334,7 +346,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -368,7 +380,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -394,7 +406,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -419,7 +431,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const logger = createMockLogger();
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule(
         createDeps({
@@ -462,8 +474,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start")
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
       );
 
       const module = createElectronLifecycleModule(

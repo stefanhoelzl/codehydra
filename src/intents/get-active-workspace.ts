@@ -6,46 +6,69 @@
  *
  * No provider dependencies - the hook handler does the actual work.
  * No domain events - this is a query operation.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
+ * result types are **derived** from that bundle via `IntentOf`/`z.infer`.
  */
 
-import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { WorkspaceRef } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { workspaceRefSchema } from "./contract";
 import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface GetActiveWorkspaceIntent extends Intent<WorkspaceRef | null> {
-  readonly type: "ui:get-active-workspace";
-  readonly payload: Record<string, never>;
-}
-
 export const INTENT_GET_ACTIVE_WORKSPACE = "ui:get-active-workspace" as const;
-
-// =============================================================================
-// Operation
-// =============================================================================
-
 export const GET_ACTIVE_WORKSPACE_OPERATION_ID = "get-active-workspace";
+
+// =============================================================================
+// Contract schemas (single source of truth)
+// =============================================================================
+
+export const getActiveWorkspacePayloadSchema = z.object({}).readonly();
+
+export const getActiveWorkspaceResultSchema = workspaceRefSchema.nullable();
 
 /**
  * Per-handler result contract for the "get" hook point.
  * Each handler returns its contribution — the operation merges them.
  * `null` is a valid result (no active workspace).
  */
-export interface GetActiveWorkspaceHookResult {
-  readonly workspaceRef: WorkspaceRef | null;
-}
+export const getActiveWorkspaceHookResultSchema = z
+  .object({
+    workspaceRef: workspaceRefSchema.nullable().optional(),
+  })
+  .readonly();
 
-export class GetActiveWorkspaceOperation implements Operation<
-  GetActiveWorkspaceIntent,
-  WorkspaceRef | null
-> {
+const schemas = {
+  type: INTENT_GET_ACTIVE_WORKSPACE,
+  payload: getActiveWorkspacePayloadSchema,
+  result: getActiveWorkspaceResultSchema,
+  hooks: {
+    get: { result: getActiveWorkspaceHookResultSchema },
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type GetActiveWorkspacePayload = z.infer<typeof getActiveWorkspacePayloadSchema>;
+export type GetActiveWorkspaceResult = z.infer<typeof getActiveWorkspaceResultSchema>;
+export type GetActiveWorkspaceIntent = IntentOf<typeof schemas>;
+export type GetActiveWorkspaceHookResult = z.infer<typeof getActiveWorkspaceHookResultSchema>;
+
+// =============================================================================
+// Operation
+// =============================================================================
+
+export class GetActiveWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = GET_ACTIVE_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<GetActiveWorkspaceIntent>): Promise<WorkspaceRef | null> {
+  async execute(
+    ctx: OperationContext<GetActiveWorkspaceIntent>
+  ): Promise<GetActiveWorkspaceResult> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };

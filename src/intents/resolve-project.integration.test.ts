@@ -44,7 +44,7 @@ function createTestSetup(
 } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+  dispatcher.registerOperation(new ResolveProjectOperation());
 
   if (resolveHandler) {
     const module: IntentModule = {

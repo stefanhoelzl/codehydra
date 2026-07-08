@@ -23,8 +23,10 @@
  * No provider dependencies - hook handlers do the actual work.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import type {
   ProjectId,
   WorkspaceName,
@@ -35,91 +37,57 @@ import type {
   BlockingProcess,
 } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
+import {
+  projectIdSchema,
+  workspaceNameSchema,
+  blockingProcessSchema,
+  deletionProgressSchema,
+  hookCtxSchema,
+} from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface DeleteWorkspacePayload {
-  readonly workspacePath: string;
-  readonly keepBranch: boolean;
-  readonly force: boolean;
-  /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
-  readonly removeWorktree: boolean;
-  readonly skipSwitch?: boolean;
-  /** If true, skip preflight checks for uncommitted changes and unmerged commits. */
-  readonly ignoreWarnings?: boolean;
-  /** PIDs from a previous failed attempt. When present, flush hook kills these before delete. */
-  readonly blockingPids?: readonly number[];
-  /**
-   * The dispatch is user-interactive: the "confirm" hook point runs before the
-   * pipeline, parking the dispatch on a confirmation dialog that contributes
-   * keepBranch or cancels. Programmatic callers (MCP, plugin, auto-workspace)
-   * omit it and never see a dialog. Only honored on the full-pipeline path
-   * (removeWorktree, not force).
-   */
-  readonly interactive?: boolean;
-}
-
-export interface DeleteWorkspaceIntent extends Intent<{ started: boolean }> {
-  readonly type: "workspace:delete";
-  readonly payload: DeleteWorkspacePayload;
-}
-
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
-
-// =============================================================================
-// Event Types
-// =============================================================================
-
-export interface WorkspaceDeletedPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly projectPath: string;
-  /**
-   * True when the dispatch removed (or force-abandoned) the git worktree;
-   * false for runtime-only teardown (removeWorktree: false — e.g. the
-   * per-workspace teardown during project:close). Consumers that track real
-   * deletions (auto-workspace dismissal) must ignore teardown events.
-   */
-  readonly worktreeRemoved: boolean;
-}
-
-export interface WorkspaceDeletedEvent extends DomainEvent {
-  readonly type: "workspace:deleted";
-  readonly payload: WorkspaceDeletedPayload;
-}
+export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
 
 export const EVENT_WORKSPACE_DELETED = "workspace:deleted" as const;
-
 export const EVENT_WORKSPACE_DELETE_FAILED = "workspace:delete-failed" as const;
-
-export interface WorkspaceDeleteFailedPayload {
-  readonly workspacePath: string;
-}
-
-export interface WorkspaceDeleteFailedEvent extends DomainEvent {
-  readonly type: typeof EVENT_WORKSPACE_DELETE_FAILED;
-  readonly payload: WorkspaceDeleteFailedPayload;
-}
-
 export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" as const;
 
-export interface WorkspaceDeletionProgressEvent extends DomainEvent {
-  readonly type: typeof EVENT_WORKSPACE_DELETION_PROGRESS;
-  readonly payload: DeletionProgress;
-}
-
 // =============================================================================
-// Hook Result Types (returned by handlers via collect())
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
+export const deleteWorkspacePayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    keepBranch: z.boolean(),
+    force: z.boolean(),
+    /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
+    removeWorktree: z.boolean(),
+    skipSwitch: z.boolean().optional(),
+    /** If true, skip preflight checks for uncommitted changes and unmerged commits. */
+    ignoreWarnings: z.boolean().optional(),
+    /** PIDs from a previous failed attempt. When present, flush hook kills these before delete. */
+    blockingPids: z.array(z.number()).readonly().optional(),
+    /**
+     * The dispatch is user-interactive: the "confirm" hook point runs before the
+     * pipeline, parking the dispatch on a confirmation dialog that contributes
+     * keepBranch or cancels. Programmatic callers (MCP, plugin, auto-workspace)
+     * omit it and never see a dialog. Only honored on the full-pipeline path
+     * (removeWorktree, not force).
+     */
+    interactive: z.boolean().optional(),
+  })
+  .readonly();
+
+export const deleteWorkspaceResultSchema = z.object({ started: z.boolean() }).readonly();
+
+// =============================================================================
+// Per-hook-point schemas
+// =============================================================================
 
 /**
  * Per-handler result for the "confirm" hook point (interactive dispatches
@@ -130,75 +98,161 @@ export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
  * the pipeline proceeds with ignoreWarnings semantics (the user just saw the
  * warnings).
  */
-export interface ConfirmHookResult {
-  readonly canceled?: boolean;
-  readonly keepBranch?: boolean;
-}
+export const confirmResultSchema = z
+  .object({
+    canceled: z.boolean().optional(),
+    keepBranch: z.boolean().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for the "preflight" hook point.
  * Checks workspace for uncommitted changes and unmerged commits before deletion.
  */
-export interface PreflightHookResult {
-  readonly isDirty?: boolean;
-  readonly unmergedCommits?: number;
-  readonly error?: string;
-}
+export const preflightResultSchema = z
+  .object({
+    isDirty: z.boolean().optional(),
+    unmergedCommits: z.number().optional(),
+    error: z.string().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for the "shutdown" hook point.
  * ViewModule provides wasActive; AgentModule may provide error.
  */
-export interface ShutdownHookResult {
-  readonly wasActive?: boolean;
-  readonly serverName?: string;
-  readonly error?: string;
-}
+export const shutdownResultSchema = z
+  .object({
+    wasActive: z.boolean().optional(),
+    serverName: z.string().optional(),
+    error: z.string().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for the "release" hook point.
  * CWD-only scan: finds and kills processes with CWD under workspace.
  */
-export interface ReleaseHookResult {
-  readonly error?: string;
-}
+export const releaseResultSchema = z.object({ error: z.string().optional() }).readonly();
 
-/**
- * Per-handler result for the "delete" hook point.
- */
-export interface DeleteHookResult {
-  readonly error?: string;
-}
+/** Per-handler result for the "delete" hook point. */
+export const deleteResultSchema = z.object({ error: z.string().optional() }).readonly();
 
 /**
  * Per-handler result for the "detect" hook point.
  * Full blocking process detection after delete failure.
  */
-export interface DetectHookResult {
-  readonly blockingProcesses?: readonly BlockingProcess[];
-  readonly error?: string;
-}
+export const detectResultSchema = z
+  .object({
+    blockingProcesses: z.array(blockingProcessSchema).readonly().optional(),
+    error: z.string().optional(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for the "flush" hook point.
  * Kills blocking processes by PID.
  */
-export interface FlushHookResult {
-  readonly error?: string;
+export const flushResultSchema = z.object({ error: z.string().optional() }).readonly();
+
+/** Operation-added enrichment shared by shutdown/release/delete/detect/confirm/preflight hooks. */
+const deletePipelineEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  workspacePath: z.string(),
+  workspaceName: workspaceNameSchema,
+  active: z.boolean(),
+});
+const deletePipelineInputSchema = hookCtxSchema(
+  deleteWorkspacePayloadSchema,
+  deletePipelineEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "flush" hook point (adds PIDs to kill). */
+const flushEnrichmentSchema = deletePipelineEnrichmentSchema.extend({
+  blockingPids: z.array(z.number()).readonly(),
+});
+const flushInputSchema = hookCtxSchema(deleteWorkspacePayloadSchema, flushEnrichmentSchema.shape);
+
+// =============================================================================
+// Event payload schemas (events defined in this file)
+// =============================================================================
+
+const workspaceDeletedSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    workspacePath: z.string(),
+    projectPath: z.string(),
+    /**
+     * True when the dispatch removed (or force-abandoned) the git worktree;
+     * false for runtime-only teardown (removeWorktree: false — e.g. the
+     * per-workspace teardown during project:close). Consumers that track real
+     * deletions (auto-workspace dismissal) must ignore teardown events.
+     */
+    worktreeRemoved: z.boolean(),
+  })
+  .readonly();
+
+const workspaceDeleteFailedSchema = z.object({ workspacePath: z.string() }).readonly();
+
+const schemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: deleteWorkspacePayloadSchema,
+  result: deleteWorkspaceResultSchema,
+  hooks: {
+    confirm: { input: deletePipelineInputSchema, result: confirmResultSchema },
+    preflight: { input: deletePipelineInputSchema, result: preflightResultSchema },
+    shutdown: { input: deletePipelineInputSchema, result: shutdownResultSchema },
+    release: { input: deletePipelineInputSchema, result: releaseResultSchema },
+    delete: { input: deletePipelineInputSchema, result: deleteResultSchema },
+    detect: { input: deletePipelineInputSchema, result: detectResultSchema },
+    flush: { input: flushInputSchema, result: flushResultSchema },
+  },
+  events: {
+    [EVENT_WORKSPACE_DELETED]: workspaceDeletedSchema,
+    [EVENT_WORKSPACE_DELETE_FAILED]: workspaceDeleteFailedSchema,
+    [EVENT_WORKSPACE_DELETION_PROGRESS]: deletionProgressSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type DeleteWorkspacePayload = z.infer<typeof deleteWorkspacePayloadSchema>;
+export type DeleteWorkspaceIntent = IntentOf<typeof schemas>;
+
+export type WorkspaceDeletedPayload = z.infer<typeof workspaceDeletedSchema>;
+export type WorkspaceDeleteFailedPayload = z.infer<typeof workspaceDeleteFailedSchema>;
+
+export interface WorkspaceDeletedEvent extends DomainEvent {
+  readonly type: "workspace:deleted";
+  readonly payload: WorkspaceDeletedPayload;
 }
+
+export interface WorkspaceDeleteFailedEvent extends DomainEvent {
+  readonly type: typeof EVENT_WORKSPACE_DELETE_FAILED;
+  readonly payload: WorkspaceDeleteFailedPayload;
+}
+
+export interface WorkspaceDeletionProgressEvent extends DomainEvent {
+  readonly type: typeof EVENT_WORKSPACE_DELETION_PROGRESS;
+  readonly payload: DeletionProgress;
+}
+
+export type ConfirmHookResult = z.infer<typeof confirmResultSchema>;
+export type PreflightHookResult = z.infer<typeof preflightResultSchema>;
+export type ShutdownHookResult = z.infer<typeof shutdownResultSchema>;
+export type ReleaseHookResult = z.infer<typeof releaseResultSchema>;
+export type DeleteHookResult = z.infer<typeof deleteResultSchema>;
+export type DetectHookResult = z.infer<typeof detectResultSchema>;
+export type FlushHookResult = z.infer<typeof flushResultSchema>;
 
 /** Input for shutdown/release/delete/detect hooks (enriched with both resolved paths). */
-export interface DeletePipelineHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly workspacePath: string;
-  readonly workspaceName: WorkspaceName;
-  readonly active: boolean;
-}
+export type DeletePipelineHookInput = HookContext & z.infer<typeof deletePipelineEnrichmentSchema>;
 
 /** Input for flush hook (enriched with PIDs to kill). */
-export interface FlushHookInput extends DeletePipelineHookInput {
-  readonly blockingPids: readonly number[];
-}
+export type FlushHookInput = HookContext & z.infer<typeof flushEnrichmentSchema>;
 
 // =============================================================================
 // Merged Result Types (internal to operation)
@@ -224,6 +278,18 @@ interface MergedDetect {
 // Merge Functions
 // =============================================================================
 
+/**
+ * `collectErrorMessages` expects exact-optional `error?: string`, but zod infers `error?: string
+ * | undefined` for `.optional()` fields. The two are runtime-identical ("maybe an error string"),
+ * so bridge the exactOptionalPropertyTypes gap with a widening view at the single call boundary.
+ */
+type ErrorResult = { readonly error?: string | undefined };
+const errorMessages = (
+  results: readonly ErrorResult[],
+  collectErrors: readonly Error[]
+): string[] =>
+  collectErrorMessages(results as readonly { readonly error?: string }[], collectErrors);
+
 function mergeShutdown(
   results: readonly ShutdownHookResult[],
   collectErrors: readonly Error[]
@@ -234,14 +300,14 @@ function mergeShutdown(
     if (r.wasActive) wasActive = true;
     if (r.serverName && !serverName) serverName = r.serverName;
   }
-  return { wasActive, serverName, errors: collectErrorMessages(results, collectErrors) };
+  return { wasActive, serverName, errors: errorMessages(results, collectErrors) };
 }
 
 function mergeErrors(
-  results: readonly { readonly error?: string }[],
+  results: readonly ErrorResult[],
   collectErrors: readonly Error[]
 ): MergedErrors {
-  return { errors: collectErrorMessages(results, collectErrors) };
+  return { errors: errorMessages(results, collectErrors) };
 }
 
 function mergeDetect(
@@ -254,7 +320,7 @@ function mergeDetect(
   }
   return {
     ...(blockingProcesses !== undefined && { blockingProcesses }),
-    errors: collectErrorMessages(results, collectErrors),
+    errors: errorMessages(results, collectErrors),
   };
 }
 
@@ -295,11 +361,9 @@ interface PipelineResult {
   readonly canceled?: boolean;
 }
 
-export class DeleteWorkspaceOperation implements Operation<
-  DeleteWorkspaceIntent,
-  { started: boolean }
-> {
+export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: boolean }> {
     const { payload } = ctx.intent;

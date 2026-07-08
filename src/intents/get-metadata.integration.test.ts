@@ -64,8 +64,8 @@ function createTestSetup(): TestSetup {
   const dispatcher = createMockDispatcher();
 
   // Register set-metadata and get-metadata operations
-  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new GetMetadataOperation());
 
   // Register infrastructure operations (resolve-workspace, resolve-project, etc.)
   registerTestInfrastructure(dispatcher, {

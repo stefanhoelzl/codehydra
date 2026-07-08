@@ -10,9 +10,10 @@
 
 import { createServer } from "node:net";
 import { vi } from "vitest";
+import { z } from "zod/v4";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import type { Operation, OperationContext, OperationSchemas } from "../intents/lib/operation";
 import { type ProjectId, type DeletionProgress } from "../shared/api/types";
 import {
   INTENT_GET_WORKSPACE_STATUS,
@@ -193,58 +194,67 @@ export function createMockToolOperations(
       capturedIntents.push(ctx.intent);
       return result;
     });
-    const operation: Operation<Intent, unknown> = { id: def.operationId, execute };
-    dispatcher.registerOperation(def.intent, operation);
+    const schemas = {
+      type: def.intent,
+      payload: z.unknown(),
+      result: z.unknown(),
+    } satisfies OperationSchemas;
+    const operation: Operation<typeof schemas> = { id: def.operationId, schemas, execute };
+    dispatcher.registerOperation(operation);
     operations[key] = execute;
   }
 
   // workspace_delete waits for a terminal deletion-progress event to learn the
   // real outcome, so the mock delete op emits one.
   const deleteControl: DeleteControl = { mode: "success" };
-  const deleteExecute = vi.fn(
-    async (ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> => {
-      capturedIntents.push(ctx.intent);
-      if (deleteControl.mode === "reject") {
-        throw new Error("Preflight check failed: Workspace has uncommitted changes");
-      }
-      const { workspacePath, keepBranch } = ctx.intent.payload;
-      const hasErrors = deleteControl.mode === "blocked";
-      const progress: DeletionProgress = {
-        workspacePath: workspacePath as DeletionProgress["workspacePath"],
-        workspaceName: "feature-branch" as DeletionProgress["workspaceName"],
-        projectId: "test-12345678" as ProjectId,
-        keepBranch,
-        operations: [
-          {
-            id: "cleanup-workspace",
-            label: "Removing workspace",
-            status: hasErrors ? "error" : "done",
-            ...(hasErrors ? { error: "EBUSY: resource busy or locked" } : {}),
-          },
-        ],
-        completed: true,
-        hasErrors,
-        ...(deleteControl.blockingProcesses
-          ? {
-              blockingProcesses: deleteControl.blockingProcesses.map((p) => ({
-                pid: p.pid,
-                name: p.name,
-                commandLine: p.name,
-                files: [],
-                cwd: null,
-              })),
-            }
-          : {}),
-      };
-      await ctx.emit({ type: EVENT_WORKSPACE_DELETION_PROGRESS, payload: progress });
-      return { started: true };
+  const deleteExecute = vi.fn(async (ctx: OperationContext<Intent>): Promise<{ started: true }> => {
+    capturedIntents.push(ctx.intent);
+    if (deleteControl.mode === "reject") {
+      throw new Error("Preflight check failed: Workspace has uncommitted changes");
     }
-  );
-  const deleteOperation: Operation<DeleteWorkspaceIntent, { started: true }> = {
+    const { workspacePath, keepBranch } = ctx.intent.payload as DeleteWorkspaceIntent["payload"];
+    const hasErrors = deleteControl.mode === "blocked";
+    const progress: DeletionProgress = {
+      workspacePath: workspacePath as DeletionProgress["workspacePath"],
+      workspaceName: "feature-branch" as DeletionProgress["workspaceName"],
+      projectId: "test-12345678" as ProjectId,
+      keepBranch,
+      operations: [
+        {
+          id: "cleanup-workspace",
+          label: "Removing workspace",
+          status: hasErrors ? "error" : "done",
+          ...(hasErrors ? { error: "EBUSY: resource busy or locked" } : {}),
+        },
+      ],
+      completed: true,
+      hasErrors,
+      ...(deleteControl.blockingProcesses
+        ? {
+            blockingProcesses: deleteControl.blockingProcesses.map((p) => ({
+              pid: p.pid,
+              name: p.name,
+              commandLine: p.name,
+              files: [],
+              cwd: null,
+            })),
+          }
+        : {}),
+    };
+    await ctx.emit({ type: EVENT_WORKSPACE_DELETION_PROGRESS, payload: progress });
+    return { started: true };
+  });
+  const deleteSchemas = {
+    type: INTENT_DELETE_WORKSPACE,
+    payload: z.unknown(),
+    result: z.custom<{ started: true }>(),
+  } satisfies OperationSchemas;
+  const deleteOperation: Operation<typeof deleteSchemas> = {
     id: DELETE_WORKSPACE_OPERATION_ID,
+    schemas: deleteSchemas,
     execute: deleteExecute,
   };
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOperation);
+  dispatcher.registerOperation(deleteOperation);
   operations.deleteWorkspace = deleteExecute;
 
   return { operations, capturedIntents, deleteControl };

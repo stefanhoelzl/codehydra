@@ -13,7 +13,8 @@ import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent } from "./lib/types";
-import type { HookContext, HookOutput } from "./lib/operation";
+import { z } from "zod/v4";
+import type { HookContext, HookOutput, OperationSchemas } from "./lib/operation";
 import {
   HibernateWorkspaceOperation,
   HIBERNATE_WORKSPACE_OPERATION_ID,
@@ -41,7 +42,6 @@ import {
 import { registerTestInfrastructure } from "./operations.test-utils";
 import {
   SetMetadataOperation,
-  INTENT_SET_METADATA,
   SET_METADATA_OPERATION_ID,
   EVENT_METADATA_CHANGED,
   type MetadataChangedEvent,
@@ -68,6 +68,19 @@ const REOPENED_WORKSPACE: Workspace = {
   metadata: CLEAN_METADATA,
   path: WORKSPACE_PATH,
 };
+
+/** Permissive schemas for the stub get-metadata / open-workspace operations wake dispatches. */
+const getMetadataStubSchemas = {
+  type: INTENT_GET_METADATA,
+  payload: z.unknown(),
+  result: z.custom<Readonly<Record<string, string>>>(),
+} satisfies OperationSchemas;
+
+const openWorkspaceStubSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<Workspace>(),
+} satisfies OperationSchemas;
 
 interface Recorder {
   captureCalled: boolean;
@@ -250,19 +263,21 @@ function buildHarness(
   const recorder = createRecorder();
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-  dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
+  dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new HibernateWorkspaceOperation());
+  dispatcher.registerOperation(new WakeWorkspaceOperation());
 
   // Mock the get-metadata + open-workspace operations that wake now dispatches
   // internally to bring the workspace back online. (Hibernate never dispatches
   // these, so registering them is harmless for those tests.)
-  dispatcher.registerOperation(INTENT_GET_METADATA, {
+  dispatcher.registerOperation({
     id: GET_METADATA_OPERATION_ID,
+    schemas: getMetadataStubSchemas,
     execute: async () => CLEAN_METADATA,
   });
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, {
+  dispatcher.registerOperation({
     id: OPEN_WORKSPACE_OPERATION_ID,
+    schemas: openWorkspaceStubSchemas,
     execute: async (ctx) => {
       recorder.openPayload = (ctx.intent as { payload: OpenWorkspacePayload }).payload;
       recorder.callOrder.push("open");

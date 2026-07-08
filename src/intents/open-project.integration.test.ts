@@ -47,7 +47,6 @@ import type {
 import {
   OpenWorkspaceOperation,
   OPEN_WORKSPACE_OPERATION_ID,
-  INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
 } from "./open-workspace";
 import type {
@@ -58,7 +57,7 @@ import type {
 } from "./open-workspace";
 import type { Project, ProjectId, WorkspaceName } from "../shared/api/types";
 import { Path } from "../utils/path/path";
-import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./switch-workspace";
+import { SwitchWorkspaceOperation } from "./switch-workspace";
 import {
   createTestViewManager,
   registerTestInfrastructure,
@@ -285,8 +284,8 @@ function createTestHarness(options?: {
   };
 
   // Register operations
-  dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+  dispatcher.registerOperation(new OpenProjectOperation());
+  dispatcher.registerOperation(new OpenWorkspaceOperation());
 
   // Shared workspace:resolve (reverse lookup over registered projects),
   // project:resolve, switch-workspace activate, and infra operations.
@@ -724,9 +723,9 @@ describe("OpenProjectOperation", () => {
       lastBaseBranches: new Map(),
     };
 
-    dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
-    dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-    dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+    dispatcher.registerOperation(new OpenProjectOperation());
+    dispatcher.registerOperation(new OpenWorkspaceOperation());
+    dispatcher.registerOperation(new SwitchWorkspaceOperation());
 
     // Resolve module that always returns alreadyOpen: true
     const alreadyOpenResolveModule: IntentModule = {
@@ -927,7 +926,7 @@ describe("OpenProjectOperation", () => {
   it("test 10: returns null when select-folder hook returns null (canceled)", async () => {
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+    dispatcher.registerOperation(new OpenProjectOperation());
 
     // Select-folder module that returns null (user canceled)
     const selectFolderModule: IntentModule = {
@@ -1025,9 +1024,9 @@ describe("OpenProjectOperation", () => {
     // Create harness where the resolve module signals alreadyOpen
     const dispatcher = createMockDispatcher();
 
-    dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
-    dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-    dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+    dispatcher.registerOperation(new OpenProjectOperation());
+    dispatcher.registerOperation(new OpenWorkspaceOperation());
+    dispatcher.registerOperation(new SwitchWorkspaceOperation());
 
     // Resolve module that always returns alreadyOpen: true
     const alreadyOpenModule: IntentModule = {

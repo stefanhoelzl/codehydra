@@ -184,11 +184,10 @@ function createTestSetup(overrides?: {
   });
 
   dispatcher.registerOperation(
-    INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "start")
+    createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
   );
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-  dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
+  dispatcher.registerOperation(new AppResumeOperation());
 
   dispatcher.registerModule(autoUpdaterModule);
 

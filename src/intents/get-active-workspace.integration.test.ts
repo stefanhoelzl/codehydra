@@ -50,7 +50,7 @@ interface TestSetup {
 function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+  dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
   // Active workspace hook handler module (event-cache pattern)
   const activeWorkspaceModule: IntentModule = {

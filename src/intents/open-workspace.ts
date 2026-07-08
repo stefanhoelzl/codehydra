@@ -15,106 +15,227 @@
  * workspace:created domain event.
  *
  * No provider dependencies - hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/event
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent`, result,
+ * hook, and event types are **derived** from that bundle — never restated.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName, Workspace, AgentSpec } from "../shared/api/types";
-import type { AgentType } from "../shared/plugin-protocol";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import type { WorkspaceName } from "./contract";
+import {
+  projectIdSchema,
+  workspaceNameSchema,
+  workspaceSchema,
+  agentSpecSchema,
+  hookCtxSchema,
+} from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
+export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
+export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
+
+export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
+export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
+export const EVENT_WORKSPACE_CREATE_FAILED = "workspace:create-failed" as const;
+
 // =============================================================================
-// Intent Types
+// Contract schemas (single source of truth)
 // =============================================================================
+
+/** Selected agent backend. Local schema (not in contract); mirrors plugin-protocol's AgentType. */
+const agentTypeSchema = z.enum(["opencode", "claude"]);
+type AgentType = z.infer<typeof agentTypeSchema>;
 
 /** Identifies which module dispatched a workspace:open intent. */
-export type WorkspaceOpenSource =
-  | "ui-ipc"
-  | "mcp"
-  | "plugin-server"
-  | "auto-workspace"
-  | "open-project"
-  | "creation";
+export const workspaceOpenSourceSchema = z.enum([
+  "ui-ipc",
+  "mcp",
+  "plugin-server",
+  "auto-workspace",
+  "open-project",
+  "creation",
+]);
+export type WorkspaceOpenSource = z.infer<typeof workspaceOpenSourceSchema>;
 
 /** Data for activating an existing (discovered) workspace via workspace:open */
-export interface ExistingWorkspaceData {
-  readonly path: string;
-  readonly name: string;
-  readonly branch: string | null;
-  readonly metadata: Readonly<Record<string, string>>;
-}
+export const existingWorkspaceDataSchema = z
+  .object({
+    path: z.string(),
+    name: z.string(),
+    branch: z.string().nullable(),
+    metadata: z.record(z.string(), z.string()).readonly(),
+  })
+  .readonly();
+export type ExistingWorkspaceData = z.infer<typeof existingWorkspaceDataSchema>;
 
-export interface OpenWorkspacePayload {
-  readonly workspaceName: string;
-  readonly base?: string;
-  /** Remote branch to check out (e.g., 'origin/feature-login'). When set, the local branch
-   *  is created at this ref with upstream configured, instead of forking from base. */
-  readonly tracking?: string;
-  /** If true, switch to the new workspace. If false, don't steal focus but still switch when
-   *  no workspace is active. Default behavior (undefined): switch. */
-  readonly stealFocus?: boolean;
-  /** When set, skip worktree creation and populate context from existing workspace data. */
-  readonly existingWorkspace?: ExistingWorkspaceData;
-  /** Authoritative project path. */
-  readonly projectPath: string;
-  /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
-  readonly source?: WorkspaceOpenSource;
-  /**
-   * Agent spec: prompt + backend-specific launch config. When the `type` is
-   * "claude"/"opencode" it also selects (and persists) the per-workspace
-   * backend; "default" or omitted falls back to git metadata / global config.
-   */
-  readonly agent?: AgentSpec;
-}
+export const openWorkspacePayloadSchema = z
+  .object({
+    workspaceName: z.string(),
+    base: z.string().optional(),
+    /** Remote branch to check out (e.g., 'origin/feature-login'). When set, the local branch
+     *  is created at this ref with upstream configured, instead of forking from base. */
+    tracking: z.string().optional(),
+    /** If true, switch to the new workspace. If false, don't steal focus but still switch when
+     *  no workspace is active. Default behavior (undefined): switch. */
+    stealFocus: z.boolean().optional(),
+    /** When set, skip worktree creation and populate context from existing workspace data. */
+    existingWorkspace: existingWorkspaceDataSchema.optional(),
+    /** Authoritative project path. */
+    projectPath: z.string(),
+    /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
+    source: workspaceOpenSourceSchema.optional(),
+    /**
+     * Agent spec: prompt + backend-specific launch config. When the `type` is
+     * "claude"/"opencode" it also selects (and persists) the per-workspace
+     * backend; "default" or omitted falls back to git metadata / global config.
+     */
+    agent: agentSpecSchema.optional(),
+  })
+  .readonly();
 
-export type OpenWorkspaceResult = Workspace;
-
-export interface OpenWorkspaceIntent extends Intent<OpenWorkspaceResult> {
-  readonly type: "workspace:open";
-  readonly payload: OpenWorkspacePayload;
-}
-
-export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
+export const openWorkspaceResultSchema = workspaceSchema;
 
 // =============================================================================
-// Event Types
+// Per-hook-point schemas
 // =============================================================================
 
-export interface WorkspaceCreatedPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly projectPath: string;
-  readonly branch: string;
-  readonly base?: string;
-  readonly tracking?: string;
-  readonly metadata: Readonly<Record<string, string>>;
-  readonly workspaceUrl: string;
-  readonly agent?: AgentSpec;
-  readonly stealFocus?: boolean;
-  /** True when re-activating a discovered workspace (not a fresh creation). */
-  readonly reopened?: boolean;
-  /** Which module dispatched the original intent. */
-  readonly source?: WorkspaceOpenSource;
-}
+/** Operation-added enrichment for the "create" hook point (resolved project path). */
+const createEnrichmentSchema = z.object({ projectPath: z.string() });
+const createInputSchema = hookCtxSchema(openWorkspacePayloadSchema, createEnrichmentSchema.shape);
+
+/** Result from the "create" hook point. Fields optional — multiple handlers may each contribute a subset. */
+export const createResultSchema = z
+  .object({
+    workspacePath: z.string().optional(),
+    branch: z.string().optional(),
+    metadata: z.record(z.string(), z.string()).readonly().optional(),
+    /** The resolved base branch (explicit or auto-detected). Used in the event payload. */
+    resolvedBase: z.string().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "setup" hook point (merged create results). */
+const setupEnrichmentSchema = z.object({
+  workspacePath: z.string(),
+  projectPath: z.string(),
+});
+const setupInputSchema = hookCtxSchema(openWorkspacePayloadSchema, setupEnrichmentSchema.shape);
+
+/** Result from the "setup" hook point. */
+export const setupResultSchema = z
+  .object({
+    envVars: z.record(z.string(), z.string()).optional(),
+    /** Selected agent backend, contributed by the active agent module.
+     *  Operation-consumed (no sibling requires), so a result — not a capability. */
+    agentType: agentTypeSchema.nullable().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "finalize" hook point (create+setup results). */
+const finalizeEnrichmentSchema = z.object({
+  workspacePath: z.string(),
+  envVars: z.record(z.string(), z.string()),
+  agentType: agentTypeSchema.nullable(),
+});
+const finalizeInputSchema = hookCtxSchema(
+  openWorkspacePayloadSchema,
+  finalizeEnrichmentSchema.shape
+);
+
+/** The "finalize" hook produces the workspace URL string (only code-server contributes one). */
+const finalizeResultSchema = z.string();
+
+// =============================================================================
+// Event payload schemas (events defined in this file)
+// =============================================================================
+
+const workspaceCreatedSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    workspacePath: z.string(),
+    projectPath: z.string(),
+    branch: z.string(),
+    base: z.string().optional(),
+    tracking: z.string().optional(),
+    metadata: z.record(z.string(), z.string()).readonly(),
+    workspaceUrl: z.string(),
+    agent: agentSpecSchema.optional(),
+    stealFocus: z.boolean().optional(),
+    /** True when re-activating a discovered workspace (not a fresh creation). */
+    reopened: z.boolean().optional(),
+    /** Which module dispatched the original intent. */
+    source: workspaceOpenSourceSchema.optional(),
+  })
+  .readonly();
+
+const workspaceLoadingSchema = z
+  .object({
+    workspaceName: z.string(),
+    projectPath: z.string(),
+    /** The requested base branch (absent when auto-detected later). */
+    base: z.string().optional(),
+  })
+  .readonly();
+
+const workspaceCreateFailedSchema = z
+  .object({
+    workspaceName: z.string(),
+    projectPath: z.string(),
+    error: z.string(),
+    /** Which module dispatched the original intent. */
+    source: workspaceOpenSourceSchema.optional(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: openWorkspacePayloadSchema,
+  result: openWorkspaceResultSchema,
+  hooks: {
+    create: { input: createInputSchema, result: createResultSchema },
+    setup: { input: setupInputSchema, result: setupResultSchema },
+    finalize: { input: finalizeInputSchema, result: finalizeResultSchema },
+  },
+  events: {
+    [EVENT_WORKSPACE_CREATED]: workspaceCreatedSchema,
+    [EVENT_WORKSPACE_LOADING]: workspaceLoadingSchema,
+    [EVENT_WORKSPACE_CREATE_FAILED]: workspaceCreateFailedSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type OpenWorkspacePayload = z.infer<typeof openWorkspacePayloadSchema>;
+export type OpenWorkspaceResult = z.infer<typeof openWorkspaceResultSchema>;
+export type OpenWorkspaceIntent = IntentOf<typeof schemas>;
+
+export type CreateHookResult = z.infer<typeof createResultSchema>;
+export type SetupHookResult = z.infer<typeof setupResultSchema>;
+
+/** Input context for the "create" hook point (enriched with resolved project path). */
+export type CreateHookInput = HookContext & z.infer<typeof createEnrichmentSchema>;
+/** Input context for the "setup" hook point (enriched with merged create results). */
+export type SetupHookInput = HookContext & z.infer<typeof setupEnrichmentSchema>;
+/** Input context for the "finalize" hook point (enriched with create+setup results). */
+export type FinalizeHookInput = HookContext & z.infer<typeof finalizeEnrichmentSchema>;
+
+export type WorkspaceCreatedPayload = z.infer<typeof workspaceCreatedSchema>;
+export type WorkspaceLoadingPayload = z.infer<typeof workspaceLoadingSchema>;
+export type WorkspaceCreateFailedPayload = z.infer<typeof workspaceCreateFailedSchema>;
 
 export interface WorkspaceCreatedEvent extends DomainEvent {
   readonly type: "workspace:created";
   readonly payload: WorkspaceCreatedPayload;
-}
-
-export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
-
-// -- workspace:loading (emitted before slow work begins) --
-
-export interface WorkspaceLoadingPayload {
-  readonly workspaceName: string;
-  readonly projectPath: string;
-  /** The requested base branch (absent when auto-detected later). */
-  readonly base?: string;
 }
 
 export interface WorkspaceLoadingEvent extends DomainEvent {
@@ -122,72 +243,18 @@ export interface WorkspaceLoadingEvent extends DomainEvent {
   readonly payload: WorkspaceLoadingPayload;
 }
 
-export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
-
-// -- workspace:create-failed (emitted on operation error) --
-
-export interface WorkspaceCreateFailedPayload {
-  readonly workspaceName: string;
-  readonly projectPath: string;
-  readonly error: string;
-  /** Which module dispatched the original intent. */
-  readonly source?: WorkspaceOpenSource;
-}
-
 export interface WorkspaceCreateFailedEvent extends DomainEvent {
   readonly type: "workspace:create-failed";
   readonly payload: WorkspaceCreateFailedPayload;
 }
 
-export const EVENT_WORKSPACE_CREATE_FAILED = "workspace:create-failed" as const;
-
 // =============================================================================
 // Operation
 // =============================================================================
 
-export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
-
-// =============================================================================
-// Per-hook-point types
-// =============================================================================
-
-/** Input context for the "create" hook point (enriched with resolved project path). */
-export interface CreateHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
-/** Result from the "create" hook point. Fields are optional — multiple handlers may each contribute a subset. */
-export interface CreateHookResult {
-  readonly workspacePath?: string;
-  readonly branch?: string;
-  readonly metadata?: Readonly<Record<string, string>>;
-  /** The resolved base branch (explicit or auto-detected). Used in the event payload. */
-  readonly resolvedBase?: string;
-}
-
-/** Input context for the "setup" hook point (enriched with merged create results). */
-export interface SetupHookInput extends HookContext {
-  readonly workspacePath: string;
-  readonly projectPath: string;
-}
-
-/** Result from the "setup" hook point. */
-export interface SetupHookResult {
-  readonly envVars?: Record<string, string>;
-  /** Selected agent backend, contributed by the active agent module.
-   *  Operation-consumed (no sibling requires), so a result — not a capability. */
-  readonly agentType?: AgentType | null;
-}
-
-/** Input context for the "finalize" hook point (enriched with create+setup results). */
-export interface FinalizeHookInput extends HookContext {
-  readonly workspacePath: string;
-  readonly envVars: Record<string, string>;
-  readonly agentType: AgentType | null;
-}
-
-export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, OpenWorkspaceResult> {
+export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
     const { projectPath } = ctx.intent.payload;
@@ -302,7 +369,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       ctx.intent.payload.workspaceName) as WorkspaceName;
     const projectId = resolvedProjectId;
 
-    const workspace: Workspace = {
+    const workspace: OpenWorkspaceResult = {
       projectId,
       name: resolvedWorkspaceName,
       branch,

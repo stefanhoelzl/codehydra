@@ -9,7 +9,7 @@ import {
   SERVER_INSTRUCTIONS,
   type McpServerFactory,
 } from "./mcp-module";
-import { agentSpecSchema } from "../shared/api/types";
+import { agentSpecSchema } from "../intents/contract";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";

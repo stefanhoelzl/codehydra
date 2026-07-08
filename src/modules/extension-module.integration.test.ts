@@ -9,7 +9,7 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
 import type { InitResult } from "../intents/app-start";
 import { createExtensionModule, type ExtensionModuleDeps } from "./extension-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -46,8 +46,7 @@ function createTestSetup(deps: ExtensionModuleDeps) {
   dispatcher.registerModule(module);
 
   dispatcher.registerOperation(
-    "app:start",
-    createMinimalOperation<never, InitResult>(APP_START_OPERATION_ID, "init", {
+    createMinimalOperation<InitResult>(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
       hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
     })
   );

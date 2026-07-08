@@ -21,7 +21,8 @@ import type { AppReadyIntent, LoadProjectsResult } from "./app-ready";
 import { INTENT_OPEN_PROJECT } from "./open-project";
 import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
-import type { HookOutput, Operation, OperationContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { HookOutput, Operation, OperationSchemas } from "./lib/operation";
 import type { Project } from "../shared/api/types";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { ConfigAgentType } from "../boundaries/platform/config";
@@ -57,14 +58,22 @@ function createProjectModule(projectPaths: readonly string[]): IntentModule {
   };
 }
 
+const openProjectStubSchemas = {
+  type: INTENT_OPEN_PROJECT,
+  payload: z.unknown(),
+  result: z.custom<Project>(),
+} satisfies OperationSchemas;
+
 function createProjectOpenStub(
   state: TestState,
   options?: { failForPath?: string }
-): Operation<OpenProjectIntent, Project> {
+): Operation<typeof openProjectStubSchemas> {
   return {
     id: "open-project",
-    async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
-      const pathStr = ctx.intent.payload.path?.toString() ?? "";
+    schemas: openProjectStubSchemas,
+    async execute(ctx): Promise<Project> {
+      const payload = ctx.intent.payload as OpenProjectIntent["payload"];
+      const pathStr = payload.path?.toString() ?? "";
       if (options?.failForPath === pathStr) {
         throw new Error(`Project not found: ${pathStr}`);
       }
@@ -82,15 +91,14 @@ function createProjectOpenStub(
 
 function createTestSetup(
   modules: IntentModule[],
-  stub: Operation<OpenProjectIntent, Project>
+  stub: Operation<typeof openProjectStubSchemas>
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(
-    INTENT_APP_READY,
     new AppReadyOperation(createMockAccessor<ConfigAgentType>("agent", "claude"))
   );
-  dispatcher.registerOperation(INTENT_OPEN_PROJECT, stub);
+  dispatcher.registerOperation(stub);
 
   for (const m of modules) dispatcher.registerModule(m);
 
@@ -178,10 +186,12 @@ describe("AppReady Operation", () => {
       const latch = new Promise<void>((r) => {
         resolveLatch = r;
       });
-      const stub: Operation<OpenProjectIntent, Project> = {
+      const stub: Operation<typeof openProjectStubSchemas> = {
         id: "open-project",
-        async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
-          const p = ctx.intent.payload.path?.toString() ?? "";
+        schemas: openProjectStubSchemas,
+        async execute(ctx): Promise<Project> {
+          const payload = ctx.intent.payload as OpenProjectIntent["payload"];
+          const p = payload.path?.toString() ?? "";
           started.push(p);
           if (started.length === paths.length) resolveLatch();
           await latch;

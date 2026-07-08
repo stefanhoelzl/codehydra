@@ -5,6 +5,7 @@
  * They receive a context with hooks, dispatch, and emit capabilities.
  */
 
+import type { z } from "zod/v4";
 import type { Intent, IntentResult, DomainEvent } from "./types";
 
 // =============================================================================
@@ -156,7 +157,70 @@ export interface OperationContext<I extends Intent = Intent> {
  * Operations orchestrate hooks and emit domain events.
  * They never call providers directly — hook handlers do the actual work.
  */
-export interface Operation<I extends Intent = Intent, R = void> {
+export interface Operation<S extends OperationSchemas = OperationSchemas> {
   readonly id: string;
-  execute(ctx: OperationContext<I>): Promise<R>;
+  /**
+   * The operation's contract schemas (item 2) — the single source of truth for its Intent
+   * and result types. The dispatcher indexes them at registration (keyed by `schemas.type`)
+   * and validates every dispatch against them. The Intent/result the operation orchestrates
+   * are **derived** from this bundle via {@link IntentOf} / {@link ResultOf}.
+   */
+  readonly schemas: S;
+  execute(ctx: OperationContext<IntentOf<S>>): Promise<ResultOf<S>>;
 }
+
+/** Per-hook-point schemas: whole input context, each handler's partial result, provided data. */
+export interface HookPointSchemas {
+  /**
+   * Whole input context (intent + scalar capabilities + enrichment) — validated for its
+   * throw/normalization side effect only; the operation-built context (a `HookContext`) is
+   * what reaches the handler. Fail → throw (the operation built a bad context).
+   */
+  readonly input?: z.ZodType;
+  /** Each handler's partial result. Fail → collected error (isolated per handler). */
+  readonly result?: z.ZodType;
+  /** Provided capability data (scalar bag). Fail → collected error. */
+  readonly provides?: z.ZodType<Readonly<Record<string, unknown>>>;
+}
+
+/**
+ * The zod schemas an operation declares for its contract. Colocated with the op's
+ * `*_OPERATION_ID` / hook-point / `EVENT_*` definitions; the dispatcher reads them at
+ * `registerOperation` (payload/result/hooks via the operations map; `events` folded into
+ * an event→schema lookup for `emitEvent`).
+ */
+export interface OperationSchemas {
+  /** Intent type literal — the discriminator, and the dispatcher registration key. */
+  readonly type: string;
+  /** Intent payload — validated at dispatch entry (fail → reject the dispatch). */
+  readonly payload: z.ZodType;
+  /** Operation return value — validated before resolve (fail → reject). Omit for a void result. */
+  readonly result?: z.ZodType;
+  /** Per-hook-point schemas, keyed by hook point id. */
+  readonly hooks?: Readonly<Record<string, HookPointSchemas>>;
+  /** Event payload schemas, keyed by event type — validated at emit (fail → throw). */
+  readonly events?: Readonly<Record<string, z.ZodType>>;
+}
+
+/**
+ * The result type an operation's `schemas` describe — `z.infer` of the `result` schema,
+ * or `void` when none is declared. Derived so an operation never restates its result type.
+ */
+export type ResultOf<S extends OperationSchemas> = S extends {
+  readonly result: infer R extends z.ZodType;
+}
+  ? z.infer<R>
+  : void;
+
+/**
+ * The Intent type an operation's `schemas` describe: the declared `type` literal, the
+ * `z.infer` of the `payload` schema, and the derived result as the phantom carrier. Lets an
+ * operation derive its whole Intent from `typeof schemas` instead of hand-writing an interface:
+ *
+ *   const schemas = { type: INTENT_X, payload: xPayloadSchema, result: xResultSchema } satisfies OperationSchemas;
+ *   export type XIntent = IntentOf<typeof schemas>;
+ */
+export type IntentOf<S extends OperationSchemas> = Intent<ResultOf<S>> & {
+  readonly type: S["type"];
+  readonly payload: z.infer<S["payload"]>;
+};

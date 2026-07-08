@@ -7,20 +7,35 @@
 
 import { createMockDispatcher } from "./dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
+import { z } from "zod/v4";
 import { Dispatcher } from "./dispatcher";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
-import type { Operation, OperationContext } from "./operation";
+import type { Operation, OperationContext, OperationSchemas } from "./operation";
 
 // =============================================================================
 // Test Helpers
 // =============================================================================
 
-function noopOperation(id: string): Operation<Intent, void> {
-  return {
-    id,
-    execute: async () => {},
-  };
+/**
+ * Build a test operation with a permissive schema whose `type` is the dispatcher
+ * registration key (the intent type it handles).
+ */
+function opWithType(
+  intentType: string,
+  spec: { id: string; execute: (ctx: OperationContext<Intent>) => Promise<unknown> }
+) {
+  const schemas = {
+    type: intentType,
+    payload: z.unknown(),
+    result: z.custom<unknown>(),
+  } satisfies OperationSchemas;
+  const op: Operation<typeof schemas> = { id: spec.id, schemas, execute: spec.execute };
+  return op;
+}
+
+function noopOperation(id: string, intentType: string) {
+  return opWithType(intentType, { id, execute: async () => {} });
 }
 
 function setup(...args: Parameters<typeof createIdempotencyModule>): { dispatcher: Dispatcher } {
@@ -37,7 +52,7 @@ function setup(...args: Parameters<typeof createIdempotencyModule>): { dispatche
 describe("createIdempotencyModule", () => {
   it("singleton: blocks duplicate dispatch", async () => {
     const { dispatcher } = setup([{ intentType: "test:shutdown" }]);
-    dispatcher.registerOperation("test:shutdown", noopOperation("shutdown-op"));
+    dispatcher.registerOperation(noopOperation("shutdown-op", "test:shutdown"));
 
     // First dispatch succeeds
     const h1 = dispatcher.dispatch({ type: "test:shutdown", payload: {} });
@@ -51,8 +66,8 @@ describe("createIdempotencyModule", () => {
 
   it("singleton: passes through unrelated intents", async () => {
     const { dispatcher } = setup([{ intentType: "test:shutdown" }]);
-    dispatcher.registerOperation("test:shutdown", noopOperation("shutdown-op"));
-    dispatcher.registerOperation("test:other", noopOperation("other-op"));
+    dispatcher.registerOperation(noopOperation("shutdown-op", "test:shutdown"));
+    dispatcher.registerOperation(noopOperation("other-op", "test:other"));
 
     // Dispatch the guarded intent
     await dispatcher.dispatch({ type: "test:shutdown", payload: {} });
@@ -64,12 +79,14 @@ describe("createIdempotencyModule", () => {
 
   it("singleton with reset: blocks during active, unblocks after reset event", async () => {
     const { dispatcher } = setup([{ intentType: "test:setup", resetOn: "test:setup-error" }]);
-    dispatcher.registerOperation("test:setup", {
-      id: "setup-op",
-      execute: async (ctx: OperationContext<Intent>) => {
-        ctx.emit({ type: "test:setup-error", payload: {} });
-      },
-    } satisfies Operation<Intent, void>);
+    dispatcher.registerOperation(
+      opWithType("test:setup", {
+        id: "setup-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          ctx.emit({ type: "test:setup-error", payload: {} });
+        },
+      })
+    );
 
     // First dispatch succeeds and emits reset event
     await dispatcher.dispatch({ type: "test:setup", payload: {} });
@@ -86,7 +103,7 @@ describe("createIdempotencyModule", () => {
         getKey: (p) => (p as { path: string }).path,
       },
     ]);
-    dispatcher.registerOperation("test:delete", noopOperation("delete-op"));
+    dispatcher.registerOperation(noopOperation("delete-op", "test:delete"));
 
     // First dispatch for /a succeeds
     const h1 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
@@ -111,12 +128,14 @@ describe("createIdempotencyModule", () => {
     ]);
 
     let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
-    dispatcher.registerOperation("test:delete", {
-      id: "delete-op",
-      execute: async (ctx: OperationContext<Intent>) => {
-        emitFn = ctx.emit;
-      },
-    });
+    dispatcher.registerOperation(
+      opWithType("test:delete", {
+        id: "delete-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          emitFn = ctx.emit;
+        },
+      })
+    );
 
     // Dispatch /a and /b
     await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
@@ -150,7 +169,7 @@ describe("createIdempotencyModule", () => {
         isForced: (intent) => (intent.payload as { force: boolean }).force,
       },
     ]);
-    dispatcher.registerOperation("test:delete", noopOperation("delete-op"));
+    dispatcher.registerOperation(noopOperation("delete-op", "test:delete"));
 
     // First dispatch for /a
     await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a", force: false } });
@@ -171,7 +190,7 @@ describe("createIdempotencyModule", () => {
         getKey: (p) => (p as { path?: string }).path,
       },
     ]);
-    dispatcher.registerOperation("test:open", noopOperation("open-op"));
+    dispatcher.registerOperation(noopOperation("open-op", "test:open"));
 
     // Payload without path → getKey returns undefined → rule skipped
     const h1 = dispatcher.dispatch({ type: "test:open", payload: {} });
@@ -200,12 +219,14 @@ describe("createIdempotencyModule", () => {
     ]);
 
     let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
-    dispatcher.registerOperation("test:open", {
-      id: "open-op",
-      execute: async (ctx: OperationContext<Intent>) => {
-        emitFn = ctx.emit;
-      },
-    });
+    dispatcher.registerOperation(
+      opWithType("test:open", {
+        id: "open-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          emitFn = ctx.emit;
+        },
+      })
+    );
 
     // Dispatch /a → tracked
     await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
@@ -239,12 +260,14 @@ describe("createIdempotencyModule", () => {
     ]);
 
     let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
-    dispatcher.registerOperation("test:open", {
-      id: "open-op",
-      execute: async (ctx: OperationContext<Intent>) => {
-        emitFn = ctx.emit;
-      },
-    });
+    dispatcher.registerOperation(
+      opWithType("test:open", {
+        id: "open-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          emitFn = ctx.emit;
+        },
+      })
+    );
 
     // Track /a
     await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
@@ -266,8 +289,8 @@ describe("createIdempotencyModule", () => {
         getKey: (p) => (p as { path: string }).path,
       },
     ]);
-    dispatcher.registerOperation("test:shutdown", noopOperation("shutdown-op"));
-    dispatcher.registerOperation("test:delete", noopOperation("delete-op"));
+    dispatcher.registerOperation(noopOperation("shutdown-op", "test:shutdown"));
+    dispatcher.registerOperation(noopOperation("delete-op", "test:delete"));
 
     // Shutdown blocks on second call
     await dispatcher.dispatch({ type: "test:shutdown", payload: {} });
@@ -293,12 +316,14 @@ describe("createIdempotencyModule", () => {
     ]);
 
     let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
-    dispatcher.registerOperation("test:delete", {
-      id: "delete-op",
-      execute: async (ctx: OperationContext<Intent>) => {
-        emitFn = ctx.emit;
-      },
-    });
+    dispatcher.registerOperation(
+      opWithType("test:delete", {
+        id: "delete-op",
+        execute: async (ctx: OperationContext<Intent>) => {
+          emitFn = ctx.emit;
+        },
+      })
+    );
 
     // Dispatch /a (tracked)
     await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });

@@ -9,75 +9,106 @@
  * On success, emits an agent:restarted domain event.
  *
  * No provider dependencies - the hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/event
+ * schemas are declared once and hung on the operation's `schemas` field; the `Intent`, result,
+ * and event-payload types are **derived** from that bundle via `IntentOf`/`z.infer`.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface RestartAgentPayload {
-  readonly workspacePath: string;
-}
-
-export interface RestartAgentIntent extends Intent<number> {
-  readonly type: "agent:restart";
-  readonly payload: RestartAgentPayload;
-}
-
 export const INTENT_RESTART_AGENT = "agent:restart" as const;
 
+export const RESTART_AGENT_OPERATION_ID = "restart-agent";
+
+const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
+
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface AgentRestartedPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly path: string;
-  readonly port: number;
-}
+export const restartAgentPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+  })
+  .readonly();
+
+/** Operation return value — the port the restarted agent server listens on. */
+export const restartAgentResultSchema = z.number();
+
+export const agentRestartedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    path: z.string(),
+    port: z.number(),
+  })
+  .readonly();
+
+/**
+ * Per-handler result contract for the "restart" hook point.
+ * Each handler returns its contribution — the operation merges them.
+ */
+export const restartAgentHookResultSchema = z
+  .object({
+    port: z.number().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "restart" hook point (beyond the base HookContext). */
+const restartEnrichmentSchema = z.object({ workspacePath: z.string() });
+
+/** Runtime whole-context validation schema for "restart". */
+export const restartAgentHookInputSchema = hookCtxSchema(
+  restartAgentPayloadSchema,
+  restartEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_RESTART_AGENT,
+  payload: restartAgentPayloadSchema,
+  result: restartAgentResultSchema,
+  hooks: {
+    restart: { input: restartAgentHookInputSchema, result: restartAgentHookResultSchema },
+  },
+  events: {
+    [EVENT_AGENT_RESTARTED]: agentRestartedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type RestartAgentPayload = z.infer<typeof restartAgentPayloadSchema>;
+export type RestartAgentIntent = IntentOf<typeof schemas>;
+export type RestartAgentHookResult = z.infer<typeof restartAgentHookResultSchema>;
+export type AgentRestartedPayload = z.infer<typeof agentRestartedPayloadSchema>;
 
 export interface AgentRestartedEvent extends DomainEvent {
   readonly type: "agent:restarted";
   readonly payload: AgentRestartedPayload;
 }
 
-const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
-
-// =============================================================================
-// Hook Result & Input Types
-// =============================================================================
-
-export const RESTART_AGENT_OPERATION_ID = "restart-agent";
-
-/** Input context for the "restart" hook point. */
-export interface RestartAgentHookInput extends HookContext {
-  readonly workspacePath: string;
-}
-
-/**
- * Per-handler result contract for the "restart" hook point.
- * Each handler returns its contribution — the operation merges them.
- */
-export interface RestartAgentHookResult {
-  readonly port?: number;
-}
+/** Input context for the "restart" hook point: base envelope + inferred enrichment. */
+export type RestartAgentHookInput = HookContext & z.infer<typeof restartEnrichmentSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
 export class RestartAgentOperation extends WorkspaceHookOperation<
-  RestartAgentIntent,
-  RestartAgentHookResult,
-  number
+  typeof schemas,
+  RestartAgentHookResult
 > {
+  readonly schemas = schemas;
+
   constructor() {
     super(RESTART_AGENT_OPERATION_ID, {
       hookPoint: "restart",

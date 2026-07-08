@@ -12,14 +12,22 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
+import { z } from "zod/v4";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
+import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+} from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
@@ -34,10 +42,17 @@ import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalStartOperation implements Operation<Intent, number | null> {
-  readonly id = APP_START_OPERATION_ID;
+const startSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<number | null>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<number | null> {
+class MinimalStartOperation implements Operation<typeof startSchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = startSchemas;
+
+  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | null> {
     const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
@@ -46,36 +61,46 @@ class MinimalStartOperation implements Operation<Intent, number | null> {
   }
 }
 
-class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, void> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-  private readonly hookInput: Partial<FinalizeHookInput>;
+const finalizeSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  constructor(hookInput: Partial<FinalizeHookInput> = {}) {
-    this.hookInput = hookInput;
-  }
-
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("finalize", {
-      intent: ctx.intent,
-      workspacePath: "/test/project/.worktrees/feature-1",
-      envVars: { OPENCODE_PORT: "8080" },
-      agentType: "opencode" as const,
-      ...this.hookInput,
-    });
-    if (errors.length > 0) throw errors[0]!;
-  }
+/**
+ * Finalize operation whose hook input is captured in a closure. The dispatcher
+ * invokes `execute` detached from the object, so `this` is unavailable — read the
+ * config from the enclosing scope instead.
+ */
+function createMinimalFinalizeOperation(
+  hookInput: Partial<FinalizeHookInput> = {}
+): Operation<typeof finalizeSchemas> {
+  return {
+    id: OPEN_WORKSPACE_OPERATION_ID,
+    schemas: finalizeSchemas,
+    async execute(ctx: OperationContext<IntentOf<typeof finalizeSchemas>>): Promise<void> {
+      const { errors } = await ctx.hooks.collect<void>("finalize", {
+        intent: ctx.intent,
+        workspacePath: "/test/project/.worktrees/feature-1",
+        envVars: { OPENCODE_PORT: "8080" },
+        agentType: "opencode" as const,
+        ...hookInput,
+      });
+      if (errors.length > 0) throw errors[0]!;
+    },
+  };
 }
 
 /** Runs the "delete" hook point with a canned delete-pipeline context. */
-function createMinimalDeleteOperation(): Operation<DeleteWorkspaceIntent, DeleteHookResult> {
-  return createMinimalOperation<DeleteWorkspaceIntent, DeleteHookResult>(
+function createMinimalDeleteOperation() {
+  return createMinimalOperation<DeleteHookResult>(
     DELETE_WORKSPACE_OPERATION_ID,
+    INTENT_DELETE_WORKSPACE,
     "delete",
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
         projectPath: "/projects/test",
-        workspacePath: ctx.intent.payload.workspacePath ?? "",
+        workspacePath: (ctx.intent.payload as DeleteWorkspaceIntent["payload"]).workspacePath ?? "",
         workspaceName: "test-workspace" as WorkspaceName,
         active: false,
       }),
@@ -141,7 +166,7 @@ describe("PluginServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
 
       const pluginPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -164,8 +189,9 @@ describe("PluginServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
       );
 
       await expect(
@@ -184,12 +210,11 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start the server first
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalFinalizeOperation({
+        createMinimalFinalizeOperation({
           workspacePath: "/test/project/.worktrees/feature-1",
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
@@ -214,8 +239,7 @@ describe("PluginServerModule", () => {
 
       // Do NOT start the server
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalFinalizeOperation({
+        createMinimalFinalizeOperation({
           workspacePath: "/test/project/.worktrees/feature-1",
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
@@ -240,8 +264,7 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalFinalizeOperation({
+        createMinimalFinalizeOperation({
           workspacePath: "/test/project/.worktrees/feature-1",
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
@@ -271,10 +294,10 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start the server first
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      dispatcher.registerOperation(new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -295,7 +318,7 @@ describe("PluginServerModule", () => {
     it("is a no-op when server has not been started (io is null)", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -317,7 +340,7 @@ describe("PluginServerModule", () => {
       // Force mode delete should not throw even if internal state is inconsistent
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
+      dispatcher.registerOperation(createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",

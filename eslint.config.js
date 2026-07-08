@@ -85,6 +85,33 @@ export default tseslint.config(
       ],
     },
   },
+  // zod confinement: zod is the intent system's dependency (src/intents/contract, item 2).
+  // Renderer, preload, and shared consume contract *types* (type-only, erased at build) — they
+  // must not import zod directly, so contract types never pull zod into those bundles. Two
+  // pre-existing shared IPC/plugin message validators (ui-event, plugin-protocol) are exempted.
+  {
+    files: [
+      "src/renderer/**/*.ts",
+      "src/renderer/**/*.svelte",
+      "src/preload/**/*.ts",
+      "src/shared/**/*.ts",
+    ],
+    ignores: ["src/shared/ui-event.ts", "src/shared/plugin-protocol.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["zod", "zod/*"],
+              message:
+                "zod is confined to the intent system (src/intents/contract). Import contract types (type-only) or a re-exported schema value; do not import zod in renderer/preload/shared. (Legacy exceptions: src/shared/ui-event.ts, src/shared/plugin-protocol.ts.)",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // markdown-review-editor CommentEditor.svelte - specific overrides
   {
     files: ["extensions/markdown-review-editor/src/lib/components/CommentEditor.svelte"],

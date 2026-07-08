@@ -14,86 +14,115 @@
  * 4. Return cached bases (or fresh bases when wait=true)
  *
  * No provider dependencies — hook handlers do the actual work.
+ *
+ * Contract schemas (item 2): zod is the single source of truth; the Intent, result,
+ * hook, and event payload types are derived from the `schemas` bundle.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId, BaseInfo } from "../shared/api/types";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
+import { projectIdSchema, baseInfoSchema, hookCtxSchema } from "./contract";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface GetProjectBasesPayload {
-  readonly projectPath: string;
-  readonly refresh?: boolean;
-  /** When true (and refresh is true), await the refresh and return fresh data. */
-  readonly wait?: boolean;
-}
-
-export interface GetProjectBasesResult {
-  readonly bases: readonly BaseInfo[];
-  readonly defaultBaseBranch?: string;
-  readonly projectPath: string;
-  readonly projectId: ProjectId;
-}
-
-export interface GetProjectBasesIntent extends Intent<GetProjectBasesResult> {
-  readonly type: "project:get-bases";
-  readonly payload: GetProjectBasesPayload;
-}
-
 export const INTENT_GET_PROJECT_BASES = "project:get-bases" as const;
+export const EVENT_BASES_UPDATED = "bases:updated" as const;
+export const GET_PROJECT_BASES_OPERATION_ID = "get-project-bases";
 
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface BasesUpdatedPayload {
-  readonly projectId: ProjectId;
-  readonly projectPath: string;
-  readonly bases: readonly BaseInfo[];
-  /** Fresh default base branch; absent when detection found none (authoritative). */
-  readonly defaultBaseBranch?: string;
-}
+export const getProjectBasesPayloadSchema = z
+  .object({
+    projectPath: z.string(),
+    refresh: z.boolean().optional(),
+    /** When true (and refresh is true), await the refresh and return fresh data. */
+    wait: z.boolean().optional(),
+  })
+  .readonly();
+
+export const getProjectBasesResultSchema = z
+  .object({
+    bases: z.array(baseInfoSchema).readonly(),
+    defaultBaseBranch: z.string().optional(),
+    projectPath: z.string(),
+    projectId: projectIdSchema,
+  })
+  .readonly();
+
+export const basesUpdatedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    projectPath: z.string(),
+    bases: z.array(baseInfoSchema).readonly(),
+    /** Fresh default base branch; absent when detection found none (authoritative). */
+    defaultBaseBranch: z.string().optional(),
+  })
+  .readonly();
+
+export const listBasesHookResultSchema = z
+  .object({
+    bases: z.array(baseInfoSchema).readonly().optional(),
+    defaultBaseBranch: z.string().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "list" / "refresh" hook points. */
+const listBasesEnrichmentSchema = z.object({ projectPath: z.string() });
+const refreshBasesEnrichmentSchema = z.object({ projectPath: z.string() });
+
+export const listBasesHookInputSchema = hookCtxSchema(
+  getProjectBasesPayloadSchema,
+  listBasesEnrichmentSchema.shape
+);
+export const refreshBasesHookInputSchema = hookCtxSchema(
+  getProjectBasesPayloadSchema,
+  refreshBasesEnrichmentSchema.shape
+);
+
+const schemas = {
+  type: INTENT_GET_PROJECT_BASES,
+  payload: getProjectBasesPayloadSchema,
+  result: getProjectBasesResultSchema,
+  hooks: {
+    list: { input: listBasesHookInputSchema, result: listBasesHookResultSchema },
+    refresh: { input: refreshBasesHookInputSchema },
+  },
+  events: {
+    [EVENT_BASES_UPDATED]: basesUpdatedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type GetProjectBasesPayload = z.infer<typeof getProjectBasesPayloadSchema>;
+export type GetProjectBasesResult = z.infer<typeof getProjectBasesResultSchema>;
+export type GetProjectBasesIntent = IntentOf<typeof schemas>;
+export type BasesUpdatedPayload = z.infer<typeof basesUpdatedPayloadSchema>;
+export type ListBasesHookResult = z.infer<typeof listBasesHookResultSchema>;
+
+/** Whole input context for "list" handlers: base envelope + inferred enrichment. */
+export type ListBasesHookInput = HookContext & z.infer<typeof listBasesEnrichmentSchema>;
+/** Whole input context for "refresh" handlers: base envelope + inferred enrichment. */
+export type RefreshBasesHookInput = HookContext & z.infer<typeof refreshBasesEnrichmentSchema>;
 
 export interface BasesUpdatedEvent extends DomainEvent {
   readonly type: "bases:updated";
   readonly payload: BasesUpdatedPayload;
 }
 
-export const EVENT_BASES_UPDATED = "bases:updated" as const;
-
-// =============================================================================
-// Hook Point Types
-// =============================================================================
-
-export interface ListBasesHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
-export interface ListBasesHookResult {
-  readonly bases?: readonly BaseInfo[];
-  readonly defaultBaseBranch?: string;
-}
-
-export interface RefreshBasesHookInput extends HookContext {
-  readonly projectPath: string;
-}
-
 // =============================================================================
 // Operation
 // =============================================================================
 
-export const GET_PROJECT_BASES_OPERATION_ID = "get-project-bases";
-
-export class GetProjectBasesOperation implements Operation<
-  GetProjectBasesIntent,
-  GetProjectBasesResult
-> {
+export class GetProjectBasesOperation implements Operation<typeof schemas> {
   readonly id = GET_PROJECT_BASES_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<GetProjectBasesIntent>): Promise<GetProjectBasesResult> {
     const { projectPath, refresh } = ctx.intent.payload;

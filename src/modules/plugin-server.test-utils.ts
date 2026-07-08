@@ -6,6 +6,7 @@
  */
 
 import { vi, type Mock } from "vitest";
+import { z } from "zod/v4";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
@@ -23,8 +24,12 @@ import {
 import { DefaultNetworkLayer } from "../boundaries/platform/network";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
-import type { Intent } from "../intents/lib/types";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import type {
+  Operation,
+  OperationContext,
+  OperationSchemas,
+  IntentOf,
+} from "../intents/lib/operation";
 import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import {
@@ -194,10 +199,17 @@ function createMockDispatch(resolveWith?: unknown, options?: { accepted?: boolea
 // Minimal Test Operations
 // ============================================================================
 
-class MinimalStartOperation implements Operation<Intent, number | null> {
-  readonly id = APP_START_OPERATION_ID;
+const startSchemas = {
+  type: INTENT_APP_START,
+  payload: z.unknown(),
+  result: z.custom<number | null>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<Intent>): Promise<number | null> {
+class MinimalStartOperation implements Operation<typeof startSchemas> {
+  readonly id = APP_START_OPERATION_ID;
+  readonly schemas = startSchemas;
+
+  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | null> {
     const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
@@ -206,29 +218,50 @@ class MinimalStartOperation implements Operation<Intent, number | null> {
   }
 }
 
-/** Minimal finalize operation that reads hook input from a mutable config. */
-class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, void> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-  hookInput: Partial<FinalizeHookInput> = {};
+const finalizeSchemas = {
+  type: INTENT_OPEN_WORKSPACE,
+  payload: z.unknown(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("finalize", {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-      envVars: {},
-      agentType: "opencode" as const,
-      ...this.hookInput,
-    });
-    if (errors.length > 0) throw errors[0]!;
-  }
+/**
+ * Minimal finalize operation that reads hook input from a mutable `hookInput`
+ * property. The dispatcher invokes `execute` detached from the object, so `this`
+ * is unavailable — `execute` reads the property off the captured `op` reference.
+ */
+function createMinimalFinalizeOperation(): Operation<typeof finalizeSchemas> & {
+  hookInput: Partial<FinalizeHookInput>;
+} {
+  const op = {
+    id: OPEN_WORKSPACE_OPERATION_ID,
+    schemas: finalizeSchemas,
+    hookInput: {} as Partial<FinalizeHookInput>,
+    async execute(ctx: OperationContext<IntentOf<typeof finalizeSchemas>>): Promise<void> {
+      const { errors } = await ctx.hooks.collect<void>("finalize", {
+        intent: ctx.intent,
+        workspacePath: "/test/workspace",
+        envVars: {},
+        agentType: "opencode" as const,
+        ...op.hookInput,
+      });
+      if (errors.length > 0) throw errors[0]!;
+    },
+  };
+  return op;
 }
 
-/** Minimal vscode-command operation that skips workspace resolution. */
-class MinimalCommandOperation implements Operation<VscodeCommandIntent, unknown> {
-  readonly id = VSCODE_COMMAND_OPERATION_ID;
+const commandSchemas = {
+  type: INTENT_VSCODE_COMMAND,
+  payload: z.unknown(),
+  result: z.custom<unknown>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<VscodeCommandIntent>): Promise<unknown> {
-    const { payload } = ctx.intent;
+/** Minimal vscode-command operation that skips workspace resolution. */
+class MinimalCommandOperation implements Operation<typeof commandSchemas> {
+  readonly id = VSCODE_COMMAND_OPERATION_ID;
+  readonly schemas = commandSchemas;
+
+  async execute(ctx: OperationContext<IntentOf<typeof commandSchemas>>): Promise<unknown> {
+    const payload = ctx.intent.payload as VscodeCommandIntent["payload"];
     const executeCtx: ExecuteHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
@@ -244,12 +277,21 @@ class MinimalCommandOperation implements Operation<VscodeCommandIntent, unknown>
   }
 }
 
-/** Minimal vscode-show-message operation that skips workspace resolution. */
-class MinimalShowMessageOperation implements Operation<VscodeShowMessageIntent, string | null> {
-  readonly id = VSCODE_SHOW_MESSAGE_OPERATION_ID;
+const showMessageSchemas = {
+  type: INTENT_VSCODE_SHOW_MESSAGE,
+  payload: z.unknown(),
+  result: z.custom<string | null>(),
+} satisfies OperationSchemas;
 
-  async execute(ctx: OperationContext<VscodeShowMessageIntent>): Promise<string | null> {
-    const { payload } = ctx.intent;
+/** Minimal vscode-show-message operation that skips workspace resolution. */
+class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas> {
+  readonly id = VSCODE_SHOW_MESSAGE_OPERATION_ID;
+  readonly schemas = showMessageSchemas;
+
+  async execute(
+    ctx: OperationContext<IntentOf<typeof showMessageSchemas>>
+  ): Promise<string | null> {
+    const payload = ctx.intent.payload as VscodeShowMessageIntent["payload"];
     const showCtx: ShowHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
@@ -301,17 +343,18 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({ logger: createMockLogger() });
   testDispatcher.registerModule(module);
-  testDispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
+  testDispatcher.registerOperation(new MinimalStartOperation());
   testDispatcher.registerOperation(
-    INTENT_APP_SHUTDOWN,
-    createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+    createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+      throwOnError: false,
+    })
   );
-  testDispatcher.registerOperation(INTENT_VSCODE_COMMAND, new MinimalCommandOperation());
-  testDispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new MinimalShowMessageOperation());
+  testDispatcher.registerOperation(new MinimalCommandOperation());
+  testDispatcher.registerOperation(new MinimalShowMessageOperation());
 
   // Register finalize operation with mutable hook input (shared across setWorkspaceConfig calls)
-  const finalizeOp = new MinimalFinalizeOperation();
-  testDispatcher.registerOperation(INTENT_OPEN_WORKSPACE, finalizeOp);
+  const finalizeOp = createMinimalFinalizeOperation();
+  testDispatcher.registerOperation(finalizeOp);
 
   // Start the server via the hook
   const port = (await testDispatcher.dispatch({

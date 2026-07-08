@@ -3,49 +3,67 @@
  *
  * No hooks needed — just emits a domain event for subscribers
  * (IPC bridge, DevTools module, etc.) to react to.
+ *
+ * Contract schemas (item 2): zod is the single source of truth. The payload/event schemas are
+ * declared once and hung on the operation's `schemas` field; the `Intent` and event-payload
+ * types are **derived** from that bundle via `IntentOf`/`z.infer`. The result is void.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext } from "./lib/operation";
-
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface ShortcutKeyPayload {
-  readonly key: string;
-}
-
-export interface ShortcutKeyIntent extends Intent<void> {
-  readonly type: "shortcut:key";
-  readonly payload: ShortcutKeyPayload;
-}
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 
 export const INTENT_SHORTCUT_KEY = "shortcut:key" as const;
 
+export const EVENT_SHORTCUT_KEY_PRESSED = "shortcut:key-pressed" as const;
+
+const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
+
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface ShortcutKeyPressedPayload {
-  readonly key: string;
-}
+export const shortcutKeyPayloadSchema = z
+  .object({
+    key: z.string(),
+  })
+  .readonly();
+
+export const shortcutKeyPressedPayloadSchema = z
+  .object({
+    key: z.string(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_SHORTCUT_KEY,
+  payload: shortcutKeyPayloadSchema,
+  events: {
+    [EVENT_SHORTCUT_KEY_PRESSED]: shortcutKeyPressedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type ShortcutKeyPayload = z.infer<typeof shortcutKeyPayloadSchema>;
+export type ShortcutKeyIntent = IntentOf<typeof schemas>;
+export type ShortcutKeyPressedPayload = z.infer<typeof shortcutKeyPressedPayloadSchema>;
 
 export interface ShortcutKeyPressedEvent extends DomainEvent {
   readonly type: "shortcut:key-pressed";
   readonly payload: ShortcutKeyPressedPayload;
 }
 
-export const EVENT_SHORTCUT_KEY_PRESSED = "shortcut:key-pressed" as const;
-
 // =============================================================================
 // Operation
 // =============================================================================
 
-const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
-
-export class ShortcutKeyOperation implements Operation<ShortcutKeyIntent, void> {
+export class ShortcutKeyOperation implements Operation<typeof schemas> {
   readonly id = SHORTCUT_KEY_OPERATION_ID;
+  readonly schemas = schemas;
 
   async execute(ctx: OperationContext<ShortcutKeyIntent>): Promise<void> {
     const event: ShortcutKeyPressedEvent = {

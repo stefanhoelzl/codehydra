@@ -43,7 +43,6 @@ import type {
 import {
   DeleteWorkspaceOperation,
   DELETE_WORKSPACE_OPERATION_ID,
-  INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
 } from "./delete-workspace";
 import type {
@@ -194,8 +193,8 @@ function createTestHarness(options?: {
   };
 
   // Register operations
-  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new CloseProjectOperation());
+  dispatcher.registerOperation(new DeleteWorkspaceOperation());
 
   // Shared workspace:resolve (reverse lookup over the project) and project:resolve
   registerTestInfrastructure(dispatcher, {

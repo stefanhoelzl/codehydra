@@ -37,75 +37,121 @@
  * workspace from their state.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import { z } from "zod/v4";
+import type { DomainEvent } from "./lib/types";
+import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
+import { type IntentOf } from "./lib/operation";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
 
-// =============================================================================
-// Intent Types
-// =============================================================================
-
-export interface HibernateWorkspacePayload {
-  readonly workspacePath: string;
-}
-
-export interface HibernateWorkspaceIntent extends Intent<{ started: true }> {
-  readonly type: "workspace:hibernate";
-  readonly payload: HibernateWorkspacePayload;
-}
-
 export const INTENT_HIBERNATE_WORKSPACE = "workspace:hibernate" as const;
-
 export const HIBERNATE_WORKSPACE_OPERATION_ID = "hibernate-workspace";
+export const EVENT_WORKSPACE_HIBERNATED = "workspace:hibernated" as const;
+export const EVENT_WORKSPACE_HIBERNATE_FAILED = "workspace:hibernate-failed" as const;
 
 /** Metadata key indicating a workspace is hibernated. */
 export const HIBERNATED_METADATA_KEY = "hibernated";
 
 // =============================================================================
-// Event Types
+// Contract schemas (single source of truth)
 // =============================================================================
 
-export interface WorkspaceHibernatedPayload {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
-  readonly projectPath: string;
-}
+export const hibernateWorkspacePayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+  })
+  .readonly();
+
+export const hibernateWorkspaceResultSchema = z.object({
+  started: z.literal(true),
+});
+
+export const workspaceHibernatedPayloadSchema = z
+  .object({
+    projectId: projectIdSchema,
+    workspaceName: workspaceNameSchema,
+    workspacePath: z.string(),
+    projectPath: z.string(),
+  })
+  .readonly();
+
+export const workspaceHibernateFailedPayloadSchema = z
+  .object({
+    workspacePath: z.string(),
+    error: z.string(),
+  })
+  .readonly();
+
+/** Operation-added enrichment shared by every hibernate pipeline hook point. */
+const hibernatePipelineEnrichmentSchema = z.object({
+  projectPath: z.string(),
+  workspacePath: z.string(),
+  projectId: projectIdSchema,
+  workspaceName: workspaceNameSchema,
+  active: z.boolean(),
+});
+
+/** Runtime whole-context validation schema for the hibernate pipeline hook points. */
+export const hibernatePipelineHookInputSchema = hookCtxSchema(
+  hibernateWorkspacePayloadSchema,
+  hibernatePipelineEnrichmentSchema.shape
+);
+
+/**
+ * Per-handler result for the "release" hook point.
+ * Best-effort CWD-rooted process kill.
+ */
+export const hibernateReleaseHookResultSchema = z
+  .object({
+    error: z.string().optional(),
+  })
+  .readonly();
+
+const schemas = {
+  type: INTENT_HIBERNATE_WORKSPACE,
+  payload: hibernateWorkspacePayloadSchema,
+  result: hibernateWorkspaceResultSchema,
+  hooks: {
+    "prepare-capture": { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
+    capture: { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
+    "cleanup-capture": { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
+    shutdown: { input: hibernatePipelineHookInputSchema, result: z.object({}).readonly() },
+    release: { input: hibernatePipelineHookInputSchema, result: hibernateReleaseHookResultSchema },
+  },
+  events: {
+    [EVENT_WORKSPACE_HIBERNATED]: workspaceHibernatedPayloadSchema,
+    [EVENT_WORKSPACE_HIBERNATE_FAILED]: workspaceHibernateFailedPayloadSchema,
+  },
+} satisfies OperationSchemas;
+
+// =============================================================================
+// Types derived from the schemas
+// =============================================================================
+
+export type HibernateWorkspacePayload = z.infer<typeof hibernateWorkspacePayloadSchema>;
+export type HibernateWorkspaceResult = z.infer<typeof hibernateWorkspaceResultSchema>;
+export type HibernateWorkspaceIntent = IntentOf<typeof schemas>;
+
+export type WorkspaceHibernatedPayload = z.infer<typeof workspaceHibernatedPayloadSchema>;
 
 export interface WorkspaceHibernatedEvent extends DomainEvent {
   readonly type: "workspace:hibernated";
   readonly payload: WorkspaceHibernatedPayload;
 }
 
-export const EVENT_WORKSPACE_HIBERNATED = "workspace:hibernated" as const;
-
-export interface WorkspaceHibernateFailedPayload {
-  readonly workspacePath: string;
-  readonly error: string;
-}
+export type WorkspaceHibernateFailedPayload = z.infer<typeof workspaceHibernateFailedPayloadSchema>;
 
 export interface WorkspaceHibernateFailedEvent extends DomainEvent {
   readonly type: "workspace:hibernate-failed";
   readonly payload: WorkspaceHibernateFailedPayload;
 }
 
-export const EVENT_WORKSPACE_HIBERNATE_FAILED = "workspace:hibernate-failed" as const;
-
-// =============================================================================
-// Hook Types
-// =============================================================================
-
 /** Input for prepare-capture/capture/cleanup-capture/shutdown/release hook handlers. */
-export interface HibernatePipelineHookInput extends HookContext {
-  readonly projectPath: string;
-  readonly workspacePath: string;
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly active: boolean;
-}
+export type HibernatePipelineHookInput = HookContext &
+  z.infer<typeof hibernatePipelineEnrichmentSchema>;
 
 /**
  * Per-handler result for the "prepare-capture" hook point. Runs before the
@@ -126,25 +172,20 @@ export type CleanupCaptureHookResult = Record<string, never>;
 /** Per-handler result for the "shutdown" hook point. */
 export type HibernateShutdownHookResult = Record<string, never>;
 
-/**
- * Per-handler result for the "release" hook point.
- * Best-effort CWD-rooted process kill.
- */
-export interface HibernateReleaseHookResult {
-  readonly error?: string;
-}
+/** Per-handler result for the "release" hook point. */
+export type HibernateReleaseHookResult = z.infer<typeof hibernateReleaseHookResultSchema>;
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class HibernateWorkspaceOperation implements Operation<
-  HibernateWorkspaceIntent,
-  { started: true }
-> {
+export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = HIBERNATE_WORKSPACE_OPERATION_ID;
+  readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<HibernateWorkspaceIntent>): Promise<{ started: true }> {
+  async execute(
+    ctx: OperationContext<HibernateWorkspaceIntent>
+  ): Promise<HibernateWorkspaceResult> {
     const { payload } = ctx.intent;
 
     let hookCtx: HibernatePipelineHookInput;
