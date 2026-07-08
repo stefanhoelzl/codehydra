@@ -68,6 +68,8 @@ import { INTENT_VSCODE_SHOW_MESSAGE } from "../intents/vscode-show-message";
 import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
+import { INTENT_SUBMIT_BUG_REPORT } from "../intents/submit-bug-report";
+import type { SubmitBugReportIntent } from "../intents/submit-bug-report";
 
 /**
  * Optional target workspace path for tools that can act on a workspace other
@@ -157,6 +159,8 @@ export const SERVER_INSTRUCTIONS = [
   '- "info", "warning", "error" — show a notification. Add options for action buttons.',
   '- "status" — update the status bar (single entry per workspace). Set message to null to clear it. hint is the tooltip.',
   '- "select" — show a selection dialog. With options: quick pick list. Without options: free text input. hint is the placeholder.',
+  "",
+  "report_bug files a bug report about CodeHydra itself with the maintainers. Use it only when the user explicitly asks to report a CodeHydra bug or send feedback — never proactively. It attaches CodeHydra's current logs and redacted config and sends even if telemetry is off.",
 ].join("\n");
 
 export function createDefaultMcpServer(): McpServerSdk {
@@ -977,7 +981,39 @@ export class McpServer {
       }
     );
 
-    this.logger.debug("Registered tools", { count: 11 });
+    // report_bug - files a bug report through the same pipeline as the in-app
+    // "Report a Bug" dialog. Non-workspace: reports are app-global and the
+    // module attaches the current logs + redacted config/state itself.
+    mcpServer.registerTool(
+      "report_bug",
+      {
+        description:
+          "File a bug report for CodeHydra itself (not the user's project). " +
+          "Only use this when the user explicitly asks to report a bug or send feedback about CodeHydra — do not file reports proactively. " +
+          "The report sends the given description together with CodeHydra's current application logs and redacted configuration to CodeHydra's maintainers, and is sent even if telemetry is disabled. " +
+          "Returns { submitted: true } once the report has been sent.",
+        inputSchema: z.object({
+          description: z
+            .string()
+            .trim()
+            .min(1)
+            .describe("Description of the bug or feedback. Must be non-empty."),
+        }),
+      },
+      async (args: { description: string }) => {
+        try {
+          await this.dispatcher.dispatch({
+            type: INTENT_SUBMIT_BUG_REPORT,
+            payload: { description: args.description },
+          } as SubmitBugReportIntent);
+          return this.successResult({ submitted: true });
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    this.logger.debug("Registered tools", { count: 12 });
   }
 
   /**

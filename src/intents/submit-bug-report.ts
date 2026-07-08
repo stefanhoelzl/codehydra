@@ -14,9 +14,6 @@ import type { Operation, OperationContext } from "./lib/operation";
 
 export interface SubmitBugReportPayload {
   readonly description: string;
-  readonly logs: string;
-  /** Chromium/Electron native log (--enable-logging=file output). */
-  readonly electronLogs: string;
 }
 
 export interface SubmitBugReportIntent extends Intent<void> {
@@ -32,9 +29,6 @@ export const INTENT_SUBMIT_BUG_REPORT = "bug-report:submit" as const;
 
 export interface BugReportSubmittedPayload {
   readonly description: string;
-  readonly logs: string;
-  /** Chromium/Electron native log (--enable-logging=file output). */
-  readonly electronLogs: string;
 }
 
 export interface BugReportSubmittedEvent extends DomainEvent {
@@ -48,7 +42,7 @@ export const EVENT_BUG_REPORT_SUBMITTED = "bug-report:submitted" as const;
 // Operation
 // =============================================================================
 
-const SUBMIT_BUG_REPORT_OPERATION_ID = "submit-bug-report";
+export const SUBMIT_BUG_REPORT_OPERATION_ID = "submit-bug-report";
 
 export class SubmitBugReportOperation implements Operation<SubmitBugReportIntent, void> {
   readonly id = SUBMIT_BUG_REPORT_OPERATION_ID;
@@ -58,10 +52,12 @@ export class SubmitBugReportOperation implements Operation<SubmitBugReportIntent
       type: EVENT_BUG_REPORT_SUBMITTED,
       payload: {
         description: ctx.intent.payload.description,
-        logs: ctx.intent.payload.logs,
-        electronLogs: ctx.intent.payload.electronLogs,
       },
     };
-    ctx.emit(event);
+    // Awaited so dispatch() resolves only after the subscriber (error-report
+    // module) has read logs, captured the exception, and flushed. The MCP
+    // report_bug tool relies on this to confirm delivery; the dialog path
+    // fire-and-forgets its dispatch, so it is unaffected.
+    await ctx.emit(event);
   }
 }

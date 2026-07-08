@@ -47,6 +47,10 @@ import {
   INTENT_VSCODE_SHOW_MESSAGE,
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
 } from "../intents/vscode-show-message";
+import {
+  INTENT_SUBMIT_BUG_REPORT,
+  SUBMIT_BUG_REPORT_OPERATION_ID,
+} from "../intents/submit-bug-report";
 
 /**
  * Find a free port for testing.
@@ -149,6 +153,11 @@ const TOOL_OPERATIONS = {
       metadata: { base: "main" },
       projectId: "test-12345678" as ProjectId,
     } as unknown,
+  },
+  submitBugReport: {
+    intent: INTENT_SUBMIT_BUG_REPORT,
+    operationId: SUBMIT_BUG_REPORT_OPERATION_ID,
+    result: undefined as unknown,
   },
 } as const;
 

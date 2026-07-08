@@ -4,11 +4,12 @@
  * report dialog AND the automatic crash handlers.
  *
  * Covers three surfaces:
- *  - the "b" shortcut dialog (reads logs, dispatches bug-report:submit)
- *  - the bug-report:submitted capture (logs + redacted config/state, unconditional)
+ *  - the "b" shortcut dialog (dispatches bug-report:submit with the description)
+ *  - the bug-report:submitted capture (reads logs + redacted config/state, unconditional)
  *  - the process error handlers (log always; report gated on telemetry; flush+exit)
  */
 
+import { gunzipSync } from "node:zlib";
 import { describe, it, expect, vi } from "vitest";
 import { createErrorReportModule, type ErrorReportModuleDeps } from "./error-report-module";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -115,6 +116,11 @@ async function emitBugReport(
   await module.events![EVENT_BUG_REPORT_SUBMITTED]!.handler(event);
 }
 
+/** Decompress a gzip+base64 log blob back to its raw string. */
+function decompressLog(blob: unknown): string {
+  return typeof blob === "string" && blob ? gunzipSync(Buffer.from(blob, "base64")).toString() : "";
+}
+
 /** Stub process.on, dispatch app:start to register the crash handlers, return them. */
 async function registerCrashHandlers(
   module: ReturnType<typeof setup>["module"]
@@ -186,7 +192,7 @@ describe("ErrorReportModule — bug report dialog", () => {
     expect(deps.ui.dialog).toHaveBeenCalledOnce();
   });
 
-  it("reads logs and dispatches bug-report:submit on 'send'", async () => {
+  it("dispatches bug-report:submit with only the description on 'send'", async () => {
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
     handle.emitEvent({
@@ -195,40 +201,12 @@ describe("ErrorReportModule — bug report dialog", () => {
       data: { description: "It broke" },
     });
 
-    await vi.waitFor(() => {
-      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          payload: {
-            description: "It broke",
-            logs: "test log content\nline 2",
-            electronLogs: "electron log content",
-          },
-        })
-      );
-    });
-    expect(handle.handle.close).toHaveBeenCalled();
-  });
-
-  it("marks the Send button busy before the dialog closes", async () => {
-    const { module, handle } = setup();
-    await emitKey(module, "b");
-    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
-
-    // A busy config is pushed synchronously on click (before the async log
-    // reads resolve and close the dialog), so the primary button shows its
-    // in-flight state until the window hides.
-    const busyConfig = handle.configs.find((c) =>
-      c.sections.some(
-        (s) =>
-          s.type === "group" &&
-          s.items.some((i) => i.type === "button" && i.id === "send" && i.busy === true)
-      )
+    expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { description: "It broke" } })
     );
-    expect(busyConfig).toBeDefined();
-    expect(handle.handle.update).toHaveBeenCalled();
-    expect(handle.handle.close).not.toHaveBeenCalled();
-
-    await vi.waitFor(() => expect(handle.handle.close).toHaveBeenCalled());
+    // Log-gathering now lives in the submitted handler, not the dialog.
+    expect(deps.fileSystem.readFile).not.toHaveBeenCalled();
+    expect(handle.handle.close).toHaveBeenCalled();
   });
 
   it("ignores a second 'send' while the first is in flight", async () => {
@@ -262,36 +240,6 @@ describe("ErrorReportModule — bug report dialog", () => {
     await emitKey(module, "b");
     expect(deps.ui.dialog).toHaveBeenCalledTimes(2);
   });
-
-  it("includes rotated archive log alongside the current log", async () => {
-    const { module, deps, handle } = setup();
-    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
-      if (path === "/logs/test-session.log") return Promise.resolve("CURRENT");
-      if (path === "/logs/test-session.old.log") return Promise.resolve("ARCHIVE\n");
-      return Promise.reject(new Error("ENOENT"));
-    });
-    await emitKey(module, "b");
-    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
-
-    await vi.waitFor(() => {
-      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ payload: expect.objectContaining({ logs: "ARCHIVE\nCURRENT" }) })
-      );
-    });
-  });
-
-  it("tolerates a log read failure", async () => {
-    const { module, deps, handle } = setup();
-    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
-    await emitKey(module, "b");
-    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
-
-    await vi.waitFor(() => {
-      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ payload: expect.objectContaining({ logs: "" }) })
-      );
-    });
-  });
 });
 
 // =============================================================================
@@ -299,38 +247,64 @@ describe("ErrorReportModule — bug report dialog", () => {
 // =============================================================================
 
 describe("ErrorReportModule — bug-report:submitted capture", () => {
-  it("captures a BugReport $exception with compressed logs + redacted config/state", async () => {
+  it("reads logs itself and captures a BugReport $exception with redacted config/state", async () => {
     const { module, boundary } = setup({
       configOverrides: { agent: "claude", "log.level": "debug" },
       stateOverrides: { "auto-workspaces": { "github/1": { workspaceName: "pr-1" } } },
     });
 
-    await emitBugReport(module, {
-      description: "It crashed",
-      logs: "app logs here",
-      electronLogs: "electron logs here",
-    });
+    // The handler gathers logs from the filesystem; the event carries only the
+    // description (defaultReadFile supplies the log/electron-log content).
+    await emitBugReport(module, { description: "It crashed" });
 
     const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
     expect(captured).toBeDefined();
     const props = captured!.properties;
     expect(props["$exception_list"]).toEqual([{ type: "BugReport", value: "It crashed" }]);
     expect(props["logs_format"]).toBe("gzip+base64");
+    expect(decompressLog(props["logs"])).toBe("test log content\nline 2");
+    expect(decompressLog(props["electron_logs"])).toBe("electron log content");
     expect(props["config"]).toEqual({ agent: "claude", "log.level": "debug" });
     expect(props["state"]).toEqual({
       "auto-workspaces": { "github/1": { workspaceName: "pr-1" } },
     });
   });
 
+  it("includes the rotated archive log alongside the current log", async () => {
+    const { module, boundary, deps } = setup();
+    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/logs/test-session.log") return Promise.resolve("CURRENT");
+      if (path === "/logs/test-session.old.log") return Promise.resolve("ARCHIVE\n");
+      return Promise.reject(new Error("ENOENT"));
+    });
+
+    await emitBugReport(module, { description: "x" });
+
+    const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
+    expect(decompressLog(captured!.properties["logs"])).toBe("ARCHIVE\nCURRENT");
+  });
+
+  it("tolerates a log read failure", async () => {
+    const { module, boundary, deps } = setup();
+    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
+
+    await emitBugReport(module, { description: "x" });
+
+    const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
+    expect(captured).toBeDefined();
+    expect(captured!.properties["logs_format"]).toBe("none");
+    expect(decompressLog(captured!.properties["logs"])).toBe("");
+  });
+
   it("flushes after a manual report for prompt delivery", async () => {
     const { module, boundary } = setup();
-    await emitBugReport(module, { description: "x", logs: "l", electronLogs: "e" });
+    await emitBugReport(module, { description: "x" });
     expect(boundary.$.flushCount).toBe(1);
   });
 
   it("sends the manual report even when telemetry is disabled (explicit consent)", async () => {
     const { module, boundary } = setup({ telemetryEnabled: false });
-    await emitBugReport(module, { description: "still sends", logs: "l", electronLogs: "" });
+    await emitBugReport(module, { description: "still sends" });
     expect(boundary).toHaveCapturedError();
   });
 });

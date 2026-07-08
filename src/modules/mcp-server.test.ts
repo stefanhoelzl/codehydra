@@ -17,6 +17,7 @@ import type { Intent } from "../intents/lib/types";
 import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
 import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import { INTENT_SUBMIT_BUG_REPORT } from "../intents/submit-bug-report";
 import {
   createMockToolOperations,
   findFreePort,
@@ -159,7 +160,8 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_create");
       expect(toolNames).toContain("ui_show_message");
       expect(toolNames).toContain("log");
-      expect(tools.length).toBe(13);
+      expect(toolNames).toContain("report_bug");
+      expect(tools.length).toBe(14);
     });
 
     it("workspace_hibernate tool dispatches the hibernate intent", async () => {
@@ -371,6 +373,28 @@ describe("McpServer", () => {
       // Verify result contains the port number
       expect(result).toEqual({
         content: [{ type: "text", text: "14001" }],
+      });
+    });
+
+    it("report_bug dispatches the submit-bug-report intent and returns submitted:true", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const reportTool = tools.find((t) => t.name === "report_bug");
+      expect(reportTool).toBeDefined();
+
+      // Non-workspace tool: no auth extra needed.
+      const result = await reportTool!.handler({ description: "Sidebar crashes on resize" }, {});
+
+      expect(mockDispatcher.operations.submitBugReport).toHaveBeenCalled();
+      const intent = mockDispatcher.operations.submitBugReport!.mock.calls[0]![0].intent as Intent;
+      expect(intent.type).toBe(INTENT_SUBMIT_BUG_REPORT);
+      expect((intent.payload as { description: string }).description).toBe(
+        "Sidebar crashes on resize"
+      );
+
+      expect(result).toEqual({
+        content: [{ type: "text", text: JSON.stringify({ submitted: true }) }],
       });
     });
   });
