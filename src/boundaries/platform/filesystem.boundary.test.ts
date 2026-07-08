@@ -13,6 +13,9 @@ import type * as NodeFs from "node:fs/promises";
  * When rmOverride is non-null, the mocked rm delegates to it instead of the real implementation.
  * This allows the ETIMEDOUT test to inject a never-resolving promise while keeping all
  * other tests using real filesystem operations.
+ *
+ * Outside the Electron runtime (Vitest), the boundary's original-fs require throws and
+ * falls back to node:fs/promises, so mocking node:fs/promises intercepts the boundary's rm.
  */
 const { rmControl } = vi.hoisted(() => ({
   rmControl: { override: null as (() => Promise<void>) | null },
@@ -497,6 +500,22 @@ describe("DefaultFileSystemBoundary", () => {
       await fs.rm(dirPath, { recursive: true, force: true });
 
       await expect(fs.readdir(dirPath)).rejects.toThrow();
+    });
+
+    it("recursively removes a tree containing a *.asar file (orphan-cleanup regression)", async () => {
+      // A workspace's installed electron leaves .../dist/resources/default_app.asar.
+      // In the packaged app, node:fs is asar-patched and treats that file as a virtual
+      // directory, so recursive rm leaves it behind and rmdir fails with ENOTEMPTY.
+      // The boundary uses original-fs to avoid asar handling; this asserts the .asar
+      // file is treated as a plain file and the whole tree is removed.
+      const resourcesDir = join(tempDir.path, "electron", "dist", "resources");
+      const asarPath = join(resourcesDir, "default_app.asar");
+      await nodeMkdir(resourcesDir, { recursive: true });
+      await nodeWriteFile(asarPath, "not a real asar", "utf-8");
+
+      await fs.rm(join(tempDir.path, "electron"), { recursive: true, force: true });
+
+      await expect(fs.readdir(join(tempDir.path, "electron"))).rejects.toThrow();
     });
 
     it("rm with timeout succeeds when operation completes within timeout", async () => {
