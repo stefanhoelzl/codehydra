@@ -19,6 +19,18 @@ import { simpleGit } from "simple-git";
 import { SILENT_LOGGER } from "./logging";
 import { Path } from "../../utils/path/path";
 
+/** Read a single branch config value via getGitConfig (replaces the removed getBranchConfig). */
+async function readBranchConfig(
+  client: SimpleGitClient,
+  repoPath: Path,
+  branch: string,
+  key: string
+): Promise<string | null> {
+  const fullKey = `branch.${branch}.${key}`;
+  const map = await client.getGitConfig(repoPath, { key: fullKey });
+  return map.get(fullKey) ?? null;
+}
+
 describe("SimpleGitClient", () => {
   let client: SimpleGitClient;
   let cleanup: () => Promise<void>;
@@ -493,24 +505,43 @@ describe("SimpleGitClient", () => {
     });
   });
 
-  describe("getBranchConfigsByPrefix", () => {
-    it("returns all codehydra.* configs for a branch", async () => {
-      // Set multiple config values with codehydra prefix
+  describe("getGitConfig", () => {
+    it("returns all matching entries by regex (full keys) across branches", async () => {
       await client.setBranchConfig(repoPath, "main", "codehydra.base", "develop");
       await client.setBranchConfig(repoPath, "main", "codehydra.note", "WIP feature");
 
-      const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
+      const configs = await client.getGitConfig(repoPath, {
+        regex: "^branch\\..*\\.codehydra\\.",
+      });
 
-      expect(configs).toEqual({
-        base: "develop",
-        note: "WIP feature",
+      expect(Object.fromEntries(configs)).toEqual({
+        "branch.main.codehydra.base": "develop",
+        "branch.main.codehydra.note": "WIP feature",
       });
     });
 
-    it("returns empty object when no configs exist", async () => {
-      const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
+    it("returns an empty map when no entries match", async () => {
+      const configs = await client.getGitConfig(repoPath, {
+        regex: "^branch\\..*\\.codehydra\\.",
+      });
 
-      expect(configs).toEqual({});
+      expect(configs.size).toBe(0);
+    });
+
+    it("returns a single value by exact key", async () => {
+      await client.setBranchConfig(repoPath, "main", "codehydra.base", "develop");
+
+      const configs = await client.getGitConfig(repoPath, { key: "branch.main.codehydra.base" });
+
+      expect(Object.fromEntries(configs)).toEqual({ "branch.main.codehydra.base": "develop" });
+    });
+
+    it("returns an empty map for an unset exact key", async () => {
+      const configs = await client.getGitConfig(repoPath, {
+        key: "branch.main.codehydra.nonexistent",
+      });
+
+      expect(configs.size).toBe(0);
     });
 
     it("handles values with spaces", async () => {
@@ -521,35 +552,37 @@ describe("SimpleGitClient", () => {
         "Work in progress with spaces"
       );
 
-      const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
+      const configs = await client.getGitConfig(repoPath, { key: "branch.main.codehydra.note" });
 
-      expect(configs.note).toBe("Work in progress with spaces");
+      expect(configs.get("branch.main.codehydra.note")).toBe("Work in progress with spaces");
     });
 
     it("handles values with equals signs", async () => {
       await client.setBranchConfig(repoPath, "main", "codehydra.equation", "x=y+z");
 
-      const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
+      const configs = await client.getGitConfig(repoPath, {
+        key: "branch.main.codehydra.equation",
+      });
 
-      expect(configs.equation).toBe("x=y+z");
+      expect(configs.get("branch.main.codehydra.equation")).toBe("x=y+z");
     });
 
-    it("only returns configs matching the prefix", async () => {
-      // Set configs with different prefixes
+    it("only returns entries matching the regex", async () => {
       await client.setBranchConfig(repoPath, "main", "codehydra.base", "develop");
       await client.setBranchConfig(repoPath, "main", "other.key", "value");
 
-      const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
+      const configs = await client.getGitConfig(repoPath, {
+        regex: "^branch\\..*\\.codehydra\\.",
+      });
 
-      expect(configs).toEqual({ base: "develop" });
-      expect(configs).not.toHaveProperty("key");
+      expect(Object.fromEntries(configs)).toEqual({ "branch.main.codehydra.base": "develop" });
     });
 
     it("throws GitError for non-repo path", async () => {
       const tempDir = await createTempDir();
       try {
         await expect(
-          client.getBranchConfigsByPrefix(new Path(tempDir.path), "main", "codehydra")
+          client.getGitConfig(new Path(tempDir.path), { regex: "^branch\\." })
         ).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
@@ -561,14 +594,14 @@ describe("SimpleGitClient", () => {
     it("removes a config key", async () => {
       // Set config first
       await client.setBranchConfig(repoPath, "main", "codehydra.note", "to be removed");
-      const before = await client.getBranchConfig(repoPath, "main", "codehydra.note");
+      const before = await readBranchConfig(client, repoPath, "main", "codehydra.note");
       expect(before).toBe("to be removed");
 
       // Unset it
       await client.unsetBranchConfig(repoPath, "main", "codehydra.note");
 
       // Verify it's gone
-      const after = await client.getBranchConfig(repoPath, "main", "codehydra.note");
+      const after = await readBranchConfig(client, repoPath, "main", "codehydra.note");
       expect(after).toBeNull();
     });
 
@@ -591,17 +624,17 @@ describe("SimpleGitClient", () => {
     });
   });
 
-  describe("getBranchConfig and setBranchConfig", () => {
-    it("getBranchConfig returns null for non-existent config", async () => {
-      const value = await client.getBranchConfig(repoPath, "main", "nonexistent");
+  describe("getGitConfig and setBranchConfig", () => {
+    it("getGitConfig returns null for non-existent config", async () => {
+      const value = await readBranchConfig(client, repoPath, "main", "nonexistent");
 
       expect(value).toBeNull();
     });
 
-    it("setBranchConfig stores value retrievable by getBranchConfig", async () => {
+    it("setBranchConfig stores value retrievable by getGitConfig", async () => {
       await client.setBranchConfig(repoPath, "main", "base", "develop");
 
-      const value = await client.getBranchConfig(repoPath, "main", "base");
+      const value = await readBranchConfig(client, repoPath, "main", "base");
       expect(value).toBe("develop");
     });
 
@@ -610,7 +643,7 @@ describe("SimpleGitClient", () => {
 
       // Create a new client instance
       const newClient = new SimpleGitClient(SILENT_LOGGER);
-      const value = await newClient.getBranchConfig(repoPath, "main", "base");
+      const value = await readBranchConfig(newClient, repoPath, "main", "base");
       expect(value).toBe("feature-branch");
     });
 
@@ -620,7 +653,7 @@ describe("SimpleGitClient", () => {
 
       await client.setBranchConfig(repoPath, "feature/foo/bar", "base", "main");
 
-      const value = await client.getBranchConfig(repoPath, "feature/foo/bar", "base");
+      const value = await readBranchConfig(client, repoPath, "feature/foo/bar", "base");
       expect(value).toBe("main");
     });
 
@@ -631,15 +664,15 @@ describe("SimpleGitClient", () => {
         client.setBranchConfig(repoPath, "nonexistent-branch", "base", "main")
       ).resolves.not.toThrow();
 
-      const value = await client.getBranchConfig(repoPath, "nonexistent-branch", "base");
+      const value = await readBranchConfig(client, repoPath, "nonexistent-branch", "base");
       expect(value).toBe("main");
     });
 
-    it("getBranchConfig throws GitError for non-repo path", async () => {
+    it("getGitConfig throws GitError for non-repo path", async () => {
       const tempDir = await createTempDir();
       try {
         await expect(
-          client.getBranchConfig(new Path(tempDir.path), "main", "base")
+          client.getGitConfig(new Path(tempDir.path), { key: "branch.main.base" })
         ).rejects.toThrow(GitError);
       } finally {
         await tempDir.cleanup();
@@ -773,38 +806,40 @@ describe("SimpleGitClient", () => {
       await targetCleanup();
     });
 
-    it("getBranchConfig works on bare repository", async () => {
+    it("getGitConfig exact key works on bare repository", async () => {
       await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
 
-      const value = await client.getBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
+      const value = await readBranchConfig(client, bareRepoPath, "test-branch", "codehydra.base");
 
       expect(value).toBe("main");
     });
 
-    it("getBranchConfigsByPrefix works on bare repository", async () => {
+    it("getGitConfig regex works on bare repository", async () => {
       await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
       await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.note", "a note");
 
-      const configs = await client.getBranchConfigsByPrefix(
-        bareRepoPath,
-        "test-branch",
-        "codehydra"
-      );
+      const configs = await client.getGitConfig(bareRepoPath, {
+        regex: "^branch\\..*\\.codehydra\\.",
+      });
 
-      expect(configs).toEqual({ base: "main", note: "a note" });
+      expect(Object.fromEntries(configs)).toEqual({
+        "branch.test-branch.codehydra.base": "main",
+        "branch.test-branch.codehydra.note": "a note",
+      });
     });
 
     it("unsetBranchConfig works on bare repository", async () => {
       await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
       await client.unsetBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
 
-      const value = await client.getBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
+      const value = await readBranchConfig(client, bareRepoPath, "test-branch", "codehydra.base");
 
       expect(value).toBeNull();
     });
 
-    it("getBranchConfig returns null for non-existent key on bare repo", async () => {
-      const value = await client.getBranchConfig(
+    it("getGitConfig returns null for non-existent key on bare repo", async () => {
+      const value = await readBranchConfig(
+        client,
         bareRepoPath,
         "test-branch",
         "codehydra.nonexistent"

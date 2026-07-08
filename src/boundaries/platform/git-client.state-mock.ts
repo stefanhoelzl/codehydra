@@ -600,16 +600,37 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       return [...repo.remotes].sort();
     },
 
-    async getBranchConfig(repoPath: Path, branch: string, key: string): Promise<string | null> {
+    async getGitConfig(
+      repoPath: Path,
+      options: { key: string } | { regex: string }
+    ): Promise<ReadonlyMap<string, string>> {
       getRepoOrThrow(repoPath); // Validate repo exists
       const repo = state.getRepo(normalizePath(repoPath))!;
 
-      const branchConfig = repo.branchConfigs.get(branch);
-      if (!branchConfig) {
-        return null;
+      // Flatten stored branch configs into full git config keys: branch.<branch>.<subkey>
+      const entries = new Map<string, string>();
+      for (const [branch, branchConfig] of repo.branchConfigs) {
+        for (const [subKey, value] of branchConfig) {
+          entries.set(`branch.${branch}.${subKey}`, value);
+        }
       }
 
-      return branchConfig.get(key) ?? null;
+      const result = new Map<string, string>();
+      if ("key" in options) {
+        const value = entries.get(options.key);
+        if (value !== undefined) {
+          result.set(options.key, value);
+        }
+        return result;
+      }
+
+      const pattern = new RegExp(options.regex);
+      for (const [key, value] of entries) {
+        if (pattern.test(key)) {
+          result.set(key, value);
+        }
+      }
+      return result;
     },
 
     async setBranchConfig(
@@ -628,32 +649,6 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       }
 
       branchConfig.set(key, value);
-    },
-
-    async getBranchConfigsByPrefix(
-      repoPath: Path,
-      branch: string,
-      prefix: string
-    ): Promise<Readonly<Record<string, string>>> {
-      getRepoOrThrow(repoPath); // Validate repo exists
-      const repo = state.getRepo(normalizePath(repoPath))!;
-
-      const branchConfig = repo.branchConfigs.get(branch);
-      if (!branchConfig) {
-        return {};
-      }
-
-      const result: Record<string, string> = {};
-      const prefixWithDot = prefix + ".";
-
-      for (const [key, value] of branchConfig) {
-        if (key.startsWith(prefixWithDot)) {
-          const strippedKey = key.substring(prefixWithDot.length);
-          result[strippedKey] = value;
-        }
-      }
-
-      return result;
     },
 
     async unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void> {
