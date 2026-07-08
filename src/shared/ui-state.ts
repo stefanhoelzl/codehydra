@@ -146,7 +146,7 @@ export interface UiState {
     readonly width: number;
   };
   /**
-   * Mounted workspace iframes: key → code-server URL. Every workspace with a
+   * Mounted workspace iframes: key → IDE server URL. Every workspace with a
    * runtime stays mounted (keep-alive); `main` references at most one of them.
    */
   readonly frames: Readonly<Record<string, string>>;

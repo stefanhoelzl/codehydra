@@ -82,7 +82,7 @@ describe("ServiceError", () => {
   describe("IdeServerError", () => {
     it("has correct type", () => {
       const error = new IdeServerError("Failed to start");
-      expect(error.type).toBe("code-server");
+      expect(error.type).toBe("ide-server");
     });
 
     it("serializes correctly", () => {
@@ -90,7 +90,7 @@ describe("ServiceError", () => {
       const json = error.toJSON();
 
       expect(json).toEqual({
-        type: "code-server",
+        type: "ide-server",
         message: "Failed to start",
         code: "START_FAILED",
       });

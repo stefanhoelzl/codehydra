@@ -10,7 +10,7 @@
  * 3. "show-ui" - Show starting screen
  * 4. "check-deps" - Check binaries and extensions (collect, isolated contexts)
  * 5. "start" - Start servers, wire services, mount renderer.
- *              Handlers that need ports (mcpPort, codeServerPort) declare
+ *              Handlers that need ports (mcpPort, ideServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
  *
@@ -29,7 +29,7 @@
  *
  * Aborts on error in any hook. Services that are optional must handle
  * their own errors internally (e.g., PluginServer graceful degradation in
- * CodeServerModule).
+ * IdeServerModule).
  *
  * Contract schemas (item 2): zod is the single source of truth. Payload, per-hook-point
  * (result/input) schemas are declared once and hung on the operation's `schemas` field; the
@@ -341,14 +341,14 @@ export class AppStartOperation implements Operation<typeof schemas> {
       }
 
       // Hook 5: "start" -- Start servers, wire callbacks, mount renderer
-      // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
+      // Handlers that need ports (mcpPort, ideServerPort) declare `requires` and
       // read from ctx.capabilities. Capability-based ordering replaces the former
       // separate "activate" hook point.
       phase = "start";
       const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
       throwHookErrors(startErrors, "app:start start hooks failed");
 
-      // After all start handlers (code-server included) are up, load initial projects.
+      // After all start handlers (IDE server included) are up, load initial projects.
       // Fire-and-forget: the snapshot stream carries the result, so startup must not
       // block on projects finishing. (Operation owns this dispatch; the presentation
       // start handler only advances the UI phase.)

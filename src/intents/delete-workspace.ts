@@ -7,7 +7,7 @@
  * 3. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
  * 4. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
  * 5. If blockingPids provided (retry): "flush" hook — kill provided PIDs
- * 6. "delete" hook — WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
+ * 6. "delete" hook — WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file)
  *
  * If delete fails (and not force):
  * 7. "detect" — Full blocking process detection (RM + CWD + handles)

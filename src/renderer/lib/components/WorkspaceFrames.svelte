@@ -1,7 +1,7 @@
 <!--
   WorkspaceFrames.svelte
 
-  Renders one <iframe> per mountable workspace (has a code-server URL and is
+  Renders one <iframe> per mountable workspace (has an IDE server URL and is
   not hibernated), from the UiState snapshot's `frames` region. All frames
   mount eagerly so switching is instant; only the active frame is visible.
 
@@ -105,10 +105,10 @@
   }
 
   // Reload every mounted frame by re-assigning its src (forces a navigation
-  // even though the URL is unchanged — the prod code-server port is stable
+  // even though the URL is unchanged — the prod IDE server port is stable
   // across a restart). Invoked by the main process via __chReloadFrames after
-  // code-server restarts on resume, so the frames reconnect to the fresh
-  // server instead of showing code-server's own "Reload" dialog. frameEls
+  // the IDE server restarts on resume, so the frames reconnect to the fresh
+  // server instead of showing the IDE server's own "Reload" dialog. frameEls
   // holds exactly the mounted (non-hibernated) frames.
   function reloadFrames(): void {
     for (const el of frameEls.values()) {

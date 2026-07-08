@@ -226,7 +226,7 @@ All API calls have a **10-second timeout**. If CodeHydra doesn't respond within 
 
 ## VS Code Extension Access
 
-Third-party VS Code extensions running inside code-server can access the public API through the codehydra extension's exports.
+Third-party VS Code extensions running inside VSCodium can access the public API through the codehydra extension's exports.
 
 ### Getting the API
 
@@ -518,7 +518,7 @@ interface Workspace {
   branch: string | null; // Current branch, or null for detached HEAD
   metadata: Readonly<Record<string, string>>; // Always contains a `base` key with the base branch
   path: string; // Absolute path to the workspace directory
-  url?: string; // code-server URL; absent while the workspace is hibernated
+  url?: string; // IDE server URL; absent while the workspace is hibernated
 }
 ```
 

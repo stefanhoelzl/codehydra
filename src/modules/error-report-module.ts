@@ -14,7 +14,7 @@
  *       ALWAYS exit(1). Logging + exit are unconditional (crash behavior is
  *       preserved with telemetry off); only the telemetry report is gated.
  * - app:start / error: a fatal startup failure (any app:start hook rejected, e.g.
- *     code-server health check timed out) ran the app:start "error" hook. Report
+ *     IDE server health check timed out) ran the app:start "error" hook. Report
  *     (if telemetry on) with crash_source: "startup" + the failing phase, then
  *     flush. The operation awaits this hook, so the report lands before the
  *     composition root shows the native "Startup Failed" box and quits — the

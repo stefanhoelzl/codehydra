@@ -38,7 +38,7 @@ export interface SerializedError {
   readonly type:
     | "git"
     | "workspace"
-    | "code-server"
+    | "ide-server"
     | "project-store"
     | "opencode"
     | "filesystem"
@@ -97,11 +97,10 @@ export class WorkspaceError extends ServiceError {
 }
 
 /**
- * Error from IDE server operations. The `type` discriminant stays "code-server"
- * as a stable wire tag (serialized across IPC); only the class name is generic.
+ * Error from IDE server operations.
  */
 export class IdeServerError extends ServiceError {
-  readonly type = "code-server" as const;
+  readonly type = "ide-server" as const;
 }
 
 /**
@@ -119,7 +118,7 @@ export class OpenCodeError extends ServiceError {
 }
 
 /**
- * Error from binary download operations (code-server, opencode).
+ * Error from binary download operations (vscodium, opencode).
  */
 export class BinaryDownloadError extends ServiceError {
   readonly type = "binary-download" as const;

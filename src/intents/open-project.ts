@@ -434,7 +434,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
           }
         }
 
-        // Carry each opened workspace's code-server URL so the renderer can
+        // Carry each opened workspace's IDE server URL so the renderer can
         // mount iframes for workspaces it learns about via project:opened
         // (their earlier workspace:created events predate the project in the
         // renderer store). Hibernated workspaces stay URL-less.

@@ -1707,11 +1707,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         "show-ui": { handler: appStartShowUi },
         "await-retry": { handler: awaitRetry },
         start: {
-          // Gate on code-server: the operation dispatches app:ready (→ project:open,
+          // Gate on the IDE server: the operation dispatches app:ready (→ project:open,
           // whose workspace URLs must be servable when the renderer mounts iframes)
           // only after this hook point completes, so advancing the phase here waits
-          // for code-server too.
-          requires: { codeServerPort: ANY_VALUE },
+          // for the IDE server too.
+          requires: { ideServerPort: ANY_VALUE },
           handler: appStartStart,
         },
       },

@@ -385,7 +385,7 @@ Variables use `var(--vscode-*, fallback)` for dual-mode operation:
 /*                    └── VS Code injects   └── Standalone fallback */
 ```
 
-- **In code-server context**: VS Code injects `--vscode-*` variables, which take precedence
+- **In VSCodium context**: VS Code injects `--vscode-*` variables, which take precedence
 - **In standalone mode**: Fallback values are used, controlled by `prefers-color-scheme`
 
 ### Light Theme Approach
@@ -751,7 +751,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │                                                               │  │
 │  └───────────────────────────────────────────────────────────────┘  │
 │                              │                                       │
-│            CodeServerManager spawns with:                           │
+│            IdeServerModule spawns with:                             │
 │            _CH_PLUGIN_PORT=<port>                             │
 └──────────────────────────────┼───────────────────────────────────────┘
                                │ localhost:port (WebSocket)
@@ -768,7 +768,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 ### Connection Lifecycle
 
 1. **PluginServer starts** on dynamic port in main process
-2. **code-server spawns** with `_CH_PLUGIN_PORT` env var
+2. **The IDE server spawns** with `_CH_PLUGIN_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (path.normalize'd)
 5. **Server validates** auth and stores connection by normalized path
@@ -794,7 +794,7 @@ Commands are sent sequentially after a brief delay (100ms) for UI stabilization.
 | ----------------- | ---------------------------------------- |
 | `_CH_PLUGIN_PORT` | Port for VS Code extension to connect to |
 
-Set automatically by CodeServerManager when spawning code-server. If not set, extension skips connection (graceful degradation).
+Set automatically by the IDE server manager when spawning the IDE server. If not set, extension skips connection (graceful degradation).
 
 ### Message Protocol
 

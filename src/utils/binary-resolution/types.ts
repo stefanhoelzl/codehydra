@@ -5,4 +5,4 @@
 /**
  * Binary types that can be resolved.
  */
-export type BinaryType = "code-server" | "vscodium" | "opencode" | "claude";
+export type BinaryType = "vscodium" | "opencode" | "claude";

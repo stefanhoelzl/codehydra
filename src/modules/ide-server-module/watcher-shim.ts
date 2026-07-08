@@ -1,7 +1,6 @@
 /**
  * Forward-slash-normalizing shim for the embedded IDE server's native file
- * watcher (`@parcel/watcher` in VSCodium reh-web, the API-identical
- * `@vscode/watcher` fork in code-server).
+ * watcher (`@parcel/watcher` in VSCodium reh-web).
  *
  * ## Why
  *
@@ -35,8 +34,8 @@ import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 
-/** Scoped package names of the watchers shipped by the supported distributions. */
-const WATCHER_SCOPES = ["@parcel", "@vscode"] as const;
+/** Scoped package name of the watcher shipped by VSCodium reh-web. */
+const WATCHER_SCOPES = ["@parcel"] as const;
 
 /** Guard rails for the bundle directory walk (a runaway tree never hangs setup). */
 const MAX_WALK_DEPTH = 12;
@@ -159,7 +158,7 @@ async function shimPackage(
  * Recursively locate watcher package directories under `bundleDir`. Descends the
  * bundle skeleton and, at each `node_modules`, checks the known watcher scopes
  * without recursing into sibling packages (the watcher is a hoisted top-level
- * dependency in both distributions).
+ * dependency).
  */
 async function findWatcherPackages(fs: WatcherShimFs, bundleDir: string): Promise<string[]> {
   const found: string[] = [];

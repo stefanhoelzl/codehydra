@@ -29,14 +29,14 @@
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────────────┐│
 │  │Window Manager │  │ UiViewManager │  │ App Services                  ││
 │  │ BaseWindow    │  │ single UI view│  │ ├─ Git Worktree Provider      ││
-│  │ resize/bounds │  │ session/focus │  │ ├─ Code-Server Manager        ││
+│  │ resize/bounds │  │ session/focus │  │ ├─ IDE Server Manager         ││
 │  │               │  │ mode/devtools │  │ ├─ Project Store              ││
 │  └───────────────┘  └───────────────┘  │ └─ Agent Server Managers      ││
 │                                        └───────────────────────────────┘│
 ├──────────────────────────────────────────────────────────────────────────┤
 │  UI Layer (the single WebContentsView — Svelte renderer)                 │
 │  ┌─────────┐ ┌──────────────────────────────────────────────────┐       │
-│  │ Sidebar │ │ Workspace iframes (code-server, one per          │       │
+│  │ Sidebar │ │ Workspace iframes (VSCodium, one per             │       │
 │  │ dialogs │ │ non-hibernated workspace; only .active visible)  │       │
 │  │ overlays│ │ ┌───────────┐ ┌───────────┐ ┌───────────┐        │       │
 │  │         │ │ │Workspace 1│ │Workspace 2│ │Workspace 3│        │       │
@@ -50,15 +50,15 @@
 
 ### Project vs Workspace
 
-| Concept   | What it is                        | Viewable          | Actions              |
-| --------- | --------------------------------- | ----------------- | -------------------- |
-| Project   | Git repository (main directory)   | No                | Close, Add workspace |
-| Workspace | Git worktree (NOT main directory) | Yes (code-server) | Select, Remove       |
+| Concept   | What it is                        | Viewable       | Actions              |
+| --------- | --------------------------------- | -------------- | -------------------- |
+| Project   | Git repository (main directory)   | No             | Close, Add workspace |
+| Workspace | Git worktree (NOT main directory) | Yes (VSCodium) | Select, Remove       |
 
 **Key behavior:**
 
 - Main git directory is the PROJECT (container, not a workspace)
-- Only git worktrees are WORKSPACES (viewable in code-server)
+- Only git worktrees are WORKSPACES (viewable in VSCodium)
 - Fresh clone with no worktrees = 0 workspaces → create dialog auto-opens
 
 ### Worktree Discovery Logic
@@ -122,7 +122,7 @@ The app owns exactly **one WebContentsView**: the UI layer (Svelte renderer).
 Workspaces render as `<iframe>` elements inside its DOM (`WorkspaceFrames`
 component), derived declaratively from the renderer's projects store:
 
-- **Mount**: every non-hibernated workspace with a code-server URL gets an
+- **Mount**: every non-hibernated workspace with an IDE server URL gets an
   iframe, eagerly (instant switching). URLs arrive on workspace payloads
   (`workspace:created`, `project:opened`).
 - **Visibility**: only the active workspace's iframe is `display: block`
@@ -134,7 +134,7 @@ component), derived declaratively from the renderer's projects store:
   (`workspace:removed`) drops the iframe from the DOM.
 - **Focus**: switching to a workspace focuses its iframe (rAF-deferred past
   layout); an injected in-frame tracker (`installChildFrameScript`) restores
-  the last-focused element inside code-server. Focus is routed by mode —
+  the last-focused element inside VSCodium. Focus is routed by mode —
   entering shortcut mode blurs the frame so navigation keys stay in the UI.
 - **Loading indication**: the main process shows a "Loading workspace..."
   dialog from `workspace:created` until the agent's first status report (or
@@ -177,7 +177,7 @@ simply have higher z-index than the frames container.
 | ---------------- | -------- | -------------------------------------------------- |
 | preload/index.ts | UI layer | Expose IPC API for sidebar, dialogs, shortcut mode |
 
-**Note**: Workspace iframes have NO preload script (preload scripts do not run in subframes), so code-server content cannot reach `window.api`. Keyboard capture is handled via main-process `before-input-event` on the UI view's webContents, which sees input typed inside iframes.
+**Note**: Workspace iframes have NO preload script (preload scripts do not run in subframes), so IDE server content cannot reach `window.api`. Keyboard capture is handled via main-process `before-input-event` on the UI view's webContents, which sees input typed inside iframes.
 
 ### App Services (pure Node.js, no Electron deps)
 
@@ -208,14 +208,12 @@ spawn, health-poll, resume, extension install, and per-workspace
 (download coordinates, serve args, readiness probe, folder/workspace URL scheme,
 remote-cli invocation, node path) to a per-distribution descriptor.
 
-Two implementations ship: **code-server** (default) and **VSCodium reh-web**,
-selected via the `ide-server` config key. code-server is Coder's build (Open
-VSX, a CodeHydra-maintained Windows fork); VSCodium is the official reh-web build
-(Open VSX, first-class Windows). Each runs on its own fixed port (25448 / 25449) so it keeps a distinct IndexedDB origin. The `code`/`ch-*` terminal
-wrapper scripts are fully distribution-agnostic: the module passes the
-descriptor's concrete remote-cli/node paths as env vars
-(`_CH_IDE_REMOTE_CLI`, `_CH_IDE_NODE`), so adding a new distribution touches only
-its descriptor.
+One implementation ships: **VSCodium reh-web** — the official build (Open VSX,
+first-class Windows). It runs on a fixed port (25448) so it keeps a stable
+IndexedDB origin. The `code`/`ch-*` terminal wrapper scripts are
+distribution-agnostic: the module passes the descriptor's concrete
+remote-cli/node paths as env vars (`_CH_IDE_REMOTE_CLI`, `_CH_IDE_NODE`), so the
+descriptor is the only distribution-specific surface.
 
 ### Workspace Cleanup
 
@@ -265,7 +263,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in code-server), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
+**Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in VSCodium), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
 **Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), the `WindowsFileLockModule` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The module provides three hook-based operations:
 
@@ -303,7 +301,7 @@ All workspaces share a single global Electron session to enable extension storag
 │  │ Workspace A  │  │ Workspace B  │  │ Workspace C  │              │
 │  │ ?folder=/a   │  │ ?folder=/b   │  │ ?folder=/c   │              │
 │  └──────────────┘  └──────────────┘  └──────────────┘              │
-│  code-server uses folder path for workspace-specific state          │
+│  VSCodium uses folder path for workspace-specific state             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -311,7 +309,7 @@ All workspaces share a single global Electron session to enable extension storag
 
 - The UI view uses the `persist:codehydra-global` session partition; workspace iframes inherit the embedding page's session, so all workspaces share it
 - Session storage (IndexedDB, localStorage, cookies) is global
-- code-server distinguishes workspaces via the `?folder=` URL parameter
+- VSCodium distinguishes workspaces via the `?folder=` URL parameter
 - VS Code's workspace-specific state uses the folder path, not browser storage
 - Extension `globalState` and `secretStorage` are shared across all workspaces
 
@@ -615,7 +613,7 @@ On first startup (no `config.json` exists), the application follows this flow:
 2. **Agent Selection**: When `agent` is null, UI shows `AgentSelectionDialog`. User selects Claude or OpenCode, which calls `lifecycle.setAgent()` to save the choice.
 
 3. **Binary Resolution**: Binary availability is determined per binary:
-   - For code-server (pinned version): Check exact version in bundles directory
+   - For VSCodium (pinned version): Check exact version in bundles directory
    - For agents with null version (Claude, OpenCode):
      1. Check system binary via `which`/`where`
      2. If not found, check bundles directory for any version
@@ -627,7 +625,7 @@ On first startup (no `config.json` exists), the application follows this flow:
    - `done`: Complete (green checkmark)
    - `failed`: Error occurred (red X, shows Retry/Quit buttons)
 
-5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (code-server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace. Earlier hook points (`register-config` through `check-deps`) handle configuration, Electron readiness, and dependency verification.
+5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (IDE server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace. Earlier hook points (`register-config` through `check-deps`) handle configuration, Electron readiness, and dependency verification.
 
 **Key invariant**: The renderer ALWAYS goes through "loading" before "ready". The multi-phase `app:start` design ensures config is loaded, dependencies are checked, and servers are running before data is loaded. This allows the UI to display a loading screen during service startup.
 
@@ -796,7 +794,7 @@ Variables use `var(--vscode-*, fallback)` for dual-mode operation:
 --ch-foreground: var(--vscode-foreground, #cccccc);
 ```
 
-- **In code-server context**: VS Code injects `--vscode-*` variables, which take precedence
+- **In VSCodium context**: VS Code injects `--vscode-*` variables, which take precedence
 - **In standalone mode**: Fallback values are used, controlled by `prefers-color-scheme`
 
 ### Light/Dark Theme Switching
@@ -817,7 +815,7 @@ Light and dark themes only change fallback values via `@media` query:
 
 This approach means:
 
-- VS Code theme takes precedence when running in code-server
+- VS Code theme takes precedence when running in VSCodium
 - System preference controls standalone appearance
 - No JavaScript needed for theme switching
 - Layout variables (widths, spacing) are NOT in the media query
@@ -871,23 +869,22 @@ The logging system provides comprehensive logging across both main and renderer 
 
 ### Logger Names/Scopes
 
-| Logger          | Module                    | Description                           |
-| --------------- | ------------------------- | ------------------------------------- |
-| `[badge]`       | BadgeManager              | App icon badge updates                |
-| `[process]`     | LoggingProcessRunner      | Spawned processes, stdout/stderr      |
-| `[network]`     | DefaultNetworkLayer       | HTTP fetch, port operations           |
-| `[fs]`          | DefaultFileSystemBoundary | File read/write operations            |
-| `[git]`         | SimpleGitClient           | Git commands                          |
-| `[opencode]`    | OpenCodeClient            | OpenCode SSE connections              |
-| `[code-server]` | CodeServerManager         | code-server lifecycle                 |
-| `[pidtree]`     | PidtreeProvider           | Process tree lookups                  |
-| `[keepfiles]`   | KeepFilesService          | .keepfiles copy operations            |
-| `[api]`         | IPC Handlers              | API request/response timing           |
-| `[window]`      | WindowManager             | Window create/resize/close            |
-| `[view]`        | ViewManager               | View lifecycle, mode changes          |
-| `[app]`         | Application Lifecycle     | Bootstrap, startup, shutdown          |
-| `[ui]`          | Renderer Components       | Dialog events, user actions           |
-| `[extension]`   | PluginServer              | Extension-side logs forwarded to main |
+| Logger        | Module                    | Description                           |
+| ------------- | ------------------------- | ------------------------------------- |
+| `[badge]`     | BadgeManager              | App icon badge updates                |
+| `[process]`   | LoggingProcessRunner      | Spawned processes, stdout/stderr      |
+| `[network]`   | DefaultNetworkLayer       | HTTP fetch, port operations           |
+| `[fs]`        | DefaultFileSystemBoundary | File read/write operations            |
+| `[git]`       | SimpleGitClient           | Git commands                          |
+| `[opencode]`  | OpenCodeClient            | OpenCode SSE connections              |
+| `[pidtree]`   | PidtreeProvider           | Process tree lookups                  |
+| `[keepfiles]` | KeepFilesService          | .keepfiles copy operations            |
+| `[api]`       | IPC Handlers              | API request/response timing           |
+| `[window]`    | WindowManager             | Window create/resize/close            |
+| `[view]`      | ViewManager               | View lifecycle, mode changes          |
+| `[app]`       | Application Lifecycle     | Bootstrap, startup, shutdown          |
+| `[ui]`        | Renderer Components       | Dialog events, user actions           |
+| `[extension]` | PluginServer              | Extension-side logs forwarded to main |
 
 ### Log File Location
 
@@ -903,9 +900,9 @@ The logging system provides comprehensive logging across both main and renderer 
 Services receive a Logger via constructor injection (required parameter):
 
 ```typescript
-class CodeServerManager {
+class IdeServerModule {
   constructor(
-    config: CodeServerConfig,
+    config: IdeServerConfig,
     processRunner: ProcessRunner,
     httpClient: HttpClient,
     portManager: PortManager,
@@ -915,7 +912,7 @@ class CodeServerManager {
   }
 
   async start(): Promise<void> {
-    this.logger.info("Starting code-server");
+    this.logger.info("Starting the IDE server");
     // ...
     this.logger.info("Started", { port, pid });
   }
@@ -1024,7 +1021,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
                     │ WebSocket (localhost only)
                     ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
-│                    codehydra extension (code-server)                      │
+│                    codehydra extension (VSCodium)                         │
 │                                                                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐  │
 │  │  extension.js                                                       │  │
@@ -1112,7 +1109,7 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 ### Connection Lifecycle
 
 1. **PluginServer starts** on dynamic port in main process
-2. **code-server spawns** with `_CH_PLUGIN_PORT` env var
+2. **The IDE server spawns** with `_CH_PLUGIN_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (normalized path)
 5. **Server validates** auth and stores connection by normalized path
@@ -1157,14 +1154,14 @@ Third-party extension developers should copy this file into their project for ty
 
 ## External URL Handling
 
-All URLs opened from code-server → external system browser:
+All URLs opened from VSCodium → external system browser:
 
 - Implemented via `setWindowOpenHandler` returning `{ action: 'deny' }`
 - Platform-specific: `xdg-open` (Linux), `open` (macOS), `start` (Windows)
 
 ## Binary Distribution
 
-CodeHydra downloads code-server and opencode binaries from GitHub releases instead of bundling them or relying on devDependencies.
+CodeHydra downloads VSCodium and opencode binaries from GitHub releases instead of bundling them or relying on devDependencies.
 
 ### Download Flow
 
@@ -1207,7 +1204,7 @@ CodeHydra downloads code-server and opencode binaries from GitHub releases inste
 
 Binary versions are defined in `src/services/binary-download/versions.ts`:
 
-- `CODE_SERVER_VERSION` - e.g., "4.106.3"
+- `VSCODIUM_VERSION` - e.g., "1.126.04524"
 - `OPENCODE_VERSION` - e.g., "0.1.47"
 
 **Development**: `pnpm install` runs the postinstall script which downloads binaries to `./app-data/`.
@@ -1216,15 +1213,15 @@ Binary versions are defined in `src/services/binary-download/versions.ts`:
 
 ### Platform-Specific Assets
 
-| Platform      | code-server Source           | opencode Source       |
-| ------------- | ---------------------------- | --------------------- |
-| macOS (x64)   | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
-| macOS (arm64) | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
-| Linux (x64)   | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
-| Linux (arm64) | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
-| Windows (x64) | stefanhoelzl/codehydra (zip) | sst/opencode (tar.gz) |
+| Platform      | VSCodium Source            | opencode Source       |
+| ------------- | -------------------------- | --------------------- |
+| macOS (x64)   | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
+| macOS (arm64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
+| Linux (x64)   | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
+| Linux (arm64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
+| Windows (x64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
 
-**Windows Note**: code-server doesn't publish Windows binaries; the pinned version's Windows build is served from a GitHub release in this repo (the auto-build workflows have been removed — see `docs/RELEASE.md`). For a maintained Windows path, select VSCodium (`ide-server: vscodium`), whose official reh-web build ships Windows binaries.
+**Windows Note**: VSCodium publishes an official reh-web build for every platform CodeHydra targets, including Windows x64, so Windows is a first-class path with no special per-platform build step.
 
 ## VS Code Setup
 
@@ -1241,7 +1238,7 @@ app.whenReady()
        ▼
   preflight()                  # Check what's installed
        │
-       ├─► missingBinaries?    # code-server/<version>/ exists?
+       ├─► missingBinaries?    # vscodium/<version>/ exists?
        ├─► missingExtensions?  # Extension directories exist?
        ├─► outdatedExtensions? # Bundled extension version matches?
        └─► markerValid?        # .setup-completed with schemaVersion 1?
@@ -1327,7 +1324,7 @@ dist/
 ```
 out/main/assets/ (ASAR in prod)
     │
-    └─► *.vsix ──► <app-data>/vscode/ ──► code-server --install-extension
+    └─► *.vsix ──► <app-data>/vscode/ ──► codium-server --install-extension
 ```
 
 - `PathProvider.vscodeAssetsDir` resolves to `<appPath>/out/main/assets/`
@@ -1342,9 +1339,9 @@ out/main/assets/ (ASAR in prod)
 ├── bin/                           # CLI wrapper scripts (regenerated every startup)
 │   ├── code (code.cmd)            # VS Code CLI wrapper
 │   └── opencode (opencode.cmd)    # OpenCode wrapper (redirects to versioned binary)
-├── code-server/
-│   └── <version>/                 # e.g., 4.106.3/
-│       ├── bin/code-server[.cmd]  # Actual code-server binary
+├── vscodium/
+│   └── <version>/                 # e.g., 1.126.04524/
+│       ├── bin/codium-server[.cmd]  # Actual VSCodium server binary
 │       ├── lib/                   # VS Code distribution
 │       │   ├── node[.exe]         # Bundled Node.js (Windows only)
 │       │   └── vscode/
@@ -1355,13 +1352,13 @@ out/main/assets/ (ASAR in prod)
 ├── vscode/
 │   ├── sidekick-0.0.3.vsix     # Copied from assets for installation
 │   ├── extensions/
-│   │   ├── codehydra.sidekick-0.0.1/  # Installed by code-server
-│   │   └── sst-dev.opencode-X.X.X/    # Installed by code-server
+│   │   ├── codehydra.sidekick-0.0.1/  # Installed by VSCodium
+│   │   └── sst-dev.opencode-X.X.X/    # Installed by VSCodium
 │   └── user-data/
 │       └── User/
 │           ├── settings.json      # Copied from assets
 │           └── keybindings.json   # Copied from assets
-├── runtime/                       # code-server runtime files
+├── runtime/                       # VSCodium runtime files
 └── projects/                      # Git worktrees
 ```
 
@@ -1370,7 +1367,7 @@ out/main/assets/ (ASAR in prod)
 The setup system uses a **preflight-based approach** instead of a single version number. On every startup:
 
 1. **Preflight checks** detect what's missing/outdated:
-   - Binary versions (code-server, opencode directories exist?)
+   - Binary versions (vscodium, opencode directories exist?)
    - Extension versions (each extension in manifest.json array must match installed version)
    - Marker validity (has `schemaVersion: 1`?)
 
@@ -1406,14 +1403,14 @@ During VS Code setup, CLI wrapper scripts are generated in `<app-data>/bin/`. Th
 
 | Script                      | Purpose                                                     |
 | --------------------------- | ----------------------------------------------------------- |
-| `code` / `code.cmd`         | VS Code CLI (code-server's remote-cli)                      |
+| `code` / `code.cmd`         | VS Code CLI (VSCodium's remote-cli)                         |
 | `opencode` / `opencode.cmd` | Redirects to `<app-data>/opencode/<version>/opencode[.exe]` |
 
-**Note**: code-server is launched directly via `PathProvider.codeServerBinaryPath` (absolute path), not via a wrapper script.
+**Note**: The IDE server is launched directly via its absolute binary path (resolved from the `IdeServer` descriptor), not via a wrapper script.
 
-**Environment Configuration (in CodeServerManager):**
+**Environment Configuration (in the IDE server module):**
 
-When spawning code-server, the manager modifies the environment:
+When spawning the IDE server, the module modifies the environment:
 
 1. **PATH prepend**: `<app-data>/bin/` is prepended to PATH
 2. **EDITOR**: Set to `<binDir>/code --wait --reuse-window`
@@ -1425,7 +1422,7 @@ When spawning code-server, the manager modifies the environment:
 setupBinDirectory()
     │
     ├── mkdir bin/
-    ├── resolveTargetPaths() → { codeRemoteCli, codeServerBinary, opencodeBinary }
+    ├── resolveTargetPaths() → { codeRemoteCli, ideServerBinary, opencodeBinary }
     ├── generateScripts(platformInfo, targetPaths) → GeneratedScript[]
     └── for each script:
         ├── writeFile(binDir + filename, content)
@@ -1434,7 +1431,7 @@ setupBinDirectory()
 
 **Git Integration:**
 
-With EDITOR configured, git operations open in code-server:
+With EDITOR configured, git operations open in VSCodium:
 
 - `git commit` - Opens commit message editor
 - `git rebase -i` - Opens interactive rebase editor

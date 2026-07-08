@@ -12,7 +12,7 @@
     crisp and clickable. (No blur/dim: the sidebar is interactive, so dimming it
     would misleadingly read as disabled.)
   - "panel" (deletion) REPLACES the workspace view: an OPAQUE layer that masks
-    the torn-down / reconnecting code-server frame behind it, sitting BELOW the
+    the torn-down / reconnecting IDE server frame behind it, sitting BELOW the
     sidebar so the sidebar (gutter or hover-expanded) renders on top and stays
     navigable. It is not dimming a live view — the view is gone; the opacity
     just keeps the empty/reconnecting frame from flickering through.

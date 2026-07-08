@@ -13,9 +13,9 @@ import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem"
 import { DefaultNetworkLayer } from "../../boundaries/platform/network";
 import { DefaultArchiveExtractor } from "../../boundaries/platform/archive-extractor";
 import {
-  createCodeServerIdeServer,
-  CODE_SERVER_VERSION,
-} from "../../modules/ide-server-module/code-server";
+  createVscodiumIdeServer,
+  VSCODIUM_VERSION,
+} from "../../modules/ide-server-module/vscodium";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -33,7 +33,7 @@ import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform
 /**
  * Binary types supported for test downloads.
  */
-export type TestBinaryType = "code-server" | "opencode";
+export type TestBinaryType = "vscodium" | "opencode";
 
 /**
  * Options for ensureBinaryForTests.
@@ -71,8 +71,8 @@ function buildDownloadRequest(
   const platform = platformInfo.platform as SupportedPlatform;
   const arch = platformInfo.arch as SupportedArch;
 
-  if (binary === "code-server") {
-    const ide = createCodeServerIdeServer();
+  if (binary === "vscodium") {
+    const ide = createVscodiumIdeServer();
     const destDir = pathProvider.bundlePath(ide.bundleSubdir()).toNative();
     const executablePath = ide.executablePath(platform);
     const subPath = ide.archiveSubPath(platform, arch);
@@ -140,7 +140,7 @@ export async function ensureBinaryForTests(
   }
 
   // Download the binary
-  const version = binary === "code-server" ? CODE_SERVER_VERSION : OPENCODE_VERSION;
+  const version = binary === "vscodium" ? VSCODIUM_VERSION : OPENCODE_VERSION;
   console.log(`Downloading ${binary} v${version} for tests...`);
 
   const deps: DownloadDeps = {

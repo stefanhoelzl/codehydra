@@ -44,7 +44,7 @@ export const EVENT_SETUP_ERROR = "setup:error" as const;
 // =============================================================================
 
 /** Binaries the setup flow can download. Local schema; mirrors binary-resolution's BinaryType. */
-const binaryTypeSchema = z.enum(["code-server", "vscodium", "opencode", "claude"]);
+const binaryTypeSchema = z.enum(["vscodium", "opencode", "claude"]);
 
 /** Selectable agent backend. Local schema; mirrors shared/ipc's LifecycleAgentType. */
 const lifecycleAgentTypeSchema = z.enum(["opencode", "claude"]);

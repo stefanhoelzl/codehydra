@@ -12,10 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultPathProvider } from "./boundaries/platform/path-provider";
 import { createMockBuildInfo } from "./boundaries/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "./boundaries/platform/platform-info.test-utils";
-import {
-  createCodeServerIdeServer,
-  CODE_SERVER_VERSION,
-} from "./modules/ide-server-module/code-server";
+import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./modules/ide-server-module/vscodium";
 import { OPENCODE_VERSION } from "./modules/agent-module/opencode/setup-info";
 import { Path } from "./utils/path/path";
 import type { PathProvider } from "./boundaries/platform/path-provider";
@@ -57,38 +54,38 @@ describe("Main process wiring", () => {
     vi.unstubAllEnvs();
   });
 
-  describe("createCodeServerConfig pattern", () => {
+  describe("createIdeServerConfig pattern", () => {
     /**
-     * This tests the same pattern used in main.ts createCodeServerConfig()
+     * This tests the same pattern used in main.ts createIdeServerConfig()
      * PathProvider now returns Path objects, so we convert to native strings for external use.
      * Uses dynamic bundlePath methods with version constants and setup-info functions.
      */
-    interface TestCodeServerConfig {
+    interface TestIdeServerConfig {
       readonly binaryPath: string;
       readonly runtimeDir: string;
       readonly extensionsDir: string;
       readonly userDataDir: string;
       readonly binDir: string;
-      readonly codeServerDir: string;
+      readonly ideServerDir: string;
       readonly opencodeDir: string;
     }
 
-    function createCodeServerConfig(
+    function createIdeServerConfig(
       pathProvider: PathProvider,
       platform: SupportedPlatform
-    ): TestCodeServerConfig {
-      const codeServerBinaryPath = new Path(
-        pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
-        createCodeServerIdeServer().executablePath(platform)
+    ): TestIdeServerConfig {
+      const ideServerBinaryPath = new Path(
+        pathProvider.bundlePath(`vscodium/${VSCODIUM_VERSION}`),
+        createVscodiumIdeServer().executablePath(platform)
       ).toNative();
 
       return {
-        binaryPath: codeServerBinaryPath,
+        binaryPath: ideServerBinaryPath,
         runtimeDir: pathProvider.dataPath("runtime").toNative(),
         extensionsDir: pathProvider.dataPath("vscode/extensions").toNative(),
         userDataDir: pathProvider.dataPath("vscode/user-data").toNative(),
         binDir: pathProvider.dataPath("bin").toNative(),
-        codeServerDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
+        ideServerDir: pathProvider.bundlePath(`vscodium/${VSCODIUM_VERSION}`).toNative(),
         opencodeDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
       };
     }
@@ -98,7 +95,7 @@ describe("Main process wiring", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      const config = createCodeServerConfig(pathProvider, "linux");
+      const config = createIdeServerConfig(pathProvider, "linux");
 
       expect(config.runtimeDir).toMatch(/app-data[/\\]runtime$/);
       expect(config.extensionsDir).toMatch(/app-data[/\\]vscode[/\\]extensions$/);
@@ -115,7 +112,7 @@ describe("Main process wiring", () => {
         });
         const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-        const config = createCodeServerConfig(pathProvider, "linux");
+        const config = createIdeServerConfig(pathProvider, "linux");
 
         expect(config.runtimeDir).toBe("/home/testuser/.local/share/codehydra/runtime");
         expect(config.extensionsDir).toBe(

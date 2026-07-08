@@ -141,15 +141,9 @@ The pending publisher automatically converts to a regular publisher on first suc
 
 ---
 
-## code-server Windows Builds (removed)
+## Windows IDE Server
 
-code-server doesn't publish Windows binaries, so CodeHydra historically built and
-published them via GitHub Actions. Those workflows
-(`build-code-server-windows.yaml`, `check-code-server-releases.yaml`) have been
-**removed**. The currently pinned code-server version's Windows build is already
-published as a GitHub release in this repo (tag `code-server-windows-v{version}`),
-and Windows now has a first-class path via **VSCodium** (`ide-server: vscodium`),
-whose official reh-web build ships Windows binaries directly.
-
-If a new code-server Windows version is ever required, it must be built manually,
-or `version.code-server` kept at an already-published build.
+Windows is a first-class platform: the embedded IDE server is **VSCodium**, whose
+official reh-web build ships Windows binaries directly. There is no special
+per-platform build or publish step for the IDE server — CodeHydra downloads the
+pinned VSCodium release for the target platform during build/first-run setup.

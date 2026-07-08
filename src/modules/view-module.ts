@@ -327,9 +327,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
       // -------------------------------------------------------------------
       // ide-server:restarted → reload every workspace iframe. A resume
-      // restart replaced the code-server process, so each frame's connection
+      // restart replaced the IDE server process, so each frame's connection
       // to the old server is dead; reloading reconnects them to the fresh
-      // server instead of leaving code-server's "Reload" dialog in each one.
+      // server instead of leaving the IDE server's "Reload" dialog in each one.
       // -------------------------------------------------------------------
       [EVENT_IDE_SERVER_RESTARTED]: {
         handler: async (): Promise<void> => {

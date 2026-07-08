@@ -149,7 +149,7 @@ const finalizeInputSchema = hookCtxSchema(
   finalizeEnrichmentSchema.shape
 );
 
-/** The "finalize" hook produces the workspace URL string (only code-server contributes one). */
+/** The "finalize" hook produces the workspace URL string (only the IDE server contributes one). */
 const finalizeResultSchema = z.string();
 
 // =============================================================================
@@ -354,7 +354,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
 
     throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
-    // Only code-server produces a finalize result (the workspace URL); the other
+    // Only the IDE server produces a finalize result (the workspace URL); the other
     // finalize handler (plugin-server) returns void, so results[0] is the URL.
     const workspaceUrl = finalizeResults[0];
     if (!workspaceUrl) {

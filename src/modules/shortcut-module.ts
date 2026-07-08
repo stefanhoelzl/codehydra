@@ -68,7 +68,7 @@ const SHORTCUT_ACTIVATION_KEY = "x";
  *
  * Why the app handles Alt+F4 at all: normally the window manager owns it and
  * sends a window close. Under native Wayland (Linux, Electron 43+) Chromium uses
- * the keyboard-shortcuts-inhibit protocol so the focused code-server surface
+ * the keyboard-shortcuts-inhibit protocol so the focused IDE server surface
  * receives ALL keys — the compositor stops acting on Alt+F4 and forwards it here
  * instead. Owning it restores quit. Linux-only (see `deps.platform` guard):
  * Windows closes via the OS (SC_CLOSE) and macOS uses Cmd+Q, so Alt+F4 must not

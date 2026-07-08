@@ -36,7 +36,7 @@ Or download directly from [GitHub Releases](https://github.com/stefanhoelzl/code
 - **Git Worktrees** - Each workspace is an isolated git worktree, not a separate clone
 - **Real-time Status** - Monitor agent status (idle/busy/waiting) across all workspaces
 - **Keyboard Driven** - Alt+X shortcut mode for fast workspace navigation
-- **VS Code Powered** - Full code-server integration with all your extensions
+- **VS Code Powered** - Full VSCodium integration with all your extensions
 - **Voice Dictation** - Built-in speech-to-text for hands-free coding
 - **Cross-platform** - Linux, macOS, and Windows
 
@@ -49,7 +49,7 @@ CodeHydra uses **git worktrees** to create isolated workspaces from a single rep
 | **Project**   | A git repository (the main directory)                         |
 | **Workspace** | A git worktree - an isolated working copy with its own branch |
 
-Each workspace gets its own VS Code instance (via code-server) and can run an independent
+Each workspace gets its own VS Code instance (via VSCodium) and can run an independent
 AI agent. Switch between workspaces instantly while each agent continues working.
 
 ## Development

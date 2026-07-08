@@ -96,7 +96,7 @@ export interface IViewManager {
 
   /**
    * Asks the renderer to reload every mounted workspace iframe (re-assigning
-   * each frame's src) and re-focus the active one. Called after code-server
+   * each frame's src) and re-focus the active one. Called after the IDE server
    * restarts, when the iframes' connections to the replaced server are stale.
    *
    * Best-effort: before the WorkspaceFrames component mounts the hook is

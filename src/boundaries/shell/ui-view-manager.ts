@@ -5,7 +5,7 @@
  *
  * - UI view lifecycle (create, load, bounds-on-resize, destroy)
  * - The shared session's header/permission handlers (x-frame-options and CSP
- *   stripping so code-server loads inside iframes)
+ *   stripping so the IDE server loads inside iframes)
  * - window.open interception → system browser
  * - Child-frame focus tracker injection (cross-origin iframes can't be
  *   scripted from the host document)
@@ -135,11 +135,11 @@ export class UiViewManager implements IViewManager {
 
     // The UI view shares the global session partition with the workspace
     // iframes inside it (iframes inherit the embedding page's session).
-    // This keeps code-server's existing storage (settings, layout) intact
+    // This keeps the IDE server's existing storage (settings, layout) intact
     // and makes the header/permission handlers below apply to iframe loads.
     const sessionHandle = this.sessionLayer.fromPartition(GLOBAL_SESSION_PARTITION);
 
-    // Strip frame-blocking headers so code-server loads inside iframes.
+    // Strip frame-blocking headers so the IDE server loads inside iframes.
     this.sessionLayer.setHeadersReceivedHandler(sessionHandle, (headers) => {
       const modified = { ...headers };
       for (const header of Object.keys(modified)) {

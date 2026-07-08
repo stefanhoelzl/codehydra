@@ -1,5 +1,5 @@
 /**
- * Postinstall script to download code-server, opencode, and claude binaries.
+ * Postinstall script to download vscodium, opencode, and claude binaries.
  *
  * This script is run after `pnpm install` to ensure binaries are available
  * for development and testing. Binaries are downloaded to production paths
@@ -24,9 +24,9 @@ import { DefaultArchiveExtractor } from "../src/boundaries/platform/archive-extr
 import { DefaultNetworkLayer } from "../src/boundaries/platform/network";
 import { DefaultFileSystemBoundary } from "../src/boundaries/platform/filesystem";
 import {
-  createCodeServerIdeServer,
-  CODE_SERVER_VERSION,
-} from "../src/modules/ide-server-module/code-server";
+  createVscodiumIdeServer,
+  VSCODIUM_VERSION,
+} from "../src/modules/ide-server-module/vscodium";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -169,18 +169,18 @@ async function main(): Promise<void> {
   };
 
   // Download binaries to production paths
-  console.log("Checking code-server...");
-  const ide = createCodeServerIdeServer();
-  const codeServerSubPath = ide.archiveSubPath(platform, arch);
-  const codeServerRequest: DownloadRequest = {
+  console.log("Checking vscodium...");
+  const ide = createVscodiumIdeServer();
+  const ideServerSubPath = ide.archiveSubPath(platform, arch);
+  const ideServerRequest: DownloadRequest = {
     name: ide.id,
     url: ide.downloadUrl(platform, arch),
     destDir: pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
     archiveExtension: ".tar.gz",
     executablePath: ide.executablePath(platform),
-    ...(codeServerSubPath !== undefined ? { subPath: codeServerSubPath } : {}),
+    ...(ideServerSubPath !== undefined ? { subPath: ideServerSubPath } : {}),
   };
-  await downloadBinary(deps, codeServerRequest, CODE_SERVER_VERSION);
+  await downloadBinary(deps, ideServerRequest, VSCODIUM_VERSION);
 
   console.log("Checking opencode...");
   const opencodeRequest: DownloadRequest = {
