@@ -190,7 +190,10 @@ describe("BadgeManager", () => {
   });
 
   describe("updateBadge (linux)", () => {
-    it("sets badge count to 1 for all-working state", () => {
+    // Electron's setBadgeCount() only ever worked on the Unity launcher, which no
+    // modern Linux desktop provides. The Linux badge was removed, so every state
+    // must be a no-op: no dock badge, no overlay icon, no generated images.
+    it.each(["all-working", "mixed", "none"] as const)("is a no-op for %s state", (state) => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       appLayer = createAppBoundaryMock({ platform: "linux" });
 
@@ -202,43 +205,11 @@ describe("BadgeManager", () => {
         SILENT_LOGGER
       );
 
-      manager.updateBadge("all-working");
+      manager.updateBadge(state);
 
-      expect(appLayer).toHaveBadgeCount(1);
-    });
-
-    it("sets badge count to 1 for mixed state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      appLayer = createAppBoundaryMock({ platform: "linux" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
-
-      manager.updateBadge("mixed");
-
-      expect(appLayer).toHaveBadgeCount(1);
-    });
-
-    it("clears badge for none state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      appLayer = createAppBoundaryMock({ platform: "linux" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
-
-      manager.updateBadge("none");
-
-      expect(appLayer).toHaveBadgeCount(0);
+      expect(appLayer.dock).toBeUndefined();
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(0);
+      expect(imageLayer).toHaveImages([]);
     });
   });
 
