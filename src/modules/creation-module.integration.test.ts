@@ -412,6 +412,29 @@ describe("CreationModule", () => {
       expect(field(panel.config, "base")["loading"]).toBe(false);
     });
 
+    it("seeds the base field from the project's defaultBaseBranch before bases load", async () => {
+      const seeded: Project = { ...PROJECT_A, defaultBaseBranch: "origin/seeded" };
+      const s = setup({ projects: [seeded] });
+      // Hang the bases fetch so only the synchronous first-paint seed is visible.
+      s.dispatcher.results.set(INTENT_GET_PROJECT_BASES, () => new Promise(() => {}));
+
+      const panel = await s.start();
+
+      const base = field(panel.config, "base");
+      // Value painted from the project list, not from the (pending) git round-trip.
+      expect(base["value"]).toBe("origin/seeded");
+      expect(base["loading"]).toBe(true);
+    });
+
+    it("leaves the base field empty when the project has no known default", async () => {
+      const s = setup({ projects: [PROJECT_A] });
+      s.dispatcher.results.set(INTENT_GET_PROJECT_BASES, () => new Promise(() => {}));
+
+      const panel = await s.start();
+
+      expect(field(panel.config, "base")["value"]).toBe("");
+    });
+
     it("name suggestions are derivable branches (value = ref, label = derives)", async () => {
       const s = setup();
       const panel = await s.start();

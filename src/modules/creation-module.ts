@@ -527,7 +527,11 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     branches = [];
     branchesLoading = true;
     branchesError = null;
-    baseValue = "";
+    // Seed the base field from the project's known default (computed at
+    // project:open, carried on the project list) so it paints on the first
+    // frame instead of after the git round-trip. The async list/refresh below
+    // validates and, if needed, re-defaults it.
+    baseValue = projects.find((p) => p.path === projectPath)?.defaultBaseBranch ?? "";
     formError = null;
     const epoch = ++selectionEpoch;
     if (options?.refocusName) {

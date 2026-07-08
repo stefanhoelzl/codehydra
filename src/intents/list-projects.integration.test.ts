@@ -197,6 +197,46 @@ describe("ListProjects Operation", () => {
     });
   });
 
+  describe("default base branch", () => {
+    it("carries defaultBaseBranch from the workspace entry onto the project", async () => {
+      const setup = createTestSetup(
+        async () => ({
+          result: {
+            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          },
+        }),
+        async () => ({
+          result: {
+            entries: [
+              { projectPath: PROJECT_A_PATH, workspaces: [], defaultBaseBranch: "origin/main" },
+            ],
+          },
+        })
+      );
+
+      const result = (await setup.dispatcher.dispatch(listProjectsIntent())) as Project[];
+
+      expect(result[0]!.defaultBaseBranch).toBe("origin/main");
+    });
+
+    it("omits defaultBaseBranch when the workspace entry has none", async () => {
+      const setup = createTestSetup(
+        async () => ({
+          result: {
+            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          },
+        }),
+        async () => ({
+          result: { entries: [{ projectPath: PROJECT_A_PATH, workspaces: [] }] },
+        })
+      );
+
+      const result = (await setup.dispatcher.dispatch(listProjectsIntent())) as Project[];
+
+      expect(result[0]!.defaultBaseBranch).toBeUndefined();
+    });
+  });
+
   describe("project with no matching workspaces", () => {
     let setup: TestSetup;
 

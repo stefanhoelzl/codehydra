@@ -481,6 +481,36 @@ describe("GitWorktreeProvider error injection", () => {
 
       expect(result).toBeUndefined();
     });
+
+    it("reuses pre-fetched bases instead of enumerating branches again", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "origin/main"],
+            currentBranch: "main",
+            remotes: ["origin"],
+          },
+        },
+      });
+
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      const listBranchesSpy = vi.spyOn(mockClient, "listBranches");
+      const bases = await provider.listBases(PROJECT_ROOT);
+      const callsAfterListBases = listBranchesSpy.mock.calls.length;
+
+      const result = await provider.defaultBase(PROJECT_ROOT, bases);
+
+      // Passing bases must not trigger another branch enumeration.
+      expect(listBranchesSpy.mock.calls.length).toBe(callsAfterListBases);
+      expect(result).toBe("origin/main");
+    });
   });
 
   describe("cleanupOrphanedWorkspaces", () => {
