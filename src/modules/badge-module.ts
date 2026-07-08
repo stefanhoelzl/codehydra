@@ -41,7 +41,9 @@ export type BadgeState = "none" | "all-working" | "mixed";
  * Platform behavior:
  * - macOS: Uses dock.setBadge() with status indicator
  * - Windows: Uses overlay icon on taskbar (16x16 generated image)
- * - Linux: Uses setBadgeCount() for Unity launcher (1 for working, 0 otherwise)
+ * - Linux: No badge. Electron's setBadgeCount() only ever worked on the Unity
+ *   launcher, which no modern desktop (GNOME/Wayland, KDE, …) provides, so the
+ *   call was a guaranteed no-op and has been removed.
  */
 export class BadgeManager {
   private readonly platformInfo: PlatformInfo;
@@ -83,11 +85,8 @@ export class BadgeManager {
       case "win32":
         this.updateWindowsBadge(state);
         break;
-      case "linux":
-        this.updateLinuxBadge(state);
-        break;
       default:
-        // Other platforms: no-op
+        // Linux and other platforms: no-op (no supported badge mechanism)
         break;
     }
   }
@@ -129,17 +128,6 @@ export class BadgeManager {
       state === "all-working" ? "All workspaces working" : "Some workspaces ready";
     this.windowManager.setOverlayIcon(handle, description);
     this.logger.debug("Updated Windows overlay icon", { state, description });
-  }
-
-  /**
-   * Updates the Linux badge count (Unity launcher).
-   * Uses 1 for any active state, 0 for none.
-   */
-  private updateLinuxBadge(state: BadgeState): void {
-    // Linux badge only supports counts, so use 1 for any visible state
-    const count = state === "none" ? 0 : 1;
-    const success = this.appLayer.setBadgeCount(count);
-    this.logger.debug("Updated Linux badge count", { state, count, success });
   }
 
   /**

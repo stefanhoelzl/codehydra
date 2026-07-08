@@ -6,7 +6,6 @@
  *
  * Custom matchers:
  * - `toHaveDockBadge(text)` - Assert current dock badge text
- * - `toHaveBadgeCount(count)` - Assert current badge count
  */
 
 import { expect } from "vitest";
@@ -28,7 +27,6 @@ import { CallbackSet, countMatcher, createSnapshot } from "../../test/state-mock
  * State is not directly exposed - use matchers for assertions.
  */
 class AppBoundaryMockStateImpl implements MockState {
-  badgeCount = 0;
   dockBadge = "";
   shouldUseDarkColors = true;
   /** True when a sleep blocker is currently active (OS prevented from sleeping). */
@@ -50,7 +48,7 @@ class AppBoundaryMockStateImpl implements MockState {
   }
 
   toString(): string {
-    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", preventingSleep: ${this.preventingSleep} }`;
+    return `AppBoundaryMockState { dockBadge: "${this.dockBadge}", preventingSleep: ${this.preventingSleep} }`;
   }
 }
 
@@ -97,11 +95,9 @@ export interface MockAppBoundaryOptions {
  * The mock maintains in-memory state and provides the same
  * platform-specific behavior as the real implementation:
  * - dock is undefined on non-macOS platforms
- * - setBadgeCount always returns true in the mock
  *
  * Use custom matchers for assertions:
  * - `expect(mock).toHaveDockBadge("text")`
- * - `expect(mock).toHaveBadgeCount(5)`
  *
  * @example Basic usage
  * ```ts
@@ -114,13 +110,6 @@ export interface MockAppBoundaryOptions {
  * ```ts
  * const appLayer = createAppBoundaryMock({ platform: "win32" });
  * expect(appLayer.dock).toBeUndefined();
- * ```
- *
- * @example Badge count
- * ```ts
- * const appLayer = createAppBoundaryMock();
- * appLayer.setBadgeCount(5);
- * expect(appLayer).toHaveBadgeCount(5);
  * ```
  */
 export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): MockAppBoundary {
@@ -142,11 +131,6 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
   return {
     $: state,
     dock,
-
-    setBadgeCount(count: number): boolean {
-      state.badgeCount = count;
-      return true;
-    },
 
     allowPowerSaving(allow: boolean): void {
       // Mirror the real boundary's idempotent single-blocker semantics.
@@ -195,12 +179,6 @@ export interface AppBoundaryMatchers {
   toHaveDockBadge(text: string): void;
 
   /**
-   * Assert current badge count.
-   * @param count - Expected badge count
-   */
-  toHaveBadgeCount(count: number): void;
-
-  /**
    * Assert that the OS is currently being prevented from sleeping
    * (a sleep blocker is active). Use `.not` to assert sleep is allowed.
    */
@@ -244,11 +222,6 @@ const appBoundaryMatchers: MatcherImplementationsFor<
           : `Expected dock badge to be "${text}", but got "${actual}"`,
     };
   },
-
-  toHaveBadgeCount: countMatcher<MockAppBoundary & { $: AppBoundaryMockStateImpl }>(
-    "badge",
-    (mock) => mock.$.badgeCount
-  ),
 
   toBePreventingSleep(received) {
     const actual = received.$.preventingSleep;

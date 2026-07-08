@@ -40,7 +40,6 @@ export interface AppDock {
  *
  * Platform-specific behavior:
  * - `dock` is only available on macOS (undefined on other platforms)
- * - `setBadgeCount` works on Linux Unity launcher only
  */
 export interface AppBoundary {
   /**
@@ -48,15 +47,6 @@ export interface AppBoundary {
    * Returns undefined on non-macOS platforms.
    */
   readonly dock: AppDock | undefined;
-
-  /**
-   * Set the app badge count.
-   * Works on Linux Unity launcher. No-op on Windows/macOS.
-   *
-   * @param count - Badge count (0 to clear)
-   * @returns true if successful, false otherwise
-   */
-  setBadgeCount(count: number): boolean;
 
   /**
    * Open a URL in the system's default handler (browser for http/https, mail client for mailto).
@@ -134,12 +124,6 @@ export class DefaultAppBoundary implements AppBoundary {
         },
       };
     }
-  }
-
-  setBadgeCount(count: number): boolean {
-    const result = app.setBadgeCount(count);
-    this.logger.debug("Badge count set", { count, success: result });
-    return result;
   }
 
   async openUrl(url: string): Promise<void> {
