@@ -30,11 +30,8 @@ const mockApi: Api = createMockApi();
 window.api = mockApi;
 
 // Mock $lib/api to avoid import-time window.api check
-vi.mock("$lib/api", () => ({
-  emitEvent: vi.fn(),
-  sendNotificationEvent: vi.fn(),
-  on: vi.fn(() => () => {}),
-}));
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
 
 // Import after mock setup
 import { emitEvent } from "$lib/api";

@@ -14,36 +14,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
 
-const { mockApi, stateCallbacks } = vi.hoisted(() => {
-  const stateCallbacks: Array<(state: unknown) => void> = [];
-  return {
-    stateCallbacks,
-    mockApi: {
-      emitEvent: vi.fn(),
-      workspaces: {
-        hibernate: vi.fn().mockResolvedValue({ started: true }),
-        wake: vi.fn().mockResolvedValue(null),
-      },
-      projects: {
-        open: vi.fn().mockResolvedValue(undefined),
-      },
-      ui: {
-        switchWorkspace: vi.fn().mockResolvedValue(undefined),
-      },
-      lifecycle: {
-        ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
-        quit: vi.fn().mockResolvedValue(undefined),
-      },
-      on: vi.fn(() => vi.fn()),
-      onState: vi.fn((callback: (state: unknown) => void) => {
-        stateCallbacks.push(callback);
-        return vi.fn();
-      }),
-      sendDialogEvent: vi.fn(),
-      sendNotificationEvent: vi.fn(),
-    },
-  };
-});
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
+
+import * as api from "$lib/api";
+import { stateCallbacks } from "$lib/api/__mocks__";
+
+const mockApi = vi.mocked(api);
 
 /** The last snapshot delivered, so panel-session helpers can extend it. */
 let currentState: UiState | undefined;
@@ -55,9 +32,6 @@ function pushState(state: UiState): void {
     callback(state);
   }
 }
-
-// Mock the API module before any imports use it
-vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "./App.svelte";

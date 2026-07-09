@@ -9,15 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import type { DialogConfig } from "@shared/dialog-types";
 
-// Mock setup - must be hoisted
-const { mockSendDialogEvent } = vi.hoisted(() => ({
-  mockSendDialogEvent: vi.fn(),
-}));
-
-vi.mock("$lib/api", () => ({
-  sendDialogEvent: mockSendDialogEvent,
-  on: vi.fn(() => vi.fn()),
-}));
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
+import { sendDialogEvent } from "$lib/api";
+const mockSendDialogEvent = vi.mocked(sendDialogEvent);
 
 // Import after mock setup
 import DialogView from "./DialogView.svelte";
