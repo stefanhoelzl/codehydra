@@ -10,15 +10,31 @@ runs:
       shell: bash
       run: echo "STORE_PATH=$(pnpm --silent store path)" >> $GITHUB_OUTPUT
 
-    - uses: actions/cache@v5
+    # Restore always, save only on main. GitHub scopes a cache to the ref that
+    # wrote it: a PR-scoped cache is readable by that PR alone, while a cache
+    # written on the default branch is readable by every branch. Letting PRs
+    # save produced one unreadable copy per PR and never seeded main, so
+    # Windows and macOS installed cold on every run.
+    #
+    # runner.arch is part of the key because the pnpm store holds arch-specific
+    # optional deps (esbuild, rollup). runner.os is "macOS" for both arm64 and
+    # x64 runners, so os alone would let them share a store.
+    - id: pnpm-store
+      uses: actions/cache/restore@v5
       with:
         path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
         restore-keys: |
-          ${{ runner.os }}-pnpm-store-
+          ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
     - run: echo "_CH_BUNDLE_DIR=${{ runner.temp }}/codehydra-bundles" >> $GITHUB_ENV
       shell: bash
 
     - run: pnpm install --frozen-lockfile
       shell: bash
+
+    - if: github.ref == 'refs/heads/main' && steps.pnpm-store.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+        key: ${{ steps.pnpm-store.outputs.cache-primary-key }}
