@@ -17,6 +17,7 @@ import { OPENCODE_VERSION } from "./modules/agent-module/opencode/setup-info";
 import { Path } from "./utils/path/path";
 import type { PathProvider } from "./boundaries/platform/path-provider";
 import type { SupportedPlatform } from "./boundaries/platform/platform-info";
+import { ElectronBuildInfo } from "./boundaries/platform/electron-build-info";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -129,8 +130,6 @@ describe("Main process wiring", () => {
       // if (buildInfo.isDevelopment) { ... register DevTools handler ... }
       // isDevelopment now comes from __IS_DEV_BUILD__, not app.isPackaged
 
-      const { ElectronBuildInfo } = await import("../boundaries/platform/electron-build-info");
-
       // Dev build (default __IS_DEV_BUILD__ = true)
       const devBuildInfo = new ElectronBuildInfo();
       expect(devBuildInfo.isDevelopment).toBe(true);
@@ -143,7 +142,7 @@ describe("Main process wiring", () => {
     });
   });
 
-  describe.skipIf(process.platform !== "darwin")("Full wiring chain (Darwin)", () => {
+  describe.skipIf(process.platform === "win32")("Full wiring chain (Darwin)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
       const platformInfo = createMockPlatformInfo({

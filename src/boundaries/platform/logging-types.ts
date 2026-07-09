@@ -58,6 +58,10 @@ export type LoggerName =
   | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator
   | "auto-workspace:github" // GitHubSource - GitHub PR polling
   | "auto-workspace:youtrack" // YouTrackSource - YouTrack issue polling
+  | "state" // StateService - state.json persistence
+  | "settings" // SettingsModule - settings UI
+  | "agent-resolver" // AgentResolver - agent selection
+  | "power" // AppBoundary.allowPowerSaving - sleep prevention
   | "error-report"; // ErrorReportModule - crash + manual bug report
 
 /**

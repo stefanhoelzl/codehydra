@@ -48,17 +48,11 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: [
-            "src/main/**/*.{test,spec}.{js,ts}",
-            "src/shared/**/*.{test,spec}.{js,ts}",
-            "src/preload/**/*.{test,spec}.{js,ts}",
-            "src/bin/**/*.{test,spec}.{js,ts}",
-            "src/boundaries/**/*.{test,spec}.{js,ts}",
-            "src/intents/**/*.{test,spec}.{js,ts}",
-            "src/modules/**/*.{test,spec}.{js,ts}",
-            "src/utils/**/*.{test,spec}.{js,ts}",
-          ],
-          exclude: ["**/*.boundary.test.{js,ts}"],
+          // Everything under src/ that the renderer and boundary projects
+          // don't claim. Enumerating directories here silently drops tests
+          // whenever the tree is reorganized.
+          include: ["src/**/*.{test,spec}.{js,ts}"],
+          exclude: ["**/*.boundary.test.{js,ts}", "src/renderer/**"],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
           // Use forks pool for better ESM/CJS interop with native modules like ws/socket.io
           pool: "forks",
@@ -70,12 +64,7 @@ export default defineConfig({
         test: {
           name: "boundary",
           environment: "node",
-          include: [
-            "src/main/**/*.boundary.test.{js,ts}",
-            "src/boundaries/**/*.boundary.test.{js,ts}",
-            "src/intents/**/*.boundary.test.{js,ts}",
-            "src/modules/**/*.boundary.test.{js,ts}",
-          ],
+          include: ["src/**/*.boundary.test.{js,ts}"],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
           pool: "forks",
         },
