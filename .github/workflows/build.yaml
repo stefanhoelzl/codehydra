@@ -105,15 +105,6 @@ jobs:
           - artifact: linux-x64
             target: linux:appimage
             output: CodeHydra-linux-x64.AppImage
-          - artifact: win-installer-x64
-            target: win:installer
-            output: CodeHydra-win-installer-x64.exe
-            wine: true
-          - artifact: win-portable-x64
-            target: win:portable
-            output: win-unpacked
-            rename: CodeHydra-win-portable-x64
-            wine: true
           - artifact: darwin-x64
             target: mac:intel
             output: mac
@@ -136,46 +127,6 @@ jobs:
         with:
           name: build-output
           path: out
-
-      - name: Restore Wine package cache
-        if: matrix.wine
-        id: wine-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/wine-debs
-          key: apt-wine-ubuntu-24.04-v4
-
-      - name: Install Wine
-        if: matrix.wine
-        timeout-minutes: 15
-        run: |
-          sudo dpkg --add-architecture i386
-          # Drop the flaky third-party apt sources: packages.microsoft.com has
-          # served invalid InRelease files that break `apt-get update`. Wine is
-          # not published there, so removing them is safe and closes that
-          # failure mode.
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
-                     /etc/apt/sources.list.d/*azure* || true
-          sudo apt-get update
-          # apt stages in-flight downloads in partial/; -p also creates ~/wine-debs
-          mkdir -p ~/wine-debs/partial
-          # Install via apt (not bare `dpkg -i`) so the multiarch packages get
-          # configured correctly — dpkg -i of the cached .debs leaves 32-bit wine
-          # unregistered ("experimental wow64 mode"), which breaks electron-builder.
-          # Point apt's archive cache at the runner-owned ~/wine-debs so a warm
-          # cache serves every .deb and no bulk download happens (the default
-          # /var/cache/apt/archives is root-owned and can't be cached).
-          sudo apt-get install -y \
-            -o Dir::Cache::archives="$HOME/wine-debs/" \
-            wine64 wine32:i386
-          sudo chown -R "$USER:$USER" ~/wine-debs
-
-      - name: Save Wine package cache
-        if: matrix.wine && steps.wine-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/wine-debs
-          key: apt-wine-ubuntu-24.04-v4
 
       - name: Package
         env:
@@ -204,10 +155,74 @@ jobs:
           if-no-files-found: error
 
       - name: Upload update metadata
-        if: matrix.artifact == 'win-installer-x64' || matrix.artifact == 'linux-x64'
+        if: matrix.artifact == 'linux-x64'
         uses: actions/upload-artifact@v7
         with:
           name: update-metadata-${{ matrix.artifact }}
+          path: dist/latest*.yml
+          retention-days: 1
+          if-no-files-found: warn
+
+  # Windows packaging runs on a Windows runner rather than under Wine on Linux.
+  # electron-builder needs Wine on Linux only to run rcedit.exe, which stamps the
+  # icon and version metadata onto electron.exe; makensis itself runs natively.
+  # Installing Wine cost 2m36s per job even on a warm apt cache, for a one-second
+  # operation. Native NSIS is also closer to what ships.
+  #
+  # Both Windows targets are emitted by a single electron-builder pass, so the app
+  # is packed once. Artifact names are unchanged — release.yaml consumes them by
+  # name — but the check context is now "Package (win-x64)".
+  package-windows:
+    name: Package (win-x64)
+    needs: prepare
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Download build output
+        uses: actions/download-artifact@v8
+        with:
+          name: build-output
+          path: out
+
+      - name: Package
+        env:
+          _CH_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npm pkg set "version=$_CH_BUILD_VERSION"
+          pnpm dist:win -- --publish=never
+
+      - name: Rename portable artifact
+        run: mv dist/win-unpacked dist/CodeHydra-win-portable-x64
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodeHydra-win-installer-x64.exe
+          path: dist/CodeHydra-win-installer-x64.exe
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload portable
+        uses: actions/upload-artifact@v7
+        with:
+          name: CodeHydra-win-portable-x64
+          path: dist/CodeHydra-win-portable-x64
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload update metadata
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-metadata-win-installer-x64
           path: dist/latest*.yml
           retention-days: 1
           if-no-files-found: warn
