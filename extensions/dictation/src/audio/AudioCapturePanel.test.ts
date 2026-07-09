@@ -1,30 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Uri, WebviewPanel, Webview, Disposable } from "vscode";
+import { resetVscodeFake } from "../../../../__mocks__/vscode";
 
-// Track mock function calls
-const mockCreateWebviewPanel = vi.fn();
-const mockExecuteCommand = vi.fn();
 let mockIsConfigured = true;
 
-// Mock vscode module
-vi.mock("vscode", () => {
-  return {
-    window: {
-      createWebviewPanel: (...args: unknown[]) => mockCreateWebviewPanel(...args),
-    },
-    commands: {
-      executeCommand: (...args: unknown[]) => mockExecuteCommand(...args),
-    },
-    ViewColumn: {
-      One: 1,
-      Two: 2,
-      Beside: -2,
-    },
-    Uri: {
-      file: (path: string) => ({ fsPath: path }) as Uri,
-    },
-  };
-});
+// Shared vscode fake (no factory) — see __mocks__/vscode.ts.
+vi.mock("vscode");
 
 // Mock config module
 vi.mock("../config", () => ({
@@ -36,7 +17,12 @@ vi.mock("fs", () => ({
   readFileSync: vi.fn(() => "<html>{{processorCode}}{{codiconsUri}}</html>"),
 }));
 
+import * as vscode from "vscode";
 import { AudioCapturePanel } from "./AudioCapturePanel";
+
+// Stable handles to the shared fake's mock fns (identity survives mockReset).
+const mockCreateWebviewPanel = vi.mocked(vscode.window.createWebviewPanel);
+const mockExecuteCommand = vi.mocked(vscode.commands.executeCommand);
 
 interface MockWebviewPanel extends WebviewPanel {
   disposed: boolean;
@@ -100,7 +86,7 @@ describe("AudioCapturePanel", () => {
   let mockPanel: MockWebviewPanel;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetVscodeFake();
     mockIsConfigured = true;
 
     extensionUri = { fsPath: "/test/extension" } as Uri;

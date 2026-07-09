@@ -1,18 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getConfig } from "./config";
+import { resetVscodeFake } from "../../../__mocks__/vscode";
 
-// Mock vscode
-vi.mock("vscode", () => ({
-  workspace: {
-    getConfiguration: vi.fn(),
-  },
-}));
+// Shared vscode fake (no factory) — see __mocks__/vscode.ts.
+vi.mock("vscode");
 
 import * as vscode from "vscode";
 
 describe("getConfig", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetVscodeFake();
   });
 
   it("returns default values when no configuration set", () => {

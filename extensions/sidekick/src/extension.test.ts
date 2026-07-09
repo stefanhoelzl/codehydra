@@ -6,7 +6,7 @@
  * socket (replacing the wrapper's WrapperStart/WrapperEnd POSTs).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { Terminal, TerminalOptions } from "vscode";
+import { createdTerminals, closeHandlers, resetVscodeFake } from "../../../__mocks__/vscode";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -41,50 +41,9 @@ vi.mock("socket.io-client", () => {
   };
 });
 
-// Captured terminal-close callbacks registered via window.onDidCloseTerminal.
-let closeHandlers: Array<(t: Terminal) => void> = [];
-// Terminals created via window.createTerminal.
-let createdTerminals: Terminal[] = [];
-
-vi.mock("vscode", () => {
-  return {
-    window: {
-      createTerminal: vi.fn((opts: TerminalOptions): Terminal => {
-        const terminal = {
-          name: opts.name,
-          creationOptions: opts,
-          show: vi.fn(),
-          sendText: vi.fn(),
-          dispose: vi.fn(),
-        } as unknown as Terminal;
-        createdTerminals.push(terminal);
-        return terminal;
-      }),
-      onDidCloseTerminal: vi.fn((cb: (t: Terminal) => void) => {
-        closeHandlers.push(cb);
-        return { dispose: vi.fn() };
-      }),
-      terminals: [],
-      showInformationMessage: vi.fn(),
-      showWarningMessage: vi.fn(),
-      showErrorMessage: vi.fn(),
-      createStatusBarItem: vi.fn(() => ({ show: vi.fn(), dispose: vi.fn() })),
-      createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), dispose: vi.fn() })),
-      activeTextEditor: undefined,
-    },
-    commands: {
-      registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
-      executeCommand: vi.fn(() => Promise.resolve()),
-    },
-    workspace: {
-      workspaceFolders: [{ uri: { fsPath: "/workspace/feature-a" } }],
-      updateWorkspaceFolders: vi.fn(),
-    },
-    ViewColumn: { Active: 1 },
-    StatusBarAlignment: { Left: 1 },
-    Uri: { file: (p: string) => ({ fsPath: p }), parse: (s: string) => ({ toString: () => s }) },
-  };
-});
+// Shared vscode fake (no factory) — see __mocks__/vscode.ts. The captured
+// terminal state (createdTerminals, closeHandlers) is imported from the fake.
+vi.mock("vscode");
 
 import { io } from "socket.io-client";
 import { activate, deactivate } from "./extension";
@@ -114,8 +73,7 @@ const CONFIG = {
 describe("sidekick agent lifecycle emits", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    closeHandlers = [];
-    createdTerminals = [];
+    resetVscodeFake();
     process.env._CH_PLUGIN_PORT = "8123";
   });
 
