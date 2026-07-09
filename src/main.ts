@@ -77,6 +77,7 @@ import { AppReadyOperation, INTENT_APP_READY } from "./intents/app-ready";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
 import type { AppShutdownIntent } from "./intents/app-shutdown";
+import type { AgentInfo } from "./shared/ipc";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
 import { SetMetadataOperation } from "./intents/set-metadata";
 import { GetMetadataOperation } from "./intents/get-metadata";
@@ -756,7 +757,6 @@ const shortcutModule = createShortcutModule({
 
 const devtoolsModule = createDevtoolsModule({
   viewManager,
-  viewLayer,
 });
 
 const debugModule = createDebugModule({ configService, ui: presentationModule });

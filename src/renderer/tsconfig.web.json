@@ -8,17 +8,9 @@
     "baseUrl": "../..",
     "paths": {
       "$lib/*": ["src/renderer/lib/*"],
-      "@shared/*": ["src/shared/*"],
-      "@services/*": ["src/services/*"]
+      "@shared/*": ["src/shared/*"]
     }
   },
-  "include": [
-    "../env.d.ts",
-    "./**/*",
-    "../shared/**/*",
-    "../intents/contract.ts",
-    "../test/**/*",
-    "../services/test-utils.ts"
-  ],
+  "include": ["../env.d.ts", "./**/*", "../shared/**/*", "../intents/contract.ts", "../test/**/*"],
   "exclude": ["../../node_modules", "../../app-data", "../test/setup-matchers.ts"]
 }

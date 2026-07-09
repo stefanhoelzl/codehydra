@@ -9,16 +9,6 @@
     },
     "types": ["node"]
   },
-  "include": [
-    "env.d.ts",
-    "main/**/*",
-    "preload/**/*",
-    "shared/**/*",
-    "test/**/*",
-    "modules/agent-module/**/*.json",
-    "intents/**/*",
-    "modules/**/*",
-    "utils/**/*",
-    "boundaries/**/*"
-  ]
+  "include": ["**/*", "modules/agent-module/**/*.json"],
+  "exclude": ["renderer/**"]
 }
