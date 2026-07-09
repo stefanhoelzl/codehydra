@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import * as zlib from "node:zlib";
 import { ArchiveError, getErrorMessage } from "../../shared/errors/service-errors.js";
 import { Path } from "../../utils/path/path.js";
 
@@ -192,29 +193,9 @@ export class ZipExtractor implements ArchiveExtractor {
             fs.promises
               .mkdir(path.dirname(nativeEntryPath), { recursive: true })
               .then(() => {
-                zipfile.openReadStream(entry, (err, readStream) => {
-                  if (err) {
-                    reject(
-                      new ArchiveError(
-                        `Failed to read entry ${entry.fileName}: ${err.message}`,
-                        "EXTRACTION_FAILED"
-                      )
-                    );
-                    return;
-                  }
-
-                  const writeStream = fs.createWriteStream(nativeEntryPath);
-                  pipeline(readStream, writeStream)
-                    .then(async () => {
-                      // Preserve file mode from external attributes (Unix mode is in upper 16 bits)
-                      const mode = (entry.externalFileAttributes >> 16) & 0o777;
-                      if (mode !== 0) {
-                        await fs.promises.chmod(nativeEntryPath, mode);
-                      }
-                    })
-                    .then(() => advance())
-                    .catch(reject);
-                });
+                writeEntry(zipfile, entry, nativeEntryPath)
+                  .then(() => advance())
+                  .catch(reject);
               })
               .catch(reject);
           }
@@ -228,6 +209,108 @@ export class ZipExtractor implements ArchiveExtractor {
         });
       });
     });
+  }
+}
+
+/** Zip compression methods we can handle. 0 = stored, 8 = deflate. */
+const ZIP_STORED = 0;
+const ZIP_DEFLATE = 8;
+
+/** Collect a readable stream into one Buffer. */
+function collect(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
+  });
+}
+
+/**
+ * Write one zip entry to disk, decompressing it ourselves.
+ *
+ * We deliberately do NOT let yauzl stream the entry through zlib. Inside an Electron
+ * **main process**, yauzl's read stream piped into zlib stalls near the end of a large
+ * entry and never emits `end` — measured at 96,204,314 of 96,277,872 bytes, with the
+ * write side idle, no backpressure and no error.
+ *
+ * It is not zlib, and it is not Electron's patched fs. Inside Electron, all of these
+ * work: `inflateRawSync` on the whole buffer (0.3s); `createInflateRaw()` fed a buffer;
+ * `fs.createReadStream(...).pipe(createInflateRaw())`; and yauzl's reader drained on its
+ * own. Only the combination stalls — yauzl reads through `fd-slicer`, which implements
+ * its own Readable over `fs.read`, and piping *that* into zlib deadlocks. Plain Node
+ * does all of it fine. `validateEntrySizes: false` does not help.
+ *
+ * That deadlock froze first-run setup forever on Windows and macOS, which fetch
+ * `opencode-*.zip`; Linux was untouched only because it fetches a `.tar.gz`.
+ *
+ * So: read the raw entry bytes (yauzl's reader is fine on its own), inflate
+ * synchronously, write once. The cost is holding one entry in memory — measured at a
+ * ~200MB transient peak for the 152MB Windows agent binary.
+ *
+ * `fflate` is the obvious escape hatch if that peak ever matters: its inflate is pure
+ * JS, so it sidesteps this entirely, and streaming it halves the peak. Measured in
+ * Electron on the 96MB entry: this code 257ms, fflate.unzipSync 627ms,
+ * fflate.Unzip streaming 877ms. It was not adopted because UnzipFileInfo exposes no
+ * external attributes, so entry file modes are lost — survivable only because
+ * binary-download chmods its executable afterwards. Note `extract-zip` is not a fix:
+ * it wraps yauzl and streams entries through zlib, reproducing the deadlock.
+ */
+async function writeEntry(
+  zipfile: yauzl.ZipFile,
+  entry: yauzl.Entry,
+  destPath: string
+): Promise<void> {
+  const method = entry.compressionMethod;
+  if (method !== ZIP_STORED && method !== ZIP_DEFLATE) {
+    throw new ArchiveError(
+      `Unsupported compression method ${method} for entry ${entry.fileName}`,
+      "INVALID_ARCHIVE"
+    );
+  }
+
+  const raw = await new Promise<Buffer>((resolve, reject) => {
+    const onStream: Parameters<typeof zipfile.openReadStream>[1] = (err, readStream) => {
+      if (err) {
+        reject(
+          new ArchiveError(
+            `Failed to read entry ${entry.fileName}: ${err.message}`,
+            "EXTRACTION_FAILED"
+          )
+        );
+        return;
+      }
+      collect(readStream).then(resolve, reject);
+    };
+
+    if (method === ZIP_DEFLATE) {
+      // Hand back the still-deflated bytes; we inflate them ourselves below.
+      // `decompress: false` is only legal for deflated entries.
+      zipfile.openReadStream(
+        entry,
+        { decompress: false, decrypt: null, start: null, end: null },
+        onStream
+      );
+    } else {
+      zipfile.openReadStream(entry, onStream);
+    }
+  });
+
+  const contents = method === ZIP_DEFLATE ? zlib.inflateRawSync(raw) : raw;
+
+  if (contents.length !== entry.uncompressedSize) {
+    throw new ArchiveError(
+      `Size mismatch for entry ${entry.fileName}: expected ${entry.uncompressedSize}, got ${contents.length}`,
+      "INVALID_ARCHIVE"
+    );
+  }
+
+  await fs.promises.writeFile(destPath, contents);
+
+  // Preserve file mode from external attributes (Unix mode is in upper 16 bits)
+  const mode = (entry.externalFileAttributes >> 16) & 0o777;
+  if (mode !== 0) {
+    await fs.promises.chmod(destPath, mode);
   }
 }
 

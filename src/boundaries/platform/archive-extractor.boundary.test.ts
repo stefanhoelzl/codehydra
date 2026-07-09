@@ -8,6 +8,7 @@ import * as fs from "node:fs/promises";
 import * as fss from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { randomBytes } from "node:crypto";
 import * as tar from "tar";
 import yazl from "yazl";
 import { TarExtractor, ZipExtractor, DefaultArchiveExtractor } from "./archive-extractor";
@@ -354,5 +355,48 @@ describe("DefaultArchiveExtractor (boundary)", () => {
       errorCode: "INVALID_ARCHIVE",
       message: expect.stringContaining("Unsupported archive format"),
     });
+  });
+});
+
+describe("ZipExtractor compression methods", () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "zip-method-test-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Deflated entries are inflated by us, not streamed through zlib by yauzl: inside an
+   * Electron main process, yauzl's reader piped into zlib stalls near the end of a large
+   * entry and never completes, which froze first-run setup on Windows and macOS. Both
+   * stored and deflated entries must still round-trip byte for byte.
+   *
+   * This test cannot reproduce that: the deadlock only exists inside Electron, and vitest
+   * runs in Node. It guards the round-trip, not the bug.
+   */
+  it("extracts stored and deflated entries alike", async () => {
+    const sourceDir = path.join(tempDir, "source");
+    await fs.mkdir(sourceDir, { recursive: true });
+
+    // Incompressible: yazl stores it. Highly repetitive: yazl deflates it.
+    const stored = randomBytes(8192);
+    const deflated = Buffer.from("codehydra".repeat(5000));
+    await fs.writeFile(path.join(sourceDir, "stored.bin"), stored);
+    await fs.writeFile(path.join(sourceDir, "deflated.txt"), deflated);
+
+    const archivePath = path.join(tempDir, "mixed.zip");
+    await createTestZip(sourceDir, archivePath);
+
+    const destDir = path.join(tempDir, "extracted");
+    await new ZipExtractor().extract(archivePath, new Path(destDir));
+
+    const gotStored = await fs.readFile(path.join(destDir, "stored.bin"));
+    const gotDeflated = await fs.readFile(path.join(destDir, "deflated.txt"));
+    expect(gotStored.equals(stored)).toBe(true);
+    expect(gotDeflated.equals(deflated)).toBe(true);
   });
 });
