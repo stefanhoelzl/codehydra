@@ -53,6 +53,24 @@ jobs:
       - run: pnpm test
       - run: git diff --exit-code
 
+  # Maximal-contamination run: --no-file-parallelism puts every file of a project
+  # into one worker, so they share one module registry. Under isolate:false the
+  # default parallel run only catches a cross-file module-state regression when
+  # the two colliding files happen to land in the same worker.
+  #
+  # Serial, so ~3-4x the parallel suite. Kept off the PR path: it would become the
+  # critical path. A regression surfaces on the merge that introduced it.
+  canary:
+    name: Test Canary
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      - run: pnpm build:wrappers
+      - run: pnpm test:canary
+
   build:
     uses: ./.github/workflows/build.yaml
 
