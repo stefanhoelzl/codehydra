@@ -267,15 +267,17 @@ cd /path/to/main && git merge --ff-only <branch>  # Fast-forward only
 | Pure utility function | Focused tests (input/output)         |
 | External interface    | Boundary tests                       |
 | Bug fix               | Test covering the fix                |
+| Packaging / startup   | e2e spec (`e2e/*.e2e.ts`)            |
 
 **Note**: Unit tests deprecated. Use integration tests with behavioral mocks.
 
-| Command                 | Purpose                      |
-| ----------------------- | ---------------------------- |
-| `pnpm test`             | All tests                    |
-| `pnpm test:integration` | Primary development feedback |
-| `pnpm test:boundary`    | External interface tests     |
-| `pnpm validate:fix`     | Auto-fix + validate          |
+| Command                 | Purpose                         |
+| ----------------------- | ------------------------------- |
+| `pnpm test`             | All tests                       |
+| `pnpm test:integration` | Primary development feedback    |
+| `pnpm test:boundary`    | External interface tests        |
+| `pnpm test:e2e`         | Packaged-build e2e (Playwright) |
+| `pnpm validate:fix`     | Auto-fix + validate             |
 
 Integration tests MUST be fast (<50ms per test).
 

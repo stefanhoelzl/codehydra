@@ -44,3 +44,7 @@ pnpm-debug.log*
 
 # Claude Code local settings (personal overrides, not shared)
 .claude/settings.local.json
+
+e2e/.output/
+playwright-report/
+test-results/
