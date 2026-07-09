@@ -19,9 +19,11 @@
  *   Lib:  import { createDriver } from "../scripts/appctrl";
  */
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { _electron, type Frame, type Page, type ElectronApplication } from "playwright";
+import { execFileSync } from "node:child_process";
 import { readFile, readdir, stat, access } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -75,6 +77,67 @@ function formatLogEntry(entry: LogEntry): string {
 }
 
 /**
+ * Every descendant pid of `root`, deepest last. Captured *before* the parent dies —
+ * once it exits, the children are reparented and the tree is unrecoverable.
+ *
+ * Windows is excluded: `taskkill /T` walks the tree itself.
+ */
+function descendantPids(root: number): number[] {
+  if (process.platform === "win32") return [];
+
+  let listing: string;
+  try {
+    listing = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf-8" });
+  } catch {
+    return [];
+  }
+
+  const childrenOf = new Map<number, number[]>();
+  for (const line of listing.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    const siblings = childrenOf.get(ppid) ?? [];
+    siblings.push(pid);
+    childrenOf.set(ppid, siblings);
+  }
+
+  const found: number[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    for (const child of childrenOf.get(stack.pop()!) ?? []) {
+      found.push(child);
+      stack.push(child);
+    }
+  }
+  return found;
+}
+
+/**
+ * Kill the app's leftovers. Quitting CodeHydra does not reap its VSCodium reh-web
+ * server, and that orphan holds the Electron process's inherited stdio pipes open —
+ * which is enough to keep a Playwright worker (or an MCP server) from ever exiting.
+ */
+function killTree(rootPid: number, descendants: number[]): void {
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(rootPid), "/T", "/F"], { stdio: "ignore" });
+    } catch {
+      // already gone
+    }
+    return;
+  }
+  for (const pid of [...descendants, rootPid]) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
  * Resolved interaction target. The app has one page (the UI); workspaces are
  * VSCodium iframes inside it, addressed as Playwright Frames.
  */
@@ -115,6 +178,13 @@ export interface LaunchOptions {
   timeout?: number;
   /** Default timeout for Playwright actions (ms). Default 2_000. */
   actionTimeout?: number;
+}
+
+/** A native Electron dialog the app tried to show while under test. */
+export interface NativeDialog {
+  kind: "error-box" | "message-box";
+  title?: string;
+  content?: string;
 }
 
 export interface ReadLogsOptions {
@@ -223,23 +293,56 @@ export function createDriver() {
     return { pid: pid() };
   }
 
-  /** Graceful async cleanup — for normal stop. */
+  /**
+   * Graceful async cleanup — for normal stop.
+   *
+   * Quits through the app's own shutdown path (`app.quit()` → `before-quit` →
+   * `app:shutdown`, which disposes the IDE server and agent servers). Killing the
+   * Electron process instead orphans those children, and because they inherit its
+   * stdio pipes, the pipes never close and the host process cannot exit — which is
+   * how a Playwright worker ends up hanging in teardown.
+   *
+   * SIGKILL remains the backstop if the app declines to leave.
+   */
   async function stop(): Promise<void> {
     if (electronApp) {
       const app = electronApp;
       electronApp = null;
-      const appPid = app.process().pid!;
-      const timeout = new Promise<void>((resolve) =>
-        setTimeout(() => {
-          try {
-            process.kill(appPid, "SIGKILL");
-          } catch {
-            // already dead
-          }
-          resolve();
-        }, 5_000)
+      const proc = app.process();
+      const appPid = proc.pid!;
+
+      // Snapshot the tree while the parent still owns it.
+      const descendants = descendantPids(appPid);
+
+      const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+
+      // Fire-and-forget: the main process exits mid-call, so this evaluate never
+      // settles — neither resolving nor rejecting. Awaiting it hangs forever.
+      void app
+        .evaluate(({ app: electronAppApi }) => {
+          electronAppApi.quit();
+        })
+        .catch(() => {
+          // Main process already gone, or CDP is down.
+        });
+
+      const timedOut = new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), 15_000)
       );
-      await Promise.race([app.close().catch(() => {}), timeout]);
+      await Promise.race([exited, timedOut]);
+
+      killTree(appPid, descendants);
+
+      // close() talks CDP to a process we just killed; it can hang rather than reject.
+      await Promise.race([
+        app.close().catch(() => {}),
+        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+      ]);
+
+      // Even reaped, the pipes can linger; nothing reads them after this point.
+      proc.stdout?.destroy();
+      proc.stderr?.destroy();
+      proc.stdin?.destroy();
     }
     consoleBuffer.length = 0;
   }
@@ -264,6 +367,24 @@ export function createDriver() {
       .find((p) => p.url().startsWith("file://"));
     if (!page) throw new Error("UI view not found");
     return page;
+  }
+
+  /**
+   * The UI page is a WebContentsView created after `app.whenReady()`, so it does not
+   * exist the instant launch() resolves. Playwright skips injecting its loader when we
+   * supply an executablePath, which means we attach after ready rather than before it —
+   * poll instead of assuming.
+   */
+  async function waitForUiPage(timeoutMs = 60_000): Promise<Page> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        return uiPage();
+      } catch (err) {
+        if (Date.now() >= deadline) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
   }
 
   function isWorkspaceUrl(url: string): boolean {
@@ -376,6 +497,43 @@ export function createDriver() {
     }, paths);
   }
 
+  /**
+   * Replace Electron's blocking native dialogs with recorders.
+   *
+   * A real one — CodeHydra's own "Startup Failed" error box, say — blocks the main
+   * process forever with no window to click, which in a headless run reads as a hang.
+   * Recording them instead lets a test assert `nativeDialogs()` is empty and fail with
+   * the actual error text.
+   */
+  async function silenceNativeDialogs(): Promise<void> {
+    await electron().evaluate(({ dialog }) => {
+      const store = globalThis as unknown as { __chNativeDialogs?: NativeDialog[] };
+      store.__chNativeDialogs = [];
+      const record = (entry: NativeDialog): void => void store.__chNativeDialogs?.push(entry);
+
+      dialog.showErrorBox = (title: string, content: string): void =>
+        record({ kind: "error-box", title, content });
+
+      dialog.showMessageBoxSync = ((): number => {
+        record({ kind: "message-box" });
+        return 0;
+      }) as typeof dialog.showMessageBoxSync;
+
+      dialog.showMessageBox = ((): Promise<{ response: number; checkboxChecked: boolean }> => {
+        record({ kind: "message-box" });
+        return Promise.resolve({ response: 0, checkboxChecked: false });
+      }) as typeof dialog.showMessageBox;
+    });
+  }
+
+  /** Native dialogs the app tried to show since silenceNativeDialogs(). */
+  async function nativeDialogs(): Promise<NativeDialog[]> {
+    return electron().evaluate(() => {
+      const store = globalThis as unknown as { __chNativeDialogs?: NativeDialog[] };
+      return store.__chNativeDialogs ?? [];
+    });
+  }
+
   /** Emit powerMonitor "resume" in the main process (drives the app:resume intent). */
   async function resume(): Promise<void> {
     await electron().evaluate(({ powerMonitor }) => {
@@ -472,6 +630,7 @@ export function createDriver() {
     pid,
     electron,
     uiPage,
+    waitForUiPage,
     isWorkspaceUrl,
     isActiveFrame,
     findTarget,
@@ -483,6 +642,8 @@ export function createDriver() {
     key,
     evaluate,
     mockDialog,
+    silenceNativeDialogs,
+    nativeDialogs,
     resume,
     consoleMessages,
     targets,
@@ -517,12 +678,11 @@ function asMessage(err: unknown): string {
  * Build the MCP server over a driver. The tool bodies are the driver's API with
  * JSON-shaped results wrapped around them — no behavior lives here.
  *
- * The SDK is imported dynamically so that importing this module as a library
- * (from the e2e suite) never pulls the MCP server into the test process.
+ * The SDK is imported statically (the repo bans inline dynamic import), but nothing
+ * here runs on import: the server is only constructed, and the transport only
+ * connected, behind the isMainModule() guard at the bottom of this file.
  */
-async function createServer(driver: AppDriver): Promise<McpServer> {
-  const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-
+function createServer(driver: AppDriver): McpServer {
   // Methods are closures, not `this`-bound, so destructuring is safe.
   const { findTarget, focusTargetFrame } = driver;
 
@@ -1134,10 +1294,8 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
-
   const driver = createDriver();
-  const server = await createServer(driver);
+  const server = createServer(driver);
 
   await server.connect(new StdioServerTransport());
 

@@ -14,6 +14,7 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 | Run boundary tests        | `pnpm test:boundary`             | [Test Commands](#test-commands)                               |
 | Run deprecated unit tests | `pnpm test:legacy`               | [Test Commands](#test-commands)                               |
 | Run extension tests       | `pnpm test:extensions`           | [Test Commands](#test-commands)                               |
+| Run e2e tests             | `pnpm test:e2e`                  | [End-to-End Tests](#end-to-end-tests-e2ee2ets)                |
 | Quick validation          | `pnpm validate:quick`            | [Targeted Testing](#targeted-testing)                         |
 | Pre-commit validation     | `pnpm validate`                  | [Test Commands](#test-commands)                               |
 | Decide which test type    | See decision guide               | [Decision Guide](#decision-guide)                             |
@@ -225,6 +226,51 @@ describe("generateProjectId", () => {
 ```
 
 ---
+
+### End-to-End Tests (e2e/\*.e2e.ts)
+
+Playwright drives a **real, packaged CodeHydra** — the exact artifact `build.yaml`
+produces — on Linux, Windows, and macOS. Run with `pnpm test:e2e` (needs `pnpm dist:<os>`
+first, or `CH_E2E_EXE=<binary>`), or `pnpm test:e2e:dev` against the unpackaged build.
+
+The driver is `createDriver()` from `scripts/appctrl.ts` — the same module the appctrl
+MCP server exposes to agents, so what you debug interactively is what CI runs.
+
+**Root.** `_CH_ROOT_DIR` relocates the app's data root _and_ its bundles root together, in
+either build flavor (`path-provider.ts`). `e2e/env.ts` defaults it under the OS temp dir and
+**refuses to `rm -rf` anything outside it** — unset, the app resolves it to
+`~/.local/share/codehydra`, which holds every project you have.
+
+Note "packaged" does not imply "production": `isDevelopment` comes from `_CH_BUILD_RELEASE`
+at build time, not from `app.isPackaged`, so CI's PR artifacts are dev-flavored. Without the
+override such a build writes its data into whatever `cwd` it inherited.
+
+**Projects.** `cold-start` runs against an empty root: it drives the first-run wizard,
+picks OpenCode, waits out the real VSCodium + opencode downloads, and leaves the root
+warm. The `opencode` and `claude` projects then run the remaining specs against that warm
+root, flipping agent with `--agent=` (CLI beats config.json, and `wasConfigured()` is now
+true so the wizard stays away). `workers: 1`, `retries: 0`.
+
+**Gotchas the specs encode:**
+
+- Every app flag must be `--key=value` or a bare `--flag`. `parseCliArgs` treats a loose
+  token as the previous flag's value.
+- The sidebar is 20px and overflow-clipped; dispatch `mouseenter` on `nav.sidebar` before
+  clicking anything in it.
+- `<vscode-button disabled>` is a custom element — Playwright reports it _enabled_. Assert
+  the `disabled` attribute, don't rely on `toBeEnabled()`.
+- Use `fill()` on the name field, not `click()` + `type()`: keystrokes race the dropdown
+  opening and get dropped.
+- `Escape` only `stopPropagation()`s when the dropdown listbox is open. Press it otherwise
+  and it dismisses the creation panel.
+- Quitting the app does **not** reap the VSCodium server; `driver.stop()` kills the process
+  tree, or the orphan's inherited stdio pipes keep the worker alive forever.
+- On Linux, launch `squashfs-root/codehydra`, **never `AppRun`**. AppRun derives `APPDIR`
+  by searching for `$1`, and Playwright's `$1` is `--inspect=0`; the search fails and it
+  `exec`s whatever `codehydra` is on `PATH` — a system-installed CodeHydra, silently.
+- Native dialogs are replaced by recorders at launch (`silenceNativeDialogs()`); a real
+  `showErrorBox` would block the main process with no window to click. Assert with
+  `expectNoNativeDialogs()`.
 
 ### Unit Tests (\*.test.ts) - DEPRECATED
 
@@ -1180,16 +1226,18 @@ This is especially important when multiple agents run concurrently, as running `
 
 ## Test Commands
 
-| Command                 | What it runs                | Use case                      |
-| ----------------------- | --------------------------- | ----------------------------- |
-| `pnpm test`             | All tests                   | Full verification             |
-| `pnpm test:related`     | Tests matching pattern      | Fast feedback during dev      |
-| `pnpm test:integration` | Integration tests only      | Primary development feedback  |
-| `pnpm test:boundary`    | Boundary tests only         | Test external interfaces      |
-| `pnpm test:legacy`      | Deprecated unit tests       | Until migrated to integration |
-| `pnpm test:extensions`  | Extension tests only        | Test VS Code extensions       |
-| `pnpm validate:quick`   | Format + lint + types       | Quick validation (~15s)       |
-| `pnpm validate`         | Integration + check + build | Pre-commit validation (fast)  |
+| Command                 | What it runs                 | Use case                      |
+| ----------------------- | ---------------------------- | ----------------------------- |
+| `pnpm test`             | All tests                    | Full verification             |
+| `pnpm test:related`     | Tests matching pattern       | Fast feedback during dev      |
+| `pnpm test:integration` | Integration tests only       | Primary development feedback  |
+| `pnpm test:boundary`    | Boundary tests only          | Test external interfaces      |
+| `pnpm test:legacy`      | Deprecated unit tests        | Until migrated to integration |
+| `pnpm test:extensions`  | Extension tests only         | Test VS Code extensions       |
+| `pnpm test:e2e`         | e2e against a packaged build | Verify the shipped artifact   |
+| `pnpm test:e2e:dev`     | e2e against the dev build    | Iterate on selectors quickly  |
+| `pnpm validate:quick`   | Format + lint + types        | Quick validation (~15s)       |
+| `pnpm validate`         | Integration + check + build  | Pre-commit validation (fast)  |
 
 **Why validate excludes boundary tests**: Boundary tests may be slower, require specific binaries (vscodium, opencode), and are only relevant when working on external interface code.
 

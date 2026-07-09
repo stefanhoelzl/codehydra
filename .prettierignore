@@ -4,3 +4,7 @@ pnpm-lock.yaml
 .vite/
 .opencode/*
 !.opencode/scripts/
+
+# Playwright e2e artifacts (traces, videos, screenshots)
+e2e/.output/
+playwright-report/
