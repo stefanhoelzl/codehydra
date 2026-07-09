@@ -27,6 +27,15 @@ import { dirname } from "node:path";
  * Config read from initial-prompt.json file.
  * Model is stored as just the modelID string (not full PromptModel).
  */
+/** Filesystem functions used to consume the one-shot initial-prompt file. */
+export interface InitialPromptFs {
+  readFileSync(path: string, encoding: "utf-8"): string;
+  unlinkSync(path: string): void;
+  rmdirSync(path: string): void;
+}
+
+const defaultInitialPromptFs: InitialPromptFs = { readFileSync, unlinkSync, rmdirSync };
+
 export interface InitialPromptConfig {
   readonly prompt?: string;
   readonly model?: string;
@@ -42,8 +51,14 @@ export interface InitialPromptConfig {
  *
  * Uses synchronous Node.js APIs to match wrapper's sync execution model.
  * Deletes the file and temp directory before returning to ensure one-time use.
+ *
+ * The filesystem functions are injected (as `runClaude` injects `RunClaudeDeps`)
+ * so tests can drive the failure branches without mocking `node:fs` — a module
+ * mock here would fight the sibling tests that use the real filesystem.
  */
-function getInitialPromptConfig(): InitialPromptConfig | undefined {
+function getInitialPromptConfig(
+  fs: InitialPromptFs = defaultInitialPromptFs
+): InitialPromptConfig | undefined {
   const filePath = process.env._CH_INITIAL_PROMPT_FILE;
 
   // No initial prompt file configured
@@ -53,18 +68,18 @@ function getInitialPromptConfig(): InitialPromptConfig | undefined {
 
   try {
     // Read the file
-    const content = readFileSync(filePath, "utf-8");
+    const content = fs.readFileSync(filePath, "utf-8");
 
     // Delete the file first (before parsing, to ensure one-time use)
     try {
-      unlinkSync(filePath);
+      fs.unlinkSync(filePath);
     } catch {
       // Ignore deletion errors - file might already be gone
     }
 
     // Delete the parent temp directory
     try {
-      rmdirSync(dirname(filePath));
+      fs.rmdirSync(dirname(filePath));
     } catch {
       // Ignore - directory might not be empty or already gone
     }

@@ -6,33 +6,33 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
-import * as fs from "node:fs";
 import type {
+  InitialPromptFs,
   RunClaudeDeps,
   getInitialPromptConfig as GetInitialPromptConfigFn,
   runClaude as RunClaudeFn,
 } from "./wrapper";
 import * as wrapper from "./wrapper";
 
-// Must mock fs before importing wrapper
-vi.mock("node:fs", () => ({
-  readFileSync: vi.fn(),
-  unlinkSync: vi.fn(),
-  rmdirSync: vi.fn(),
-  existsSync: vi.fn().mockReturnValue(false),
-}));
-
-// Use dynamic import to ensure mock is set up before wrapper is loaded
 let getInitialPromptConfig: typeof GetInitialPromptConfigFn;
 let runClaude: typeof RunClaudeFn;
 
 describe("getInitialPromptConfig integration", () => {
-  const mockReadFileSync = vi.mocked(fs.readFileSync);
-  const mockUnlinkSync = vi.mocked(fs.unlinkSync);
-  const mockRmdirSync = vi.mocked(fs.rmdirSync);
+  // These are injected, not module-mocked. wrapper.ts is also loaded by
+  // wrapper.test.ts and wrapper.boundary.test.ts, which use the real
+  // filesystem. Mocking the fs module here would bind wrapper.ts to whichever
+  // test file imports it first, so exactly one of the three would always fail
+  // under a shared module registry.
+  const mockReadFileSync = vi.fn<(path: string, encoding: "utf-8") => string>();
+  const mockUnlinkSync = vi.fn<(path: string) => void>();
+  const mockRmdirSync = vi.fn<(path: string) => void>();
+  const fakeFs: InitialPromptFs = {
+    readFileSync: mockReadFileSync,
+    unlinkSync: mockUnlinkSync,
+    rmdirSync: mockRmdirSync,
+  };
 
-  beforeAll(async () => {
-    // Dynamic import after mock is set up
+  beforeAll(() => {
     getInitialPromptConfig = wrapper.getInitialPromptConfig;
     runClaude = wrapper.runClaude;
   });
@@ -61,7 +61,7 @@ describe("getInitialPromptConfig integration", () => {
     mockReadFileSync.mockReturnValue(fileContent);
 
     // Call function
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     // Verify result
     expect(result).toEqual({
@@ -86,7 +86,7 @@ describe("getInitialPromptConfig integration", () => {
 
   it("returns undefined when env var is not set", () => {
     // No env var set
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     expect(result).toBeUndefined();
     expect(mockReadFileSync).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe("getInitialPromptConfig integration", () => {
 
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     expect(result).toBeUndefined();
     // ENOENT should NOT produce a warning - it's expected on restart
@@ -124,7 +124,7 @@ describe("getInitialPromptConfig integration", () => {
     // Suppress console.warn during test
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     // Should return undefined on JSON parse error
     expect(result).toBeUndefined();
@@ -147,7 +147,7 @@ describe("getInitialPromptConfig integration", () => {
     const fileContent = JSON.stringify({ prompt: "Simple prompt" });
     mockReadFileSync.mockReturnValue(fileContent);
 
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     expect(result).toEqual({ prompt: "Simple prompt" });
     expect(result?.model).toBeUndefined();
@@ -165,7 +165,7 @@ describe("getInitialPromptConfig integration", () => {
     });
 
     // Should not throw, should return the config
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     expect(result).toEqual({ prompt: "Test" });
     expect(mockUnlinkSync).toHaveBeenCalled();
@@ -183,7 +183,7 @@ describe("getInitialPromptConfig integration", () => {
     });
 
     // Should not throw, should return the config
-    const result = getInitialPromptConfig();
+    const result = getInitialPromptConfig(fakeFs);
 
     expect(result).toEqual({ prompt: "Test" });
   });
