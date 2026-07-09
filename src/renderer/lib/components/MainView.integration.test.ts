@@ -14,33 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
 
-const { mockApi } = vi.hoisted(() => {
-  return {
-    mockApi: {
-      emitEvent: vi.fn(),
-      projects: {
-        open: vi.fn().mockResolvedValue({}),
-      },
-      workspaces: {
-        hibernate: vi.fn().mockResolvedValue({ started: true }),
-        wake: vi.fn().mockResolvedValue(null),
-      },
-      ui: {
-        switchWorkspace: vi.fn().mockResolvedValue(undefined),
-      },
-      lifecycle: {
-        ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
-        quit: vi.fn().mockResolvedValue(undefined),
-      },
-      on: vi.fn(() => vi.fn()),
-      onState: vi.fn(() => vi.fn()),
-      sendDialogEvent: vi.fn(),
-      sendNotificationEvent: vi.fn(),
-    },
-  };
-});
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
 
-vi.mock("$lib/api", () => mockApi);
+import * as api from "$lib/api";
+
+const mockApi = vi.mocked(api);
 
 // Mock AgentNotificationService
 const { MockAgentNotificationService } = vi.hoisted(() => {

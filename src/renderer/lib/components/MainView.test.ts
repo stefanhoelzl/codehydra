@@ -14,22 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
 
-const { mockApi } = vi.hoisted(() => {
-  return {
-    mockApi: {
-      emitEvent: vi.fn(),
-      lifecycle: {
-        quit: vi.fn().mockResolvedValue(undefined),
-      },
-      on: vi.fn(() => vi.fn()),
-      onState: vi.fn(() => vi.fn()),
-      sendDialogEvent: vi.fn(),
-      sendNotificationEvent: vi.fn(),
-    },
-  };
-});
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
 
-vi.mock("$lib/api", () => mockApi);
+import * as api from "$lib/api";
+
+const mockApi = vi.mocked(api);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";

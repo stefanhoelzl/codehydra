@@ -8,11 +8,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { AgentStatus } from "@shared/api/types";
 import type { UiState, UiWorkspaceRow } from "@shared/ui-state";
 
-vi.mock("$lib/api", () => ({
-  emitEvent: vi.fn(),
-  on: vi.fn(() => vi.fn()),
-  onState: vi.fn(() => vi.fn()),
-}));
+// Shared fake: src/renderer/lib/api/__mocks__/index.ts
+vi.mock("$lib/api");
 
 import { setupDomainEventBindings, type OnState } from "./setup-domain-event-bindings";
 import { AgentNotificationService } from "$lib/services/agent-notifications";

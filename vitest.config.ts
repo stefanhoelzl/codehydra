@@ -15,6 +15,10 @@ export default defineConfig({
     isolate: true,
     restoreMocks: true,
     clearMocks: true,
+    // Required by the shared `__mocks__` fakes: without it a `.mockReturnValue()`
+    // set by one test file survives into the next, because the fake is a single
+    // instance shared across every file in the worker.
+    mockReset: true,
     reporters: ["dot"],
 
     coverage: {
