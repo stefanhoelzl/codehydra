@@ -54,7 +54,7 @@ describe("McpServerManager", () => {
   let activeManager: McpServerManager | null = null;
 
   beforeEach(() => {
-    portManager = createPortManagerMock([12345]);
+    portManager = createPortManagerMock();
     dispatcher = createMockDispatcher();
     logger = createMockLogger();
     mockSdkFactory = () => createMockMcpSdk();
@@ -84,26 +84,16 @@ describe("McpServerManager", () => {
   });
 
   describe("start", () => {
-    it("allocates port via PortManager", async () => {
+    it("binds a port via PortManager", async () => {
       activeManager = new McpServerManager(portManager, dispatcher, logger, {
         serverFactory: mockSdkFactory,
       });
 
       const port = await activeManager.start();
 
-      // Verify port was allocated (behavioral assertion)
-      expect(port).toBe(12345);
-      expect(portManager.$.allocatedPorts).toEqual([12345]);
-    });
-
-    it("returns allocated port", async () => {
-      activeManager = new McpServerManager(portManager, dispatcher, logger, {
-        serverFactory: mockSdkFactory,
-      });
-
-      const port = await activeManager.start();
-
-      expect(port).toBe(12345);
+      // The port the server listens on is the one PortManager bound for it.
+      expect(port).toBeGreaterThan(0);
+      expect(portManager.$.allocatedPorts).toEqual([port]);
     });
 
     it("prevents double-start", async () => {
@@ -111,13 +101,12 @@ describe("McpServerManager", () => {
         serverFactory: mockSdkFactory,
       });
 
-      await activeManager.start();
+      const port1 = await activeManager.start();
       const port2 = await activeManager.start();
 
-      // Should return same port without allocating new one
-      expect(port2).toBe(12345);
-      // Verify only one port was allocated (behavioral assertion)
-      expect(portManager.$.allocatedPorts).toEqual([12345]);
+      // Should return same port without binding a new one
+      expect(port2).toBe(port1);
+      expect(portManager.$.allocatedPorts).toEqual([port1]);
     });
   });
 
@@ -130,46 +119,50 @@ describe("McpServerManager", () => {
     });
 
     it("allows restart after stop", async () => {
-      // Provide two ports for start/stop/restart cycle
-      const restartPortManager = createPortManagerMock([12345, 54321]);
+      const restartPortManager = createPortManagerMock();
       activeManager = new McpServerManager(restartPortManager, dispatcher, logger, {
         serverFactory: mockSdkFactory,
       });
 
-      await activeManager.start();
+      const first = await activeManager.start();
       await activeManager.stop();
 
-      // Should be able to start again with next port
-      const port = await activeManager.start();
-      expect(port).toBe(54321);
+      // Should be able to start again, binding a second port
+      const second = await activeManager.start();
+      expect(second).toBeGreaterThan(0);
+      expect(restartPortManager.$.allocatedPorts).toEqual([first, second]);
     });
   });
 
   describe("dispose", () => {
     it("stops the manager", async () => {
-      // Provide two ports so a restart after dispose is observable
-      const disposePortManager = createPortManagerMock([12345, 54321]);
+      const disposePortManager = createPortManagerMock();
       activeManager = new McpServerManager(disposePortManager, dispatcher, logger, {
         serverFactory: mockSdkFactory,
       });
 
-      await activeManager.start();
+      const first = await activeManager.start();
       await activeManager.dispose();
 
-      // After dispose, starting again allocates the next port
-      const port = await activeManager.start();
-      expect(port).toBe(54321);
+      // After dispose, starting again binds a fresh port
+      const second = await activeManager.start();
+      expect(second).toBeGreaterThan(0);
+      expect(disposePortManager.$.allocatedPorts).toEqual([first, second]);
     });
   });
 
   describe("error handling", () => {
-    it("cleans up on port allocation failure", async () => {
-      // Empty port list causes "No ports available" error on first call
-      const failingPortManager = createPortManagerMock([]);
+    it("cleans up when the server cannot bind a port", async () => {
+      const failingPortManager = {
+        ...createPortManagerMock(),
+        listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
+      };
 
       const manager = new McpServerManager(failingPortManager, dispatcher, logger);
 
-      await expect(manager.start()).rejects.toThrow("No ports available");
+      await expect(manager.start()).rejects.toThrow("bind failed");
+      // A failed start must not leave the manager looking alive.
+      await expect(manager.stop()).resolves.not.toThrow();
     });
   });
 });
@@ -182,7 +175,7 @@ describe("McpModule Integration", () => {
   describe("app:start / start hook", () => {
     it("starts MCP server and returns port", async () => {
       const dispatcher = createMockDispatcher();
-      const portManager = createPortManagerMock([9999]);
+      const portManager = createPortManagerMock();
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 
       dispatcher.registerOperation(
@@ -205,14 +198,15 @@ describe("McpModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      expect(portManager.$.allocatedPorts).toEqual([9999]);
+      expect(portManager.$.allocatedPorts).toHaveLength(1);
+      expect(portManager.$.allocatedPorts[0]).toBeGreaterThan(0);
     });
   });
 
   describe("app:shutdown / stop hook", () => {
     it("disposes MCP server", async () => {
       const shutdownDispatcher = createMockDispatcher();
-      const portManager = createPortManagerMock([9999]);
+      const portManager = createPortManagerMock();
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 
       shutdownDispatcher.registerOperation(new AppShutdownOperation());

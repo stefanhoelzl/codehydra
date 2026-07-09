@@ -156,6 +156,68 @@ describe("DefaultNetworkLayer boundary tests", () => {
     });
   });
 
+  describe("PortManager.listenOnFreePort()", () => {
+    let networkLayer: PortManager;
+
+    beforeEach(() => {
+      networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
+    });
+
+    it("returns the port the server is actually listening on", async () => {
+      const server = createServer();
+      try {
+        const port = await networkLayer.listenOnFreePort(server);
+
+        expect(port).toBeGreaterThanOrEqual(1024);
+        expect(port).toBeLessThanOrEqual(65535);
+        expect(server.listening).toBe(true);
+        const address = server.address();
+        expect(address).toMatchObject({ port, address: "127.0.0.1" });
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it("rebinds immediately after the previous server is closed", async () => {
+      // The bound socket is the probed socket, so there is no window in which
+      // the port is claimed by a listener nobody owns any more.
+      for (let i = 0; i < 50; i++) {
+        const server = createServer();
+        const port = await networkLayer.listenOnFreePort(server);
+        expect(port).toBeGreaterThan(0);
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it("rejects when the server cannot bind", async () => {
+      const occupied = createServer();
+      const port = await networkLayer.listenOnFreePort(occupied);
+
+      // A server already bound elsewhere cannot be re-listened.
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", () => resolve());
+        server.once("listening", () => reject(new Error("expected bind to fail")));
+        server.listen(port, "127.0.0.1");
+      });
+
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    });
+
+    it("hands out unique ports for concurrent calls", async () => {
+      const servers = Array.from({ length: 10 }, () => createServer());
+      try {
+        const ports = await Promise.all(servers.map((s) => networkLayer.listenOnFreePort(s)));
+
+        expect(new Set(ports).size).toBe(servers.length);
+      } finally {
+        await Promise.all(
+          servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve())))
+        );
+      }
+    });
+  });
+
   describe("PortManager.findFreePort()", () => {
     let networkLayer: PortManager;
 

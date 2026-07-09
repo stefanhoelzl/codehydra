@@ -8,7 +8,6 @@
  * tests pick success / blocked / preflight-reject behavior.
  */
 
-import { createServer } from "node:net";
 import { vi } from "vitest";
 import { z } from "zod/v4";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -52,25 +51,6 @@ import {
   INTENT_SUBMIT_BUG_REPORT,
   SUBMIT_BUG_REPORT_OPERATION_ID,
 } from "../intents/submit-bug-report";
-
-/**
- * Find a free port for testing.
- */
-export async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (addr && typeof addr === "object") {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        reject(new Error("Could not get port"));
-      }
-    });
-    server.on("error", reject);
-  });
-}
 
 /** Controls the mock delete-workspace operation's behavior. */
 export interface DeleteControl {

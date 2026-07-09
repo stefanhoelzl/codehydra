@@ -118,7 +118,7 @@ const STATUS_BAR_ID = "mcp";
 // =============================================================================
 
 export interface PluginServerModuleDeps {
-  readonly portManager: Pick<PortManager, "findFreePort">;
+  readonly portManager: Pick<PortManager, "listenOnFreePort">;
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
@@ -168,8 +168,6 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
       return port!;
     }
 
-    const assignedPort = await portManager.findFreePort();
-
     httpServer = createServer();
     io = new Server(httpServer, {
       transports: [...transports],
@@ -178,14 +176,11 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
     setupEventHandlers();
 
-    await new Promise<void>((resolve, reject) => {
-      httpServer!.listen(assignedPort, "127.0.0.1", () => {
-        port = assignedPort;
-        logger.info("Started", { port: assignedPort });
-        resolve();
-      });
-      httpServer!.on("error", reject);
-    });
+    // Bind and discover in one step; a port discovered up front can be lost
+    // again before listen() reaches it.
+    const assignedPort = await portManager.listenOnFreePort(httpServer, "127.0.0.1");
+    port = assignedPort;
+    logger.info("Started", { port: assignedPort });
 
     return assignedPort;
   }

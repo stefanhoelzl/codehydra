@@ -20,10 +20,10 @@ import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
 import { INTENT_SUBMIT_BUG_REPORT } from "../intents/submit-bug-report";
 import {
   createMockToolOperations,
-  findFreePort,
   type DeleteControl,
   type MockToolOperations,
 } from "./mcp-server.test-utils";
+import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
@@ -104,24 +104,34 @@ describe("McpServer", () => {
 
   describe("constructor", () => {
     it("creates server with injected dependencies", () => {
-      const server = new McpServer(mockDispatcher.dispatcher, mockFactory, mockLogger);
+      const server = new McpServer(
+        mockDispatcher.dispatcher,
+        createPortManagerMock(),
+        mockFactory,
+        mockLogger
+      );
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server without logger", () => {
-      const server = new McpServer(mockDispatcher.dispatcher, mockFactory);
+      const server = new McpServer(mockDispatcher.dispatcher, createPortManagerMock(), mockFactory);
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server with default factory", () => {
-      const server = new McpServer(mockDispatcher.dispatcher);
+      const server = new McpServer(mockDispatcher.dispatcher, createPortManagerMock());
       expect(server).toBeInstanceOf(McpServer);
     });
   });
 
   describe("isRunning", () => {
     it("returns false before start", () => {
-      const server = new McpServer(mockDispatcher.dispatcher, mockFactory, mockLogger);
+      const server = new McpServer(
+        mockDispatcher.dispatcher,
+        createPortManagerMock(),
+        mockFactory,
+        mockLogger
+      );
       expect(server.isRunning()).toBe(false);
     });
   });
@@ -131,9 +141,13 @@ describe("McpServer", () => {
     let port: number;
 
     beforeEach(async () => {
-      port = await findFreePort();
-      server = new McpServer(mockDispatcher.dispatcher, mockFactory, mockLogger);
-      await server.start(port);
+      server = new McpServer(
+        mockDispatcher.dispatcher,
+        createPortManagerMock(),
+        mockFactory,
+        mockLogger
+      );
+      port = await server.start();
     });
 
     afterEach(async () => {

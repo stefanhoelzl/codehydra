@@ -38,7 +38,7 @@ async function sendHook(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Connection: "close", // Disable keep-alive to prevent server isolation issues
+      Connection: "close", // Close the socket with the response; no socket outlives its server
     },
     body: JSON.stringify(payload),
   });
@@ -58,8 +58,9 @@ describe("ClaudeCodeServerManager integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Provide enough ports for tests
-    mockPortManager = createPortManagerMock([15001, 15002, 15003, 15004, 15005]);
+    // The manager binds the OS-assigned port its server actually listens on,
+    // so tests never pin a fixed port (and never race each other for one).
+    mockPortManager = createPortManagerMock();
     mockPathProvider = createMockPathProvider();
     mockFileSystem = createFileSystemMock({
       entries: {
@@ -90,30 +91,75 @@ describe("ClaudeCodeServerManager integration", () => {
       const port2 = await serverManager.startServer("/workspace/feature-b");
 
       // Both should get the same port (single server for all workspaces)
-      expect(port1).toBe(15001);
-      expect(port2).toBe(15001);
+      expect(port1).toBeGreaterThan(0);
+      expect(port2).toBe(port1);
     });
 
     it("returns existing port when starting same workspace twice", async () => {
       const port1 = await serverManager.startServer("/workspace/feature-a");
       const port2 = await serverManager.startServer("/workspace/feature-a");
 
-      expect(port1).toBe(port2);
-      expect(port1).toBe(15001);
+      expect(port1).toBeGreaterThan(0);
+      expect(port2).toBe(port1);
     });
 
     it("server stops only when last workspace is removed", async () => {
-      await serverManager.startServer("/workspace/feature-a");
+      const port = await serverManager.startServer("/workspace/feature-a");
       await serverManager.startServer("/workspace/feature-b");
 
       // Stop first workspace - server still running, new workspaces reuse its port
       await serverManager.stopServer("/workspace/feature-a");
-      expect(await serverManager.startServer("/workspace/feature-c")).toBe(15001);
+      expect(await serverManager.startServer("/workspace/feature-c")).toBe(port);
 
-      // Stop remaining workspaces - server stops, next start allocates a fresh port
+      // Stop remaining workspaces - the server is gone and the port stops answering
       await serverManager.stopServer("/workspace/feature-b");
       await serverManager.stopServer("/workspace/feature-c");
-      expect(await serverManager.startServer("/workspace/feature-d")).toBe(15002);
+      await expect(
+        sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" })
+      ).rejects.toThrow();
+
+      // A later start brings up a fresh, working server
+      const newPort = await serverManager.startServer("/workspace/feature-d");
+      const response = await sendHook(newPort, "SessionStart", {
+        workspacePath: "/workspace/feature-d",
+      });
+      expect(response.status).toBe(200);
+    });
+
+    it("dispose leaves the port immediately rebindable", async () => {
+      // Regression: dispose() used to resolve while the listening socket was
+      // still being torn down, so the next bind raced it. Now that the manager
+      // binds the socket it keeps, a fresh manager can come straight back up.
+      await serverManager.startServer("/workspace/feature-a");
+      await serverManager.dispose();
+
+      for (let i = 0; i < 20; i++) {
+        const port = await serverManager.startServer("/workspace/feature-a");
+        expect(port).toBeGreaterThan(0);
+        await serverManager.dispose();
+      }
+    });
+
+    it("dispose is safe after a failed start and does not strand the server", async () => {
+      // Regression: a failed listen() left `httpServer` set, so dispose() called
+      // close() on a handle-less server and rejected with ERR_SERVER_NOT_RUNNING.
+      const failing = new ClaudeCodeServerManager({
+        portManager: {
+          ...mockPortManager,
+          listenOnFreePort: vi
+            .fn()
+            .mockRejectedValue(
+              Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" })
+            ),
+        },
+        pathProvider: mockPathProvider,
+        fileSystem: mockFileSystem,
+        logger: SILENT_LOGGER,
+        config: { hookHandlerPath: "/mock/hook-handler.js" },
+      });
+
+      await expect(failing.startServer("/workspace/feature-a")).rejects.toThrow("EADDRINUSE");
+      await expect(failing.dispose()).resolves.toBeUndefined();
     });
   });
 
@@ -122,12 +168,12 @@ describe("ClaudeCodeServerManager integration", () => {
       const startedCallback = vi.fn();
       serverManager.onServerStarted(startedCallback);
 
-      await serverManager.startServer("/workspace/feature-a");
+      const port = await serverManager.startServer("/workspace/feature-a");
       await serverManager.startServer("/workspace/feature-b");
 
       expect(startedCallback).toHaveBeenCalledTimes(2);
-      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-a", 15001);
-      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-b", 15001);
+      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-a", port);
+      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-b", port);
     });
 
     it("onServerStopped fires for each workspace", async () => {

@@ -38,6 +38,11 @@ import {
 import hooksConfigTemplate from "./hooks.template.json";
 import mcpConfigTemplate from "./mcp.template.json";
 
+/** Node reports ERR_SERVER_NOT_RUNNING when close() is called on a server that is already down. */
+function isServerNotRunning(error: Error): boolean {
+  return (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING";
+}
+
 /**
  * Per-workspace state tracked by the server manager.
  */
@@ -507,24 +512,24 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Start the HTTP bridge server.
    */
   private async startHttpServer(): Promise<void> {
-    // Allocate a port
-    this.port = await this.portManager.findFreePort();
-
-    // Create HTTP server
-    this.httpServer = createServer((req, res) => {
+    const server = createServer((req, res) => {
       this.handleRequest(req, res);
     });
 
-    // Start listening (port is guaranteed to be set from findFreePort above)
-    const port = this.port;
-    await new Promise<void>((resolve, reject) => {
-      this.httpServer!.once("error", reject);
-      this.httpServer!.listen(port, "127.0.0.1", () => {
-        this.httpServer!.removeListener("error", reject);
-        resolve();
-      });
-    });
+    // Bind and discover the port in one step. Asking for a free port first and
+    // binding it afterwards loses the port between the two: the probe socket is
+    // still being torn down by the kernel, so listen() can fail with EADDRINUSE.
+    try {
+      this.port = await this.portManager.listenOnFreePort(server, "127.0.0.1");
+    } catch (error) {
+      // Leave no half-started server behind: dispose() would later call close()
+      // on a handle-less server and reject with ERR_SERVER_NOT_RUNNING.
+      this.httpServer = null;
+      this.port = null;
+      throw error;
+    }
 
+    this.httpServer = server;
     this.logger.info("Bridge server started", { port: this.port });
   }
 
@@ -532,14 +537,22 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Stop the HTTP bridge server.
    */
   private async stopHttpServer(): Promise<void> {
-    if (this.httpServer === null) {
+    const server = this.httpServer;
+    if (server === null) {
       return;
     }
 
-    this.httpServer.closeAllConnections();
+    const port = this.port;
+    // Drop the references first: whatever happens below, this manager must not
+    // keep pointing at a server it has already closed.
+    this.httpServer = null;
+    this.port = null;
+
+    server.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
-      this.httpServer!.close((err) => {
-        if (err) {
+      server.close((err) => {
+        // A server that is already down is the state we wanted anyway.
+        if (err && !isServerNotRunning(err)) {
           this.logger.warn("Error closing bridge server", { error: err.message });
           reject(err);
         } else {
@@ -548,9 +561,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       });
     });
 
-    this.logger.info("Bridge server stopped", { port: this.port });
-    this.httpServer = null;
-    this.port = null;
+    this.logger.info("Bridge server stopped", { port });
   }
 
   /**

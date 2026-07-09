@@ -34,6 +34,7 @@ import type {
   DeleteHookResult,
 } from "../intents/delete-workspace";
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
+import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
@@ -115,9 +116,7 @@ function createMinimalDeleteOperation() {
 
 function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServerModuleDeps {
   return {
-    portManager: {
-      findFreePort: vi.fn().mockResolvedValue(3456),
-    },
+    portManager: createPortManagerMock(),
     dispatcher: { dispatch: vi.fn() } as unknown as PluginServerModuleDeps["dispatcher"],
     appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
     logger: SILENT_LOGGER,
@@ -162,7 +161,7 @@ describe("PluginServerModule", () => {
     it("degrades gracefully when port allocation fails, provides null pluginPort", async () => {
       const deps = createMockDeps({
         portManager: {
-          findFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
+          listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
         },
       });
       const { dispatcher } = createTestSetup(deps);
