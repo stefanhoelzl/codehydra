@@ -43,8 +43,13 @@ describe("ScriptModule Integration", () => {
       makeExecutable: vi.fn().mockResolvedValue(undefined),
     };
 
+    // Distinct runtime vs asset roots: the wrappers MUST be copied from
+    // runtimePath (extraResources / resources/bin, real files), NOT assetPath
+    // (inside app.asar, unreadable via original-fs in the packaged app). If this
+    // regresses to assetPath, the /runtime assertions below fail.
     const pathProvider = createMockPathProvider({
       dataRootDir: "/app-data",
+      runtimeRootDir: "/runtime",
       assetsRootDir: "/assets",
     });
 
@@ -71,22 +76,22 @@ describe("ScriptModule Integration", () => {
     );
     expect(fileSystem.mkdir).toHaveBeenCalledWith(new Path("/app-data/bin"));
 
-    // Should copy each declared script
+    // Should copy each declared script from runtimePath (/runtime/bin), not assetPath
     expect(fileSystem.copyTree).toHaveBeenCalledTimes(4);
     expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/assets/bin/ch-claude"),
+      new Path("/runtime/bin/ch-claude"),
       new Path("/app-data/bin/ch-claude")
     );
     expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/assets/bin/ch-claude.cjs"),
+      new Path("/runtime/bin/ch-claude.cjs"),
       new Path("/app-data/bin/ch-claude.cjs")
     );
     expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/assets/bin/ch-claude.cmd"),
+      new Path("/runtime/bin/ch-claude.cmd"),
       new Path("/app-data/bin/ch-claude.cmd")
     );
     expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/assets/bin/code"),
+      new Path("/runtime/bin/code"),
       new Path("/app-data/bin/code")
     );
 
