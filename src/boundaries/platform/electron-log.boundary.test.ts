@@ -215,4 +215,97 @@ describe("ElectronLog boundary tests", () => {
 
     expect(logContent).toContain("Buffered message");
   });
+
+  /** Read the single log file written by a test. */
+  async function readLogFile(): Promise<string> {
+    const files = await readdir(logsDir);
+    expect(files[0]).toBeDefined();
+    return readFile(join(logsDir, files[0] as string), "utf-8");
+  }
+
+  describe("logger filtering", () => {
+    it("writes from every logger when allowedLoggers is undefined", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, allowedLoggers: undefined });
+
+      service.createLogger("git").info("from git");
+      service.createLogger("network").info("from network");
+      await waitForWrite();
+
+      const logContent = await readLogFile();
+      expect(logContent).toContain("from git");
+      expect(logContent).toContain("from network");
+    });
+
+    it("writes only from loggers in allowedLoggers", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, allowedLoggers: new Set(["git"]) });
+
+      service.createLogger("git").info("from git");
+      service.createLogger("network").info("from network");
+      await waitForWrite();
+
+      const logContent = await readLogFile();
+      expect(logContent).toContain("from git");
+      expect(logContent).not.toContain("from network");
+    });
+  });
+
+  describe("JSON format mode", () => {
+    it("writes one JSON object per line with scope and message", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
+
+      service.createLogger("git").info("Services started");
+      await waitForWrite();
+
+      const line = (await readLogFile()).trim().split("\n")[0] as string;
+      const entry = JSON.parse(line) as Record<string, unknown>;
+
+      expect(entry.level).toBe("info");
+      expect(entry.scope).toBe("git");
+      expect(entry.message).toBe("Services started");
+      expect(entry.context).toBeUndefined();
+      expect(typeof entry.timestamp).toBe("string");
+    });
+
+    it("keeps context as a structured field rather than appending it to the message", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
+
+      service.createLogger("git").info("Clone complete", { repo: "myrepo", branch: "main" });
+      await waitForWrite();
+
+      const entry = JSON.parse((await readLogFile()).trim()) as Record<string, unknown>;
+
+      expect(entry.message).toBe("Clone complete");
+      expect(entry.context).toEqual({ repo: "myrepo", branch: "main" });
+    });
+
+    it("records context and error separately for error level", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
+
+      service.createLogger("git").error("Failed", { op: "test" }, new Error("boom"));
+      await waitForWrite();
+
+      const entry = JSON.parse((await readLogFile()).trim()) as Record<string, unknown>;
+
+      expect(entry.message).toBe("Failed");
+      expect(entry.context).toEqual({ op: "test" });
+      expect(entry.error).toMatchObject({ message: "boom" });
+    });
+
+    it("appends context to the message in text mode", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logFormat: "text" });
+
+      service.createLogger("git").info("Clone complete", { repo: "myrepo" });
+      await waitForWrite();
+
+      const logContent = await readLogFile();
+      expect(logContent).toContain("Clone complete repo=myrepo");
+      expect(() => JSON.parse(logContent.trim())).toThrow();
+    });
+  });
 });
