@@ -130,7 +130,7 @@ describe("createMockPathProvider", () => {
 
 describe("DefaultPathProvider", () => {
   beforeEach(() => {
-    vi.stubEnv("_CH_BUNDLE_DIR", "");
+    vi.stubEnv("_CH_ROOT_DIR", "");
   });
 
   afterEach(() => {
@@ -500,6 +500,29 @@ describe("DefaultPathProvider", () => {
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
 
       expect(() => pp.getProjectWorkspacesDir("")).toThrow(TypeError);
+    });
+  });
+
+  describe("root override", () => {
+    it("_CH_ROOT_DIR relocates dataRoot and bundlesRoot together in a dev build", () => {
+      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      // Without the override a dev build would answer <cwd>/app-data here.
+      expect(pp.dataPath("config.json").toString()).toBe("/tmp/ch-root/config.json");
+      expect(pp.bundlePath("vscodium").toString()).toBe("/tmp/ch-root/vscodium");
+    });
+
+    it("_CH_ROOT_DIR relocates both roots in a production build", () => {
+      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.dataPath("projects").toString()).toBe("/tmp/ch-root/projects");
+      expect(pp.bundlePath("opencode").toString()).toBe("/tmp/ch-root/opencode");
     });
   });
 });
