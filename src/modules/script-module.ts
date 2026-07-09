@@ -41,7 +41,13 @@ export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
             const { requiredScripts } = ctx as InitHookContext;
 
             const binDir = deps.pathProvider.dataPath("bin");
-            const binAssetsDir = deps.pathProvider.assetPath("bin");
+            // Source the bundled wrappers from runtimePath (extraResources /
+            // resources/bin), NOT assetPath (inside app.asar). In the packaged
+            // app the FileSystemBoundary uses Electron's original-fs, which has
+            // no asar virtualization, so copying out of app.asar throws
+            // ENOTDIR/ENOENT and aborts app:start. runtimePath points at the
+            // real, un-archived copy on every target (dev + prod).
+            const binAssetsDir = deps.pathProvider.runtimePath("bin");
 
             // Clean bin directory to remove stale scripts before copying new ones
             await deps.fileSystem.rm(binDir, { recursive: true, force: true });
