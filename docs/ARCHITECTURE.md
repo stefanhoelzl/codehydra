@@ -452,7 +452,7 @@ Each layer has boundary tests (`*.boundary.test.ts`) that verify behavior agains
 
 ### Platform Abstractions Overview
 
-All external system access goes through abstraction interfaces defined in `src/services/platform/`. This enables unit testing with mocks and boundary testing against real systems.
+All external system access goes through abstraction interfaces defined in `src/boundaries/platform/`. This enables unit testing with mocks and boundary testing against real systems.
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
@@ -547,7 +547,7 @@ External Trigger (IPC / MCP / Electron lifecycle)
 5. **Hooks are unordered by default** -- any ordering must be declared explicitly
 6. **Operations decide what happens next**, based on hook outcomes
 7. **Modules never call each other**
-8. **Composition happens only in the application shell** (`src/main/index.ts`)
+8. **Composition happens only in the application shell** (`src/main.ts`)
 
 ### Key Rules
 
@@ -602,7 +602,7 @@ The v2 API uses `api:` prefixed IPC channels:
 
 ### Main Process Startup Architecture
 
-The main process uses a composition-root pattern in `src/main/index.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched. See [INTENTS.md — Composition Root](INTENTS.md#composition-root) for the full bootstrap diagram.
+The main process uses a composition-root pattern in `src/main.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched. See [INTENTS.md — Composition Root](INTENTS.md#composition-root) for the full bootstrap diagram.
 
 ### First-Run Flow
 
@@ -1004,10 +1004,10 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │  (PluginServer remains agnostic to API layer)                       │  │
 │  └─────────────────────────────────────────────────────────────────────┘  │
 │                                           ▲                               │
-│                                           │ wirePluginApi() registers     │
+│                                           │ plugin-server-module adds     │
 │                                           │ handlers during app:start     │
 │  ┌────────────────────────────────────────┴────────────────────────────┐  │
-│  │  wirePluginApi() - src/main/index.ts                                │  │
+│  │  createPluginServerModule() - src/modules/plugin-server-module.ts   │  │
 │  │                                                                     │  │
 │  │  Workspace path resolution:                                         │  │
 │  │  1. appState.findProjectForWorkspace(workspacePath)                 │  │
@@ -1202,10 +1202,12 @@ CodeHydra downloads VSCodium and opencode binaries from GitHub releases instead 
 
 ### Version Management
 
-Binary versions are defined in `src/services/binary-download/versions.ts`:
+Binary versions are defined per component:
 
-- `VSCODIUM_VERSION` - e.g., "1.126.04524"
-- `OPENCODE_VERSION` - e.g., "0.1.47"
+- `VSCODIUM_VERSION` - `src/modules/ide-server-module/vscodium.ts` (e.g., "1.126.04524")
+- `OPENCODE_VERSION` - `src/modules/agent-module/opencode/setup-info.ts` (e.g., "1.0.223")
+- `CLAUDE_VERSION` - `src/modules/agent-module/claude/setup-info.ts` (`null` prefers the system
+  binary, falling back to latest)
 
 **Development**: `pnpm install` runs the postinstall script which downloads binaries to `./app-data/`.
 
