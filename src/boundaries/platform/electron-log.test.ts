@@ -8,20 +8,24 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPathProvider } from "./path-provider.test-utils";
 import type { LoggingConfigureOptions } from "./logging-types";
+import { ElectronLog, parseLogLevel, parseLogLevelSpec, splitLogLevelSpec } from "./electron-log";
 
-// Mock electron-log/main
-const mockScope = vi.fn();
-const mockInitialize = vi.fn();
-const mockTransports = {
-  file: {
-    level: undefined as string | false | undefined,
-    format: undefined as string | ((...args: unknown[]) => string) | undefined,
+// Mock electron-log/main. Declared via vi.hoisted() so the hoisted vi.mock
+// factory below can reference these without hitting their temporal dead zone.
+const { mockScope, mockInitialize, mockTransports } = vi.hoisted(() => ({
+  mockScope: vi.fn(),
+  mockInitialize: vi.fn(),
+  mockTransports: {
+    file: {
+      level: undefined as string | false | undefined,
+      format: undefined as string | ((...args: unknown[]) => string) | undefined,
+    },
+    console: {
+      level: undefined as string | false | undefined,
+      format: undefined as string | ((...args: unknown[]) => string) | undefined,
+    },
   },
-  console: {
-    level: undefined as string | false | undefined,
-    format: undefined as string | ((...args: unknown[]) => string) | undefined,
-  },
-};
+}));
 
 vi.mock("electron-log/main", () => ({
   default: {
@@ -64,7 +68,6 @@ describe("ElectronLog", () => {
     dataRootDir?: string;
     skipConfigure?: boolean;
   }) {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createMockPathProvider({
       dataRootDir: options?.dataRootDir ?? "/test/app-data",
     });
@@ -339,7 +342,6 @@ describe("ElectronLog", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLog(pathProvider);
 
@@ -369,7 +371,6 @@ describe("ElectronLog", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLog(pathProvider);
 
@@ -411,7 +412,6 @@ describe("ElectronLog", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLog(pathProvider);
 
@@ -426,7 +426,6 @@ describe("ElectronLog", () => {
     });
 
     it("configure() can be called multiple times (reconfigures)", async () => {
-      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLog(pathProvider);
 
@@ -460,7 +459,6 @@ describe("ElectronLog", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
       const service = new ElectronLog(pathProvider);
 
@@ -476,7 +474,6 @@ describe("ElectronLog", () => {
 
   describe("parseLogLevel", () => {
     it("parses valid log levels", async () => {
-      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("debug")).toBe("debug");
       expect(parseLogLevel("info")).toBe("info");
       expect(parseLogLevel("warn")).toBe("warn");
@@ -485,18 +482,15 @@ describe("ElectronLog", () => {
     });
 
     it("handles uppercase input", async () => {
-      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("ERROR")).toBe("error");
       expect(parseLogLevel("DEBUG")).toBe("debug");
     });
 
     it("handles whitespace", async () => {
-      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("  info  ")).toBe("info");
     });
 
     it("returns undefined for invalid input", async () => {
-      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("invalid")).toBeUndefined();
       expect(parseLogLevel("")).toBeUndefined();
       expect(parseLogLevel(undefined)).toBeUndefined();
@@ -505,7 +499,6 @@ describe("ElectronLog", () => {
 
   describe("parseLogLevelSpec", () => {
     it("validates plain log levels", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug")).toBe("debug");
       expect(parseLogLevelSpec("warn")).toBe("warn");
       expect(parseLogLevelSpec("error")).toBe("error");
@@ -514,56 +507,47 @@ describe("ElectronLog", () => {
     });
 
     it("validates combined level:filter format", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:git,process")).toBe("debug:git,process");
       expect(parseLogLevelSpec("warn:network")).toBe("warn:network");
     });
 
     it("validates wildcard filter", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:*")).toBe("debug:*");
     });
 
     it("trims whitespace", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("  debug  ")).toBe("debug");
     });
 
     it("returns undefined for invalid level", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("invalid")).toBeUndefined();
       expect(parseLogLevelSpec("invalid:git")).toBeUndefined();
     });
 
     it("returns undefined for empty or undefined input", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec(undefined)).toBeUndefined();
       expect(parseLogLevelSpec("")).toBeUndefined();
       expect(parseLogLevelSpec("  ")).toBeUndefined();
     });
 
     it("returns undefined for level with empty filter", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:")).toBeUndefined();
     });
   });
 
   describe("splitLogLevelSpec", () => {
     it("extracts level from plain spec", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log");
       expect(splitLogLevelSpec("debug")).toEqual({ level: "debug", filter: undefined });
       expect(splitLogLevelSpec("warn")).toEqual({ level: "warn", filter: undefined });
     });
 
     it("extracts level and filter from combined spec", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log");
       const result = splitLogLevelSpec("debug:git,process");
       expect(result.level).toBe("debug");
       expect(result.filter).toEqual(new Set(["git", "process"]));
     });
 
     it("treats * filter as undefined (all loggers)", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log");
       expect(splitLogLevelSpec("debug:*")).toEqual({ level: "debug", filter: undefined });
     });
   });

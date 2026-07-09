@@ -10,6 +10,28 @@ import path from "node:path";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const gitignorePath = path.resolve(__dirname, ".gitignore");
 
+const NO_INLINE_TYPE_IMPORT = {
+  selector: "TSImportType",
+  message: "Use a top-level `import type` declaration instead of inline import() type references.",
+};
+
+const NO_DYNAMIC_IMPORT = {
+  selector: "ImportExpression",
+  message: "Use a top-level `import` declaration instead of an inline dynamic import().",
+};
+
+// Files where a dynamic import() is load-bearing and cannot be hoisted:
+// - vite.config.ts: `await import("vite")` inside a plugin hook (importing vite
+//   at module scope would be circular).
+// - the two renderer tests below: they call vi.resetModules() and re-import a
+//   module that reads `window.api` at module scope, so the import must happen
+//   after the stub is installed.
+const DYNAMIC_IMPORT_ALLOWED = [
+  "**/vite.config.ts",
+  "src/renderer/lib/api/index.test.ts",
+  "src/renderer/lib/logging/index.test.ts",
+];
+
 export default tseslint.config(
   includeIgnoreFile(gitignorePath),
   // Ignore VS Code extensions node_modules and dist, but lint source
@@ -32,14 +54,13 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/ban-ts-comment": "error",
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "TSImportType",
-          message:
-            "Use a top-level `import type` declaration instead of inline import() type references.",
-        },
-      ],
+      "no-restricted-syntax": ["error", NO_DYNAMIC_IMPORT, NO_INLINE_TYPE_IMPORT],
+    },
+  },
+  {
+    files: DYNAMIC_IMPORT_ALLOWED,
+    rules: {
+      "no-restricted-syntax": ["error", NO_INLINE_TYPE_IMPORT],
     },
   },
   {

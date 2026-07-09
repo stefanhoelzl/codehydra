@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createMockPathProvider } from "./path-provider.test-utils";
 import type { PathProvider } from "./path-provider";
 import type { LoggingConfigureOptions } from "./logging-types";
+import { ElectronLog } from "./electron-log";
 
 // Test timeout for file operations
 const WRITE_DELAY_MS = 100;
@@ -64,7 +65,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("creates log directory if not exists", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -79,7 +79,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("writes to log file with session-based filename", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -98,7 +97,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("log format matches specification", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -120,7 +118,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("filters by level - DEBUG not written when level is WARN", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -142,7 +139,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("writes all levels when level is DEBUG", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -166,7 +162,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("includes Error stack in error logs", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -186,7 +181,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("uses configured path for log files", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);
@@ -203,7 +197,6 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("flushes buffered entries to file after configure()", async () => {
-    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
     const service = new ElectronLog(pathProvider);

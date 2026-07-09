@@ -8,6 +8,7 @@ import type {
   CaptureErrorHandler,
 } from "./audio/AudioCapturePanel";
 import { DictationController, type DictationState } from "./DictationController";
+import * as vscode from "vscode";
 
 // Track mock function calls - must use vi.fn() inline in the factory
 // because vi.mock is hoisted to the top of the file
@@ -182,7 +183,6 @@ class MockAudioCapturePanel implements Pick<
 
 // Get references to the mocked functions after import
 async function getVscodeMocks() {
-  const vscode = await import("vscode");
   return {
     showErrorMessage: vi.mocked(vscode.window.showErrorMessage),
     showInformationMessage: vi.mocked(vscode.window.showInformationMessage),
@@ -696,7 +696,6 @@ describe("DictationController", () => {
 
   describe("terminal text insertion", () => {
     it("inserts transcript into terminal when no editor is active", async () => {
-      const vscode = await import("vscode");
       const mockTerminal = { sendText: vi.fn() };
 
       Object.defineProperty(vscode.window, "activeTextEditor", {
@@ -772,7 +771,6 @@ describe("DictationController", () => {
   describe("smart output (visibility-based)", () => {
     beforeEach(async () => {
       // Reset window properties to ensure type command is used (not terminal)
-      const vscode = await import("vscode");
       Object.defineProperty(vscode.window, "activeTextEditor", {
         value: { document: {} },
         configurable: true,

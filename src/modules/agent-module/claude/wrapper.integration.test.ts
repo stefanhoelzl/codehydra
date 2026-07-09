@@ -12,6 +12,7 @@ import type {
   getInitialPromptConfig as GetInitialPromptConfigFn,
   runClaude as RunClaudeFn,
 } from "./wrapper";
+import * as wrapper from "./wrapper";
 
 // Must mock fs before importing wrapper
 vi.mock("node:fs", () => ({
@@ -32,7 +33,6 @@ describe("getInitialPromptConfig integration", () => {
 
   beforeAll(async () => {
     // Dynamic import after mock is set up
-    const wrapper = await import("./wrapper");
     getInitialPromptConfig = wrapper.getInitialPromptConfig;
     runClaude = wrapper.runClaude;
   });
