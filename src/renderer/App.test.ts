@@ -1,4 +1,3 @@
-// @vitest-environment-options {"settings": {"disableIframePageLoading": true}}
 /**
  * Tests for the App component.
  *
