@@ -13,7 +13,7 @@
  * #4: start hook failure (data) propagates
  * #5: PluginServer graceful degradation
  * #6: check hooks -- no setup needed
- * #7: check hooks -- setup needed (agent null)
+ * #7: check hooks -- agent-selection precedes check-deps (first-run binary regression)
  * #8: check hooks -- setup needed (binaries)
  * #9: check hooks -- setup needed (extensions)
  * #10: init error aborts startup (configuredAgent path)
@@ -45,6 +45,8 @@ import type {
   ConfigureResult,
   InitHookContext,
   InitResult,
+  RegisterAgentResult,
+  SaveAgentHookInput,
 } from "./app-start";
 import { INTENT_SETUP } from "./setup";
 import type { IntentModule } from "./lib/module";
@@ -413,6 +415,64 @@ describe("AppStart Operation", () => {
       };
     }
 
+    /**
+     * Models a real agent module: it only reports its own missing binary when it is the
+     * configured agent, and it records the agent check-deps was called with. This is the
+     * shape that made the first-run bug possible — a null agent here means "report nothing".
+     */
+    function createAgentBinaryModule(
+      agentType: ConfigAgentType,
+      binary: BinaryType,
+      seenAgents: (ConfigAgentType | null)[]
+    ): IntentModule {
+      return {
+        name: `${agentType}-agent`,
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "check-deps": {
+              handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
+                const { configuredAgent } = ctx as CheckDepsHookContext;
+                seenAgents.push(configuredAgent);
+                if (configuredAgent !== agentType) return { result: {} };
+                return { result: { missingBinaries: [binary] } };
+              },
+            },
+          },
+        },
+      };
+    }
+
+    /** Models the picker + persistence: register-agents / agent-selection / save-agent. */
+    function createAgentSelectionModule(
+      chosen: ConfigAgentType,
+      state: TestState,
+      saved: ConfigAgentType[]
+    ): IntentModule {
+      return {
+        name: "picker",
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "register-agents": {
+              handler: async (): Promise<HookOutput<RegisterAgentResult>> => ({
+                result: { agent: chosen, label: chosen, icon: "sparkle" },
+              }),
+            },
+            "agent-selection": {
+              handler: async (): Promise<HookOutput<ConfigAgentType>> => {
+                state.executionOrder.push("agent-selection");
+                return { result: chosen };
+              },
+            },
+            "save-agent": {
+              handler: async (ctx: HookContext): Promise<void> => {
+                saved.push((ctx as SaveAgentHookInput).selectedAgent);
+              },
+            },
+          },
+        },
+      };
+    }
+
     function createExtensionCheckModule(opts: {
       installPlan?: Array<{ id: string; vsixPath: string }>;
     }): IntentModule {
@@ -499,12 +559,87 @@ describe("AppStart Operation", () => {
       expect(state.mcpStarted).toBe(true);
     });
 
-    it("setup needed -- agent null triggers app:setup (#7)", async () => {
+    it("agent null runs agent-selection, and check-deps sees the chosen agent (#7)", async () => {
       const state = createTestState();
       const setupStub = createSetupStub(state);
+      const seenAgents: (ConfigAgentType | null)[] = [];
+      const saved: ConfigAgentType[] = [];
       const { dispatcher } = createCheckTestSetup(
         [
           createConfigCheckModule(null),
+          createAgentSelectionModule("opencode", state, saved),
+          // Two agent modules; only the chosen one should report its binary.
+          createAgentBinaryModule("opencode", "opencode", seenAgents),
+          createAgentBinaryModule("claude", "claude", seenAgents),
+          createExtensionCheckModule({}),
+          createIdeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub, configuredAgent: null }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      // The picker ran, and it ran BEFORE check-deps: every agent module saw the
+      // chosen agent, never the null that used to make them all skip themselves.
+      expect(state.executionOrder.indexOf("agent-selection")).toBeLessThan(
+        state.executionOrder.indexOf("setup")
+      );
+      expect(seenAgents).toEqual(["opencode", "opencode"]);
+      expect(saved).toEqual(["opencode"]);
+    });
+
+    it("the chosen agent's binary reaches app:setup on a first run (#7a)", async () => {
+      const state = createTestState();
+      const seenAgents: (ConfigAgentType | null)[] = [];
+      const saved: ConfigAgentType[] = [];
+      let setupPayload: unknown;
+      const setupStub: Operation<typeof setupStubSchemas> = {
+        id: "setup",
+        schemas: setupStubSchemas,
+        async execute(ctx): Promise<void> {
+          state.executionOrder.push("setup");
+          setupPayload = ctx.intent.payload;
+        },
+      };
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule(null),
+          createAgentSelectionModule("opencode", state, saved),
+          createAgentBinaryModule("opencode", "opencode", seenAgents),
+          createExtensionCheckModule({}),
+          createIdeServerModule(state),
+          createMcpModule(state),
+          createDataModule(state),
+          createViewModule(state),
+        ],
+        { setupStub, configuredAgent: null }
+      );
+
+      await dispatcher.dispatch(appStartIntent());
+
+      // Regression: check-deps used to run with a null agent, so opencode never landed
+      // in missingBinaries and the setup "binary" hook downloaded nothing. The user
+      // reached a working-looking app whose agent binary did not exist.
+      expect(setupPayload).toMatchObject({
+        missingBinaries: ["opencode"],
+        needsBinaryDownload: true,
+        configuredAgent: "opencode",
+      });
+      expect(state.ideServerStarted).toBe(true);
+    });
+
+    it("no setup dispatched when the chosen agent needs nothing (#7b)", async () => {
+      const state = createTestState();
+      const setupStub = createSetupStub(state);
+      const saved: ConfigAgentType[] = [];
+      const { dispatcher } = createCheckTestSetup(
+        [
+          createConfigCheckModule(null),
+          createAgentSelectionModule("claude", state, saved),
+          // claude never downloads a binary, so nothing is missing.
           createBinaryCheckModule([]),
           createExtensionCheckModule({}),
           createIdeServerModule(state),
@@ -517,8 +652,10 @@ describe("AppStart Operation", () => {
 
       await dispatcher.dispatch(appStartIntent());
 
-      expect(state.executionOrder).toContain("setup");
-      // start hooks still ran after setup
+      // Agent selection is no longer a reason to run app:setup.
+      expect(state.executionOrder).toContain("agent-selection");
+      expect(state.executionOrder).not.toContain("setup");
+      expect(saved).toEqual(["claude"]);
       expect(state.ideServerStarted).toBe(true);
     });
 

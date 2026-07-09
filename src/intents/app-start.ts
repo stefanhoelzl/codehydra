@@ -8,11 +8,18 @@
  *             app.whenReady(). Handlers needing Electron declare
  *             `requires: { "app-ready": ANY_VALUE }`.
  * 3. "show-ui" - Show starting screen
- * 4. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 5. "start" - Start servers, wire services, mount renderer.
+ * 4. "register-agents" / "agent-selection" / "save-agent" - (first run only)
+ *    Collect the selectable agents, show the picker, persist the choice.
+ * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 6. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, ideServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
+ *
+ * Agent selection MUST precede "check-deps": the deps check is agent-specific
+ * (each agent module only reports its own missing binary, and only when it is
+ * the configured agent), so running it before the agent is known would report an
+ * empty binary list and the chosen agent's binary would never be downloaded.
  *
  * Configuration is loaded before this operation runs (via Config.load()).
  * configuredAgent is read from Config, not from hook results.
@@ -43,6 +50,7 @@ import type { Operation, OperationContext, OperationSchemas, HookContext } from 
 import { type IntentOf } from "./lib/operation";
 import { configAgentTypeSchema, hookCtxSchema } from "./contract";
 import type { ConfigAgentType } from "../shared/api/types";
+import type { LifecycleAgentType } from "../shared/ipc";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import { INTENT_SETUP } from "./setup";
@@ -96,10 +104,26 @@ export const appStartPhaseSchema = z.enum([
   "before-ready",
   "init",
   "show-ui",
+  "agent-selection",
   "check-deps",
   "setup",
   "start",
 ]);
+
+/** Selectable agent backend. Local schema; mirrors shared/ipc's LifecycleAgentType. */
+const lifecycleAgentTypeSchema = z.enum(["opencode", "claude"]);
+
+/**
+ * Per-handler result for the "register-agents" hook point.
+ * Each per-agent module returns its agent info for the selection UI.
+ */
+export const registerAgentResultSchema = z
+  .object({
+    agent: lifecycleAgentTypeSchema,
+    label: z.string(),
+    icon: z.string(),
+  })
+  .readonly();
 
 /**
  * Per-handler result for "before-ready" hook point.
@@ -148,9 +172,25 @@ const initEnrichmentSchema = z.object({
 });
 const initHookInputSchema = hookCtxSchema(appStartPayloadSchema, initEnrichmentSchema.shape);
 
-/** Operation-added enrichment for "check-deps". Agent modules use their own isActive flag. */
+/** Operation-added enrichment for the "agent-selection" hook (agents from register-agents). */
+const agentSelectionEnrichmentSchema = z.object({
+  availableAgents: z.array(registerAgentResultSchema).readonly(),
+});
+const agentSelectionInputSchema = hookCtxSchema(
+  appStartPayloadSchema,
+  agentSelectionEnrichmentSchema.shape
+);
+
+/** Operation-added enrichment for the "save-agent" hook (selectedAgent from agent-selection). */
+const saveAgentEnrichmentSchema = z.object({ selectedAgent: configAgentTypeSchema });
+const saveAgentInputSchema = hookCtxSchema(appStartPayloadSchema, saveAgentEnrichmentSchema.shape);
+
+/**
+ * Operation-added enrichment for "check-deps". Agent modules use their own isActive flag.
+ * Non-nullable: agent selection runs first, so the agent is always known here.
+ */
 const checkDepsEnrichmentSchema = z.object({
-  configuredAgent: configAgentTypeSchema.nullable(),
+  configuredAgent: configAgentTypeSchema,
   extensionRequirements: z.array(extensionRequirementSchema).readonly(),
 });
 const checkDepsHookInputSchema = hookCtxSchema(
@@ -178,6 +218,9 @@ const schemas = {
     "before-ready": { result: configureResultSchema },
     init: { input: initHookInputSchema, result: initResultSchema },
     "show-ui": { result: showUIHookResultSchema },
+    "register-agents": { result: registerAgentResultSchema },
+    "agent-selection": { input: agentSelectionInputSchema, result: lifecycleAgentTypeSchema },
+    "save-agent": { input: saveAgentInputSchema },
     "check-deps": { input: checkDepsHookInputSchema, result: checkDepsResultSchema },
     [APP_START_ERROR_HOOK]: { input: appStartErrorHookInputSchema },
   },
@@ -198,6 +241,14 @@ export type ConfigureResult = z.infer<typeof configureResultSchema>;
 export type InitResult = z.infer<typeof initResultSchema>;
 export type ShowUIHookResult = z.infer<typeof showUIHookResultSchema>;
 export type CheckDepsResult = z.infer<typeof checkDepsResultSchema>;
+export type RegisterAgentResult = z.infer<typeof registerAgentResultSchema>;
+
+/** Input context for the "agent-selection" hook — carries agents from register-agents. */
+export type AgentSelectionHookContext = HookContext &
+  z.infer<typeof agentSelectionEnrichmentSchema>;
+
+/** Input context for the "save-agent" hook — carries selectedAgent from agent-selection. */
+export type SaveAgentHookInput = HookContext & z.infer<typeof saveAgentEnrichmentSchema>;
 
 /** Input context for "init" -- carries requiredScripts collected from before-ready results. */
 export type InitHookContext = HookContext & z.infer<typeof initEnrichmentSchema>;
@@ -218,8 +269,6 @@ export type AppStartErrorHookContext = HookContext & z.infer<typeof appStartErro
 /** Merged check results produced by runChecks(). */
 interface CheckResult {
   readonly needsSetup: boolean;
-  readonly configuredAgent: ConfigAgentType | null;
-  readonly needsAgentSelection: boolean;
   readonly needsBinaryDownload: boolean;
   readonly missingBinaries: readonly BinaryType[];
   readonly needsExtensions: boolean;
@@ -279,8 +328,9 @@ export class AppStartOperation implements Operation<typeof schemas> {
       }
 
       // On first run (no config.json yet) the agent is treated as "not chosen":
-      // null defers binary checks and drives needsAgentSelection, exactly as a null
-      // agent value used to. Once configured, the real (non-null) agent is used.
+      // null drives the agent-selection hook points below. The `agent` config key is
+      // non-nullable (it defaults to "claude"), so file existence — not the value —
+      // is what distinguishes "never chosen" from "chose Claude".
       const configuredAgent: ConfigAgentType | null = this.wasConfigured()
         ? this.agentConfig.get()
         : null;
@@ -292,9 +342,19 @@ export class AppStartOperation implements Operation<typeof schemas> {
       throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
       const retrySupported = showUiResults.some((r) => r.retrySupported === true);
 
-      // Hook 4: "check-deps" (collect, isolated contexts)
+      // Hook 4: agent selection (first run only) -- register-agents, agent-selection, save-agent.
+      // Runs BEFORE check-deps so the deps check knows which agent's binary to look for.
+      let agent: ConfigAgentType;
+      if (configuredAgent === null) {
+        phase = "agent-selection";
+        agent = await this.selectAgent(ctx, hookCtx, retrySupported);
+      } else {
+        agent = configuredAgent;
+      }
+
+      // Hook 5: "check-deps" (collect, isolated contexts)
       phase = "check-deps";
-      let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
+      let checkResult = await this.runChecks(ctx, agent, extensionRequirements);
 
       // Dispatch app:setup if needed (blocking sub-operation)
       // Setup manages its own UI (shows/hides setup screen)
@@ -307,12 +367,11 @@ export class AppStartOperation implements Operation<typeof schemas> {
             await ctx.dispatch({
               type: INTENT_SETUP,
               payload: {
-                needsAgentSelection: checkResult.needsAgentSelection,
                 needsBinaryDownload: checkResult.needsBinaryDownload,
                 missingBinaries: checkResult.missingBinaries,
                 needsExtensions: checkResult.needsExtensions,
                 extensionInstallPlan: checkResult.extensionInstallPlan,
-                configuredAgent: checkResult.configuredAgent,
+                configuredAgent: agent,
               },
             });
             setupComplete = true;
@@ -325,7 +384,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
               const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
               throwHookErrors(retryErrors, "app:start await-retry hooks failed");
               // Re-run check hooks to get fresh preflight state for retry
-              checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
+              checkResult = await this.runChecks(ctx, agent, extensionRequirements);
               if (!checkResult.needsSetup) {
                 setupComplete = true;
               }
@@ -376,12 +435,63 @@ export class AppStartOperation implements Operation<typeof schemas> {
   }
 
   /**
+   * First-run agent selection: collect the selectable agents, show the picker, persist
+   * the choice. Wrapped in the same retry loop app:setup uses, so a failed or cancelled
+   * pick re-prompts rather than killing startup (when the UI can host a retry).
+   *
+   * Nothing is persisted unless the user actually picks: if the picker rejects (e.g.
+   * app:shutdown during selection), save-agent never runs and the next launch re-prompts.
+   */
+  private async selectAgent(
+    ctx: OperationContext<AppStartIntent>,
+    hookCtx: HookContext,
+    retrySupported: boolean
+  ): Promise<ConfigAgentType> {
+    for (;;) {
+      try {
+        const { results: agentInfos, errors: registerErrors } =
+          await ctx.hooks.collect<RegisterAgentResult>("register-agents", hookCtx);
+        throwHookErrors(registerErrors, "app:start register-agents hooks failed");
+
+        const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
+        const { results: agentResults, errors: agentErrors } =
+          await ctx.hooks.collect<LifecycleAgentType>("agent-selection", selectionCtx);
+        throwHookErrors(agentErrors, "app:start agent-selection hooks failed");
+
+        // Single result-producer (the picker); results[0] is the chosen agent.
+        const selectedAgent = agentResults[0] as ConfigAgentType | undefined;
+        if (selectedAgent === undefined) {
+          throw new Error("app:start agent-selection produced no agent");
+        }
+
+        const saveAgentInput: SaveAgentHookInput = { intent: ctx.intent, selectedAgent };
+        const { errors: saveErrors } = await ctx.hooks.collect<void>("save-agent", saveAgentInput);
+        throwHookErrors(saveErrors, "app:start save-agent hooks failed");
+
+        return selectedAgent;
+      } catch (selectionError) {
+        if (!retrySupported) {
+          throw new Error("Agent selection failed and no retry mechanism available", {
+            cause: selectionError,
+          });
+        }
+        const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
+        throwHookErrors(retryErrors, "app:start await-retry hooks failed");
+      }
+    }
+  }
+
+  /**
    * Run check-deps hook point using collect() (isolated contexts).
    * Merges results and derives boolean flags.
+   *
+   * `agent` is non-null: selection has already happened. Agent modules only report
+   * their own missing binary when they are the configured agent, so calling this with
+   * a null agent would silently produce an empty binary list.
    */
   private async runChecks(
     ctx: OperationContext<AppStartIntent>,
-    configuredAgent: ConfigAgentType | null,
+    configuredAgent: ConfigAgentType,
     extensionRequirements: readonly ExtensionRequirement[]
   ): Promise<CheckResult> {
     // check-deps: binary + extension checks (collect, isolated contexts)
@@ -406,15 +516,12 @@ export class AppStartOperation implements Operation<typeof schemas> {
     }
 
     // Derive booleans (dissolved from needsSetupModule)
-    const needsAgentSelection = configuredAgent === null;
     const needsBinaryDownload = missingBinaries.length > 0;
     const needsExtensions = extensionInstallPlan.length > 0;
-    const needsSetup = needsAgentSelection || needsBinaryDownload || needsExtensions;
+    const needsSetup = needsBinaryDownload || needsExtensions;
 
     return {
       needsSetup,
-      configuredAgent,
-      needsAgentSelection,
       needsBinaryDownload,
       missingBinaries,
       needsExtensions,

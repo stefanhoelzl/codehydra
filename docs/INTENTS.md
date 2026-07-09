@@ -453,36 +453,36 @@ Plugin API) dispatch intents directly through the Dispatcher.
 
 All operations use the intent dispatcher. Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
 
-| Operation              | Intent Type               | Hook Points                                                                                      | Domain Events                                                                 |
-| ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `set-metadata`         | `workspace:set-metadata`  | `set`                                                                                            | `workspace:metadata-changed`                                                  |
-| `get-metadata`         | `workspace:get-metadata`  | `get`                                                                                            | --                                                                            |
-| `get-workspace-status` | `workspace:get-status`    | `get`                                                                                            | --                                                                            |
-| `get-agent-session`    | `agent:get-session`       | `get`                                                                                            | --                                                                            |
-| `restart-agent`        | `agent:restart`           | `restart`                                                                                        | `agent:restarted`                                                             |
-| `agent-lifecycle`      | `agent:lifecycle`         | `lifecycle`                                                                                      | --                                                                            |
-| `update-agent-status`  | `agent:update-status`     | --                                                                                               | `agent:status-updated`                                                        |
-| `get-active-workspace` | `ui:get-active-workspace` | `get`                                                                                            | --                                                                            |
-| `vscode-command`       | `vscode:command`          | `execute`                                                                                        | --                                                                            |
-| `vscode-show-message`  | `vscode:show-message`     | `show`                                                                                           | --                                                                            |
-| `resolve-workspace`    | `workspace:resolve`       | `resolve`                                                                                        | --                                                                            |
-| `resolve-project`      | `project:resolve`         | `resolve`                                                                                        | --                                                                            |
-| `open-workspace`       | `workspace:open`          | `create`, `setup`, `finalize`                                                                    | `workspace:loading`, `workspace:created`, `workspace:create-failed`           |
-| `delete-workspace`     | `workspace:delete`        | `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                  | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
-| `hibernate-workspace`  | `workspace:hibernate`     | `capture`, `shutdown`, `release`                                                                 | `workspace:hibernated`, `workspace:hibernate-failed`                          |
-| `wake-workspace`       | `workspace:wake`          | `cleanup`                                                                                        | `workspace:woken`, `workspace:wake-failed`                                    |
-| `switch-workspace`     | `workspace:switch`        | `activate`, `find-candidates`, `select-next`                                                     | `workspace:switched`                                                          |
-| `open-project`         | `project:open`            | `select-folder`, `prepare`, `resolve`, `register`, `discover`                                    | `clone:progress`, `project:opened`, `project:open-failed`                     |
-| `close-project`        | `project:close`           | `resolve`, `close`                                                                               | `project:closed`, `workspace:switched(null)`                                  |
-| `list-projects`        | `project:list`            | `list-projects`, `list-workspaces`                                                               | --                                                                            |
-| `get-project-bases`    | `project:get-bases`       | `list`, `refresh`                                                                                | `bases:updated`                                                               |
-| `app-start`            | `app:start`               | `before-ready`, `init`, `show-ui`, `check-deps`, `start`                                         | --                                                                            |
-| `app-ready`            | `app:ready`               | `available-agents`, `load-projects`                                                              | `app:started`                                                                 |
-| `app-shutdown`         | `app:shutdown`            | `stop`, `quit`                                                                                   | --                                                                            |
-| `setup`                | `app:setup`               | `show-ui`, `register-agents`, `agent-selection`, `save-agent`, `binary`, `extensions`, `hide-ui` | `setup:progress`, `setup:error`                                               |
-| `app-resume`           | `app:resume`              | `resume`                                                                                         | `app:resumed`                                                                 |
-| `shortcut-key`         | `shortcut:key`            | --                                                                                               | `shortcut:key-pressed`                                                        |
-| `submit-bug-report`    | `bug-report:submit`       | --                                                                                               | `bug-report:submitted`                                                        |
+| Operation              | Intent Type               | Hook Points                                                                                                  | Domain Events                                                                 |
+| ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `set-metadata`         | `workspace:set-metadata`  | `set`                                                                                                        | `workspace:metadata-changed`                                                  |
+| `get-metadata`         | `workspace:get-metadata`  | `get`                                                                                                        | --                                                                            |
+| `get-workspace-status` | `workspace:get-status`    | `get`                                                                                                        | --                                                                            |
+| `get-agent-session`    | `agent:get-session`       | `get`                                                                                                        | --                                                                            |
+| `restart-agent`        | `agent:restart`           | `restart`                                                                                                    | `agent:restarted`                                                             |
+| `agent-lifecycle`      | `agent:lifecycle`         | `lifecycle`                                                                                                  | --                                                                            |
+| `update-agent-status`  | `agent:update-status`     | --                                                                                                           | `agent:status-updated`                                                        |
+| `get-active-workspace` | `ui:get-active-workspace` | `get`                                                                                                        | --                                                                            |
+| `vscode-command`       | `vscode:command`          | `execute`                                                                                                    | --                                                                            |
+| `vscode-show-message`  | `vscode:show-message`     | `show`                                                                                                       | --                                                                            |
+| `resolve-workspace`    | `workspace:resolve`       | `resolve`                                                                                                    | --                                                                            |
+| `resolve-project`      | `project:resolve`         | `resolve`                                                                                                    | --                                                                            |
+| `open-workspace`       | `workspace:open`          | `create`, `setup`, `finalize`                                                                                | `workspace:loading`, `workspace:created`, `workspace:create-failed`           |
+| `delete-workspace`     | `workspace:delete`        | `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                              | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
+| `hibernate-workspace`  | `workspace:hibernate`     | `capture`, `shutdown`, `release`                                                                             | `workspace:hibernated`, `workspace:hibernate-failed`                          |
+| `wake-workspace`       | `workspace:wake`          | `cleanup`                                                                                                    | `workspace:woken`, `workspace:wake-failed`                                    |
+| `switch-workspace`     | `workspace:switch`        | `activate`, `find-candidates`, `select-next`                                                                 | `workspace:switched`                                                          |
+| `open-project`         | `project:open`            | `select-folder`, `prepare`, `resolve`, `register`, `discover`                                                | `clone:progress`, `project:opened`, `project:open-failed`                     |
+| `close-project`        | `project:close`           | `resolve`, `close`                                                                                           | `project:closed`, `workspace:switched(null)`                                  |
+| `list-projects`        | `project:list`            | `list-projects`, `list-workspaces`                                                                           | --                                                                            |
+| `get-project-bases`    | `project:get-bases`       | `list`, `refresh`                                                                                            | `bases:updated`                                                               |
+| `app-start`            | `app:start`               | `before-ready`, `init`, `show-ui`, `register-agents`, `agent-selection`, `save-agent`, `check-deps`, `start` | --                                                                            |
+| `app-ready`            | `app:ready`               | `available-agents`, `load-projects`                                                                          | `app:started`                                                                 |
+| `app-shutdown`         | `app:shutdown`            | `stop`, `quit`                                                                                               | --                                                                            |
+| `setup`                | `app:setup`               | `show-ui`, `binary`, `extensions`, `hide-ui`                                                                 | `setup:progress`, `setup:error`                                               |
+| `app-resume`           | `app:resume`              | `resume`                                                                                                     | `app:resumed`                                                                 |
+| `shortcut-key`         | `shortcut:key`            | --                                                                                                           | `shortcut:key-pressed`                                                        |
+| `submit-bug-report`    | `bug-report:submit`       | --                                                                                                           | `bug-report:submitted`                                                        |
 
 The presenter (`PresentationModule`) maps renderer `ui:events` to these intents. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules — the presenter folds them into the `UiState` snapshot, while others (BadgeModule, WindowTitleModule) react internally (taskbar badge, window title).
 
@@ -510,13 +510,16 @@ The `close-project` operation uses these hook modules:
 
 Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
 
-The `app-start` operation runs five hook points in sequence:
+The `app-start` operation runs these hook points in sequence:
 
 - **before-ready**: Env config + script declarations (no I/O, pre-Electron ready)
 - **init**: Initialization (logging, shell, scripts). ElectronLifecycleModule provides `"app-ready"` capability after `app.whenReady()`; handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`.
 - **show-ui**: Show starting screen, capture waitForRetry callback
+- **register-agents** / **agent-selection** / **save-agent**: First run only (`Config.wasConfigured()` is false). Collect the selectable agents, show the picker, persist the choice. Wrapped in the same retry loop `app:setup` uses.
 - **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
 - **start**: Start servers with capability-based ordering (`pluginPort` → `ideServerPort` → downstream handlers).
+
+Agent selection **must** precede `check-deps`: the deps check is agent-specific — each agent module reports its missing binary only when it is the configured agent — so checking before the agent is known yields an empty binary list and the chosen agent's binary is never downloaded. `check-deps` therefore receives a non-null `configuredAgent`.
 
 The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (start hook modules read ports from capabilities). Errors in early hooks abort startup.
 
@@ -591,6 +594,7 @@ index.ts (composition root)
               +-- "init" (app.whenReady() provides "app-ready" capability,
               |           logging, shell, scripts)
               +-- "show-ui" (starting screen)
+              +-- "register-agents"/"agent-selection"/"save-agent" (first run only)
               +-- "check-deps" (binary/extension checks -> app:setup if needed)
               |
               +-- "start" hook point (servers, wiring)

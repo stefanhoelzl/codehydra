@@ -2,13 +2,14 @@
  * SetupOperation - Orchestrates setup UI and work.
  *
  * Called as a blocking sub-operation from AppStartOperation when setup is needed.
- * Runs six hook points in sequence:
+ * Runs four hook points in sequence:
  * 1. "show-ui" - Show setup screen
- * 2. "agent-selection" - (if needsAgentSelection) Show agent selection UI, wait for user
- * 3. "save-agent" - (if selectedAgent) Persist agent selection to config
- * 4. "binary" - Update binary progress (downloads if needed)
- * 5. "extensions" - Update extension progress (installs if needed)
- * 6. "hide-ui" - Hide setup screen (return to starting screen)
+ * 2. "binary" - Update binary progress (downloads if needed)
+ * 3. "extensions" - Update extension progress (installs if needed)
+ * 4. "hide-ui" - Hide setup screen (return to starting screen)
+ *
+ * Agent selection lives in app:start, ahead of check-deps — the deps check is
+ * agent-specific, so setup is only ever dispatched with a known agent.
  *
  * On completion, returns control to AppStartOperation (no dispatch).
  * On failure, emits setup:error domain event for renderer error UI.
@@ -23,14 +24,12 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import type { ConfigAgentType } from "../shared/api/types";
 import {
   configAgentTypeSchema,
   setupRowIdSchema,
   setupRowStatusSchema,
   hookCtxSchema,
 } from "./contract";
-import type { LifecycleAgentType } from "../shared/ipc";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_SETUP = "app:setup" as const;
@@ -46,9 +45,6 @@ export const EVENT_SETUP_ERROR = "setup:error" as const;
 /** Binaries the setup flow can download. Local schema; mirrors binary-resolution's BinaryType. */
 const binaryTypeSchema = z.enum(["vscodium", "opencode", "claude"]);
 
-/** Selectable agent backend. Local schema; mirrors shared/ipc's LifecycleAgentType. */
-const lifecycleAgentTypeSchema = z.enum(["opencode", "claude"]);
-
 /** What needs to be installed. Local schema; mirrors app-start's ExtensionInstallEntry. */
 const extensionInstallEntrySchema = z
   .object({
@@ -63,8 +59,6 @@ const extensionInstallEntrySchema = z
 
 export const setupPayloadSchema = z
   .object({
-    /** True if agent selection is needed */
-    needsAgentSelection: z.boolean().optional(),
     /** True if binary download is needed */
     needsBinaryDownload: z.boolean().optional(),
     /** List of binaries that need download */
@@ -73,8 +67,8 @@ export const setupPayloadSchema = z
     needsExtensions: z.boolean().optional(),
     /** Extensions to install (from check-deps install plan) */
     extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
-    /** Currently configured agent (may be null) */
-    configuredAgent: configAgentTypeSchema.nullable().optional(),
+    /** The agent in effect. Always known: app:start selects it before dispatching setup. */
+    configuredAgent: configAgentTypeSchema,
   })
   .readonly();
 
@@ -83,41 +77,12 @@ export const setupPayloadSchema = z
 // =============================================================================
 
 /**
- * Per-handler result contract for the "register-agents" hook point.
- * Each per-agent module returns its agent info for the selection UI.
- */
-export const registerAgentResultSchema = z
-  .object({
-    agent: lifecycleAgentTypeSchema,
-    label: z.string(),
-    icon: z.string(),
-  })
-  .readonly();
-
-// selectedAgent is the agent-selection hook *result* (operation-consumed, not a
-// capability — nothing in the hook point requires it).
-
-/** Operation-added enrichment for the "agent-selection" hook (available agents from register-agents). */
-const agentSelectionEnrichmentSchema = z.object({
-  availableAgents: z.array(registerAgentResultSchema).readonly(),
-});
-const agentSelectionInputSchema = hookCtxSchema(
-  setupPayloadSchema,
-  agentSelectionEnrichmentSchema.shape
-);
-
-/** Operation-added enrichment for the "save-agent" hook (selectedAgent from agent-selection). */
-const saveAgentEnrichmentSchema = z.object({ selectedAgent: configAgentTypeSchema });
-const saveAgentInputSchema = hookCtxSchema(setupPayloadSchema, saveAgentEnrichmentSchema.shape);
-
-/**
- * Operation-added enrichment for the "binary" hook (agent + binary info from payload/selection).
+ * Operation-added enrichment for the "binary" hook (agent + binary info from payload).
  * Progress is streamed by the handler (an async generator that yields `SetupProgressPayload`
  * frames); the operation emits `setup:progress` for each — no `report` closure in the context.
  */
 const binaryEnrichmentSchema = z.object({
-  selectedAgent: configAgentTypeSchema.optional(),
-  configuredAgent: configAgentTypeSchema.nullable().optional(),
+  configuredAgent: configAgentTypeSchema,
   missingBinaries: z.array(binaryTypeSchema).readonly().optional(),
 });
 const binaryInputSchema = hookCtxSchema(setupPayloadSchema, binaryEnrichmentSchema.shape);
@@ -156,12 +121,6 @@ const schemas = {
   type: INTENT_SETUP,
   payload: setupPayloadSchema,
   hooks: {
-    "register-agents": { result: registerAgentResultSchema },
-    "agent-selection": {
-      input: agentSelectionInputSchema,
-      result: lifecycleAgentTypeSchema,
-    },
-    "save-agent": { input: saveAgentInputSchema },
     binary: { input: binaryInputSchema },
     extensions: { input: extensionsInputSchema },
   },
@@ -178,21 +137,8 @@ const schemas = {
 export type SetupPayload = z.infer<typeof setupPayloadSchema>;
 export type SetupIntent = IntentOf<typeof schemas>;
 
-export type RegisterAgentResult = z.infer<typeof registerAgentResultSchema>;
-
 /**
- * Input context for the "agent-selection" hook — carries available agents from register-agents.
- */
-export type AgentSelectionHookContext = HookContext &
-  z.infer<typeof agentSelectionEnrichmentSchema>;
-
-/**
- * Input context for the "save-agent" hook — carries selectedAgent from agent-selection.
- */
-export type SaveAgentHookInput = HookContext & z.infer<typeof saveAgentEnrichmentSchema>;
-
-/**
- * Input context for the "binary" hook — carries agent and binary info from payload/selection.
+ * Input context for the "binary" hook — carries agent and binary info from the payload.
  */
 export type BinaryHookInput = HookContext & z.infer<typeof binaryEnrichmentSchema>;
 
@@ -234,33 +180,6 @@ export class SetupOperation implements Operation<typeof schemas> {
       const { errors: showUiErrors } = await ctx.hooks.collect<void>("show-ui", hookCtx);
       throwHookErrors(showUiErrors, "app:setup show-ui hooks failed");
 
-      // Hook 2: "agent-selection" -- (conditional) Collect agent info + show UI
-      let selectedAgent: ConfigAgentType | undefined;
-      if (payload.needsAgentSelection) {
-        // 2a: Collect available agents from per-agent modules
-        const { results: agentInfos, errors: registerErrors } =
-          await ctx.hooks.collect<RegisterAgentResult>("register-agents", hookCtx);
-        throwHookErrors(registerErrors, "app:setup register-agents hooks failed");
-
-        // 2b: Show agent selection UI with collected agents
-        const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
-        const { errors: agentErrors, results: agentResults } =
-          await ctx.hooks.collect<LifecycleAgentType>("agent-selection", selectionCtx);
-        throwHookErrors(agentErrors, "app:setup agent-selection hooks failed");
-        // Single result-producer (the picker); results[0] is the chosen agent.
-        selectedAgent = agentResults[0] as ConfigAgentType | undefined;
-      }
-
-      // Hook 3: "save-agent" -- (conditional) Persist agent selection
-      if (selectedAgent) {
-        const saveAgentInput: SaveAgentHookInput = {
-          intent: ctx.intent,
-          selectedAgent,
-        };
-        const { errors: saveErrors } = await ctx.hooks.collect<void>("save-agent", saveAgentInput);
-        throwHookErrors(saveErrors, "app:setup save-agent hooks failed");
-      }
-
       // Streaming handlers (binary/extensions) yield SetupProgressPayload frames;
       // the operation emits setup:progress for each. DomainEvent.payload is unknown,
       // so the frame forwards straight through — the handler owns its typed yields.
@@ -268,11 +187,10 @@ export class SetupOperation implements Operation<typeof schemas> {
         void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: frame });
       };
 
-      // Hook 4: "binary" -- Update binary progress (downloads if needed)
+      // Hook 2: "binary" -- Update binary progress (downloads if needed)
       const binaryInput: BinaryHookInput = {
         intent: ctx.intent,
-        ...(selectedAgent !== undefined && { selectedAgent }),
-        ...(payload.configuredAgent !== undefined && { configuredAgent: payload.configuredAgent }),
+        configuredAgent: payload.configuredAgent,
         ...(payload.missingBinaries !== undefined && { missingBinaries: payload.missingBinaries }),
       };
       const { errors: binaryErrors } = await ctx.hooks.collect<void>("binary", binaryInput, {
@@ -280,7 +198,7 @@ export class SetupOperation implements Operation<typeof schemas> {
       });
       throwHookErrors(binaryErrors, "app:setup binary hooks failed");
 
-      // Hook 5: "extensions" -- Update extension progress (installs if needed)
+      // Hook 3: "extensions" -- Update extension progress (installs if needed)
       const extensionsInput: ExtensionsHookInput = {
         intent: ctx.intent,
         ...(payload.extensionInstallPlan !== undefined && {
@@ -294,7 +212,7 @@ export class SetupOperation implements Operation<typeof schemas> {
       );
       throwHookErrors(extensionsErrors, "app:setup extensions hooks failed");
 
-      // Hook 6: "hide-ui" -- Hide setup screen (return to starting screen)
+      // Hook 4: "hide-ui" -- Hide setup screen (return to starting screen)
       const { errors: hideUiErrors } = await ctx.hooks.collect<void>("hide-ui", hookCtx);
       throwHookErrors(hideUiErrors, "app:setup hide-ui hooks failed");
 
