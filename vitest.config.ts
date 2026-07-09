@@ -12,7 +12,12 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    isolate: true,
+    // Test files in a worker share one module registry, so each module is
+    // evaluated once. A per-file `vi.mock(id, factory)` builds a fresh mock the
+    // already-cached consumer never sees, so mocked modules are shared fakes
+    // under `__mocks__/` that every file mocks with a bare `vi.mock(id)`.
+    // `pnpm test:canary` forces one registry per project to catch regressions.
+    isolate: false,
     restoreMocks: true,
     clearMocks: true,
     // Required by the shared `__mocks__` fakes: without it a `.mockReturnValue()`

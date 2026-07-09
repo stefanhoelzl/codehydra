@@ -17,6 +17,7 @@
     "build": "pnpm build:wrappers && pnpm build:extensions && electron-vite build",
     "preview": "pnpm build && electron-vite preview --skipBuild",
     "test": "vitest run --no-color",
+    "test:canary": "vitest run --no-color --no-file-parallelism",
     "test:related": "vitest run --no-color --passWithNoTests",
     "test:legacy": "vitest run --no-color --exclude '**/*.integration.test.ts' --exclude '**/*.boundary.test.ts'",
     "test:integration": "vitest run --no-color integration",
