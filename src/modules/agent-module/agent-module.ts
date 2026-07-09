@@ -24,13 +24,10 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-} from "../../intents/app-start";
-import type {
   RegisterAgentResult,
   SaveAgentHookInput,
-  BinaryHookInput,
-  SetupProgressPayload,
-} from "../../intents/setup";
+} from "../../intents/app-start";
+import type { BinaryHookInput, SetupProgressPayload } from "../../intents/setup";
 import type {
   SetupHookInput,
   SetupHookResult,
@@ -197,6 +194,37 @@ export function createAgentModule(
           },
         },
 
+        "register-agents": {
+          handler: async (): Promise<HookOutput<RegisterAgentResult>> => {
+            return {
+              result: {
+                agent: provider.type,
+                label: provider.displayName,
+                icon: provider.icon,
+              },
+            };
+          },
+        },
+
+        "save-agent": {
+          handler: async (ctx: HookContext) => {
+            const { selectedAgent } = ctx as SaveAgentHookInput;
+            if (selectedAgent !== provider.type) return;
+
+            try {
+              await deps.agentConfig.set(selectedAgent);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              throw new SetupError(
+                `Failed to save agent selection: ${message}`,
+                "CONFIG_SAVE_FAILED"
+              );
+            }
+          },
+        },
+
+        // Runs after agent selection, so `configuredAgent` is the agent the user just
+        // picked (or the one already in config.json) — never null.
         "check-deps": {
           handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
             const { configuredAgent } = ctx as CheckDepsHookContext;
@@ -279,35 +307,6 @@ export function createAgentModule(
       },
 
       [SETUP_OPERATION_ID]: {
-        "register-agents": {
-          handler: async (): Promise<HookOutput<RegisterAgentResult>> => {
-            return {
-              result: {
-                agent: provider.type,
-                label: provider.displayName,
-                icon: provider.icon,
-              },
-            };
-          },
-        },
-
-        "save-agent": {
-          handler: async (ctx: HookContext) => {
-            const { selectedAgent } = ctx as SaveAgentHookInput;
-            if (selectedAgent !== provider.type) return;
-
-            try {
-              await deps.agentConfig.set(selectedAgent);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
-              throw new SetupError(
-                `Failed to save agent selection: ${message}`,
-                "CONFIG_SAVE_FAILED"
-              );
-            }
-          },
-        },
-
         binary: {
           // Streaming handler: yield progress frames; the setup operation emits them.
           handler: async function* (
@@ -316,8 +315,7 @@ export function createAgentModule(
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
 
-            const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
-            if (agentType !== provider.type) return;
+            if (hookCtx.configuredAgent !== provider.type) return;
 
             if (!missingBinaries.includes(provider.binaryType)) {
               yield { id: "agent", status: "done" };

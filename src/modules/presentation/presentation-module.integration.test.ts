@@ -38,7 +38,7 @@ import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import type { ShowUIHookResult } from "../../intents/app-start";
 import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../../intents/setup";
-import type { AgentSelectionHookContext } from "../../intents/setup";
+import type { AgentSelectionHookContext } from "../../intents/app-start";
 import type { HookOutput } from "../../intents/lib/operation";
 import { EVENT_PROJECT_OPENED } from "../../intents/open-project";
 import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
@@ -1328,13 +1328,13 @@ describe("PresentationModule - startup flow", () => {
     connect(deps);
 
     const ctx: AgentSelectionHookContext = {
-      intent: { type: "app:setup", payload: {} },
+      intent: { type: "app:start", payload: {} },
       availableAgents: [
         { agent: "claude", label: "Claude", icon: "sparkle" },
         { agent: "opencode", label: "OpenCode", icon: "terminal" },
       ],
     };
-    const handlerDecl = module.hooks![SETUP_OPERATION_ID]!["agent-selection"]!;
+    const handlerDecl = module.hooks![APP_START_OPERATION_ID]!["agent-selection"]!;
     const pending = handlerDecl.handler(ctx as never);
     await flush();
 
@@ -1467,16 +1467,18 @@ describe("PresentationModule - startup flow", () => {
     connect(deps);
 
     const ctx: AgentSelectionHookContext = {
-      intent: { type: "app:setup", payload: {} },
+      intent: { type: "app:start", payload: {} },
       availableAgents: [{ agent: "claude", label: "Claude", icon: "sparkle" }],
     };
-    const pending = module.hooks![SETUP_OPERATION_ID]!["agent-selection"]!.handler(ctx as never);
+    const pending = module.hooks![APP_START_OPERATION_ID]!["agent-selection"]!.handler(
+      ctx as never
+    );
 
     await runHook(module, APP_SHUTDOWN_OPERATION_ID, "stop", {
       intent: { type: "app:shutdown", payload: {} },
     });
 
-    // The parked promise rejects: app:setup unwinds WITHOUT reaching save-agent,
+    // The parked promise rejects: app:start unwinds WITHOUT reaching save-agent,
     // so a quit-mid-selection never persists an agent the user didn't choose.
     await expect(pending).rejects.toThrow(/shutting down/);
     // The system dialog is closed and stays closed.

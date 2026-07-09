@@ -27,15 +27,12 @@ import type {
   ConfigureResult,
   CheckDepsResult,
   CheckDepsHookContext,
+  RegisterAgentResult,
+  SaveAgentHookInput,
 } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
-import type {
-  RegisterAgentResult,
-  SaveAgentHookInput,
-  BinaryHookInput,
-  SetupProgressPayload,
-} from "../../intents/setup";
+import type { BinaryHookInput, SetupProgressPayload } from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
 import type {
   SetupHookResult,
@@ -194,13 +191,13 @@ function minimalStart(mcpPort: number | null = null): Operation<OperationSchemas
 }
 
 const registerAgentsSchemas = {
-  type: "setup",
+  type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<readonly RegisterAgentResult[]>(),
 } satisfies OperationSchemas;
 
 class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsSchemas> {
-  readonly id = SETUP_OPERATION_ID;
+  readonly id = APP_START_OPERATION_ID;
   readonly schemas = registerAgentsSchemas;
 
   async execute(
@@ -214,9 +211,9 @@ class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsS
   }
 }
 
-/** Minimal setup operation that runs the "save-agent" hook point with `selectedAgent` seeded. */
+/** Minimal app:start operation that runs the "save-agent" hook point with `selectedAgent` seeded. */
 function minimalSaveAgent(selectedAgent: string): Operation<OperationSchemas> {
-  return createMinimalOperation<void>(SETUP_OPERATION_ID, "setup", "save-agent", {
+  return createMinimalOperation<void>(APP_START_OPERATION_ID, INTENT_APP_START, "save-agent", {
     hookContext: (ctx): SaveAgentHookInput => ({
       intent: ctx.intent,
       selectedAgent: selectedAgent as SaveAgentHookInput["selectedAgent"],
@@ -673,7 +670,7 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation(new MinimalRegisterAgentsOperation());
 
       const results = (await dispatcher.dispatch({
-        type: "setup",
+        type: INTENT_APP_START,
         payload: {},
       })) as readonly RegisterAgentResult[];
 
@@ -696,7 +693,7 @@ describe("createAgentModule", () => {
       const setSpy = vi.spyOn(agentConfig, "set");
       dispatcher.registerOperation(minimalSaveAgent("claude"));
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
 
       expect(setSpy).toHaveBeenCalledWith("claude");
     });
@@ -706,7 +703,7 @@ describe("createAgentModule", () => {
       const setSpy = vi.spyOn(agentConfig, "set");
       dispatcher.registerOperation(minimalSaveAgent("opencode"));
 
-      await dispatcher.dispatch({ type: "setup", payload: {} });
+      await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
 
       expect(setSpy).not.toHaveBeenCalled();
     });
@@ -716,7 +713,9 @@ describe("createAgentModule", () => {
       vi.spyOn(agentConfig, "set").mockRejectedValue(new Error("disk full"));
       dispatcher.registerOperation(minimalSaveAgent("claude"));
 
-      await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
+      await expect(dispatcher.dispatch({ type: INTENT_APP_START, payload: {} })).rejects.toThrow(
+        SetupError
+      );
     });
   });
 
@@ -729,7 +728,7 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
       const op = minimalBinary({
         missingBinaries: ["claude"],
-        selectedAgent: "claude",
+        configuredAgent: "claude",
       });
       dispatcher.registerOperation(op);
 
@@ -743,7 +742,7 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
       const op = minimalBinary({
         missingBinaries: [],
-        selectedAgent: "claude",
+        configuredAgent: "claude",
       });
       dispatcher.registerOperation(op);
 
@@ -757,7 +756,7 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
       const op = minimalBinary({
         missingBinaries: ["claude"],
-        selectedAgent: "opencode",
+        configuredAgent: "opencode",
       });
       dispatcher.registerOperation(op);
 
@@ -782,7 +781,7 @@ describe("createAgentModule", () => {
       });
       const op = minimalBinary({
         missingBinaries: ["claude"],
-        selectedAgent: "claude",
+        configuredAgent: "claude",
       });
       dispatcher.registerOperation(op);
 
@@ -808,25 +807,12 @@ describe("createAgentModule", () => {
       });
       const op = minimalBinary({
         missingBinaries: ["claude"],
-        selectedAgent: "claude",
+        configuredAgent: "claude",
       });
       dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
       expect(op.frames).toContainEqual({ id: "agent", status: "failed", error: "network error" });
-    });
-
-    it("uses configuredAgent when selectedAgent not provided", async () => {
-      const { dispatcher, mockProvider } = createTestSetup();
-      const op = minimalBinary({
-        missingBinaries: ["claude"],
-        configuredAgent: "claude",
-      });
-      dispatcher.registerOperation(op);
-
-      await dispatcher.dispatch({ type: "setup", payload: {} });
-
-      expect(mockProvider.downloadBinary).toHaveBeenCalled();
     });
   });
 

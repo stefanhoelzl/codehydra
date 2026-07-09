@@ -47,12 +47,15 @@ import {
   type AppShutdownIntent,
 } from "../../intents/app-shutdown";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
-import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../../intents/app-start";
+import {
+  APP_START_OPERATION_ID,
+  type ShowUIHookResult,
+  type AgentSelectionHookContext,
+} from "../../intents/app-start";
 import {
   SETUP_OPERATION_ID,
   EVENT_SETUP_PROGRESS,
   EVENT_SETUP_ERROR,
-  type AgentSelectionHookContext,
   type SetupProgressEvent,
   type SetupErrorEvent,
 } from "../../intents/setup";
@@ -435,10 +438,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
 
   /**
-   * Startup phase. "starting" is the genesis state (boot splash); "setup" /
-   * "agent-selection" are pushed by the app:setup hooks; "running" is reached
-   * once app:start's `start` hook fires (app:ready dispatched) and stays until
-   * app:started, after which the normal main logic owns the view.
+   * Startup phase. "starting" is the genesis state (boot splash); "agent-selection"
+   * is pushed by app:start's picker hook and "setup" by the app:setup hooks;
+   * "running" is reached once app:start's `start` hook fires (app:ready dispatched)
+   * and stays until app:started, after which the normal main logic owns the view.
    */
   type StartupPhase = "starting" | "setup" | "agent-selection" | "running" | "done";
   let startupPhase: StartupPhase = "starting";
@@ -1622,6 +1625,34 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
+   * app:start `agent-selection`: show the picker (a radio system dialog) and park
+   * until the user clicks Continue, which arrives as a system-dialog action and
+   * resolves the parked promise with the chosen agent (returned as the hook result
+   * to app:start). app:shutdown REJECTS the promise so a quit-during-selection throws
+   * here — app:start unwinds without reaching save-agent, so no agent is persisted and
+   * the next launch re-prompts.
+   *
+   * On resolve we drop straight back to the boot splash. Leaving the phase on
+   * "agent-selection" would keep the (now answered) picker on screen for the whole of
+   * check-deps and app:setup — the binary download would run behind a frozen dialog.
+   */
+  async function appStartAgentSelection(ctx: HookContext): Promise<HookOutput<LifecycleAgentType>> {
+    const { availableAgents } = ctx as AgentSelectionHookContext;
+    agentOptions = availableAgents;
+    startupPhase = "agent-selection";
+    scheduleUpdate();
+
+    const agent = await new Promise<LifecycleAgentType>((resolve, reject) => {
+      agentSelectionResolve = resolve;
+      agentSelectionReject = reject;
+    });
+
+    startupPhase = "starting";
+    scheduleUpdate();
+    return { result: agent };
+  }
+
+  /**
    * app:start `await-retry`: block until the user clicks Retry (a system-dialog
    * action resolves `retryResolve`), then return. app:shutdown rejects the parked
    * promise so a quit-during-retry unwinds app:start instead of hanging. The promise
@@ -1649,27 +1680,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     startupPhase = "setup";
     resetSetupRows();
     scheduleUpdate();
-  }
-
-  /**
-   * app:setup `agent-selection`: show the picker (a radio system dialog) and
-   * park until the user clicks Continue, which arrives as a system-dialog
-   * action and resolves the parked promise with the chosen agent (returned as
-   * the agent-selection hook result to app:setup). app:shutdown REJECTS the promise
-   * so a quit-during-selection throws here — app:setup unwinds without reaching
-   * save-agent, so no agent is persisted and the next launch re-prompts.
-   */
-  async function setupAgentSelection(ctx: HookContext): Promise<HookOutput<LifecycleAgentType>> {
-    const { availableAgents } = ctx as AgentSelectionHookContext;
-    agentOptions = availableAgents;
-    startupPhase = "agent-selection";
-    scheduleUpdate();
-
-    const agent = await new Promise<LifecycleAgentType>((resolve, reject) => {
-      agentSelectionResolve = resolve;
-      agentSelectionReject = reject;
-    });
-    return { result: agent };
   }
 
   /** app:setup `hide-ui`: return to the boot-splash phase. */
@@ -1705,6 +1715,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           },
         },
         "show-ui": { handler: appStartShowUi },
+        "agent-selection": { handler: appStartAgentSelection },
         "await-retry": { handler: awaitRetry },
         start: {
           // Gate on the IDE server: the operation dispatches app:ready (→ project:open,
@@ -1717,9 +1728,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
       [SETUP_OPERATION_ID]: {
         "show-ui": { handler: setupShowUi },
-        "agent-selection": {
-          handler: setupAgentSelection,
-        },
         "hide-ui": { handler: setupHideUi },
       },
       [CLOSE_PROJECT_OPERATION_ID]: {
@@ -1735,7 +1743,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         stop: {
           handler: async (): Promise<void> => {
             // Keep the system dialog closed for the rest of the process life,
-            // and reject any parked startup promises so app:setup / app:start
+            // and reject any parked startup promises so app:start / app:setup
             // unwind rather than hang. Rejecting the agent-selection promise
             // (rather than resolving a default) is deliberate: a quit-mid-pick
             // must NOT persist an agent the user never chose.
