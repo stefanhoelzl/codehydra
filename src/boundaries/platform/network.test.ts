@@ -5,6 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DefaultNetworkLayer, type HttpClient } from "./network";
 import { SILENT_LOGGER } from "./logging";
+import { waitForPort, createTestServer } from "./network.test-utils";
+import { createServer } from "net";
 
 describe("DefaultNetworkLayer", () => {
   describe("HttpClient.fetch()", () => {
@@ -157,12 +159,10 @@ describe("DefaultNetworkLayer", () => {
 describe("waitForPort", () => {
   // Import the function dynamically to avoid import issues
   const getWaitForPort = async () => {
-    const { waitForPort } = await import("./network.test-utils");
     return waitForPort;
   };
 
   it("resolves when port is accepting connections", async () => {
-    const { createTestServer } = await import("./network.test-utils");
     const waitForPort = await getWaitForPort();
     const server = createTestServer();
     await server.start();
@@ -176,7 +176,6 @@ describe("waitForPort", () => {
   });
 
   it("times out when port is not available", async () => {
-    const { createServer } = await import("net");
     const waitForPort = await getWaitForPort();
 
     // Find an unused port by binding to 0, then immediately closing
@@ -200,7 +199,6 @@ describe("waitForPort", () => {
   });
 
   it("handles port becoming available during wait", async () => {
-    const { createServer } = await import("net");
     const waitForPort = await getWaitForPort();
 
     // Find an unused port by binding to 0
