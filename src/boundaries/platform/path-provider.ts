@@ -21,10 +21,10 @@ export interface PathOptions {
  * Use `path.toNative()` for external process spawning.
  */
 export interface PathProvider {
-  /** `<dataRoot>/subpath` — app data (dev: ./app-data/, prod: platform-specific) */
+  /** `<dataRoot>/subpath` — app data (dev: ./app-data/, prod: platform-specific, or `_CH_ROOT_DIR`) */
   dataPath(subpath: string, options?: PathOptions): Path;
 
-  /** `<bundlesRoot>/subpath` — binary downloads (always production paths) */
+  /** `<bundlesRoot>/subpath` — binary downloads (production paths, or `_CH_ROOT_DIR`) */
   bundlePath(subpath: string): Path;
 
   /** `<runtimeRoot>/subpath` — external process access (prod: resourcesPath, dev: assets) */
@@ -57,6 +57,8 @@ export interface PathProvider {
  * - Production Linux: `~/.local/share/codehydra/`
  * - Production macOS: `~/Library/Application Support/Codehydra/`
  * - Production Windows: `<home>/AppData/Roaming/Codehydra/`
+ *
+ * `_CH_ROOT_DIR` overrides both roots at once, in either build flavor.
  */
 export class DefaultPathProvider implements PathProvider {
   readonly appIconPath: Path;
@@ -121,8 +123,16 @@ export class DefaultPathProvider implements PathProvider {
     return new Path(process.cwd(), "resources", "icon.png");
   }
 
+  /**
+   * Explicit root override. Relocates the data root *and* the bundles root together,
+   * which is the shape a production install already has.
+   */
+  private static rootOverride(): string | undefined {
+    return process.env._CH_ROOT_DIR || undefined;
+  }
+
   private computeBundlesRootDir(platformInfo: PlatformInfo): string {
-    const override = process.env._CH_BUNDLE_DIR;
+    const override = DefaultPathProvider.rootOverride();
     if (override) {
       return override;
     }
@@ -141,6 +151,14 @@ export class DefaultPathProvider implements PathProvider {
   }
 
   private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
+    // An explicit root wins over the dev/prod split: without this, a dev build (which
+    // includes every non-release packaged artifact — isDevelopment comes from
+    // _CH_BUILD_RELEASE at build time, not from app.isPackaged) writes its data into
+    // whatever cwd it inherited, ignoring the override entirely.
+    const override = DefaultPathProvider.rootOverride();
+    if (override) {
+      return override;
+    }
     if (buildInfo.isDevelopment) {
       return join(process.cwd(), "app-data");
     }
