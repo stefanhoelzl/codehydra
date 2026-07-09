@@ -61,16 +61,10 @@ export interface RmOptions {
 
 /**
  * Error codes for filesystem operations.
+ * Defined in shared/errors/service-errors (no Node dependency); re-exported here
+ * so existing consumers of this module keep working.
  */
-export type FileSystemErrorCode =
-  | "ENOENT" // File/directory not found
-  | "EACCES" // Permission denied
-  | "EEXIST" // File/directory already exists
-  | "ENOTDIR" // Not a directory
-  | "EISDIR" // Is a directory (when file expected; Linux unlink of a directory)
-  | "EPERM" // Operation not permitted (macOS unlink of a directory)
-  | "ENOTEMPTY" // Directory not empty
-  | "UNKNOWN"; // Other errors (check originalCode)
+export type { FileSystemErrorCode } from "../../shared/errors/service-errors";
 
 /**
  * Abstraction over filesystem operations.
@@ -284,7 +278,8 @@ export interface FileSystemBoundary {
 
 import { createRequire } from "node:module";
 import * as nodeFsPromises from "node:fs/promises";
-import { FileSystemError } from "../../shared/errors/service-errors";
+import { FileSystemError, KNOWN_FILESYSTEM_ERROR_CODES } from "../../shared/errors/service-errors";
+import type { KnownFileSystemErrorCode } from "../../shared/errors/service-errors";
 
 // In the packaged Electron main process, node:fs is asar-patched: any op on a path
 // containing a *.asar treats it as a virtual directory and caches the archive fd for
@@ -307,16 +302,13 @@ import type { Logger } from "./logging";
 
 /**
  * Known error codes that map to FileSystemErrorCode.
+ * Derived from the union's source tuple - cannot drift.
  */
-const KNOWN_ERROR_CODES = new Set([
-  "ENOENT",
-  "EACCES",
-  "EEXIST",
-  "ENOTDIR",
-  "EISDIR",
-  "EPERM",
-  "ENOTEMPTY",
-]);
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<string>(KNOWN_FILESYSTEM_ERROR_CODES);
+
+function isKnownErrorCode(code: string): code is KnownFileSystemErrorCode {
+  return KNOWN_ERROR_CODES.has(code);
+}
 
 /**
  * SystemError info structure for fs.rm() errors.
@@ -363,8 +355,8 @@ function mapError(error: unknown, path: string): FileSystemError {
 
   const code = extractErrorCode(error);
 
-  if (code && KNOWN_ERROR_CODES.has(code)) {
-    return new FileSystemError(code as FileSystemErrorCode, path, error.message, error);
+  if (code && isKnownErrorCode(code)) {
+    return new FileSystemError(code, path, error.message, error);
   }
 
   // Unknown error code - preserve original code

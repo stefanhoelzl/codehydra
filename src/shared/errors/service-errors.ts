@@ -3,18 +3,25 @@
  */
 
 /**
- * Filesystem error codes (inlined to avoid pulling node-only filesystem boundary into renderer).
- * Must stay in sync with FileSystemErrorCode in boundaries/platform/filesystem.ts.
+ * POSIX error codes that map 1:1 onto a FileSystemErrorCode.
+ * Single source of truth: the runtime Set in the filesystem boundary and the
+ * FileSystemErrorCode union are both derived from this tuple.
  */
-type FileSystemErrorCode =
-  | "ENOENT"
-  | "EACCES"
-  | "EEXIST"
-  | "ENOTDIR"
-  | "EISDIR"
-  | "EPERM"
-  | "ENOTEMPTY"
-  | "UNKNOWN";
+export const KNOWN_FILESYSTEM_ERROR_CODES = [
+  "ENOENT", // File/directory not found
+  "EACCES", // Permission denied
+  "EEXIST", // File/directory already exists
+  "ENOTDIR", // Not a directory
+  "EISDIR", // Is a directory (when file expected; Linux unlink of a directory)
+  "EPERM", // Operation not permitted (macOS unlink of a dir; Windows unlink of a read-only file)
+  "ENOTEMPTY", // Directory not empty
+] as const;
+
+/** A recognised POSIX code (never "UNKNOWN"). */
+export type KnownFileSystemErrorCode = (typeof KNOWN_FILESYSTEM_ERROR_CODES)[number];
+
+/** Error codes for filesystem operations. "UNKNOWN" = other errors (check originalCode). */
+export type FileSystemErrorCode = KnownFileSystemErrorCode | "UNKNOWN";
 
 // Re-export getErrorMessage for internal services use
 export { getErrorMessage } from "../error-utils";
