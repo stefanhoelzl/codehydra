@@ -478,8 +478,20 @@ export class ExecaProcessRunner implements ProcessRunner {
       // Log spawn failure when wait() is called (to get stderr with error message)
       // Don't log here - will be logged in wait()
     } else {
-      // Log successful spawn
-      this.logger.debug("Spawned", { command, args: args.join(" "), pid: spawned.pid });
+      // Log successful spawn.
+      //
+      // `spawnfile`/`spawnargs` are what CreateProcess/execve actually received, after any
+      // shell transformation. On Windows a `.cmd` goes through cmd.exe, and how its
+      // arguments end up quoted decides whether a batch script can parse them at all —
+      // VSCodium's codium-server.cmd dies on a quoted first argument.
+      const child = subprocess as unknown as { spawnfile?: string; spawnargs?: string[] };
+      this.logger.debug("Spawned", {
+        command,
+        args: args.join(" "),
+        pid: spawned.pid,
+        ...(child.spawnfile !== undefined && { spawnfile: child.spawnfile }),
+        ...(child.spawnargs !== undefined && { spawnargs: JSON.stringify(child.spawnargs) }),
+      });
     }
 
     return spawned;
