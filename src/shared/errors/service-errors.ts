@@ -4,6 +4,7 @@
 
 /**
  * Filesystem error codes (inlined to avoid pulling node-only filesystem boundary into renderer).
+ * Must stay in sync with FileSystemErrorCode in boundaries/platform/filesystem.ts.
  */
 type FileSystemErrorCode =
   | "ENOENT"
@@ -11,6 +12,7 @@ type FileSystemErrorCode =
   | "EEXIST"
   | "ENOTDIR"
   | "EISDIR"
+  | "EPERM"
   | "ENOTEMPTY"
   | "UNKNOWN";
 

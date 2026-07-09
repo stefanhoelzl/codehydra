@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
-import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, chmod, rm, realpath } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
@@ -170,8 +170,9 @@ describe("ExecaProcessRunner", () => {
     it(
       "supports custom working directory",
       async () => {
-        // Use os.tmpdir() for cross-platform temp directory
-        const tempDir = os.tmpdir();
+        // realpath: on macOS os.tmpdir() is /var/... , a symlink to /private/var/... ,
+        // and the child process reports its cwd already resolved.
+        const tempDir = await realpath(os.tmpdir());
         // Use Node.js to print cwd - cross-platform
         const proc = runner.run(process.execPath, ["-e", "console.log(process.cwd())"], {
           cwd: tempDir,
