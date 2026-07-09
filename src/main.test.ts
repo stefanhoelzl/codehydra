@@ -19,38 +19,26 @@ import type { PathProvider } from "./boundaries/platform/path-provider";
 import type { SupportedPlatform } from "./boundaries/platform/platform-info";
 import { ElectronBuildInfo } from "./boundaries/platform/electron-build-info";
 
-// Track mock isPackaged value for ElectronBuildInfo tests
-let mockIsPackaged = false;
-
 // Mock __APP_VERSION__ global (Vite-injected constant)
 vi.stubGlobal("__APP_VERSION__", "2026.01.01-dev.test1234");
 
 // Mock __IS_DEV_BUILD__ global (Vite-injected constant)
 vi.stubGlobal("__IS_DEV_BUILD__", true);
 
-// Mock Electron app module with getters and methods
-vi.mock("electron", () => ({
-  app: {
-    get isPackaged() {
-      return mockIsPackaged;
-    },
-    getAppPath() {
-      return "/mock/app/path";
-    },
-    getVersion: () => "1.0.0-test",
-  },
-}));
+// Shared fake: __mocks__/electron.ts
+vi.mock("electron");
+import { appState, resetElectronFake } from "./test/mocks/electron";
 
 describe("Main process wiring", () => {
   beforeEach(() => {
-    mockIsPackaged = false;
+    resetElectronFake();
     vi.stubGlobal("__IS_DEV_BUILD__", true);
     // Clear _CH_BUNDLE_DIR to ensure tests use expected paths
     vi.stubEnv("_CH_BUNDLE_DIR", "");
   });
 
   afterEach(() => {
-    mockIsPackaged = false;
+    resetElectronFake();
     vi.stubGlobal("__IS_DEV_BUILD__", true);
     vi.unstubAllEnvs();
   });
@@ -135,7 +123,7 @@ describe("Main process wiring", () => {
       expect(devBuildInfo.isDevelopment).toBe(true);
 
       // A packaged dev build still has isDevelopment = true
-      mockIsPackaged = true;
+      appState.isPackaged = true;
       const packagedDevBuildInfo = new ElectronBuildInfo();
       expect(packagedDevBuildInfo.isDevelopment).toBe(true);
       expect(packagedDevBuildInfo.isPackaged).toBe(true);
