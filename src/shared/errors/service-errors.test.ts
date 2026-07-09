@@ -8,6 +8,7 @@ import {
   ProjectStoreError,
   OpenCodeError,
   FileSystemError,
+  KNOWN_FILESYSTEM_ERROR_CODES,
   getErrorMessage,
 } from "./service-errors";
 
@@ -214,18 +215,20 @@ describe("FileSystemError", () => {
     });
   });
 
-  it("serializes all error codes correctly", () => {
-    const testCases = [
-      { code: "ENOENT" as const, path: "/missing" },
-      { code: "EACCES" as const, path: "/forbidden" },
-      { code: "EEXIST" as const, path: "/exists" },
-      { code: "ENOTDIR" as const, path: "/notdir" },
-      { code: "EISDIR" as const, path: "/isdir" },
-      { code: "ENOTEMPTY" as const, path: "/notempty" },
-      { code: "UNKNOWN" as const, path: "/unknown" },
-    ];
+  it("does not list UNKNOWN as a known POSIX code", () => {
+    // UNKNOWN is the fallback, not a code the filesystem boundary recognises.
+    // If it leaked into the tuple, mapError would treat a literal "UNKNOWN"
+    // errno as a recognised code.
+    expect(KNOWN_FILESYSTEM_ERROR_CODES).not.toContain("UNKNOWN");
+  });
 
-    for (const { code, path } of testCases) {
+  it("serializes all error codes correctly", () => {
+    // Derived from the single source of truth, so a newly added code is covered
+    // here automatically and cannot be silently omitted.
+    const codes = [...KNOWN_FILESYSTEM_ERROR_CODES, "UNKNOWN"] as const;
+
+    for (const code of codes) {
+      const path = `/test/${code}`;
       const error = new FileSystemError(code, path, `Test error for ${code}`);
       const json = error.toJSON();
       expect(json.code).toBe(code);
