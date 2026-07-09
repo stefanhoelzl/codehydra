@@ -51,10 +51,14 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
   // CI deviates from a real user's launch.
   if (mode() === "packaged" && process.platform === "linux") flags.push("--no-sandbox");
 
-  // Opt-in for local runs without a display; CI/Linux uses xvfb-run instead, so the
-  // app takes the same code path a user does.
   if (process.env.CH_E2E_HEADLESS) {
+    // Opt-in for local runs without any display at all.
     flags.push("--electron.flags=--ozone-platform=headless --disable-gpu");
+  } else if (process.platform === "linux") {
+    // Pin X11 so the app honors DISPLAY (xvfb's). Ozone otherwise auto-detects, and on a
+    // Wayland desktop it takes the Wayland socket and throws a real window on the
+    // developer's screen, ignoring xvfb entirely.
+    flags.push("--electron.flags=--ozone-platform=x11");
   }
 
   flags.push(...(options.extraArgs ?? []));
@@ -225,11 +229,14 @@ export async function openProject(driver: AppDriver, repoPath: string): Promise<
 }
 
 /**
- * Create a workspace. The panel is already open when no workspace exists; once one
- * does, the active workspace's iframe owns the main area and the panel must be
- * reopened from the sidebar.
+ * Create a workspace, and wait until it is the active one.
+ *
+ * Waiting for the sidebar row is not enough: activation lands afterwards, and when the
+ * new workspace's iframe takes over the main area it unmounts the creation panel. A
+ * caller that immediately opens the panel again races that teardown.
  */
-export async function createWorkspace(ui: Page, name: string): Promise<void> {
+export async function createWorkspace(driver: AppDriver, name: string): Promise<void> {
+  const ui = driver.uiPage();
   const panel = ui.getByRole("region", { name: "New workspace" });
   if (!(await panel.isVisible())) {
     await expandSidebar(ui);
@@ -268,6 +275,7 @@ export async function createWorkspace(ui: Page, name: string): Promise<void> {
   // Creating a worktree, booting the IDE server, and (for opencode) waiting on a
   // 30s agent health check all happen before the row settles.
   await expect(workspaceRow(ui, name)).toBeVisible({ timeout: 180_000 });
+  await waitForWorkspaceFrame(driver, name);
 }
 
 /**
