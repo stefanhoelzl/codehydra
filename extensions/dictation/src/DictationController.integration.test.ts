@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Uri } from "vscode";
 import { MockProvider } from "./providers/mock.state-mock";
 import type { DictationError } from "./providers/types";
 import type {
@@ -8,41 +7,12 @@ import type {
   CaptureErrorHandler,
 } from "./audio/AudioCapturePanel";
 import { DictationController, type DictationState } from "./DictationController";
+import { resetVscodeFake } from "../../../__mocks__/vscode";
 import * as vscode from "vscode";
 
-// Track mock function calls - must use vi.fn() inline in the factory
-// because vi.mock is hoisted to the top of the file
-vi.mock("vscode", () => {
-  const showErrorMessage = vi.fn();
-  const showInformationMessage = vi.fn();
-  const executeCommand = vi.fn();
-
-  return {
-    window: {
-      showErrorMessage,
-      showInformationMessage,
-    },
-    commands: {
-      executeCommand,
-    },
-    workspace: {
-      getConfiguration: vi.fn(() => ({
-        get: vi.fn((key: string, defaultValue: unknown) => {
-          if (key === "provider") return "assemblyai";
-          if (key === "assemblyai.apiKey") return "test-api-key";
-          if (key === "assemblyai.connectionTimeout") return 2000;
-          if (key === "autoStopDelay") return 5;
-          if (key === "listeningDelay") return 300;
-          if (key === "autoSubmit") return true;
-          return defaultValue;
-        }),
-      })),
-    },
-    Uri: {
-      file: (path: string) => ({ fsPath: path }) as Uri,
-    },
-  };
-});
+// Shared vscode fake (no factory) — see __mocks__/vscode.ts. The config values
+// the old factory baked into getConfiguration are now set per-test in beforeEach.
+vi.mock("vscode");
 
 /**
  * Mock AudioCapturePanel for testing
@@ -199,8 +169,22 @@ describe("DictationController", () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
+    resetVscodeFake();
 
     mocks = await getVscodeMocks();
+
+    // Default configuration the old factory baked into getConfiguration.
+    mocks.getConfiguration.mockReturnValue({
+      get: vi.fn((key: string, defaultValue: unknown) => {
+        if (key === "provider") return "assemblyai";
+        if (key === "assemblyai.apiKey") return "test-api-key";
+        if (key === "assemblyai.connectionTimeout") return 2000;
+        if (key === "autoStopDelay") return 5;
+        if (key === "listeningDelay") return 300;
+        if (key === "autoSubmit") return true;
+        return defaultValue;
+      }),
+    } as unknown as ReturnType<typeof mocks.getConfiguration>);
 
     mockProvider = new MockProvider();
     mockAudioCapturePanel = new MockAudioCapturePanel();
@@ -209,11 +193,6 @@ describe("DictationController", () => {
       mockAudioCapturePanel as unknown as AudioCapturePanel,
       () => mockProvider
     );
-
-    // Reset mocks
-    mocks.showErrorMessage.mockClear();
-    mocks.showInformationMessage.mockClear();
-    mocks.executeCommand.mockClear();
   });
 
   afterEach(() => {

@@ -1,59 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StatusBar } from "./StatusBar";
+import { mockStatusBarItem, resetVscodeFake } from "../../../__mocks__/vscode";
 
-// Track mock function calls
-const mockStatusBarItem = {
-  text: "",
-  tooltip: "",
-  command: undefined as string | undefined,
-  color: undefined as unknown,
-  backgroundColor: undefined as unknown,
-  show: vi.fn(),
-  dispose: vi.fn(),
-};
+// Shared vscode fake (no factory) — see __mocks__/vscode.ts.
+vi.mock("vscode");
 
-// Mock vscode
-vi.mock("vscode", () => {
-  // ThemeColor needs to be a real class for `new vscode.ThemeColor()` to work
-  class ThemeColor {
-    id: string;
-    constructor(color: string) {
-      this.id = color;
-    }
-  }
-
-  return {
-    window: {
-      createStatusBarItem: vi.fn(() => mockStatusBarItem),
-    },
-    StatusBarAlignment: {
-      Right: 2,
-    },
-    ThemeColor,
-    workspace: {
-      getConfiguration: vi.fn(() => ({
-        get: vi.fn((key: string) => {
-          if (key === "assemblyai.apiKey") return "test-api-key";
-          return undefined;
-        }),
-      })),
-    },
-  };
-});
+import * as vscode from "vscode";
 
 describe("StatusBar", () => {
   let statusBar: StatusBar;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    // Reset mock state
-    mockStatusBarItem.text = "";
-    mockStatusBarItem.tooltip = "";
-    mockStatusBarItem.command = undefined;
-    mockStatusBarItem.color = undefined;
-    mockStatusBarItem.backgroundColor = undefined;
-    mockStatusBarItem.show.mockClear();
-    mockStatusBarItem.dispose.mockClear();
+    resetVscodeFake();
+
+    // isConfigured() reads the apiKey through the real config module, so the
+    // factory-baked apiKey now lives here.
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string) => (key === "assemblyai.apiKey" ? "test-api-key" : undefined)),
+    } as unknown as vscode.WorkspaceConfiguration);
 
     statusBar = new StatusBar();
   });
