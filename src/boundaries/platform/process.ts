@@ -240,9 +240,11 @@ class ExecaSpawnedProcess implements SpawnedProcess {
       // Unix: kill children first with pkill -P, then kill parent
       const signal = force ? "SIGKILL" : "SIGTERM";
 
-      // Kill all child processes by parent PID
+      // Kill all child processes by parent PID.
+      // The signal must come first: BSD pkill (macOS) only accepts a signal as
+      // its first argument and rejects it anywhere else as an invalid option.
       try {
-        await execa("pkill", ["-P", String(pid), force ? "-9" : "-15"]);
+        await execa("pkill", [force ? "-9" : "-15", "-P", String(pid)]);
       } catch {
         // pkill returns non-zero if no processes matched - that's fine
       }
