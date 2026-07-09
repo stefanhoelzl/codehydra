@@ -7,23 +7,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Use vi.hoisted to create mocks that are available during module hoisting
-const { mockIpcRenderer, mockContextBridge } = vi.hoisted(() => ({
-  mockIpcRenderer: {
-    invoke: vi.fn(),
-    on: vi.fn(),
-    removeListener: vi.fn(),
-    send: vi.fn(),
-  },
-  mockContextBridge: {
-    exposeInMainWorld: vi.fn(),
-  },
-}));
-
-vi.mock("electron", () => ({
-  ipcRenderer: mockIpcRenderer,
-  contextBridge: mockContextBridge,
-}));
+// Shared fake: __mocks__/electron.ts
+vi.mock("electron");
+import {
+  ipcRenderer as mockIpcRenderer,
+  contextBridge as mockContextBridge,
+} from "../test/mocks/electron";
 
 // Import after mocking - this triggers the preload which calls exposeInMainWorld
 import "../preload/index";
