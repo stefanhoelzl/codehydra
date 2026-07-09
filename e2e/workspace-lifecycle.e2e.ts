@@ -34,8 +34,8 @@ test("two workspaces coexist, each with its own worktree", async () => {
   const ui = app().uiPage();
   await openProject(app(), repo.path);
 
-  await createWorkspace(ui, "alpha");
-  await createWorkspace(ui, "beta");
+  await createWorkspace(app(), "alpha");
+  await createWorkspace(app(), "beta");
 
   await expect(workspaceRow(ui, "alpha")).toBeVisible();
   await expect(workspaceRow(ui, "beta")).toBeVisible();

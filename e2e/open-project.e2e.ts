@@ -18,7 +18,6 @@ import {
   openProject,
   projectNamePattern,
   useApp,
-  waitForWorkspaceFrame,
   workspaceRow,
   workspacesDir,
 } from "./fixtures";
@@ -48,7 +47,7 @@ test("open a folder, create a workspace, and VSCodium loads in its worktree", as
   await expect(baseBranchField(ui)).toHaveValue("main");
 
   // --- The workspace is created ---
-  await createWorkspace(ui, "solo");
+  await createWorkspace(app(), "solo");
   await expect(workspaceRow(ui, "solo")).toBeVisible();
 
   // The worktree exists on disk, alongside the .code-workspace file the IDE opens.
@@ -60,8 +59,6 @@ test("open a folder, create a workspace, and VSCodium loads in its worktree", as
     .toBe(true);
 
   // --- The IDE actually mounted ---
-  // The iframe attaches after the sidebar row renders.
-  await waitForWorkspaceFrame(app(), "solo");
   const { frame, isWorkspaceFrame } = await app().findTarget("workspace");
   expect(isWorkspaceFrame).toBe(true);
   expect(frame.url()).toContain("127.0.0.1");

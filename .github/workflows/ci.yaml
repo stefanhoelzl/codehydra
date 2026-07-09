@@ -74,6 +74,165 @@ jobs:
   build:
     uses: ./.github/workflows/build.yaml
 
+  # Drive the exact artifacts `build` uploaded, on the OS each ships to.
+  #
+  # `_CH_ROOT_DIR` puts the app's data root *and* its binary bundles under the runner
+  # temp dir, so cold-start can wipe it: e2e/env.ts refuses to rm -rf anything outside
+  # os.tmpdir() or RUNNER_TEMP. It also overrides the value the setup action exports.
+  e2e:
+    name: E2E (${{ matrix.name }})
+    needs: build
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runs-on: ubuntu-24.04
+            artifact: CodeHydra-linux-x64.AppImage
+          - name: windows
+            runs-on: windows-2025
+            artifact: CodeHydra-win-portable-x64
+          - name: macos
+            runs-on: macos-26
+            artifact: CodeHydra-darwin-arm64.tar.gz
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      # Must come *after* the setup action, which exports its own _CH_ROOT_DIR:
+      # a later GITHUB_ENV write wins, whereas job-level `env:` would not.
+      - name: Point the app at a disposable root
+        shell: bash
+        run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e" >> "$GITHUB_ENV"
+
+      - name: Download packaged artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+
+      # upload-artifact zips the AppImage, which drops the executable bit.
+      # Extract rather than mount: ubuntu-24.04 has no libfuse2.
+      #
+      # Launch squashfs-root/codehydra, NOT AppRun: AppRun derives APPDIR by searching
+      # for `$1`, and Playwright injects `--inspect=0` there. The search fails and it
+      # exec's whatever `codehydra` is on PATH instead of the build under test.
+      - name: Prepare Linux binary
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          chmod +x dist/CodeHydra-linux-x64.AppImage
+          cd dist && ./CodeHydra-linux-x64.AppImage --appimage-extract > /dev/null
+          echo "CH_E2E_EXE=$PWD/squashfs-root/codehydra" >> "$GITHUB_ENV"
+
+      # The macOS artifact is a tar inside the zip, so file modes survive.
+      - name: Prepare macOS binary
+        if: matrix.name == 'macos'
+        run: |
+          tar xzf dist/CodeHydra-darwin-arm64.tar.gz -C dist
+          APP="$PWD/dist/CodeHydra-darwin-arm64/CodeHydra.app/Contents/MacOS/CodeHydra"
+          test -x "$APP" || chmod +x "$APP"
+          echo "CH_E2E_EXE=$APP" >> "$GITHUB_ENV"
+
+      # The portable artifact was uploaded from a directory, so download-artifact
+      # unpacks its *contents* into dist/ — CodeHydra.exe sits at the top level.
+      #
+      # pwsh, not bash: under Git-bash `$PWD` is an MSYS path (`/d/a/...`) that Node's
+      # spawn cannot launch, and `test -f` happily validates it.
+      - name: Prepare Windows binary
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "dist\CodeHydra.exe"
+          if (-not (Test-Path $exe)) {
+            Get-ChildItem dist -Recurse | Select-Object -First 30 | Format-Table FullName
+            throw "no CodeHydra.exe at $exe"
+          }
+          "CH_E2E_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # xvfb gives a real X server, so the app takes the same path a user's does.
+      # --no-sandbox is unavoidable: extracting the AppImage as non-root strips the
+      # setuid bit from chrome-sandbox, and ubuntu-24.04 restricts user namespaces.
+      # e2e/fixtures.ts adds it for packaged Linux runs.
+      - name: Run e2e (Linux)
+        if: matrix.name == 'linux'
+        run: xvfb-run -a pnpm test:e2e
+
+      - name: Run e2e
+        if: matrix.name != 'linux'
+        run: pnpm test:e2e
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-${{ matrix.name }}-failure
+          path: |
+            e2e/.output/
+            ${{ runner.temp }}/ch-e2e/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The installer is what most Windows users download; the portable dir above is not.
+  # Install it silently, then run the cold-start spec against the *installed* app.
+  e2e-windows-installer:
+    name: E2E (Windows NSIS installer)
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      - name: Point the app at a disposable root
+        shell: bash
+        run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e-nsis" >> "$GITHUB_ENV"
+
+      - name: Download installer
+        uses: actions/download-artifact@v8
+        with:
+          name: CodeHydra-win-installer-x64.exe
+          path: dist
+
+      # oneClick NSIS installs per-user and `-Wait` returns before the files land: the
+      # installer hands off to a child process. Poll for the exe rather than assume, and
+      # find it rather than hardcode the path electron-builder chose.
+      - name: Install silently
+        shell: pwsh
+        run: |
+          Start-Process -FilePath "dist\CodeHydra-win-installer-x64.exe" -ArgumentList "/S" -Wait
+
+          $deadline = (Get-Date).AddMinutes(3)
+          $exe = $null
+          while (-not $exe -and (Get-Date) -lt $deadline) {
+            $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Filter "CodeHydra.exe" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+            if (-not $exe) { Start-Sleep -Seconds 5 }
+          }
+          if (-not $exe) { throw "installer did not produce CodeHydra.exe under $env:LOCALAPPDATA\Programs within 3 minutes" }
+
+          Write-Host "installed at $($exe.FullName)"
+          "CH_E2E_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # cold-start is the only project with no dependencies, and it proves the most:
+      # the installed app launches, the wizard runs, the binaries download, the UI loads.
+      - name: Run cold-start against the installed app
+        run: pnpm exec playwright test --project=cold-start
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-windows-nsis-failure
+          path: |
+            e2e/.output/
+            ${{ runner.temp }}/ch-e2e-nsis/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
   build-packages:
     name: Build Packages
     runs-on: ubuntu-24.04

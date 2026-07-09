@@ -271,6 +271,11 @@ true so the wizard stays away). `workers: 1`, `retries: 0`.
 - Native dialogs are replaced by recorders at launch (`silenceNativeDialogs()`); a real
   `showErrorBox` would block the main process with no window to click. Assert with
   `expectNoNativeDialogs()`.
+- Linux runs pin `--ozone-platform=x11`. Ozone otherwise auto-detects, and on a Wayland
+  desktop it grabs the Wayland socket and opens a real window, ignoring `xvfb-run`.
+- `createWorkspace()` waits for the workspace to become _active_, not merely listed: its
+  iframe unmounts the creation panel on activation, so a caller reopening the panel
+  immediately would race that teardown.
 
 ### Unit Tests (\*.test.ts) - DEPRECATED
 
