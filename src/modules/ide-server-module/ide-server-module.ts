@@ -227,6 +227,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     const bundleDir = deps.pathProvider.bundlePath(ide.bundleSubdir());
     return {
       binaryPath: new Path(bundleDir, ide.executablePath(deps.platform)).toNative(),
+      // Resolved against the bundle; empty on platforms that spawn the CLI directly.
+      prefixArgs: ide
+        .entryArgs(deps.platform)
+        .map((relative) => new Path(bundleDir, relative).toNative()),
       ideServerDir: bundleDir.toNative(),
     };
   }
@@ -395,14 +399,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       // Concrete wrapper invocations resolved from the active descriptor, so
       // the wrapper scripts stay distribution-agnostic. Plus the opencode dir
       // for the agent wrappers.
-      const { binaryPath, ideServerDir } = resolveIdeServerPaths();
+      const { binaryPath, prefixArgs, ideServerDir } = resolveIdeServerPaths();
       const remoteCli = ide.remoteCli(ideServerDir, deps.platform);
       cleanEnv._CH_IDE_REMOTE_CLI = remoteCli.exe;
       cleanEnv._CH_IDE_REMOTE_CLI_ARGS = formatRemoteCliArgs(remoteCli.args, deps.platform);
       cleanEnv._CH_IDE_NODE = ide.nodeBinary(ideServerDir, deps.platform);
       cleanEnv._CH_OPENCODE_DIR = deps.resolveOpencodeBundleDir();
 
-      serverProcess = processRunner.run(binaryPath, args, {
+      serverProcess = processRunner.run(binaryPath, [...prefixArgs, ...args], {
         cwd: config.runtimeDir,
         env: cleanEnv,
       });
@@ -802,7 +806,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 await removeFromExtensionsJson(fileSystemLayer, extensionsDir, [entry.id]);
 
                 // Install via the IDE server CLI
-                const proc = processRunner.run(resolveIdeServerPaths().binaryPath, [
+                const { binaryPath, prefixArgs } = resolveIdeServerPaths();
+                const proc = processRunner.run(binaryPath, [
+                  ...prefixArgs,
                   "--install-extension",
                   entry.vsixPath,
                   "--extensions-dir",

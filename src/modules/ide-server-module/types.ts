@@ -44,8 +44,18 @@ export interface IdeServer {
    * the archive has no wrapping directory (contents sit at the root).
    */
   archiveSubPath(platform: SupportedPlatform, arch: SupportedArch): string | undefined;
-  /** Relative path to the server executable within the extracted bundle. */
+  /** Relative path to the executable to spawn, within the extracted bundle. */
   executablePath(platform: SupportedPlatform): string;
+  /**
+   * Leading arguments before any CLI flags, as paths relative to the bundle.
+   *
+   * Windows spawns `node.exe out/server-main.js` rather than the `.cmd` wrapper: a
+   * batch file goes through cmd.exe, and execa quotes every argument, so the script's
+   * `%1` arrives as `"--install-extension"`. VSCodium's codium-server.cmd then evaluates
+   * `if "%_FIRST_ARG:~0,9%"=="--inspect"` to `if ""--instal"=="--inspect"`, fails to
+   * parse, and exits 255. Spawning the executable directly has no shell in the middle.
+   */
+  entryArgs(platform: SupportedPlatform): readonly string[];
   /** Bundle subdirectory under bundlePath (e.g. "vscodium/<version>"). */
   bundleSubdir(): string;
 

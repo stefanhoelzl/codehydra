@@ -46,7 +46,13 @@ export function createVscodiumIdeServer(version: string = VSCODIUM_VERSION): Ide
     },
 
     executablePath(platform: SupportedPlatform): string {
-      return platform === "win32" ? "bin/codium-server.cmd" : "bin/codium-server";
+      // Not bin/codium-server.cmd — see IdeServer.entryArgs for why the batch wrapper
+      // cannot be used. The reh-web bundle ships node.exe at its root.
+      return platform === "win32" ? "node.exe" : "bin/codium-server";
+    },
+
+    entryArgs(platform: SupportedPlatform): readonly string[] {
+      return platform === "win32" ? ["out/server-main.js"] : [];
     },
 
     bundleSubdir(): string {
