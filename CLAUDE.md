@@ -66,7 +66,7 @@ All external access MUST use abstraction interfaces:
 **ALWAYS use the `Path` class** for internal path handling:
 
 ```typescript
-import { Path } from "../services/platform/path";
+import { Path } from "../utils/path/path";
 const projectPath = new Path(inputPath);
 map.set(path.toString(), value); // toString() for Map keys
 path1.equals(path2); // equals() for comparison
@@ -142,11 +142,11 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ## Intent Dispatcher
 
-All operations use an intent-based dispatcher with operations, hook modules, and domain events. The composition root is `src/main/index.ts`, which constructs all services, registers operations and modules with the dispatcher, then dispatches `app:start`. Cross-cutting concerns (e.g., idempotency) are implemented via `createIdempotencyModule()` from `src/main/intents/infrastructure/idempotency-module.ts`. This factory accepts an array of rules and produces a single `IntentModule` with one interceptor and reset event handlers, supporting singleton, singleton-with-reset, and per-key modes.
+All operations use an intent-based dispatcher with operations, hook modules, and domain events. The composition root is `src/main.ts`, which constructs all services, registers operations and modules with the dispatcher, then dispatches `app:start`. Cross-cutting concerns (e.g., idempotency) are implemented via `createIdempotencyModule()` from `src/intents/lib/idempotency-module.ts`. This factory accepts an array of rules and produces a single `IntentModule` with one interceptor and reset event handlers, supporting singleton, singleton-with-reset, and per-key modes.
 
 Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `Config.load()` (sync) before `app:start` is dispatched. `app:start` runs five hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `Config.load()` (sync) before `app:start` is dispatched. `app:start` runs five hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/intents/lib/operation.ts`). See `docs/INTENTS.md` for the complete reference.
 
 ---
 
@@ -167,12 +167,16 @@ The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Co
 
 ```
 src/
-├── main/           # Electron main process
+├── main.ts         # Electron main process entry (composition root)
 ├── preload/        # Preload scripts
 ├── renderer/       # Svelte frontend
-└── services/       # Node.js services (pure, no Electron deps)
-    ├── platform/   # OS/runtime abstractions (Path, IPC, Dialog, etc.)
-    └── shell/      # Visual container abstractions (Window, View, Session)
+├── shared/         # Types shared across processes (IPC contracts)
+├── intents/        # Intent dispatcher, operations
+├── modules/        # Hook modules registered on the dispatcher
+├── utils/          # Pure utilities (Path, liquid templates)
+└── boundaries/     # External-system abstractions
+    ├── platform/   # OS/runtime abstractions (Filesystem, Process, Network, Config)
+    └── shell/      # Visual container abstractions (Window, View, Session, Dialog)
 ```
 
 **Dependency Rule**: Shell layers may depend on Platform layers, but not vice versa.
@@ -221,7 +225,7 @@ See docs/PATTERNS.md for full details.
 
 ## Binary Distribution
 
-Versions defined per agent in `src/agents/*/setup-info.ts`. Downloads happen during `pnpm install` (dev) and first-run setup (prod).
+Versions defined per agent in `src/modules/agent-module/*/setup-info.ts`. Downloads happen during `pnpm install` (dev) and first-run setup (prod).
 
 ## VS Code Assets
 

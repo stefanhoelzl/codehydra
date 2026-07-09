@@ -561,7 +561,7 @@ The `Path` class normalizes paths to a canonical internal format:
 - **Clean format**: No trailing slashes, no `..` or `.` segments
 
 ```typescript
-import { Path } from "../services/platform/path";
+import { Path } from "../utils/path/path";
 
 // Create normalized path
 const p = new Path("C:\\Users\\Name\\Project");

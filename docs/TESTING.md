@@ -106,12 +106,12 @@ describe("SimpleGitClient", () => {
 
 **What to mock**: Only boundary interfaces, using **behavioral simulators**.
 
-**Entry points**: CodeHydraApi, LifecycleApi, service classes (direct), UI components.
+**Entry points**: intent operations (via the dispatcher), hook modules, service classes (direct), UI components.
 
 **Key characteristics**:
 
 - Tests behavior, not implementation ("when user does X, outcome is Y")
-- Real module interaction (modules, ProjectStore, GitWorktreeProvider all run together)
+- Real module interaction (modules, GitWorktreeProvider, KeepFilesService all run together)
 - Only mock boundaries (same interfaces tested by boundary tests)
 - **MUST be fast** - target <50ms per test, <2s per module
 
@@ -126,7 +126,7 @@ Traditional unit tests mock everything except the single module under test. This
 Integration tests solve this by:
 
 1. **Testing behavior** - "When user does X, outcome is Y"
-2. **Real module interaction** - Modules, ProjectStore, GitWorktreeProvider all run together
+2. **Real module interaction** - Modules, GitWorktreeProvider, KeepFilesService all run together
 3. **Only mock boundaries** - The external system interfaces, not internal modules
 
 ---
@@ -261,7 +261,7 @@ Code change involves external system interface?
 
 | Condition                                     | Entry Point                        | Example                                     |
 | --------------------------------------------- | ---------------------------------- | ------------------------------------------- |
-| Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | ProjectStore, AgentModule                   |
+| Module is reached through an intent           | `dispatcher.dispatch()`            | GitWorktreeWorkspaceModule, AgentModule     |
 | Module is internal service with complex state | Direct service                     | IdeServerModule, PluginServer               |
 | Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager                  |
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
@@ -762,8 +762,8 @@ State mocks provide a standardized interface for behavioral mocks with type-safe
 
 State mock files use the `*.state-mock.ts` suffix:
 
-- `src/services/platform/filesystem.state-mock.ts`
-- `src/services/git/git-client.state-mock.ts`
+- `src/boundaries/platform/filesystem.state-mock.ts`
+- `src/boundaries/platform/git-client.state-mock.ts`
 
 ### Core Interfaces
 
@@ -966,7 +966,7 @@ import {
   createTestSession,
   type SdkClientFactory,
   type MockSdkClient,
-} from "src/services/opencode/sdk-client.state-mock";
+} from "src/modules/agent-module/opencode/sdk-client.state-mock";
 
 // Create mock with initial sessions
 const mock = createSdkClientMock({
@@ -1152,13 +1152,13 @@ For efficient development feedback, especially when multiple agents are working 
 
 ```bash
 # Single module
-pnpm test:related -- src/services/git/
+pnpm test:related -- src/boundaries/platform/
 
 # Component by name
 pnpm test:related -- CreateWorkspaceDialog
 
 # Multiple modules
-pnpm test:related -- src/services/git/ src/services/platform/
+pnpm test:related -- src/boundaries/platform/ src/modules/agent-module/
 
 # Specific test file pattern
 pnpm test:related -- workspace.integration
@@ -1212,64 +1212,64 @@ Integration tests go through specific entry points, not arbitrary internal modul
 
 ### Main Process Entry Points
 
-| Entry Point          | What It Is               | Modules Exercised                                                                              |
-| -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
-| `CodeHydraApi`       | Main application facade  | ProjectStore, GitWorktreeProvider, AgentStatusManager, OpenCodeServerManager, KeepFilesService |
-| `LifecycleApi`       | Setup/bootstrap facade   | VscodeSetupService, BinaryDownloadService, WrapperScriptGenerationService                      |
-| `IdeServerModule`    | Direct (not via API)     | Just IdeServerModule                                                                           |
-| `PluginServer`       | Direct (not via API)     | Just PluginServer                                                                              |
-| `McpServerManager`   | Direct (not via API)     | McpServerManager, McpServer                                                                    |
-| `ViewManager`        | Direct (mocked Electron) | Just ViewManager                                                                               |
-| `WindowManager`      | Direct (mocked Electron) | Just WindowManager                                                                             |
-| `BadgeManager`       | Direct (mocked Electron) | Just BadgeManager                                                                              |
-| `ShortcutController` | Direct (mocked Electron) | Just ShortcutController                                                                        |
+| Entry Point                   | What It Is                   | Modules Exercised                                              |
+| ----------------------------- | ---------------------------- | -------------------------------------------------------------- |
+| `dispatcher.dispatch(intent)` | The main-process facade      | The intent's operation plus every hook module registered on it |
+| `createXModule()`             | A single hook module, direct | Just that module                                               |
+| `PluginServer`                | Direct (not via dispatcher)  | Just PluginServer                                              |
+| `McpServerManager`            | Direct (not via dispatcher)  | McpServerManager, McpServer                                    |
+| `ViewManager`                 | Direct (mocked Electron)     | Just ViewManager                                               |
+| `WindowManager`               | Direct (mocked Electron)     | Just WindowManager                                             |
+| `BadgeManager`                | Direct (mocked Electron)     | Just BadgeManager                                              |
+| `ShortcutController`          | Direct (mocked Electron)     | Just ShortcutController                                        |
 
 ### Why Entry Points Matter
 
-Testing through `CodeHydraApi` means:
+Testing through `dispatcher.dispatch()` means:
 
-- Multiple modules work together (ProjectStore → GitWorktreeProvider → GitClient)
+- Multiple modules work together (`workspace:create` → GitWorktreeProvider → IGitClient → KeepFilesService)
 - State flows correctly between modules
-- Events are emitted properly
+- Domain events are emitted properly
 - Error handling works across layers
 
-Testing individual modules in isolation (old unit test approach) misses these interactions.
+Testing individual modules in isolation (old unit test approach) misses these interactions. Use `createMockDispatcher()` from `src/intents/lib/dispatcher.test-utils.ts` to drive an intent through its real operation and hook chain.
 
 ---
 
 ## Test File Organization
 
-Tests are organized by **entry point**, with subgroups for large entry points.
+Tests are co-located with the code they exercise — there is no separate test tree. A file's **path** decides which vitest project runs it; its **suffix** decides what kind of test it is.
+
+| Project      | Runs                                                                | Environment |
+| ------------ | ------------------------------------------------------------------- | ----------- |
+| `node`       | Everything under `src/` except `renderer/` and `*.boundary.test.ts` | node        |
+| `renderer`   | `src/renderer/**`                                                   | happy-dom   |
+| `boundary`   | `src/**/*.boundary.test.ts`                                         | node        |
+| `extensions` | `extensions/**`                                                     | node        |
+
+Each project's `include` is a blanket glob minus what its siblings claim. **Do not replace these with per-directory lists.** An enumerated `include` silently stops matching when a directory is renamed, and a test file that no project collects is indistinguishable from one whose tests all pass.
+
+| Suffix                  | Type                                  |
+| ----------------------- | ------------------------------------- |
+| `*.boundary.test.ts`    | Boundary test (real external systems) |
+| `*.integration.test.ts` | Integration test (behavioral mocks)   |
+| `*.test.ts`             | Focused test for a pure function      |
 
 ### Main Process Tests
 
-| Entry Point           | Test Location          | Subgroups                    |
-| --------------------- | ---------------------- | ---------------------------- |
-| **CodeHydraApi**      | `src/main/api/`        | `project`, `workspace`, `ui` |
-| **LifecycleApi**      | `src/main/api/`        | `lifecycle` (single file)    |
-| **Direct Services**   | `src/services/<name>/` | Per service                  |
-| **Electron Managers** | `src/main/managers/`   | Per manager                  |
+| Layer              | Location                                            | Typical type           |
+| ------------------ | --------------------------------------------------- | ---------------------- |
+| Boundaries         | `src/boundaries/platform/`, `src/boundaries/shell/` | boundary + integration |
+| Intents/operations | `src/intents/`                                      | integration            |
+| Hook modules       | `src/modules/`                                      | integration            |
+| Pure utilities     | `src/utils/`, `src/shared/`                         | focused                |
+| Composition root   | `src/main.test.ts`                                  | wiring                 |
 
-**CodeHydraApi subgroups** (large API with multiple namespaces):
-
-| File                            | Namespace     | Modules Exercised                     |
-| ------------------------------- | ------------- | ------------------------------------- |
-| `project.integration.test.ts`   | IProjectApi   | ProjectStore                          |
-| `workspace.integration.test.ts` | IWorkspaceApi | GitWorktreeProvider, KeepFilesService |
-| `ui.integration.test.ts`        | IUIApi        | ViewManager                           |
+`src/main.ts` cannot be imported under test — it pulls in Electron at module scope. So `src/main.test.ts` exercises the same wiring chain the composition root uses (`BuildInfo` → `PlatformInfo` → `PathProvider` → services) against mocked platform info, rather than importing the root itself.
 
 ### Renderer Tests
 
-| Entry Point    | Test Location                                                | Strategy                       |
-| -------------- | ------------------------------------------------------------ | ------------------------------ |
-| **App**        | `src/renderer/App.integration.test.ts`                       | Top-level routing, mode switch |
-| **MainView**   | `src/renderer/lib/components/MainView.integration.test.ts`   | Main view after setup          |
-| **Sidebar**    | `src/renderer/lib/components/Sidebar.integration.test.ts`    | Project/workspace list         |
-| **Dialogs**    | `src/renderer/lib/components/dialogs.integration.test.ts`    | All dialog components          |
-| **Dropdowns**  | `src/renderer/lib/components/dropdowns.integration.test.ts`  | Branch, project dropdowns      |
-| **Setup**      | `src/renderer/lib/components/setup.integration.test.ts`      | Setup flow components          |
-| **Indicators** | `src/renderer/lib/components/indicators.integration.test.ts` | Status indicators, overlays    |
-| **Primitives** | `src/renderer/lib/components/primitives.integration.test.ts` | Icon, Logo, EmptyState         |
+Renderer tests are co-located with their components under `src/renderer/`, run in `happy-dom`, and are mostly focused component tests (`*.test.ts`). `MainView.integration.test.ts` is the one renderer integration test, exercising the main view against a mocked API.
 
 ---
 
@@ -1322,15 +1322,13 @@ Behavioral mocks are organized at two levels:
 Each boundary interface has its mock factory co-located with the interface:
 
 ```
-src/services/platform/
-├── filesystem.ts              # Interface
-├── filesystem.test-utils.ts   # createFileSystemMock() + fileSystemMatchers
-├── network.ts                 # Interface
-├── network.test-utils.ts      # createHttpClientMock(), createPortManagerMock() + matchers
-
-src/services/git/
-├── git-client.interface.ts    # Interface
-└── git-client.test-utils.ts   # createGitClientMock() + gitClientMatchers
+src/boundaries/platform/
+├── filesystem.ts               # Interface
+├── filesystem.state-mock.ts    # createFileSystemMock()
+├── http-client.state-mock.ts   # createMockHttpClient()
+├── port-manager.state-mock.ts  # createPortManagerMock()
+├── git-client.ts               # Interface
+└── git-client.state-mock.ts    # createMockGitClient() + gitClientMatchers
 ```
 
 **Use for**: Service-level tests that only need 1-2 behavioral mocks.
@@ -1399,7 +1397,7 @@ export function createTestFixture(options?: TestFixtureOptions): TestFixture {
 }
 ```
 
-**Use for**: API-level tests (CodeHydraApi, LifecycleApi) that exercise multiple modules.
+**Use for**: dispatcher-level tests that exercise multiple modules.
 
 ### Usage in Tests
 
@@ -1560,14 +1558,14 @@ Each module migration from unit tests to integration tests requires a **separate
 - Unit test file(s): `module.test.ts` (X tests)
 - Integration test file(s): `module.integration.test.ts` (if exists - also needs migration!)
 - What it tests: [description]
-- Entry point for integration: [CodeHydraApi / LifecycleApi / Direct / Component]
+- Entry point for integration: [Dispatcher / Direct / Component]
 
 ## Proposed Integration Tests
 
-| #   | Test Case | Entry Point                        | Boundary Mocks        | Behavior Verified                  |
-| --- | --------- | ---------------------------------- | --------------------- | ---------------------------------- |
-| 1   | ...       | `CodeHydraApi.workspaces.create()` | GitClient, FileSystem | `project.workspaces.contains(...)` |
-| 2   | ...       | ...                                | ...                   | ...                                |
+| #   | Test Case | Entry Point                             | Boundary Mocks        | Behavior Verified                  |
+| --- | --------- | --------------------------------------- | --------------------- | ---------------------------------- |
+| 1   | ...       | `dispatcher.dispatch(workspace:create)` | GitClient, FileSystem | `project.workspaces.contains(...)` |
+| 2   | ...       | ...                                     | ...                   | ...                                |
 
 ## Boundary Mock Requirements
 
@@ -1599,7 +1597,7 @@ Current `*.integration.test.ts` files use **call-tracking mocks**, not **behavio
 
 ### General Helpers
 
-All general helpers are in `src/services/test-utils.ts`.
+All general helpers are in `src/utils/testing/test-utils.ts`.
 
 ### createTestGitRepo(options?)
 
@@ -1645,7 +1643,7 @@ Convenience wrapper for repos with remotes that handles cleanup automatically.
 
 ### Boundary Test Utilities
 
-Cross-platform process spawning utilities for boundary tests. All utilities are in `src/services/platform/process.boundary-test-utils.ts`.
+Cross-platform process spawning utilities for boundary tests. All utilities are in `src/boundaries/platform/process.boundary-test-utils.ts`.
 
 See [AGENTS.md Boundary Test Utilities](#boundary-test-utilities) for detailed documentation.
 

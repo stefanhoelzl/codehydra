@@ -12,7 +12,7 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 | [IPC-to-Intent Mapping](#ipc-to-intent-mapping)                   | How IPC channels map to intents                              |
 | [Operations Reference](#operations-reference)                     | All operations with hook points and module contributions     |
 | [Domain Events](#domain-events)                                   | Event types, payloads, and flow                              |
-| [Composition Root](#composition-root)                             | Bootstrap pattern in src/main/index.ts                       |
+| [Composition Root](#composition-root)                             | Bootstrap pattern in src/main.ts                             |
 | [External System Access Rules](#external-system-access-rules)     | Required abstraction interfaces                              |
 | [Platform Abstractions](#platform-abstractions)                   | FileSystemBoundary, NetworkLayer, ProcessRunner, Path, etc.  |
 | [Shell and Platform Layers](#shell-and-platform-layers)           | Electron abstraction architecture                            |
@@ -387,7 +387,7 @@ The interceptor runs before any operation. For each dispatched intent, it looks 
 
 ### Usage in Composition Root
 
-From `src/main/index.ts`:
+From `src/main.ts`:
 
 ```typescript
 const idempotencyModule = createIdempotencyModule([
@@ -572,7 +572,7 @@ The `workspace:switched` event is emitted through the intent dispatcher via `Swi
 
 ## Composition Root
 
-The main process uses a composition-root pattern in `src/main/index.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched to orchestrate the startup flow:
+The main process uses a composition-root pattern in `src/main.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched to orchestrate the startup flow:
 
 ```
 index.ts (composition root)
@@ -920,7 +920,7 @@ The `Path` class normalizes filesystem paths to a canonical internal format:
 - **Clean format**: No trailing slashes, resolved `..` segments
 
 ```typescript
-import { Path } from "../services/platform/path";
+import { Path } from "../utils/path/path";
 
 const p = new Path("C:\\Users\\Name");
 p.toString(); // "c:/users/name" (Windows)
@@ -990,7 +990,7 @@ const mockPathProvider = createMockPathProvider({
 
 The application uses dependency injection to abstract build mode detection and path resolution.
 
-**Interfaces (defined in `src/services/platform/`):**
+**Interfaces (defined in `src/boundaries/platform/`):**
 
 | Interface            | Purpose                                    |
 | -------------------- | ------------------------------------------ |
@@ -1001,14 +1001,14 @@ The application uses dependency injection to abstract build mode detection and p
 
 **Implementations:**
 
-| Class                       | Location        | Description                                  |
-| --------------------------- | --------------- | -------------------------------------------- |
-| `ElectronBuildInfo`         | `src/main/`     | Uses `app.isPackaged`                        |
-| `NodePlatformInfo`          | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
-| `DefaultPathProvider`       | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
-| `DefaultFileSystemBoundary` | `src/services/` | Wraps `node:fs/promises` with error mapping  |
+| Class                       | Location          | Description                                  |
+| --------------------------- | ----------------- | -------------------------------------------- |
+| `ElectronBuildInfo`         | `src/main/`       | Uses `app.isPackaged`                        |
+| `NodePlatformInfo`          | `src/main/`       | Uses `process.platform`, `os.homedir()`      |
+| `DefaultPathProvider`       | `src/boundaries/` | Computes paths from BuildInfo + PlatformInfo |
+| `DefaultFileSystemBoundary` | `src/boundaries/` | Wraps `node:fs/promises` with error mapping  |
 
-**Instantiation Order (in `src/main/index.ts`):**
+**Instantiation Order (in `src/main.ts`):**
 
 1. Module level (before `app.whenReady()`):
    - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`, `DefaultFileSystemBoundary`
@@ -1430,7 +1430,7 @@ expect(config.agent).toBe("claude");
 
 ## Mock Factories Reference
 
-All paths below are relative to `src/services/`.
+All paths below are relative to `src/boundaries/`.
 
 ### Platform Layer Mocks
 
