@@ -193,7 +193,7 @@
       title="Workspace {frame.title}"
       data-key={frame.key}
       class:active={frame.key === activeKey}
-      allow="clipboard-read; clipboard-write; fullscreen; cross-origin-isolated; autoplay; camera; microphone; display-capture"
+      allow="clipboard-read; clipboard-write; fullscreen; cross-origin-isolated; autoplay"
       allowfullscreen
     ></iframe>
   {/each}
