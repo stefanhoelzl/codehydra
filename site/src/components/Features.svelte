@@ -89,7 +89,7 @@
           </span>
           VS Code Powered
         </h3>
-        <p>Full code-server integration with extensions, themes, and settings</p>
+        <p>Full VSCodium integration with extensions, themes, and settings</p>
       </div>
       <div class="feature-card">
         <h3>
@@ -203,14 +203,14 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" y1="19" x2="12" y2="22" />
+              <path d="M12 13v8" />
+              <path d="m8 17 4 4 4-4" />
+              <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
             </svg>
           </span>
-          Voice Dictation
+          Remote Projects
         </h3>
-        <p>Speech-to-text extension for dictating prompts to AI agents</p>
+        <p>Clone straight from a git URL — stored as a bare clone, worktrees on demand</p>
       </div>
     </div>
     <div class="platform-row">

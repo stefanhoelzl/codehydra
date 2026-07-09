@@ -3,20 +3,19 @@ import { vi } from "vitest";
 /**
  * Shared `vscode` fake for the `extensions` vitest project.
  *
- * Under `isolate: false` a source module (e.g. `config.ts`) is evaluated once
- * per worker and its `vscode` import binding is permanently wired to whatever
- * this module exported on first evaluation. A per-file `vi.mock("vscode",
- * factory)` would hand each file a *different* object that the shared consumer
- * modules are not connected to, so every file instead does `vi.mock("vscode")`
- * with no factory and shares this single instance.
+ * Under `isolate: false` a source module is evaluated once per worker and its
+ * `vscode` import binding is permanently wired to whatever this module exported
+ * on first evaluation. A per-file `vi.mock("vscode", factory)` would hand each
+ * file a *different* object that the shared consumer modules are not connected
+ * to, so every file instead does `vi.mock("vscode")` with no factory and shares
+ * this single instance.
  *
  * `mockReset: true` (vitest.config.ts) restores the implementation passed to
  * `vi.fn(impl)` before each test but discards anything set via
  * `.mockReturnValue()`. Every mock here therefore uses `vi.fn(() => value)`,
- * never `vi.fn().mockReturnValue(value)`. Per-file return values that a test
- * needs (e.g. `workspace.getConfiguration`) are configured in that file's
- * `beforeEach` via `vi.mocked(...)`, and shared captured state is cleared with
- * `resetVscodeFake()`.
+ * never `vi.fn().mockReturnValue(value)`. Per-file return values a test needs
+ * are configured in that file's `beforeEach` via `vi.mocked(...)`, and shared
+ * captured state is cleared with `resetVscodeFake()`.
  */
 
 // --- captured state (cleared by resetVscodeFake) ---------------------------
@@ -58,20 +57,11 @@ export const mockStatusBarItem: FakeStatusBarItem = {
 
 // --- classes / enums (static, unaffected by mockReset) ---------------------
 
-// ThemeColor must be a real class so `new vscode.ThemeColor(id)` works.
-export class ThemeColor {
-  id: string;
-  constructor(id: string) {
-    this.id = id;
-  }
-}
-
 export const StatusBarAlignment = { Left: 1, Right: 2 } as const;
 
 export const ViewColumn = { Active: 1, One: 1, Two: 2, Beside: -2 } as const;
 
 export const Uri = {
-  file: (fsPath: string) => ({ fsPath }),
   parse: (value: string) => ({ toString: () => value }),
 };
 
@@ -99,10 +89,7 @@ export const window = {
   showErrorMessage: vi.fn(),
   createStatusBarItem: vi.fn(() => mockStatusBarItem),
   createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), dispose: vi.fn() })),
-  createWebviewPanel: vi.fn(),
-  // Redefined per-test with Object.defineProperty in the DictationController tests.
   activeTextEditor: undefined as unknown,
-  activeTerminal: undefined as unknown,
 };
 
 export const commands = {
@@ -111,8 +98,6 @@ export const commands = {
 };
 
 export const workspace = {
-  // No baked-in return: each test configures this via vi.mocked(...) in beforeEach.
-  getConfiguration: vi.fn(),
   workspaceFolders: [{ uri: { fsPath: "/workspace/feature-a" } }] as unknown,
   updateWorkspaceFolders: vi.fn(),
 };
@@ -122,8 +107,8 @@ export const workspace = {
 /**
  * Clears the shared captured state so it cannot leak between test files (which,
  * under `isolate: false`, all share this single module instance). Call it in
- * each test file's `beforeEach`. Does not touch `window.activeText/Terminal`,
- * which the DictationController tests own via `Object.defineProperty`.
+ * each test file's `beforeEach`. Does not touch `window.activeTextEditor`,
+ * which tests redefine per-case via `Object.defineProperty`.
  */
 export function resetVscodeFake(): void {
   createdTerminals.length = 0;

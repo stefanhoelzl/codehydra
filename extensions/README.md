@@ -9,12 +9,6 @@ extensions/
 ├── tsconfig.ext.json         # Shared TypeScript config (strict)
 ├── vite.config.ext.ts        # Base Vite config for extensions
 ├── external.json             # External extensions (marketplace IDs)
-├── dictation/                # Voice-to-text dictation extension
-│   ├── src/                  # TypeScript source
-│   │   ├── extension.ts      # Extension entry point
-│   │   └── audio/            # Audio capture and processing
-│   ├── package.json          # Extension manifest
-│   └── vite.config.ts        # Vite build configuration
 ├── sidekick/                 # Custom sidekick extension source
 │   ├── src/                  # TypeScript source
 │   │   ├── extension.ts      # Extension entry point

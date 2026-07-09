@@ -646,7 +646,6 @@ function connectToPluginServer(port: number, workspacePath: string): void {
         "workbench.action.closeAuxiliaryBar",
         "workbench.action.editorLayoutSingle",
         "workbench.action.closeAllEditors",
-        "codehydra.dictation.openPanel",
       ];
       for (const command of preLayoutCommands) {
         try {

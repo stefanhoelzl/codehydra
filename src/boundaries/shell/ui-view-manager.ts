@@ -81,7 +81,6 @@ const ALLOWED_PERMISSIONS = new Set([
   "clipboard-read",
   "clipboard-sanitized-write",
   "clipboard-write",
-  "media",
   "fullscreen",
   "notifications",
   "openExternal",
