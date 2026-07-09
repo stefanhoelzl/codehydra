@@ -6,7 +6,7 @@ Multi-workspace IDE for parallel AI agent development.
 
 ```bash
 # Run directly without installation
-npx codehydra
+npx codehydra@latest
 
 # Or install globally
 npm install -g codehydra
@@ -15,11 +15,11 @@ codehydra
 
 ## Features
 
-- Run multiple AI agents simultaneously in isolated git worktrees
-- Real-time status monitoring across all workspaces
+- Run Claude Code or OpenCode in several isolated git worktrees at once
+- Real-time agent status monitoring across all workspaces
 - Keyboard-driven navigation (Alt+X shortcut mode)
-- Full VS Code integration via code-server
-- Built-in voice dictation
+- A full VSCodium editor per workspace, with your extensions, themes and settings
+- Agents can run any VS Code command through the built-in MCP server
 
 ## How It Works
 
@@ -33,6 +33,7 @@ Supported platforms:
 
 ## Links
 
+- [Website](https://codehydra.dev)
 - [GitHub Repository](https://github.com/stefanhoelzl/codehydra)
 - [Releases](https://github.com/stefanhoelzl/codehydra/releases)
 
