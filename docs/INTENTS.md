@@ -769,10 +769,17 @@ NetworkLayer provides unified interfaces for all localhost network operations, d
 
 **Interface Responsibilities:**
 
-| Interface     | Methods               | Purpose                       | Used By                                                  |
-| ------------- | --------------------- | ----------------------------- | -------------------------------------------------------- |
-| `HttpClient`  | `fetch(url, options)` | HTTP GET with timeout support | IdeServerModule, OpenCodeServerManager                   |
-| `PortManager` | `findFreePort()`      | Find available ports          | IdeServerModule, OpenCodeServerManager, McpServerManager |
+| Interface     | Methods                    | Purpose                                | Used By                                                |
+| ------------- | -------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| `HttpClient`  | `fetch(url, options)`      | HTTP GET with timeout support          | IdeServerModule, OpenCodeServerManager                 |
+| `PortManager` | `listenOnFreePort(server)` | Bind a server to a free port (no race) | ClaudeCodeServerManager, McpServer, PluginServerModule |
+| `PortManager` | `findFreePort()`           | Find a free port without holding it    | IdeServerModule, OpenCodeServerManager                 |
+
+`findFreePort()` releases the port before returning it, so the caller can lose it before binding
+(to another process, or briefly to the kernel still tearing down the probe socket) and must handle
+`EADDRINUSE`. Use it only when the port must be known before the socket exists — e.g. to pass to a
+child process that binds it itself. When the caller owns the server, `listenOnFreePort()` binds and
+reports in one step and cannot lose the port.
 
 **Dependency Injection:**
 

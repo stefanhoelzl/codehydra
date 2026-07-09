@@ -5,6 +5,7 @@
  * `MockWithState<T>` pattern from `src/test/state-mock.ts`.
  */
 
+import type { Server } from "net";
 import type { PortManager } from "./network";
 import type { MockState, MockWithState, Snapshot } from "../../test/state-mock";
 import { createSnapshot } from "../../test/state-mock";
@@ -66,6 +67,14 @@ export class PortManagerMockState implements MockState {
     }
     this._allocatedPorts.push(port);
     return port;
+  }
+
+  /**
+   * Record a port the OS assigned to a server bound via `listenOnFreePort()`.
+   * Does not consume the configured port list — that list feeds `findFreePort()`.
+   */
+  recordAllocated(port: number): void {
+    this._allocatedPorts.push(port);
   }
 
   /**
@@ -185,6 +194,31 @@ export function createPortManagerMock(
 
   return {
     $: state,
+    async listenOnFreePort(server: Server, host = "127.0.0.1"): Promise<number> {
+      // Bind for real on an OS-assigned port: a fixed port would make every test
+      // in a file compete for the same one, which is exactly the race this
+      // method exists to remove.
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error): void => {
+          server.removeListener("listening", onListening);
+          reject(error);
+        };
+        const onListening = (): void => {
+          server.removeListener("error", onError);
+          resolve();
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(0, host);
+      });
+
+      const address = server.address();
+      if (address === null || typeof address !== "object") {
+        throw new Error("Failed to get port from server address");
+      }
+      state.recordAllocated(address.port);
+      return address.port;
+    },
     async findFreePort(): Promise<number> {
       return state.allocateNext();
     },

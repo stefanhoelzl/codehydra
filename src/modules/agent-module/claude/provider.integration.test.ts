@@ -38,7 +38,7 @@ async function sendHook(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Connection: "close", // Disable keep-alive to prevent server isolation issues
+      Connection: "close", // Close the socket with the response; no socket outlives its server
     },
     body: JSON.stringify(payload),
   });
@@ -56,7 +56,7 @@ describe("ClaudeCodeProvider integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockPortManager = createPortManagerMock([16001, 16002, 16003]);
+    mockPortManager = createPortManagerMock();
     mockPathProvider = createMockPathProvider();
     mockFileSystem = createFileSystemMock({
       entries: {
@@ -270,7 +270,7 @@ describe("ClaudeCodeProvider integration", () => {
     it("returns empty MCP port if not configured", async () => {
       // Create server manager without MCP config
       const serverManagerNoMcp = new ClaudeCodeServerManager({
-        portManager: createPortManagerMock([17001]),
+        portManager: createPortManagerMock(),
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,
         logger: SILENT_LOGGER,

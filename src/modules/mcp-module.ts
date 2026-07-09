@@ -189,10 +189,12 @@ interface McpSession {
  */
 export class McpServer {
   private readonly dispatcher: Dispatcher;
+  private readonly portManager: Pick<PortManager, "listenOnFreePort">;
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
 
   private httpServer: HttpServer | null = null;
+  private boundPort: number | null = null;
   private running = false;
 
   /** Per-client MCP sessions, keyed by MCP session ID. */
@@ -210,22 +212,26 @@ export class McpServer {
 
   constructor(
     dispatcher: Dispatcher,
+    portManager: Pick<PortManager, "listenOnFreePort">,
     serverFactory: McpServerFactory = createDefaultMcpServer,
     logger?: Logger
   ) {
     this.dispatcher = dispatcher;
+    this.portManager = portManager;
     this.serverFactory = serverFactory;
     this.logger = logger ?? SILENT_LOGGER;
   }
 
   /**
-   * Start the MCP server on the specified port.
+   * Start the MCP server on an OS-assigned free port.
    * Only creates the HTTP server — MCP sessions are created on-demand per client.
+   *
+   * @returns The port the server is listening on
    */
-  async start(port: number): Promise<void> {
+  async start(): Promise<number> {
     if (this.running) {
       this.logger.warn("Server already running");
-      return;
+      return this.boundPort!;
     }
 
     // Subscribe once to terminal deletion-progress events so workspace_delete
@@ -255,15 +261,18 @@ export class McpServer {
       });
     });
 
-    // Start listening
-    await new Promise<void>((resolve, reject) => {
-      this.httpServer!.listen(port, "127.0.0.1", () => {
-        this.running = true;
-        this.logger.info("Started", { port });
-        resolve();
-      });
-      this.httpServer!.on("error", reject);
-    });
+    // Bind and discover in one step; a port discovered up front can be lost
+    // again before listen() reaches it.
+    try {
+      this.boundPort = await this.portManager.listenOnFreePort(this.httpServer, "127.0.0.1");
+    } catch (error) {
+      this.httpServer = null;
+      throw error;
+    }
+
+    this.running = true;
+    this.logger.info("Started", { port: this.boundPort });
+    return this.boundPort;
   }
 
   /**
@@ -297,13 +306,16 @@ export class McpServer {
     this.sessions.clear();
 
     // Close HTTP server
-    if (this.httpServer) {
+    const httpServer = this.httpServer;
+    this.httpServer = null;
+    this.boundPort = null;
+    if (httpServer) {
+      httpServer.closeAllConnections();
       await new Promise<void>((resolve) => {
-        this.httpServer!.close(() => {
+        httpServer.close(() => {
           resolve();
         });
       });
-      this.httpServer = null;
     }
 
     this.running = false;
@@ -1158,9 +1170,7 @@ export class McpServerManager implements IDisposable {
   }
 
   /**
-   * Start the MCP server.
-   *
-   * Allocates a port and starts the server.
+   * Start the MCP server on an OS-assigned free port.
    *
    * @returns The port the server is listening on
    * @throws Error if server fails to start
@@ -1172,13 +1182,14 @@ export class McpServerManager implements IDisposable {
     }
 
     try {
-      // Allocate a free port
-      this.port = await this.portManager.findFreePort();
-      this.logger.info("Allocated port", { port: this.port });
-
       // Create and start the MCP server
-      this.mcpServer = new McpServer(this.dispatcher, this.serverFactory, this.logger);
-      await this.mcpServer.start(this.port);
+      this.mcpServer = new McpServer(
+        this.dispatcher,
+        this.portManager,
+        this.serverFactory,
+        this.logger
+      );
+      this.port = await this.mcpServer.start();
 
       this.logger.info("Manager started", {
         port: this.port,

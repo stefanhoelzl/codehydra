@@ -9,7 +9,7 @@
  * removed in favor of the @opencode-ai/sdk which handles SSE internally.
  */
 
-import { createServer } from "net";
+import { createServer, type Server } from "net";
 import type { Logger } from "./logging";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 
@@ -67,11 +67,30 @@ export interface HttpClient {
  */
 export interface PortManager {
   /**
-   * Find a free port on localhost.
+   * Bind a server to a free localhost port chosen by the OS, and report it.
+   *
+   * Prefer this over `findFreePort()` whenever the caller owns the server that
+   * will hold the port. The port is never released between discovery and use,
+   * so there is no race: the socket that is probed is the socket that is kept.
+   *
+   * @param server - An unbound server to listen on
+   * @param host - Interface to bind. Default: 127.0.0.1
+   * @returns The port the server is now listening on
+   */
+  listenOnFreePort(server: Server, host?: string): Promise<number>;
+
+  /**
+   * Find a free port on localhost, without holding it.
    *
    * Uses TCP server bind to port 0, which lets the OS assign an available port.
-   * Port is released after discovery, so there's a small race window.
-   * Callers should handle EADDRINUSE and retry if needed.
+   * The port is released again before this resolves, so the caller may lose it
+   * before it binds: either to another process, or — for a few milliseconds —
+   * to the kernel still tearing down the probe socket. Callers must handle
+   * EADDRINUSE.
+   *
+   * Only use this when the port must be known before the socket exists, e.g. to
+   * pass to a child process that binds it itself. When the caller owns the
+   * server, use `listenOnFreePort()` instead.
    *
    * @returns Available port number (1024-65535)
    */
@@ -93,6 +112,35 @@ export interface PortManager {
 
 /** Default timeout for HTTP requests in ms. */
 const DEFAULT_TIMEOUT_MS = 5000;
+
+/**
+ * Listen on a port and resolve the port actually bound.
+ *
+ * Pass port 0 to let the OS assign one. The "listening"/"error" pair is settled
+ * exactly once, and the loser is unsubscribed so a later error on the server
+ * doesn't reject an already-settled promise.
+ */
+async function listenOnPort(server: Server, port: number, host: string): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port, host);
+  });
+
+  const address = server.address();
+  if (address === null || typeof address !== "object") {
+    throw new Error("Failed to get port from server address");
+  }
+  return address.port;
+}
 
 /**
  * Default implementation of network interfaces.
@@ -153,21 +201,18 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
   }
 
   // PortManager implementation
+  async listenOnFreePort(server: Server, host = "127.0.0.1"): Promise<number> {
+    const port = await listenOnPort(server, 0, host);
+    this.logger.debug("Bound free port", { port });
+    return port;
+  }
+
   async findFreePort(): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const server = createServer();
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (address && typeof address === "object") {
-          const { port } = address;
-          this.logger.debug("Found free port", { port });
-          server.close(() => resolve(port));
-        } else {
-          server.close(() => reject(new Error("Failed to get port from server address")));
-        }
-      });
-      server.on("error", reject);
-    });
+    const probe = createServer();
+    const port = await listenOnPort(probe, 0, "127.0.0.1");
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    this.logger.debug("Found free port", { port });
+    return port;
   }
 
   async isPortAvailable(port: number): Promise<boolean> {

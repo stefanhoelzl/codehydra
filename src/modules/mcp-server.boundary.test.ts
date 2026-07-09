@@ -15,7 +15,8 @@ import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
-import { createMockToolOperations, findFreePort } from "./mcp-server.test-utils";
+import { createMockToolOperations } from "./mcp-server.test-utils";
+import { DefaultNetworkLayer } from "../boundaries/platform/network";
 
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
@@ -76,13 +77,17 @@ describe("McpServer Boundary Tests", () => {
   const workspacePathB = "/home/user/projects/my-app/.worktrees/bugfix-branch";
 
   beforeEach(async () => {
-    port = await findFreePort();
     const mock = createMockDispatcher();
     capturedIntents = mock.capturedIntents;
     logger = createMockLogger();
 
-    server = new McpServer(mock.dispatcher, createDefaultMcpServer, logger);
-    await server.start(port);
+    server = new McpServer(
+      mock.dispatcher,
+      new DefaultNetworkLayer(logger),
+      createDefaultMcpServer,
+      logger
+    );
+    port = await server.start();
   });
 
   afterEach(async () => {
