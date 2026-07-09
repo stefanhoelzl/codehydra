@@ -67,7 +67,8 @@ export type FileSystemErrorCode =
   | "EACCES" // Permission denied
   | "EEXIST" // File/directory already exists
   | "ENOTDIR" // Not a directory
-  | "EISDIR" // Is a directory (when file expected)
+  | "EISDIR" // Is a directory (when file expected; Linux unlink of a directory)
+  | "EPERM" // Operation not permitted (macOS unlink of a directory)
   | "ENOTEMPTY" // Directory not empty
   | "UNKNOWN"; // Other errors (check originalCode)
 
@@ -307,7 +308,15 @@ import type { Logger } from "./logging";
 /**
  * Known error codes that map to FileSystemErrorCode.
  */
-const KNOWN_ERROR_CODES = new Set(["ENOENT", "EACCES", "EEXIST", "ENOTDIR", "EISDIR", "ENOTEMPTY"]);
+const KNOWN_ERROR_CODES = new Set([
+  "ENOENT",
+  "EACCES",
+  "EEXIST",
+  "ENOTDIR",
+  "EISDIR",
+  "EPERM",
+  "ENOTEMPTY",
+]);
 
 /**
  * SystemError info structure for fs.rm() errors.

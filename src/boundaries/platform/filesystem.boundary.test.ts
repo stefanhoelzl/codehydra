@@ -390,20 +390,27 @@ describe("DefaultFileSystemBoundary", () => {
       }
     });
 
-    it.skipIf(process.platform === "win32")("throws EISDIR when path is a directory", async () => {
-      const dirPath = join(tempDir.path, "subdir");
-      await nodeMkdir(dirPath);
+    // POSIX lets unlink() of a directory fail with either EISDIR or EPERM.
+    // Linux picks EISDIR, macOS picks EPERM.
+    it.skipIf(process.platform === "win32")(
+      "throws EISDIR/EPERM when path is a directory",
+      async () => {
+        const dirPath = join(tempDir.path, "subdir");
+        await nodeMkdir(dirPath);
 
-      await expect(fs.unlink(dirPath)).rejects.toThrow(FileSystemError);
+        await expect(fs.unlink(dirPath)).rejects.toThrow(FileSystemError);
 
-      try {
-        await fs.unlink(dirPath);
-      } catch (error) {
-        expect(error).toBeInstanceOf(FileSystemError);
-        expect((error as FileSystemError).fsCode).toBe("EISDIR");
-        expect((error as FileSystemError).path).toBe(dirPath);
+        const expectedCode = process.platform === "darwin" ? "EPERM" : "EISDIR";
+
+        try {
+          await fs.unlink(dirPath);
+        } catch (error) {
+          expect(error).toBeInstanceOf(FileSystemError);
+          expect((error as FileSystemError).fsCode).toBe(expectedCode);
+          expect((error as FileSystemError).path).toBe(dirPath);
+        }
       }
-    });
+    );
   });
 
   describe("rm", () => {
