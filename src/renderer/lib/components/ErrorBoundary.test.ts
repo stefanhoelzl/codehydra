@@ -8,20 +8,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
 
-// Capture logger.error calls.
-const { mockError } = vi.hoisted(() => ({ mockError: vi.fn() }));
-
-vi.mock("$lib/logging", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: mockError,
-  }),
-}));
-
-// Import after the mock is set up.
 import ErrorBoundary from "./ErrorBoundary.svelte";
+
+/**
+ * The real `$lib/logging` is used here rather than a module mock: it is
+ * imported by four components, so a mock registered in this file alone would
+ * bind whichever of them loads first. Its only side effect is
+ * `window.api.emitEvent`, which we stub instead — the same seam
+ * `src/renderer/lib/logging/index.test.ts` uses.
+ */
+const mockEmitEvent = vi.fn();
+
+type WindowWithApi = { api?: { emitEvent: typeof mockEmitEvent } };
 
 const okChildren = createRawSnippet(() => ({
   render: () => `<p data-testid="ok">content</p>`,
@@ -36,9 +34,11 @@ const throwingChildren = createRawSnippet(() => ({
 describe("ErrorBoundary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (window as unknown as WindowWithApi).api = { emitEvent: mockEmitEvent };
   });
 
   afterEach(() => {
+    delete (window as unknown as WindowWithApi).api;
     document.body.innerHTML = "";
     vi.useRealTimers();
   });
@@ -63,10 +63,13 @@ describe("ErrorBoundary", () => {
     expect(screen.queryByTestId("ok")).not.toBeInTheDocument();
 
     // Reported over the log channel, tagged with the region label.
-    expect(mockError).toHaveBeenCalledWith(
-      'UI boundary "panel:test" caught an error',
-      expect.objectContaining({ message: "boom from child" })
-    );
+    expect(mockEmitEvent).toHaveBeenCalledWith({
+      kind: "log",
+      level: "error",
+      logger: "ui",
+      message: 'UI boundary "panel:test" caught an error',
+      context: expect.objectContaining({ message: "boom from child" }),
+    });
 
     vi.clearAllTimers();
   });
