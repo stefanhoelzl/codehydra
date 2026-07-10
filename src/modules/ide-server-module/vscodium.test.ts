@@ -58,15 +58,13 @@ describe("vscodium descriptor: downloadUrl", () => {
 describe("vscodium descriptor: paths", () => {
   const ide = createVscodiumIdeServer();
 
-  it("launches node.exe + server-main.js on win32, the CLI directly elsewhere", () => {
-    expect(ide.executablePath("linux")).toBe("bin/codium-server");
-    expect(ide.executablePath("darwin")).toBe("bin/codium-server");
-    // Not the .cmd wrapper: cmd.exe + execa's argument quoting makes VSCodium's batch
-    // script fail to parse its own `if` block and exit 255.
+  it("launches the bundled node with the server entry point, never the wrapper", () => {
+    // Never bin/codium-server: on win32 the .cmd cannot parse a quoted first argument,
+    // and elsewhere the wrapper only execs this same node anyway.
     expect(ide.executablePath("win32")).toBe("node.exe");
-    expect(ide.entryArgs("win32")).toEqual(["out/server-main.js"]);
-    expect(ide.entryArgs("linux")).toEqual([]);
-    expect(ide.entryArgs("darwin")).toEqual([]);
+    expect(ide.executablePath("linux")).toBe("node");
+    expect(ide.executablePath("darwin")).toBe("node");
+    expect(ide.entryArgs()).toEqual(["out/server-main.js"]);
   });
 
   it("bundleSubdir uses the built-in version by default", () => {

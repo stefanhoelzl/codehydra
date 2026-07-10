@@ -578,8 +578,10 @@ describe("IdeServerModule", () => {
       expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25448);
       expect(asMockRunner(deps)).toHaveSpawned([
         {
-          command: expect.stringContaining("codium-server") as string,
+          // The bundle's own node, never bin/codium-server.
+          command: expect.stringMatching(/[\\/]node$/) as string,
           args: expect.arrayContaining([
+            expect.stringMatching(/out[\\/]server-main\.js$/),
             "--host",
             "127.0.0.1",
             "--port",
@@ -870,8 +872,10 @@ describe("IdeServerModule", () => {
 
       expect(asMockRunner(deps)).toHaveSpawned([
         {
-          command: expect.stringContaining("codium-server") as string,
+          // The bundle's own node, never bin/codium-server.
+          command: expect.stringMatching(/[\\/]node$/) as string,
           args: expect.arrayContaining([
+            expect.stringMatching(/out[\\/]server-main\.js$/),
             "--install-extension",
             "/path/ext-one.vsix",
           ]) as unknown as string[],

@@ -4,7 +4,8 @@
  * VSCodium ships an official "remote extension host — web" build for every
  * platform CodeHydra targets (Linux/macOS x64+arm64, Windows x64), from the
  * VSCodium GitHub releases. Facts here were verified against the real build:
- * launcher `bin/codium-server`, a flat archive (no wrapping dir), readiness at
+ * a bundled `node` and `out/server-main.js` at the archive root, a flat archive
+ * (no wrapping dir), readiness at
  * `/version` (no `/healthz`), and the same upstream `?folder=`/`?workspace=`
  * URL scheme. `--disable-workspace-trust` is accepted (it flips the workbench's
  * injected `enableWorkspaceTrust` to false) even though it isn't in `--help`.
@@ -46,13 +47,13 @@ export function createVscodiumIdeServer(version: string = VSCODIUM_VERSION): Ide
     },
 
     executablePath(platform: SupportedPlatform): string {
-      // Not bin/codium-server.cmd — see IdeServer.entryArgs for why the batch wrapper
-      // cannot be used. The reh-web bundle ships node.exe at its root.
-      return platform === "win32" ? "node.exe" : "bin/codium-server";
+      // Not bin/codium-server — see IdeServer.entryArgs. The reh-web bundle ships
+      // its own node at the archive root.
+      return platform === "win32" ? "node.exe" : "node";
     },
 
-    entryArgs(platform: SupportedPlatform): readonly string[] {
-      return platform === "win32" ? ["out/server-main.js"] : [];
+    entryArgs(): readonly string[] {
+      return ["out/server-main.js"];
     },
 
     bundleSubdir(): string {

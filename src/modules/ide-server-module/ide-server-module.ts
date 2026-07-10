@@ -227,10 +227,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     const bundleDir = deps.pathProvider.bundlePath(ide.bundleSubdir());
     return {
       binaryPath: new Path(bundleDir, ide.executablePath(deps.platform)).toNative(),
-      // Resolved against the bundle; empty on platforms that spawn the CLI directly.
-      prefixArgs: ide
-        .entryArgs(deps.platform)
-        .map((relative) => new Path(bundleDir, relative).toNative()),
+      // Resolved against the bundle, so they survive any cwd.
+      prefixArgs: ide.entryArgs().map((relative) => new Path(bundleDir, relative).toNative()),
       ideServerDir: bundleDir.toNative(),
     };
   }
