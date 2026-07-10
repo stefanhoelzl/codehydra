@@ -1326,7 +1326,7 @@ dist/
 ```
 out/main/assets/ (ASAR in prod)
     │
-    └─► *.vsix ──► <app-data>/vscode/ ──► codium-server --install-extension
+    └─► *.vsix ──► <app-data>/vscode/ ──► node out/server-main.js --install-extension
 ```
 
 - `PathProvider.vscodeAssetsDir` resolves to `<appPath>/out/main/assets/`
@@ -1343,11 +1343,10 @@ out/main/assets/ (ASAR in prod)
 │   └── opencode (opencode.cmd)    # OpenCode wrapper (redirects to versioned binary)
 ├── vscodium/
 │   └── <version>/                 # e.g., 1.126.04524/
-│       ├── bin/codium-server[.cmd]  # Actual VSCodium server binary
-│       ├── lib/                   # VS Code distribution
-│       │   ├── node[.exe]         # Bundled Node.js (Windows only)
-│       │   └── vscode/
-│       └── out/node/entry.js      # Entry point
+│       ├── node[.exe]             # Bundled Node.js — what we spawn
+│       ├── out/server-main.js     # Server entry point
+│       ├── bin/codium-server[.cmd]  # Launcher wrapper (unused; see IdeServer.entryArgs)
+│       └── bin/remote-cli/codium[.cmd]  # Terminal `code` CLI target
 ├── opencode/
 │   └── <version>/                 # e.g., 0.1.47/
 │       └── opencode[.exe]         # Actual opencode binary

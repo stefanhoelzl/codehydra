@@ -49,13 +49,16 @@ export interface IdeServer {
   /**
    * Leading arguments before any CLI flags, as paths relative to the bundle.
    *
-   * Windows spawns `node.exe out/server-main.js` rather than the `.cmd` wrapper: a
-   * batch file goes through cmd.exe, and execa quotes every argument, so the script's
-   * `%1` arrives as `"--install-extension"`. VSCodium's codium-server.cmd then evaluates
-   * `if "%_FIRST_ARG:~0,9%"=="--inspect"` to `if ""--instal"=="--inspect"`, fails to
-   * parse, and exits 255. Spawning the executable directly has no shell in the middle.
+   * We spawn the bundle's own node with the server entry point rather than the
+   * `bin/codium-server` wrapper, on every platform. On Windows the wrapper cannot
+   * work at all: a `.cmd` goes through cmd.exe, cross-spawn quotes every argument,
+   * and VSCodium's script evaluates `if "%_FIRST_ARG:~0,9%"=="--inspect"` against a
+   * quoted `%1` — unbalanced quotes, unparseable `if`, exit 255. The POSIX wrapper
+   * works, but only ever execs the same node; its one extra behaviour, a patchelf
+   * step, is gated on `VSCODE_SERVER_CUSTOM_GLIBC_*`, and the serve environment
+   * strips every `VSCODE_*` variable before spawning. Same command, no shell.
    */
-  entryArgs(platform: SupportedPlatform): readonly string[];
+  entryArgs(): readonly string[];
   /** Bundle subdirectory under bundlePath (e.g. "vscodium/<version>"). */
   bundleSubdir(): string;
 
