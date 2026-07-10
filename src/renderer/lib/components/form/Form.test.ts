@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { DialogConfig, DialogKind } from "@shared/dialog-types";
+import type { DialogConfig, DialogKind, DropdownSuggestionGroup } from "@shared/dialog-types";
 
 // Shared fake: src/renderer/lib/api/__mocks__/index.ts
 vi.mock("$lib/api");
@@ -459,6 +459,78 @@ describe("Form component", () => {
           dialogId: "dd",
           actionId: "confirm",
           data: { name: "seeded" },
+        });
+      });
+    });
+
+    // A strict dropdown whose suggestions arrive asynchronously (the creation
+    // form's base branch): the backend seeds the value against an empty list,
+    // then re-sends it once the list has loaded.
+    describe("value pushed before the suggestion list arrives", () => {
+      function baseConfig(
+        suggestions: DropdownSuggestionGroup[],
+        value: string,
+        extra?: { loading?: boolean }
+      ): DialogConfig {
+        return {
+          sections: [
+            {
+              type: "dropdown",
+              id: "base",
+              suggestions,
+              value,
+              placeholder: "Select branch...",
+              ...extra,
+            },
+            {
+              type: "group",
+              items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+            },
+          ],
+        };
+      }
+
+      const loaded: DropdownSuggestionGroup[] = [
+        { header: "Local Branches", items: [{ value: "base-branch", label: "base-branch" }] },
+        { header: "Remote Branches", items: [{ value: "origin/main", label: "origin/main" }] },
+      ];
+
+      it("paints the pushed value while the list is still loading", async () => {
+        renderForm(baseConfig([], "origin/main", { loading: true }), { dialogId: "dd" });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("origin/main");
+      });
+
+      it("keeps the seeded value when the list arrives carrying it", async () => {
+        const { rerender } = renderForm(baseConfig([], "origin/main"), { dialogId: "dd" });
+
+        // Same value re-sent alongside the loaded list: a rejected push must
+        // not have been recorded as adopted, or this reads as a re-send and
+        // the field falls back to the first suggestion.
+        await rerender({ dialogId: "dd", config: baseConfig(loaded, "origin/main") });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("origin/main");
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { base: "origin/main" },
+        });
+      });
+
+      it("re-defaults the seeded value when the arriving list lacks it", async () => {
+        const { rerender } = renderForm(baseConfig([], "origin/gone"), { dialogId: "dd" });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("origin/gone");
+
+        await rerender({ dialogId: "dd", config: baseConfig(loaded, "origin/gone") });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("base-branch");
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { base: "base-branch" },
         });
       });
     });
