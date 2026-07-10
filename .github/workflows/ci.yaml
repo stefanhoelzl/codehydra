@@ -58,11 +58,12 @@ jobs:
   # default parallel run only catches a cross-file module-state regression when
   # the two colliding files happen to land in the same worker.
   #
-  # Serial, so ~3-4x the parallel suite. Kept off the PR path: it would become the
-  # critical path. A regression surfaces on the merge that introduced it.
+  # Serial, so ~3-4x the parallel suite, but it runs on PRs: "which worker did the file
+  # land in" is not a property a reviewer can reason about. A vi.mock that another test
+  # file had already defeated (by importing the module first) passed the parallel suite
+  # locally and failed on the ubuntu runner; only this job reproduced it every run.
   canary:
     name: Test Canary
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
