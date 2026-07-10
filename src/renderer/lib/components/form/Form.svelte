@@ -175,13 +175,19 @@
   // - dropdown (controlled): when the config carries a `value` the renderer
   //   has not adopted yet, adopt it (strict mode falls back below when it
   //   names no suggestion). Re-sends of the same value preserve user edits.
+  //   Only a value the reconcile actually applies is recorded as adopted — a
+  //   rejected one must stay adoptable, or the backend re-sending it (e.g. the
+  //   creation form seeding the base branch before the branch list arrives,
+  //   then re-sending it with the list) would be dismissed as a re-send.
   // - dropdown (freeText): like input — keep existing edits/picks, else seed
   //   from initialValue on first sight.
   // - dropdown (strict): keep the existing choice if still a valid suggestion
   //   value; on first sight start at initialValue when it names a suggestion;
-  //   else the first suggestion's value. Display text follows the value
-  //   (suggestion label) unless the value is unchanged (preserving what the
-  //   user sees, e.g. typed free text).
+  //   else the first suggestion's value. An empty suggestion list accepts any
+  //   value, so a seeded default paints while the list is still loading; the
+  //   value is re-validated (and re-defaulted) once the list arrives. Display
+  //   text follows the value (suggestion label) unless the value is unchanged
+  //   (preserving what the user sees, e.g. typed free text).
   // - input: keep existing edits/seeded value; otherwise seed from initialValue
   //   on first sight (a later initialValue change does not re-seed).
   // Existing values are read via untrack to avoid a write -> retrigger loop.
@@ -199,21 +205,25 @@
           section.value !== undefined && section.value !== adoptedValues[section.id]
             ? section.value
             : undefined;
-        if (pushed !== undefined) {
-          adoptedValues[section.id] = pushed;
-        }
         if (section.freeText) {
+          if (pushed !== undefined) {
+            adoptedValues[section.id] = pushed;
+          }
           next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
         } else {
+          const options = flatSuggestions(section);
           const isValid = (v: string | undefined): v is string =>
-            v !== undefined && flatSuggestions(section).some((o) => o.value === v);
+            v !== undefined && (options.length === 0 || options.some((o) => o.value === v));
+          if (pushed !== undefined && isValid(pushed)) {
+            adoptedValues[section.id] = pushed;
+          }
           next[section.id] = isValid(pushed)
             ? pushed
             : pushed === undefined && isValid(existing)
               ? existing
               : existing === undefined && pushed === undefined && isValid(section.initialValue)
                 ? section.initialValue
-                : (flatSuggestions(section)[0]?.value ?? "");
+                : (options[0]?.value ?? "");
         }
         const existingDisplay = untrack(() => dropdownDisplay[section.id]);
         nextDisplay[section.id] =
