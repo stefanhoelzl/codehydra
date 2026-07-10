@@ -21,18 +21,24 @@ import * as api from "$lib/api";
 
 const mockApi = vi.mocked(api);
 
-// Mock AgentNotificationService
-const { MockAgentNotificationService } = vi.hoisted(() => {
+// Mock AgentNotificationService. It captures the chime player MainView injects,
+// so a test can fire it and observe whether `ui.silent` suppressed the sound.
+const { MockAgentNotificationService, chimePlayers, playChimeSound } = vi.hoisted(() => {
+  const chimePlayers: (() => void)[] = [];
   class MockAgentNotificationService {
     handleStatusChange = vi.fn();
     removeWorkspace = vi.fn();
     reset = vi.fn();
+    constructor(playChime?: () => void) {
+      if (playChime) chimePlayers.push(playChime);
+    }
   }
-  return { MockAgentNotificationService };
+  return { MockAgentNotificationService, chimePlayers, playChimeSound: vi.fn() };
 });
 
 vi.mock("$lib/services/agent-notifications", () => ({
   AgentNotificationService: MockAgentNotificationService,
+  playChimeSound,
 }));
 
 // Import after mock setup
@@ -113,5 +119,37 @@ describe("MainView close project integration", () => {
     expect(mockApi.emitEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "close-project", projectId: projectWithWorkspaces.id })
     );
+  });
+});
+
+describe("MainView agent chime", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    chimePlayers.length = 0;
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  /** Mount MainView and hand back the chime player it injected into the service. */
+  async function mountAndGetChimePlayer(silent: boolean): Promise<() => void> {
+    render(MainView, { props: { ui: makeUiState([], { silent }) } });
+    await waitFor(() => expect(chimePlayers).toHaveLength(1));
+    return chimePlayers[0]!;
+  }
+
+  it("plays the chime when `silent` is off", async () => {
+    const playChime = await mountAndGetChimePlayer(false);
+    playChime();
+
+    expect(playChimeSound).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses the chime when `silent` is on", async () => {
+    const playChime = await mountAndGetChimePlayer(true);
+    playChime();
+
+    expect(playChimeSound).not.toHaveBeenCalled();
   });
 });

@@ -154,6 +154,8 @@ export interface UiState {
   readonly theme: UiTheme;
   /** How overflowing sidebar row labels scroll (config `sidebar.label-scroll`). */
   readonly labelScroll: SidebarLabelScroll;
+  /** Suppress the chime played when an agent goes idle (config `silent`). */
+  readonly silent: boolean;
   /**
    * The single UI mode, computed by the presenter (main-owned) with priority
    * shortcut > dialog > hover > workspace. The renderer reads mode only from

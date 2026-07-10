@@ -30,6 +30,7 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
     main: { kind: "creation" },
     theme: "dark",
     labelScroll: "hover",
+    silent: false,
     mode: "hover",
     capturing: false,
     dialogs: [],
