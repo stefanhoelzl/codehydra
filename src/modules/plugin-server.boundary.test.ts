@@ -25,10 +25,65 @@ import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
-import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
+  INTENT_DELETE_WORKSPACE,
+} from "../intents/delete-workspace";
+import type { DeletePipelineHookInput, DeleteWorkspaceIntent } from "../intents/delete-workspace";
+import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
+import { z } from "zod/v4";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+
+/**
+ * A delete-workspace operation reduced to what this file needs: run the "shutdown"
+ * hook (where the plugin server closes the workspace for business), then optionally
+ * emit the event that ends the deletion.
+ */
+function createDeleteShutdownOperation(
+  ends?: typeof EVENT_WORKSPACE_DELETED | typeof EVENT_WORKSPACE_DELETE_FAILED
+): Operation<typeof deleteShutdownSchemas> {
+  return {
+    id: DELETE_WORKSPACE_OPERATION_ID,
+    schemas: deleteShutdownSchemas,
+    async execute(ctx): Promise<void> {
+      const { workspacePath } = ctx.intent.payload as { workspacePath: string };
+      const hookCtx: DeletePipelineHookInput = {
+        // The minimal schema types the payload as `unknown`, so widen before narrowing.
+        intent: ctx.intent as unknown as DeleteWorkspaceIntent,
+        projectPath: "/projects/test",
+        workspacePath,
+        workspaceName: "ws" as WorkspaceName,
+        active: false,
+      };
+      await ctx.hooks.collect("shutdown", hookCtx);
+      if (ends === EVENT_WORKSPACE_DELETED) {
+        await ctx.emit({
+          type: EVENT_WORKSPACE_DELETED,
+          payload: {
+            projectId: "test-12345678" as ProjectId,
+            workspaceName: "ws" as WorkspaceName,
+            workspacePath,
+            projectPath: "/projects/test",
+            worktreeRemoved: true,
+          },
+        });
+      } else if (ends === EVENT_WORKSPACE_DELETE_FAILED) {
+        await ctx.emit({ type: EVENT_WORKSPACE_DELETE_FAILED, payload: { workspacePath } });
+      }
+    },
+  };
+}
+
+const deleteShutdownSchemas = {
+  type: INTENT_DELETE_WORKSPACE,
+  payload: z.unknown(),
+  result: z.custom<void>(),
+} satisfies OperationSchemas;
 
 // Longer timeout for CI environments
 const TEST_TIMEOUT = 15000;
@@ -1127,6 +1182,77 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
       expect(elapsed).toBeLessThan(2000);
+    });
+  });
+
+  // A workspace's sidekick connects whenever its VS Code window finishes starting,
+  // which can land *after* the user hit Remove. Receiving the config is what makes it
+  // open an agent terminal — a live process inside the worktree about to be removed.
+  // On Windows that handle makes `git worktree remove` fail.
+  describe("connections during deletion", () => {
+    const WS = "/test/workspace";
+
+    async function startDeleting(
+      ends?: typeof EVENT_WORKSPACE_DELETED | typeof EVENT_WORKSPACE_DELETE_FAILED
+    ): Promise<void> {
+      env.testDispatcher.registerOperation(createDeleteShutdownOperation(ends));
+      await env.testDispatcher.dispatch({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: { workspacePath: WS, removeWorktree: true },
+      } as Intent);
+    }
+
+    it("rejects a client that connects after deletion has begun", async () => {
+      await startDeleting();
+
+      // The server hangs up rather than refusing the handshake, so connect() may
+      // briefly succeed. `disconnect(true)` stops the client from reconnecting.
+      const client = createClient(WS);
+      client.connect();
+      await delay(500);
+
+      expect(client.connected).toBe(false);
+    });
+
+    it("sends no config to a client that connects after deletion has begun", async () => {
+      await startDeleting();
+
+      const client = createClient(WS);
+      const config = vi.fn();
+      client.on("config", config);
+      client.connect();
+      await delay(500);
+
+      // Receiving the config is what makes the sidekick open an agent terminal.
+      expect(config).not.toHaveBeenCalled();
+    });
+
+    it("disconnects a client that was already connected", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+
+      await startDeleting();
+      await waitForDisconnect(client);
+
+      expect(client.connected).toBe(false);
+    });
+
+    it("leaves other workspaces connectable", async () => {
+      await startDeleting();
+
+      const other = createClient("/test/other");
+      await waitForConnect(other);
+
+      expect(other.connected).toBe(true);
+    });
+
+    it("accepts clients again once deletion fails, since the workspace survives", async () => {
+      await startDeleting(EVENT_WORKSPACE_DELETE_FAILED);
+
+      const client = createClient(WS);
+      await waitForConnect(client);
+
+      expect(client.connected).toBe(true);
     });
   });
 });
