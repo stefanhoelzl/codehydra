@@ -363,6 +363,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         main: { kind: "starting" },
         theme: "dark",
         labelScroll: "hover",
+        silent: false,
         mode: "dialog",
         capturing: false,
         dialogs: [systemDialog([STARTING_SPINNER])],
@@ -385,11 +386,20 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "creation" },
       theme: "dark",
       labelScroll: "hover",
+      silent: false,
       mode: "hover",
       capturing: false,
       dialogs: [],
       notifications: [],
     });
+  });
+
+  it("ships the `silent` config in every ui:state push", async () => {
+    const deps = createDeps();
+    deps.configService = createMockConfig({ defaults: { silent: true } });
+    await startModule(deps);
+
+    expect(lastSnapshot(deps)?.silent).toBe(true);
   });
 
   it("includes pre-start events in the first post-startup snapshot (witnesses genesis)", async () => {
@@ -430,6 +440,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
       theme: "dark",
       labelScroll: "hover",
+      silent: false,
       mode: "workspace",
       capturing: false,
       dialogs: [],

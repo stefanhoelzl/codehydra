@@ -54,6 +54,7 @@ export function makeUiState(
     main: { kind: "creation" },
     theme: "dark",
     labelScroll: "hover",
+    silent: false,
     mode: "workspace",
     capturing: false,
     dialogs: [],

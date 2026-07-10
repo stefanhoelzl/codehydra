@@ -136,7 +136,7 @@ import {
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
 import type { Config } from "../../boundaries/platform/config";
-import { storeEnum } from "../../boundaries/platform/store-definition";
+import { storeBoolean, storeEnum } from "../../boundaries/platform/store-definition";
 import { buildScreenshotPath } from "../hibernation-screenshot-module";
 import {
   DialogManager,
@@ -386,6 +386,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       ...storeEnum(LABEL_SCROLL_VALUES),
     }
   );
+
+  // Read at snapshot-build time like labelScroll, so flipping it re-pushes
+  // ui:state and the very next chime is suppressed — no restart, and the
+  // renderer never caches the value.
+  const silentConfig = deps.configService.register("silent", {
+    default: false,
+    description: "Silence the audible notification played when an agent goes idle",
+    applies: "live",
+    ...storeBoolean(),
+  });
 
   // The presenter privately owns the dialog/notification registries. They hold
   // session state and hand out handles; every mutation calls scheduleUpdate so
@@ -905,6 +915,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       main,
       theme,
       labelScroll: labelScrollConfig.get(),
+      silent: silentConfig.get(),
       mode: buildMode(main),
       capturing,
       dialogs: dialogs.getSnapshot(),

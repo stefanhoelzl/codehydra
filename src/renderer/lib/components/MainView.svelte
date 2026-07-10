@@ -26,7 +26,7 @@
   import { onMount } from "svelte";
   import * as api from "$lib/api";
   import type { UiState } from "@shared/ui-state";
-  import { AgentNotificationService } from "$lib/services/agent-notifications";
+  import { AgentNotificationService, playChimeSound } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
 
   // Setup functions
@@ -135,7 +135,11 @@
   // Subscribe to the surviving domain events (notification chimes) on mount.
   // The ui:state subscription + ui-connected handshake are owned by App.svelte.
   onMount(() => {
-    const notificationService = new AgentNotificationService();
+    // Read `ui.silent` when the chime fires, not when the service is built:
+    // onMount runs once, but the config applies live.
+    const notificationService = new AgentNotificationService(() => {
+      if (!ui.silent) playChimeSound();
+    });
     return setupDomainEventBindings(notificationService);
   });
 

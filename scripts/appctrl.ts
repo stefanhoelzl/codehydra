@@ -171,6 +171,8 @@ export interface LaunchOptions {
    * App flags. Each MUST start with `--`: the app's parseCliArgs treats a bare
    * `--flag` followed by a non-`--` token as that flag's value, so a stray bare
    * argument would be silently swallowed as someone else's value.
+   *
+   * `--silent=true` is always prepended; pass `--silent=false` to opt back in.
    */
   args?: string[];
   env?: Record<string, string | undefined>;
@@ -262,6 +264,10 @@ export function createDriver() {
       }
     }
 
+    // Never chime at whoever is driving the app. Prepended, not appended, so a
+    // caller can still pass `--silent=false` and win (parseCliArgs: last wins).
+    const appArgs = ["--silent=true", ...args];
+
     if (appPath !== null) {
       try {
         await access(join(appPath, "out/main/index.cjs"));
@@ -275,7 +281,7 @@ export function createDriver() {
     try {
       electronApp = await _electron.launch({
         executablePath,
-        args: [...(appPath !== null ? [appPath] : []), ...args],
+        args: [...(appPath !== null ? [appPath] : []), ...appArgs],
         cwd,
         env: env as Record<string, string>,
         timeout,
