@@ -13,6 +13,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
+// Type-only: erased at runtime, so it cannot pre-load the module being mocked below.
+import type * as AgentNotifications from "$lib/services/agent-notifications";
 
 // Shared fake: src/renderer/lib/api/__mocks__/index.ts
 vi.mock("$lib/api");
@@ -21,24 +23,24 @@ import * as api from "$lib/api";
 
 const mockApi = vi.mocked(api);
 
-// Mock AgentNotificationService. It captures the chime player MainView injects,
-// so a test can fire it and observe whether `ui.silent` suppressed the sound.
-const { MockAgentNotificationService, chimePlayers, playChimeSound } = vi.hoisted(() => {
-  const chimePlayers: (() => void)[] = [];
+// Mock AgentNotificationService
+const { MockAgentNotificationService } = vi.hoisted(() => {
   class MockAgentNotificationService {
     handleStatusChange = vi.fn();
     removeWorkspace = vi.fn();
     reset = vi.fn();
-    constructor(playChime?: () => void) {
-      if (playChime) chimePlayers.push(playChime);
-    }
   }
-  return { MockAgentNotificationService, chimePlayers, playChimeSound: vi.fn() };
+  return { MockAgentNotificationService };
 });
 
-vi.mock("$lib/services/agent-notifications", () => ({
+// Keep the module's real exports — MainView also imports `createChimePlayer` —
+// and swap only the service. This mock is a no-op whenever another renderer test
+// file has already imported MainView.svelte, since `isolate: false` shares one
+// module registry per worker. So nothing here may *depend* on it taking effect;
+// the chime gate is covered directly in agent-notifications.test.ts.
+vi.mock("$lib/services/agent-notifications", async (importOriginal) => ({
+  ...(await importOriginal<typeof AgentNotifications>()),
   AgentNotificationService: MockAgentNotificationService,
-  playChimeSound,
 }));
 
 // Import after mock setup
@@ -119,37 +121,5 @@ describe("MainView close project integration", () => {
     expect(mockApi.emitEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "close-project", projectId: projectWithWorkspaces.id })
     );
-  });
-});
-
-describe("MainView agent chime", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    chimePlayers.length = 0;
-  });
-
-  afterEach(() => {
-    document.body.innerHTML = "";
-  });
-
-  /** Mount MainView and hand back the chime player it injected into the service. */
-  async function mountAndGetChimePlayer(silent: boolean): Promise<() => void> {
-    render(MainView, { props: { ui: makeUiState([], { silent }) } });
-    await waitFor(() => expect(chimePlayers).toHaveLength(1));
-    return chimePlayers[0]!;
-  }
-
-  it("plays the chime when `silent` is off", async () => {
-    const playChime = await mountAndGetChimePlayer(false);
-    playChime();
-
-    expect(playChimeSound).toHaveBeenCalledTimes(1);
-  });
-
-  it("suppresses the chime when `silent` is on", async () => {
-    const playChime = await mountAndGetChimePlayer(true);
-    playChime();
-
-    expect(playChimeSound).not.toHaveBeenCalled();
   });
 });

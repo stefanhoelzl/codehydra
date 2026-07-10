@@ -26,7 +26,7 @@
   import { onMount } from "svelte";
   import * as api from "$lib/api";
   import type { UiState } from "@shared/ui-state";
-  import { AgentNotificationService, playChimeSound } from "$lib/services/agent-notifications";
+  import { AgentNotificationService, createChimePlayer } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
 
   // Setup functions
@@ -137,9 +137,7 @@
   onMount(() => {
     // Read `ui.silent` when the chime fires, not when the service is built:
     // onMount runs once, but the config applies live.
-    const notificationService = new AgentNotificationService(() => {
-      if (!ui.silent) playChimeSound();
-    });
+    const notificationService = new AgentNotificationService(createChimePlayer(() => ui.silent));
     return setupDomainEventBindings(notificationService);
   });
 

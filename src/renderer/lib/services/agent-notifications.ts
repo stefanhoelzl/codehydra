@@ -13,6 +13,21 @@ import type { InternalAgentCounts } from "@shared/ipc";
 export type ChimePlayer = () => void;
 
 /**
+ * Wrap a chime player so it stays quiet while `isSilent()` holds (config `silent`).
+ *
+ * `isSilent` is a thunk, not a boolean: the caller builds this once at mount but
+ * the config applies live, so the value must be read when the chime fires.
+ */
+export function createChimePlayer(
+  isSilent: () => boolean,
+  play: ChimePlayer = playChimeSound
+): ChimePlayer {
+  return () => {
+    if (!isSilent()) play();
+  };
+}
+
+/**
  * Service responsible for audio notifications when agent status changes.
  * Extracted from store to separate concerns and improve testability.
  */
