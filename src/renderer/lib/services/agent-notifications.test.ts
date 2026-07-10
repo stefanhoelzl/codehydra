@@ -4,7 +4,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Mock } from "vitest";
-import { AgentNotificationService, playChimeSound, type ChimePlayer } from "./agent-notifications";
+import {
+  AgentNotificationService,
+  createChimePlayer,
+  playChimeSound,
+  type ChimePlayer,
+} from "./agent-notifications";
 
 // Mock AudioContext
 class MockOscillator {
@@ -194,5 +199,34 @@ describe("playChimeSound", () => {
 
     // Should not throw even if AudioContext is undefined
     expect(() => playChimeSound()).not.toThrow();
+  });
+});
+
+describe("createChimePlayer", () => {
+  it("plays when not silent", () => {
+    const play = vi.fn();
+    createChimePlayer(() => false, play)();
+
+    expect(play).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet when silent", () => {
+    const play = vi.fn();
+    createChimePlayer(() => true, play)();
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("reads `silent` at each chime, so the config applies live", () => {
+    const play = vi.fn();
+    let silent = true;
+    const chime = createChimePlayer(() => silent, play);
+
+    chime();
+    expect(play).not.toHaveBeenCalled();
+
+    silent = false;
+    chime();
+    expect(play).toHaveBeenCalledTimes(1);
   });
 });
