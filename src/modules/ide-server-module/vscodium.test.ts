@@ -140,3 +140,46 @@ describe("vscodium descriptor: wrapper invocations", () => {
     expect(ide.nodeBinary("C:\\b\\vsc", "win32")).toBe("C:\\b\\vsc\\node.exe");
   });
 });
+
+describe("vscodium descriptor: webviewAsset", () => {
+  const ide = createVscodiumIdeServer();
+  const PRE = "out/vs/workbench/contrib/webview/browser/pre";
+  // The base URL VSCodium actually bakes in: a Microsoft *insider* commit whose
+  // webview service-worker is v4, while this build's workbench requires v5.
+  const cdn = (file: string) =>
+    `https://07uscgn4lhh36t8.vscode-cdn.net/insider/ef65ac1ba57f57f2a3961bfe94aa20481caca4c6/${PRE}/${file}`;
+
+  it("maps the webview shell files onto the bundle", () => {
+    expect(ide.webviewAsset(cdn("index.html"))).toBe(`${PRE}/index.html`);
+    expect(ide.webviewAsset(cdn("fake.html"))).toBe(`${PRE}/fake.html`);
+    // The service worker is the whole point: serving the bundle's v5 copy here
+    // is what resolves the "Found: 4. Expected: 5" mismatch.
+    expect(ide.webviewAsset(cdn("service-worker.js"))).toBe(`${PRE}/service-worker.js`);
+  });
+
+  it("ignores the query string the workbench appends", () => {
+    expect(ide.webviewAsset(`${cdn("index.html")}?id=abc&swVersion=5&platform=browser`)).toBe(
+      `${PRE}/index.html`
+    );
+  });
+
+  it("serves index.html for the bare directory", () => {
+    expect(ide.webviewAsset(cdn(""))).toBe(`${PRE}/index.html`);
+  });
+
+  it("passes through everything that is not a webview shell request", () => {
+    // Arbitrary pages (e.g. opened in Simple Browser) must reach the network.
+    expect(ide.webviewAsset("https://example.com/index.html")).toBeNull();
+    // Right host, but not the webview shell path.
+    expect(ide.webviewAsset("https://x.vscode-cdn.net/stable/abc/out/vs/other.js")).toBeNull();
+    // A lookalike host must not match.
+    expect(ide.webviewAsset(`https://evil-vscode-cdn.net/insider/c/${PRE}/index.html`)).toBeNull();
+    expect(ide.webviewAsset(`http://x.vscode-cdn.net/insider/c/${PRE}/index.html`)).toBeNull();
+    expect(ide.webviewAsset("not a url")).toBeNull();
+  });
+
+  it("refuses to escape the webview directory", () => {
+    expect(ide.webviewAsset(cdn("../../../../product.json"))).toBeNull();
+    expect(ide.webviewAsset(cdn("nested/index.html"))).toBeNull();
+  });
+});

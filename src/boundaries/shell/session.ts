@@ -57,6 +57,25 @@ export type PermissionRequestHandler = (permission: Permission) => boolean;
  */
 export type PermissionCheckHandler = (permission: Permission) => boolean;
 
+/**
+ * An asset served in place of a network response by a protocol interceptor.
+ */
+export interface InterceptedAsset {
+  readonly body: Uint8Array;
+  readonly contentType: string;
+  /** Extra response headers (e.g. `service-worker-allowed`). */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+/**
+ * Resolves an intercepted request URL to a locally-served asset, or `null` to
+ * forward the request to the built-in (network) handler untouched.
+ *
+ * Interceptors are given only the URL — no Electron or fetch types cross the
+ * boundary, so callers stay trivially testable.
+ */
+export type ProtocolInterceptor = (url: string) => Promise<InterceptedAsset | null>;
+
 // ============================================================================
 // Interface
 // ============================================================================
@@ -112,6 +131,19 @@ export interface SessionBoundary {
     handle: SessionHandle,
     handler: (headers: Record<string, string[]>) => Record<string, string[]>
   ): void;
+
+  /**
+   * Intercept `scheme` on this session, serving the interceptor's asset when it
+   * returns one and forwarding to the network otherwise.
+   *
+   * Registration is idempotent: re-registering replaces the previous handler.
+   *
+   * @param handle - Handle to the session
+   * @param scheme - Scheme to intercept (e.g. "https")
+   * @param interceptor - Resolves a URL to a local asset, or null to pass through
+   * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
+   */
+  setProtocolHandler(handle: SessionHandle, scheme: string, interceptor: ProtocolInterceptor): void;
 
   /**
    * Dispose of all resources.
@@ -195,6 +227,35 @@ export class DefaultSessionBoundary implements SessionBoundary {
     });
 
     this.logger.debug("Headers received handler set", { id: handle.id });
+  }
+
+  setProtocolHandler(
+    handle: SessionHandle,
+    scheme: string,
+    interceptor: ProtocolInterceptor
+  ): void {
+    const state = this.getSession(handle);
+    const { protocol } = state.session;
+
+    // Idempotent: protocol.handle throws if the scheme is already handled.
+    if (protocol.isProtocolHandled(scheme)) {
+      protocol.unhandle(scheme);
+    }
+
+    protocol.handle(scheme, async (request) => {
+      const asset = await interceptor(request.url);
+      if (!asset) {
+        // Forward to Electron's built-in handler. Without the bypass this would
+        // re-enter this same handler and loop forever.
+        return state.session.fetch(request, { bypassCustomProtocolHandlers: true });
+      }
+      return new Response(asset.body as BodyInit, {
+        status: 200,
+        headers: { "content-type": asset.contentType, ...asset.headers },
+      });
+    });
+
+    this.logger.debug("Protocol handler set", { id: handle.id, scheme });
   }
 
   async dispose(): Promise<void> {

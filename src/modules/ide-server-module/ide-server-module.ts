@@ -25,6 +25,7 @@ import {
   PROCESS_KILL_FORCE_TIMEOUT_MS,
 } from "../../boundaries/platform/process";
 import type { HttpClient, PortManager } from "../../boundaries/platform/network";
+import type { SessionBoundary, InterceptedAsset } from "../../boundaries/shell/session";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
@@ -147,12 +148,20 @@ export interface IdeServerModuleDeps {
     | "readdir"
     | "rm"
     | "readFile"
+    | "readFileBuffer"
     | "writeFile"
     | "unlink"
     | "rename"
     | "writeFileBuffer"
     | "makeExecutable"
   >;
+  /**
+   * Session the workspace iframes load in. The module intercepts the webview
+   * shell requests on it (see `IdeServer.webviewAsset`).
+   */
+  readonly sessionLayer: Pick<SessionBoundary, "fromPartition" | "setProtocolHandler">;
+  /** Partition name of that session. */
+  readonly sessionPartition: string;
   readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
   readonly buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">;
   readonly platform: SupportedPlatform;
@@ -297,6 +306,61 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
 
   // Internal state: port set by start hook, read by finalize hook
   let ideServerPort = 0;
+
+  // -------------------------------------------------------------------------
+  // Webview shell interception
+  // -------------------------------------------------------------------------
+
+  /** Content type for the flat webview shell files (html + the service worker). */
+  function webviewContentType(assetPath: string): string {
+    return assetPath.endsWith(".js")
+      ? "text/javascript; charset=utf-8"
+      : "text/html; charset=utf-8";
+  }
+
+  /**
+   * Serve the webview shell from the bundle instead of the CDN the distribution
+   * bakes in (see `IdeServer.webviewAsset` for why). Registered on the session
+   * the workspace iframes load in; every other https request passes through.
+   */
+  function registerWebviewInterceptor(): void {
+    const ide = getIdeServer();
+    const bundleDir = deps.pathProvider.bundlePath(ide.bundleSubdir());
+    const handle = deps.sessionLayer.fromPartition(deps.sessionPartition);
+
+    deps.sessionLayer.setProtocolHandler(
+      handle,
+      "https",
+      async (url): Promise<InterceptedAsset | null> => {
+        const assetPath = ide.webviewAsset(url);
+        if (assetPath === null) return null;
+
+        try {
+          const body = await fileSystemLayer.readFileBuffer(new Path(bundleDir, assetPath));
+          return {
+            body,
+            contentType: webviewContentType(assetPath),
+            headers: {
+              // The shell is cheap to re-read and must never pin a stale
+              // service-worker version the way the CDN's immutable assets did.
+              "cache-control": "no-cache",
+              // The worker's scope sits above its own directory.
+              "service-worker-allowed": "/",
+            },
+          };
+        } catch (error) {
+          // Fall through to the network rather than fail the frame outright.
+          logger.warn("Failed to serve webview asset from bundle", {
+            assetPath,
+            error: getErrorMessage(error),
+          });
+          return null;
+        }
+      }
+    );
+
+    logger.debug("Webview interceptor registered", { partition: deps.sessionPartition });
+  }
 
   // -------------------------------------------------------------------------
   // Process lifecycle functions
@@ -636,6 +700,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
             if (pluginPort !== null) {
               config.pluginPort = pluginPort;
             }
+
+            // Before any workspace iframe loads, so the first webview already
+            // resolves to the bundle's shell rather than the baked-in CDN.
+            registerWebviewInterceptor();
 
             // Ensure required directories exist
             await Promise.all([

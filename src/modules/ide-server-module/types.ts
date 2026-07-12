@@ -70,6 +70,24 @@ export interface IdeServer {
   /** Readiness probe URL for the given port. */
   healthUrl(port: number): string;
 
+  /**
+   * Map a request URL to the bundle-relative path of the webview asset that
+   * should answer it, or `null` when the URL is not a webview asset request.
+   *
+   * Why this exists: the distribution bakes an external webview base URL into
+   * its compiled workbench (`webviewContentExternalBaseUrlTemplate`), and for
+   * VSCodium that URL points at a *Microsoft* build on `vscode-cdn.net` whose
+   * webview service-worker is v4 while VSCodium's own workbench requires v5.
+   * The mismatch breaks every webview (Simple Browser, markdown preview, ...),
+   * and it is unfixable by repointing the URL: the CDN hosts no assets for
+   * VSCodium's commit at all. So the shell intercepts these requests and serves
+   * the bundle's own matching assets *at the original URL* — which keeps the
+   * per-webview origin isolation the CDN hostname provides, and works offline.
+   *
+   * Pure: parses the URL only. The caller does the reading.
+   */
+  webviewAsset(url: string): string | null;
+
   /** URL that opens a folder path. */
   urlForFolder(port: number, folderPath: string): string;
   /** URL that opens a `.code-workspace` file. */

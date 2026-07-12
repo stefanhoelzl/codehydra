@@ -8,6 +8,7 @@
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { createSessionBoundaryMock } from "../../boundaries/shell/session.state-mock";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The watcher shim's own behavior is covered in watcher-shim.integration.test.ts;
@@ -307,12 +308,15 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
       readdir: vi.fn().mockResolvedValue([]),
       rm: vi.fn().mockResolvedValue(undefined),
       readFile: vi.fn().mockResolvedValue("[]"),
+      readFileBuffer: vi.fn().mockResolvedValue(Buffer.from("")),
       writeFile: vi.fn().mockResolvedValue(undefined),
       writeFileBuffer: vi.fn().mockResolvedValue(undefined),
       unlink: vi.fn().mockResolvedValue(undefined),
       rename: vi.fn().mockResolvedValue(undefined),
       makeExecutable: vi.fn().mockResolvedValue(undefined),
     },
+    sessionLayer: createSessionBoundaryMock(),
+    sessionPartition: "persist:test",
     pathProvider: {
       bundlePath: vi.fn().mockImplementation((subpath: string) => {
         return new Path(`/bundles/${subpath}`);
@@ -531,6 +535,66 @@ describe("IdeServerModule", () => {
   // ---------------------------------------------------------------------------
   // start
   // ---------------------------------------------------------------------------
+
+  describe("webview interception", () => {
+    /** Drive the `start` hook, then hand back the https interceptor it registered. */
+    async function startAndGetInterceptor(deps: IdeServerModuleDeps) {
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const sessions = (deps.sessionLayer as ReturnType<typeof createSessionBoundaryMock>).$
+        .sessions;
+      const session = [...sessions.values()].find((s) => s.partition === "persist:test");
+      return session?.protocolInterceptors.get("https");
+    }
+
+    it("serves the webview shell from the bundle, not the baked-in CDN", async () => {
+      // VSCodium points webviews at a Microsoft insider commit on vscode-cdn.net
+      // whose service-worker is v4, while its own workbench demands v5 — and the
+      // CDN has no assets for VSCodium's commit at all. We answer at that URL
+      // with the bundle's own (matching) copy, keeping the origin intact.
+      const deps = createMockDeps();
+      deps.fileSystemLayer.readFileBuffer = vi.fn().mockResolvedValue(Buffer.from("SW_V5"));
+
+      const intercept = await startAndGetInterceptor(deps);
+      const asset = await intercept!(
+        "https://abc.vscode-cdn.net/insider/ef65ac/out/vs/workbench/contrib/webview/browser/pre/service-worker.js?v=5"
+      );
+
+      expect(asset?.body).toEqual(Buffer.from("SW_V5"));
+      expect(asset?.contentType).toBe("text/javascript; charset=utf-8");
+      // Never let a stale service-worker version get pinned again.
+      expect(asset?.headers?.["cache-control"]).toBe("no-cache");
+      expect(deps.fileSystemLayer.readFileBuffer).toHaveBeenCalledWith(
+        new Path(
+          "/bundles/vscodium/1.126.04524/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"
+        )
+      );
+    });
+
+    it("passes other https requests through to the network", async () => {
+      const deps = createMockDeps();
+      const intercept = await startAndGetInterceptor(deps);
+
+      // A page opened in Simple Browser must not be served from the bundle.
+      await expect(intercept!("https://example.com/index.html")).resolves.toBeNull();
+      expect(deps.fileSystemLayer.readFileBuffer).not.toHaveBeenCalled();
+    });
+
+    it("falls through to the network when the asset cannot be read", async () => {
+      const deps = createMockDeps();
+      deps.fileSystemLayer.readFileBuffer = vi.fn().mockRejectedValue(new Error("ENOENT"));
+
+      const intercept = await startAndGetInterceptor(deps);
+
+      await expect(
+        intercept!(
+          "https://abc.vscode-cdn.net/insider/ef65ac/out/vs/workbench/contrib/webview/browser/pre/index.html"
+        )
+      ).resolves.toBeNull();
+    });
+  });
 
   describe("start", () => {
     it("starts the IDE server and returns port", async () => {
@@ -1013,6 +1077,7 @@ describe("IdeServerModule", () => {
           readdir: vi.fn().mockResolvedValue([]),
           rm: vi.fn().mockResolvedValue(undefined),
           readFile: vi.fn().mockResolvedValue("[]"),
+          readFileBuffer: vi.fn().mockResolvedValue(Buffer.from("")),
           writeFile: vi.fn().mockRejectedValue(new Error("disk full")),
           writeFileBuffer: vi.fn().mockResolvedValue(undefined),
           unlink: vi.fn().mockResolvedValue(undefined),
@@ -1088,6 +1153,7 @@ describe("IdeServerModule", () => {
           readdir: vi.fn().mockResolvedValue([]),
           rm: vi.fn().mockRejectedValue(new Error("permission denied")),
           readFile: vi.fn().mockResolvedValue("[]"),
+          readFileBuffer: vi.fn().mockResolvedValue(Buffer.from("")),
           writeFile: vi.fn().mockResolvedValue(undefined),
           writeFileBuffer: vi.fn().mockResolvedValue(undefined),
           unlink: vi.fn().mockResolvedValue(undefined),
@@ -1122,6 +1188,7 @@ describe("IdeServerModule", () => {
           readdir: vi.fn().mockResolvedValue([]),
           rm: vi.fn().mockRejectedValue(new Error("permission denied")),
           readFile: vi.fn().mockResolvedValue("[]"),
+          readFileBuffer: vi.fn().mockResolvedValue(Buffer.from("")),
           writeFile: vi.fn().mockResolvedValue(undefined),
           writeFileBuffer: vi.fn().mockResolvedValue(undefined),
           unlink: vi.fn().mockResolvedValue(undefined),
