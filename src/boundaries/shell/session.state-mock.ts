@@ -15,7 +15,12 @@
  */
 
 import { expect } from "vitest";
-import type { SessionBoundary, PermissionRequestHandler, PermissionCheckHandler } from "./session";
+import type {
+  SessionBoundary,
+  PermissionRequestHandler,
+  PermissionCheckHandler,
+  ProtocolInterceptor,
+} from "./session";
 import type { SessionHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type {
@@ -38,6 +43,11 @@ export interface MockSessionState {
   readonly hasPermissionRequestHandler: boolean;
   readonly hasPermissionCheckHandler: boolean;
   readonly hasHeadersReceivedHandler: boolean;
+  /**
+   * Interceptors registered per scheme. Held (not just flagged) so tests can
+   * drive them directly and assert what a URL resolves to.
+   */
+  readonly protocolInterceptors: ReadonlyMap<string, ProtocolInterceptor>;
 }
 
 /**
@@ -74,6 +84,7 @@ interface MutableSessionState {
   hasPermissionRequestHandler: boolean;
   hasPermissionCheckHandler: boolean;
   hasHeadersReceivedHandler: boolean;
+  protocolInterceptors: Map<string, ProtocolInterceptor>;
 }
 
 class SessionBoundaryMockStateImpl implements SessionBoundaryMockState {
@@ -198,6 +209,7 @@ export function createSessionBoundaryMock(
         hasPermissionRequestHandler: sessionState.hasPermissionRequestHandler ?? false,
         hasPermissionCheckHandler: sessionState.hasPermissionCheckHandler ?? false,
         hasHeadersReceivedHandler: sessionState.hasHeadersReceivedHandler ?? false,
+        protocolInterceptors: new Map(),
       });
       partitionToId.set(partition, id);
     }
@@ -226,6 +238,7 @@ export function createSessionBoundaryMock(
         hasPermissionRequestHandler: false,
         hasPermissionCheckHandler: false,
         hasHeadersReceivedHandler: false,
+        protocolInterceptors: new Map(),
       });
       partitionToId.set(partition, id);
 
@@ -248,6 +261,15 @@ export function createSessionBoundaryMock(
     ): void {
       const session = getSession(handle);
       session.hasHeadersReceivedHandler = true;
+    },
+
+    setProtocolHandler(
+      handle: SessionHandle,
+      scheme: string,
+      interceptor: ProtocolInterceptor
+    ): void {
+      const session = getSession(handle);
+      session.protocolInterceptors.set(scheme, interceptor);
     },
 
     async dispose(): Promise<void> {

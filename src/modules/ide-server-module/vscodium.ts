@@ -20,6 +20,12 @@ import { folderUrl, workspaceUrl } from "./url-scheme";
 /** Current VSCodium version to download (reh-web build; VS Code <major.minor>.<build>). */
 export const VSCODIUM_VERSION = "1.126.04524";
 
+/** Bundle-relative directory holding the webview shell (index/fake html + service worker). */
+const WEBVIEW_PRE_DIR = "out/vs/workbench/contrib/webview/browser/pre";
+
+/** The same directory as it appears in the baked webview base URL. */
+const WEBVIEW_PRE_PATH = `/${WEBVIEW_PRE_DIR}/`;
+
 /** Map Node's platform to the VSCodium release asset OS token. */
 function osToken(platform: SupportedPlatform): string {
   // VSCodium asset names use "darwin"/"linux"/"win32" directly.
@@ -85,6 +91,30 @@ export function createVscodiumIdeServer(version: string = VSCODIUM_VERSION): Ide
     healthUrl(port: number): string {
       // reh-web has no /healthz; /version returns 200 once the server is up.
       return `http://127.0.0.1:${port}/version`;
+    },
+
+    webviewAsset(url: string): string | null {
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return null;
+      }
+      // Webviews are framed from `https://<uuid>.vscode-cdn.net/<quality>/<commit>{WEBVIEW_PRE_PATH}`.
+      if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".vscode-cdn.net")) {
+        return null;
+      }
+      const index = parsed.pathname.indexOf(WEBVIEW_PRE_PATH);
+      if (index === -1) return null;
+
+      // The workbench only ever asks for flat files here (index.html, fake.html,
+      // service-worker.js). Reject anything with a separator or traversal so a
+      // crafted URL can't escape the bundle.
+      const file = parsed.pathname.slice(index + WEBVIEW_PRE_PATH.length);
+      if (file === "") return `${WEBVIEW_PRE_DIR}/index.html`;
+      if (file.includes("/") || file.includes("\\") || file.includes("..")) return null;
+
+      return `${WEBVIEW_PRE_DIR}/${file}`;
     },
 
     urlForFolder(port: number, folderPath: string): string {

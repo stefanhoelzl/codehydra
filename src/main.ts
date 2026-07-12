@@ -45,7 +45,7 @@ import { DefaultWindowBoundary } from "./boundaries/shell/window";
 import { DefaultViewBoundary } from "./boundaries/shell/view";
 import { DefaultSessionBoundary } from "./boundaries/shell/session";
 import { WindowManager } from "./boundaries/shell/window-manager";
-import { UiViewManager } from "./boundaries/shell/ui-view-manager";
+import { UiViewManager, GLOBAL_SESSION_PARTITION } from "./boundaries/shell/ui-view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive-extractor";
@@ -508,6 +508,8 @@ const ideServerModule = createIdeServerModule({
   httpClient: networkLayer,
   portManager: networkLayer,
   fileSystemLayer,
+  sessionLayer,
+  sessionPartition: GLOBAL_SESSION_PARTITION,
   pathProvider,
   buildInfo,
   platform,
