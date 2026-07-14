@@ -11,9 +11,9 @@ import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { createSessionBoundaryMock } from "../../boundaries/shell/session.state-mock";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// The watcher shim's own behavior is covered in watcher-shim.integration.test.ts;
-// here we only assert the download step wires it in (and gates it to Windows).
-vi.mock("./watcher-shim", () => ({ applyWatcherShim: vi.fn().mockResolvedValue(1) }));
+// The patches' own behavior is covered in bundle-patches.integration.test.ts;
+// here we only assert the start hook wires them in, against the bundle dir.
+vi.mock("./bundle-patches", () => ({ applyBundlePatches: vi.fn().mockResolvedValue(undefined) }));
 import { delimiter, join } from "node:path";
 
 import { z } from "zod/v4";
@@ -58,7 +58,7 @@ import type {
   DeleteHookResult,
 } from "../../intents/delete-workspace";
 import { createIdeServerModule, type IdeServerModuleDeps } from "./ide-server-module";
-import { applyWatcherShim } from "./watcher-shim";
+import { applyBundlePatches } from "./bundle-patches";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../../intents/app-start";
 import type { DirEntry } from "../../boundaries/platform/filesystem";
@@ -622,6 +622,25 @@ describe("IdeServerModule", () => {
       expect(deps.fileSystemLayer.mkdir).toHaveBeenCalledTimes(3);
     });
 
+    it("patches the vendored bundle before the IDE server starts serving it", async () => {
+      vi.mocked(applyBundlePatches).mockClear();
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(applyBundlePatches).toHaveBeenCalledWith(
+        expect.objectContaining({ fileSystemLayer: deps.fileSystemLayer, platform: "linux" }),
+        expect.stringContaining("vscodium")
+      );
+      // Ordering is the whole point: the server must never serve an unpatched
+      // workbench to a workspace iframe.
+      const patchedAt = vi.mocked(applyBundlePatches).mock.invocationCallOrder[0]!;
+      const startedAt = vi.mocked(deps.portManager.isPortAvailable).mock.invocationCallOrder[0]!;
+      expect(patchedAt).toBeLessThan(startedAt);
+    });
+
     it("checks port availability before spawning", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
@@ -884,37 +903,6 @@ describe("IdeServerModule", () => {
           error: expect.stringContaining("Failed to download IDE server"),
         })
       );
-    });
-
-    it("applies the watcher shim to the downloaded bundle on Windows", async () => {
-      vi.mocked(applyWatcherShim).mockClear();
-      const deps = createDownloadDeps({
-        platform: "win32",
-        arch: "x64",
-        archiveExtractor: createArchiveExtractorMock(),
-      });
-      const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
-      dispatcher.registerOperation(op);
-
-      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
-
-      expect(applyWatcherShim).toHaveBeenCalledWith(
-        expect.objectContaining({ fileSystemLayer: deps.fileSystemLayer }),
-        expect.stringContaining("vscodium")
-      );
-    });
-
-    it("does not apply the watcher shim on non-Windows platforms", async () => {
-      vi.mocked(applyWatcherShim).mockClear();
-      const deps = createDownloadDeps({ archiveExtractor: createArchiveExtractorMock() });
-      const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
-      dispatcher.registerOperation(op);
-
-      await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
-
-      expect(applyWatcherShim).not.toHaveBeenCalled();
     });
   });
 

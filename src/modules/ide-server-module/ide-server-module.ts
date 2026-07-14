@@ -65,7 +65,7 @@ import type { Config } from "../../boundaries/platform/config";
 import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import { waitForHealthy } from "../../utils/health-check";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
-import { applyWatcherShim } from "./watcher-shim";
+import { applyBundlePatches } from "./bundle-patches";
 import type { IdeServer } from "./types";
 
 // =============================================================================
@@ -613,22 +613,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       const message = getErrorMessage(error);
       throw new IdeServerError(`Failed to download IDE server: ${message}`);
     }
-
-    // Windows-only: patch the freshly extracted bundle's native file watcher so
-    // absolute backslash ignore globs don't crash it (see watcher-shim.ts). A
-    // re-download overwrites the shim, so it must run after every download.
-    // Best-effort — a shim failure must not fail an otherwise-good download.
-    if (deps.platform === "win32") {
-      try {
-        const applied = await applyWatcherShim(
-          { fileSystemLayer: deps.fileSystemLayer, logger },
-          request.destDir
-        );
-        logger.debug("Watcher shim pass complete", { applied });
-      } catch (error) {
-        logger.warn("Watcher shim pass failed", { error: getErrorMessage(error) });
-      }
-    }
+    // The freshly extracted bundle is patched by the "start" hook, which always
+    // follows setup in the same app:start dispatch (see bundle-patches.ts).
   }
 
   // -------------------------------------------------------------------------
@@ -704,6 +690,21 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
             // Before any workspace iframe loads, so the first webview already
             // resolves to the bundle's shell rather than the baked-in CDN.
             registerWebviewInterceptor();
+
+            // Fix the vendored bundle's upstream bugs before the server can serve
+            // a single byte of it. Setup has already downloaded it if it was
+            // missing; patches are idempotent, so installs that predate a patch
+            // are fixed here too. Throws in dev if a patch no longer matches the
+            // bundle, so a version bump can't silently un-fix it (bundle-patches.ts).
+            await applyBundlePatches(
+              {
+                fileSystemLayer: deps.fileSystemLayer,
+                logger,
+                platform: deps.platform,
+                isPackaged: deps.buildInfo.isPackaged,
+              },
+              resolveIdeServerPaths().ideServerDir
+            );
 
             // Ensure required directories exist
             await Promise.all([
