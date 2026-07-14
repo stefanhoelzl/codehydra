@@ -242,8 +242,10 @@ export interface AppHandle {
  * a packaged Electron app plus a VSCodium server plus an opencode server is not
  * something to run several of at once.
  *
- * `cold: true` skips the reset and the launch entirely; the cold-start spec drives
- * both itself, because it needs to assert on what happens during startup.
+ * `cold: true` hands back a driver but does not reset or launch: the cold-start
+ * spec does both itself, inside its test, because it has to assert on the empty
+ * root first and then watch the wizard come up. Teardown is shared either way —
+ * that is the point of routing every spec through here.
  */
 export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): AppHandle {
   let driver: AppDriver;
@@ -253,6 +255,9 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
   // TestInfo without taking one.
   test.beforeAll(async () => {
     driver = createDriver();
+    // A worker is reused across spec files, so a previous file's launch would
+    // otherwise still be the window we read logs from.
+    launchedAt = 0;
     if (options.cold) return;
     // The warm projects are named after the agent they exercise.
     const agent = options.agent ?? (test.info().project.name as Agent);
@@ -265,10 +270,13 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
     await driver?.stop();
 
     // After stop, so the shutdown path is covered too. Every spec gets this for
-    // free: an error logged behind the IPC boundary fails the spec even when every
-    // assertion in it passed. `cold: true` never launched, so there is nothing to
-    // read — the cold-start spec asserts this itself.
-    if (!options.cold) expectNoErrorLogs();
+    // free: an error logged behind the IPC boundary fails it even when every
+    // assertion in it passed.
+    //
+    // Keyed on "did anything launch", not on `cold`: a cold spec launches itself,
+    // and gating on the flag would quietly exempt exactly the run that downloads
+    // and patches the bundle.
+    if (launchedAt !== 0) expectNoErrorLogs();
   });
 
   return () => driver;
