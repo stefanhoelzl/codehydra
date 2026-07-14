@@ -65,8 +65,17 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
   return flags;
 }
 
+/**
+ * When the app under test was launched. `expectNoErrorLogs` reads only entries
+ * from here on, so one spec's failure doesn't resurface in every later one (the
+ * logs directory outlives a single app).
+ */
+let launchedAt = 0;
+
 export async function launchApp(driver: AppDriver, options: LaunchAppOptions = {}): Promise<void> {
   const args = await appFlags(options);
+  // Before launch, not after: the app logs from its very first tick.
+  launchedAt = Date.now();
   await driver.launch({
     ...(mode() === "packaged" && { executablePath: packagedExecutable(), appPath: null }),
     cwd: REPO_ROOT,
@@ -151,6 +160,79 @@ export async function expectNoNativeDialogs(driver: AppDriver): Promise<void> {
   expect(dialogs, `the app raised native dialog(s): ${JSON.stringify(dialogs)}`).toEqual([]);
 }
 
+/** One entry of the app's JSONL log. */
+interface LogEntry {
+  readonly timestamp?: string;
+  readonly level?: string;
+  readonly scope?: string;
+  readonly message?: string;
+  readonly context?: Record<string, unknown>;
+}
+
+/** Every log entry the main process wrote since `since` (ms epoch). */
+function mainProcessLog(since: number): LogEntry[] {
+  const logsDir = join(DATA_ROOT, "logs");
+  if (!existsSync(logsDir)) return [];
+
+  const entries: LogEntry[] = [];
+  // electron.log is Electron's own stream, not ours.
+  for (const file of readdirSync(logsDir).filter(
+    (f) => f.endsWith(".log") && f !== "electron.log"
+  )) {
+    for (const line of readFileSync(join(logsDir, file), "utf-8").split("\n")) {
+      if (line.trim() === "") continue;
+      let entry: LogEntry;
+      try {
+        entry = JSON.parse(line) as LogEntry;
+      } catch {
+        continue; // not a JSONL line (the file is written with --log.format=json)
+      }
+      // Scope to this spec's launch: the logs dir outlives a single app, so
+      // without this a failure would resurface in every later spec.
+      const at = entry.timestamp === undefined ? NaN : Date.parse(entry.timestamp);
+      if (Number.isNaN(at) || at >= since) entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+/** Render an entry the way a human would want to read it in a failure. */
+function formatEntry(entry: LogEntry): string {
+  const scope = entry.scope === undefined ? "" : `[${entry.scope}] `;
+  const context =
+    entry.context === undefined || Object.keys(entry.context).length === 0
+      ? ""
+      : ` ${JSON.stringify(entry.context)}`;
+  return `${scope}${entry.message ?? "(no message)"}${context}`;
+}
+
+/**
+ * Fail if the **main process** logged at error level.
+ *
+ * The renderer has its own console check (see the specs); this covers everything
+ * behind the IPC boundary, which is where the interesting failures hide: a broken
+ * bundle patch, a failed git op, a dead server. All of those log and carry on, so
+ * without this the app looks fine and the spec passes.
+ *
+ * This is what makes a stale bundle patch a red build. Packaged builds
+ * deliberately do not throw when a patch stops matching (that would take down
+ * every workspace over one broken feature) — they log at error level and start.
+ * The e2e run is packaged, so this assertion is the thing that notices.
+ *
+ * Strict on purpose: the suite currently produces zero error entries, so there is
+ * no allow-list to erode. If a legitimate error appears, silence it at the source
+ * or downgrade it — do not add an exception here.
+ */
+export function expectNoErrorLogs(): void {
+  const errors = mainProcessLog(launchedAt).filter((e) => e.level === "error");
+
+  expect(
+    errors.map(formatEntry),
+    "the app logged error(s) in the main process — it kept running, but something it " +
+      "depends on is broken"
+  ).toEqual([]);
+}
+
 export interface AppHandle {
   (): AppDriver;
 }
@@ -181,6 +263,12 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
 
   test.afterAll(async () => {
     await driver?.stop();
+
+    // After stop, so the shutdown path is covered too. Every spec gets this for
+    // free: an error logged behind the IPC boundary fails the spec even when every
+    // assertion in it passed. `cold: true` never launched, so there is nothing to
+    // read — the cold-start spec asserts this itself.
+    if (!options.cold) expectNoErrorLogs();
   });
 
   return () => driver;

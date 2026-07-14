@@ -17,6 +17,7 @@ import { createDriver, type AppDriver } from "../scripts/appctrl";
 import {
   DATA_ROOT,
   ROOT_DIR,
+  expectNoErrorLogs,
   expectNoNativeDialogs,
   failFastOnSetupError,
   launchApp,
@@ -80,6 +81,12 @@ test("first run: pick OpenCode, download its binary, reach the app", async () =>
 
     // Startup failures surface as a native error box, which would otherwise just hang.
     await expectNoNativeDialogs(driver);
+
+    // Nothing behind the IPC boundary failed quietly on the way up. This run is the
+    // one that downloads the VSCodium bundle and patches it, so it is where a patch
+    // that no longer matches upstream shows up — packaged builds log that error and
+    // start anyway (src/modules/ide-server-module/bundle-patches.ts).
+    expectNoErrorLogs();
   } finally {
     await driver.stop();
   }
