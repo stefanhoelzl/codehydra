@@ -91,6 +91,12 @@ export const workspaceSwitchedPayloadSchema = z
     projectPath: z.string(),
     workspaceName: workspaceNameSchema,
     path: z.string(),
+    /** The workspace's raw domain metadata, as resolved at switch time. It is
+     *  the baseline consumers can't reconstruct from workspace:metadata-changed
+     *  alone: metadata persists in git config across restarts, so a title set in
+     *  an earlier run never re-emits as a change. Consumers interpret it (see
+     *  `readTitle`/`extractTags`) and keep the meanings, never the raw map. */
+    metadata: z.record(z.string(), z.string()).readonly(),
   })
   .readonly();
 
@@ -320,7 +326,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName, active } = await ctx.dispatch({
+    const { projectPath, workspaceName, active, metadata } = await ctx.dispatch({
       type: INTENT_RESOLVE_WORKSPACE,
       payload: { workspacePath: payload.workspacePath },
     } as ResolveWorkspaceIntent);
@@ -359,6 +365,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
         projectPath,
         workspaceName,
         path: resolvedPath,
+        metadata,
       },
     };
     ctx.emit(event);

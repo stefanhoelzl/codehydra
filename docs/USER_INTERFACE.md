@@ -43,7 +43,7 @@ The sidebar minimizes by default to 20px, showing status indicators only. Hover 
 - **Sidebar**: 250px wide when expanded, 20px when minimized (hover to expand)
 - **VS Code area**: Starts at x=20px, expanded sidebar overlays it
 - **Window minimum size**: 800x600
-- **Window title**: "CodeHydra - Project / Workspace - (version)" or "CodeHydra - (version)" if no workspace
+- **Window title**: "Title / Workspace / Project - CodeHydra (version)", dropping the leading "Title / " when the workspace has no user-given title, or "CodeHydra (version)" if no workspace. Most-specific-first so the workspace survives taskbar truncation; the title is the workspace metadata `title`, shown alongside the branch name rather than replacing it
 - **Update available**: Title includes " - (X.Y.Z update available)" suffix when an update is downloaded and ready
 
 ### Sidebar Expansion Behavior

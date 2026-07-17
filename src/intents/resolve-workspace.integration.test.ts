@@ -92,7 +92,25 @@ describe("ResolveWorkspaceOperation Integration", () => {
         active: false,
         // Defaults to null when no handler provides a branch.
         branch: null,
+        // Defaults to empty when no handler provides metadata.
+        metadata: {},
       });
+    });
+
+    it("returns the metadata when a handler provides it", async () => {
+      const { dispatcher } = createTestSetup(
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectPath: PROJECT_PATH,
+            workspaceName: WORKSPACE_NAME,
+            metadata: { title: "Fix login bug", hibernated: "true" },
+          },
+        })
+      );
+
+      const result = await dispatcher.dispatch(resolveIntent(WORKSPACE_PATH));
+
+      expect(result.metadata).toEqual({ title: "Fix login bug", hibernated: "true" });
     });
 
     it("returns the branch when a handler provides it", async () => {

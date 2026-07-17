@@ -51,6 +51,8 @@ export interface MockWorkspaceEntry {
   readonly branch?: string | null;
   /** Explicit active flag; when omitted, derived from the viewManager (if any). */
   readonly active?: boolean;
+  /** Raw domain metadata; when omitted, resolve defaults it to empty. */
+  readonly metadata?: Readonly<Record<string, string>>;
 }
 
 export interface MockProjectEntry {
@@ -87,7 +89,10 @@ export interface TestMockConfig {
 /** Minimal project shape for {@link workspacesFromProjects}. */
 export interface ProjectWithWorkspaces {
   readonly path: string;
-  readonly workspaces?: ReadonlyArray<{ readonly path: string }>;
+  readonly workspaces?: ReadonlyArray<{
+    readonly path: string;
+    readonly metadata?: Readonly<Record<string, string>>;
+  }>;
 }
 
 /**
@@ -100,10 +105,12 @@ export function workspacesFromProjects(
 ): (workspacePath: string) => MockWorkspaceEntry | undefined {
   return (workspacePath) => {
     for (const project of getProjects()) {
-      if (project.workspaces?.some((w) => w.path === workspacePath)) {
+      const workspace = project.workspaces?.find((w) => w.path === workspacePath);
+      if (workspace) {
         return {
           projectPath: project.path,
           workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
+          ...(workspace.metadata !== undefined && { metadata: workspace.metadata }),
         };
       }
     }

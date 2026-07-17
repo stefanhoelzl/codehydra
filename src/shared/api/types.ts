@@ -146,6 +146,27 @@ export function extractTags(metadata: Readonly<Record<string, string>>): Workspa
 }
 
 // =============================================================================
+// Workspace Title
+// =============================================================================
+
+/** Metadata key holding a workspace's user-given display title. */
+export const TITLE_METADATA_KEY = "title";
+
+/**
+ * Interpret a raw metadata `title` into a display title: trim, and treat an
+ * empty string as unset (undefined) so an emptied title reverts to the branch
+ * name. Shared so every consumer (sidebar rows, window title) falls back
+ * identically.
+ *
+ * @param value Raw metadata value; null/undefined when the key is unset
+ * @returns The trimmed title, or undefined when there is none
+ */
+export function readTitle(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+// =============================================================================
 // Domain Types — re-exported type-only from the intent contract
 // =============================================================================
 // zod is the single source of truth for these (src/intents/contract). Type-only re-exports,

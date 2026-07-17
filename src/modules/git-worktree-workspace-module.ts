@@ -111,6 +111,7 @@ export function createGitWorktreeWorkspaceModule(
         projectPath: string;
         workspaceName: WorkspaceName;
         branch: string | null;
+        metadata: Readonly<Record<string, string>>;
       }
     | undefined {
     const normalizedPath = new Path(workspacePath).toString();
@@ -125,6 +126,7 @@ export function createGitWorktreeWorkspaceModule(
             // case-sensitive name matching for uppercase workspace names.
             workspaceName: ws.name as WorkspaceName,
             branch: ws.branch,
+            metadata: ws.metadata,
           };
         }
       }
