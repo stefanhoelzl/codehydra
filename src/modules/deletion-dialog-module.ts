@@ -151,6 +151,8 @@ interface RemoveConfirmState {
   readonly workspaceName: string;
   /** The background dirty/unmerged status check is still running. */
   readonly checking: boolean;
+  /** The background status check failed — dirty/unmerged state is unknown. */
+  readonly checkFailed: boolean;
   readonly isDirty: boolean;
   readonly unmergedCommits: number;
   /** Base branch name (workspace metadata), for the unmerged warning text. */
@@ -165,7 +167,16 @@ function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
   ];
 
   if (state.checking) {
-    sections.push({ type: "text", content: "Checking workspace status...", style: "subtitle" });
+    // Warning, not a dim subtitle: Remove is live while the check runs, so
+    // "we don't know yet whether this loses your work" is a caution to weigh.
+    sections.push({ type: "text", content: "Checking workspace status...", style: "warning" });
+  } else if (state.checkFailed) {
+    sections.push({
+      type: "text",
+      content:
+        "Could not check workspace status. Uncommitted changes or unmerged commits may be lost.",
+      style: "warning",
+    });
   } else {
     if (state.isDirty) {
       sections.push({
@@ -346,6 +357,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     let state: RemoveConfirmState = {
       workspaceName: input.workspaceName,
       checking: true,
+      checkFailed: false,
       isDirty: false,
       unmergedCommits: 0,
       base: undefined,
@@ -355,8 +367,8 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     let dialogOpen = true;
 
     // Background status check (refresh fetches remotes — slow). Never blocks
-    // the dialog; failures fall back to "no warnings", like the old renderer
-    // dialog did.
+    // the dialog; a failure warns that the status is unknown rather than
+    // silently rendering as "verified clean".
     void (async (): Promise<void> => {
       try {
         const [status, metadata] = await Promise.all([
@@ -372,16 +384,17 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         state = {
           ...state,
           checking: false,
+          checkFailed: false,
           isDirty: status.isDirty,
           unmergedCommits: status.unmergedCommits,
           base: metadata["base"],
         };
       } catch (error) {
-        deps.logger.debug("Remove-confirm status check failed", {
+        deps.logger.warn("Remove-confirm status check failed", {
           workspace: input.workspacePath,
           error: getErrorMessage(error),
         });
-        state = { ...state, checking: false };
+        state = { ...state, checking: false, checkFailed: true };
       }
       if (dialogOpen) {
         handle.update(buildRemoveConfirmConfig(state));
