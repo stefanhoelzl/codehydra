@@ -33,7 +33,7 @@ Supported platforms:
 
 ## Links
 
-- [Website](https://codehydra.dev)
+- [Website](https://codehydra.stho.net)
 - [GitHub Repository](https://github.com/stefanhoelzl/codehydra)
 - [Releases](https://github.com/stefanhoelzl/codehydra/releases)
 
