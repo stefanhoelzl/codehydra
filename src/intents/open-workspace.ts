@@ -36,7 +36,7 @@ import {
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
-import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
+import { throwHookErrors, mergeHookResults, lastDefined } from "./lib/hook-helpers";
 
 export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
 export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
@@ -135,6 +135,9 @@ export const setupResultSchema = z
     /** Selected agent backend, contributed by the active agent module.
      *  Operation-consumed (no sibling requires), so a result — not a capability. */
     agentType: agentTypeSchema.nullable().optional(),
+    /** Metadata keys this handler wrote, folded into the create hook's snapshot
+     *  so the workspace:created event carries them. See mergeMetadata. */
+    metadata: z.record(z.string(), z.string()).readonly().optional(),
   })
   .readonly();
 
@@ -149,8 +152,15 @@ const finalizeInputSchema = hookCtxSchema(
   finalizeEnrichmentSchema.shape
 );
 
-/** The "finalize" hook produces the workspace URL string (only the IDE server contributes one). */
-const finalizeResultSchema = z.string();
+/** Result from the "finalize" hook point. Fields optional — handlers contribute a subset
+ *  (the IDE server is the only one producing a URL). */
+export const finalizeResultSchema = z
+  .object({
+    workspaceUrl: z.string().optional(),
+    /** Metadata keys this handler wrote — folded in like the setup contributions. */
+    metadata: z.record(z.string(), z.string()).readonly().optional(),
+  })
+  .readonly();
 
 // =============================================================================
 // Event payload schemas (events defined in this file)
@@ -221,6 +231,7 @@ export type OpenWorkspaceIntent = IntentOf<typeof schemas>;
 
 export type CreateHookResult = z.infer<typeof createResultSchema>;
 export type SetupHookResult = z.infer<typeof setupResultSchema>;
+export type FinalizeHookResult = z.infer<typeof finalizeResultSchema>;
 
 /** Input context for the "create" hook point (enriched with resolved project path). */
 export type CreateHookInput = HookContext & z.infer<typeof createEnrichmentSchema>;
@@ -251,6 +262,19 @@ export interface WorkspaceCreateFailedEvent extends DomainEvent {
 // =============================================================================
 // Operation
 // =============================================================================
+
+/**
+ * Folds a hook handler's metadata contribution into the accumulator, last write
+ * winning per key. Unlike mergeHookResults' conflict-throw — right for fields like
+ * workspacePath, where two providers means a bug — contributing disjoint metadata
+ * keys is the intended use, so a duplicate key must not fail workspace creation.
+ */
+function mergeMetadata(
+  target: Record<string, string>,
+  contribution: Readonly<Record<string, string>> | undefined
+): void {
+  if (contribution) Object.assign(target, contribution);
+}
 
 export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
@@ -316,6 +340,13 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       throw new Error("Create hook did not provide all required fields");
     }
 
+    // Metadata written by later hook points folds into the create snapshot, so the
+    // workspace:created event (and the returned Workspace) carry it. Without this a
+    // setup/finalize write would only surface after a restart re-read git config:
+    // its workspace:metadata-changed event lands before the row exists and the
+    // presenter drops it (presentation-module.ts, EVENT_METADATA_CHANGED).
+    const mergedMetadata: Record<string, string> = { ...metadata };
+
     // Hook 3b: "setup" — keepfiles is best-effort (internal try/catch), agent is fatal
     const setupCtx: SetupHookInput = {
       intent: ctx.intent,
@@ -338,6 +369,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       if (result.agentType != null) {
         agentType = result.agentType;
       }
+      mergeMetadata(mergedMetadata, result.metadata);
     }
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
@@ -347,16 +379,18 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       envVars,
       agentType,
     };
-    const { errors: finalizeErrors, results: finalizeResults } = await ctx.hooks.collect<string>(
-      "finalize",
-      finalizeCtx
-    );
+    const { errors: finalizeErrors, results: finalizeResults } =
+      await ctx.hooks.collect<FinalizeHookResult>("finalize", finalizeCtx);
 
     throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
-    // Only the IDE server produces a finalize result (the workspace URL); the other
-    // finalize handler (plugin-server) returns void, so results[0] is the URL.
-    const workspaceUrl = finalizeResults[0];
+    for (const result of finalizeResults) {
+      mergeMetadata(mergedMetadata, result.metadata);
+    }
+
+    // Only the IDE server contributes a workspace URL; other finalize handlers
+    // contribute metadata or nothing at all.
+    const workspaceUrl = lastDefined(finalizeResults, (result) => result.workspaceUrl);
     if (!workspaceUrl) {
       throw new Error("Finalize hook did not provide workspaceUrl");
     }
@@ -373,7 +407,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       projectId,
       name: resolvedWorkspaceName,
       branch,
-      metadata,
+      metadata: mergedMetadata,
       path: workspacePath,
       url: workspaceUrl,
     };
@@ -388,7 +422,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       branch,
       ...(eventBase !== undefined && { base: eventBase }),
       ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
-      metadata,
+      metadata: mergedMetadata,
       workspaceUrl,
       ...(ctx.intent.payload.agent !== undefined && {
         agent: ctx.intent.payload.agent,
