@@ -130,6 +130,68 @@ const OSC52_CLIPBOARD: TextPatch = {
 };
 
 /**
+ * Persist extension secrets (sign-in tokens).
+ *
+ * `context.secrets` is where extensions keep credentials — the GitHub Pull
+ * Requests extension reaches it through `vscode.authentication.getSession`, which
+ * the built-in `github-authentication` extension backs with a secret under
+ * `{"extensionId":"vscode.github-authentication","key":"github.auth"}`. The
+ * extension host is remote, so that call proxies to the *workbench page's*
+ * `ISecretStorageService`: the iframe decides where the token lives, not the
+ * server.
+ *
+ * In web, that service never persists on its own. `BrowserSecretStorageService`
+ * hands its base class `_useInMemoryStorage: true` outright (`super(!0,…)`), and
+ * the browser's encryption service answers `isEncryptionAvailable()` with a flat
+ * `false`, so the one remaining branch logs "Encryption is not available, falling
+ * back to in-memory storage" and keeps secrets in a plain `Map`. The only escape
+ * is an embedder-supplied `secretStorageProvider`, and the workbench bootstrap
+ * gates that on:
+ *
+ *     secretStorageProvider: config.remoteAuthority && !secretKeyPath ? void 0 : new LocalStorageSecretStorageProvider(crypto)
+ *
+ * reh-web always sets `remoteAuthority` (the server fills it from the request
+ * host), and `secretKeyPath` comes from a `vscode-secret-key-path` cookie that
+ * only Codespaces-style embedders set — nothing in the bundle or in CodeHydra
+ * does. So the provider is always `undefined` and every secret lives in the
+ * iframe's heap: a token minted in one workspace is invisible to the next, and any
+ * reload, hibernation or restart drops it. That is the whole bug — users had to
+ * sign in to GitHub again in every workspace, over and over.
+ *
+ * This is a regression from our own migration, not new upstream breakage.
+ * code-server — the IDE server we shipped before VSCodium — patched this exact
+ * expression, replacing the cookie lookup with a path it always computes
+ * (`location.pathname + "/mint-key"`), so `!secretKeyPath` was never true and the
+ * provider was always installed, sealed against a 256-bit key from its own
+ * `/mint-key` route. Stock VSCodium has no such route and no such patch.
+ *
+ * Forcing the provider on restores persistence. The crypto argument is whatever
+ * the bootstrap already built, which — with the cookie absent — is the
+ * *transparent* crypto, so secrets land as plaintext JSON in `localStorage` under
+ * `secrets.provider`. That is a deliberate trade: every workspace is an iframe on
+ * the same `127.0.0.1` origin inside the shared `persist:codehydra-global`
+ * partition, so localStorage is exactly the storage that makes one sign-in cover
+ * every workspace and survive a restart. code-server's encryption bought little
+ * over it — its key came from an unauthenticated localhost route that any local
+ * process could mint from, the same process that could already read the
+ * partition off disk.
+ *
+ * A `secrets.provider` blob left behind by the code-server era is sealed with a
+ * key we no longer have, so the provider's `load()` fails to `JSON.parse` it,
+ * catches, and clears the key — old data degrades to a fresh sign-in rather than
+ * breaking startup.
+ */
+const SECRET_STORAGE_PERSISTENCE: TextPatch = {
+  id: "secret-storage-persistence",
+  file: "out/vs/code/browser/workbench/workbench.js",
+  find: /secretStorageProvider:[\w$]+\.remoteAuthority&&![\w$]+\?void 0:new ([\w$]+)\(([\w$]+)\)/g,
+  replace: (provider, crypto) => `secretStorageProvider:new ${provider}(${crypto})`,
+  applied: /secretStorageProvider:new [\w$]+\([\w$]+\)/,
+  whenMissing:
+    "extension sign-ins (e.g. the GitHub Pull Requests extension) will not persist and must be repeated in every workspace",
+};
+
+/**
  * Forward-slash-normalize the native file watcher's ignore globs (Windows only).
  *
  * `@parcel/watcher` compiles each glob `ignore` pattern into a C++ `std::regex`
@@ -166,7 +228,11 @@ const WATCHER_IGNORE_SEPARATORS: TextPatch = {
 };
 
 /** Every patch. */
-const TEXT_PATCHES: readonly TextPatch[] = [OSC52_CLIPBOARD, WATCHER_IGNORE_SEPARATORS];
+const TEXT_PATCHES: readonly TextPatch[] = [
+  OSC52_CLIPBOARD,
+  SECRET_STORAGE_PERSISTENCE,
+  WATCHER_IGNORE_SEPARATORS,
+];
 
 // =============================================================================
 // Engine
