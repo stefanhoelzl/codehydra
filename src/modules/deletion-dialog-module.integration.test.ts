@@ -557,6 +557,12 @@ describe("DeletionDialogModule - remove confirm", () => {
       `Remove workspace "${WS_NAME_A}"?`,
       "Checking workspace status...",
     ]);
+    // Remove is live while the check runs, so the notice carries the warning style.
+    expect(handle.config.sections).toContainEqual({
+      type: "text",
+      content: "Checking workspace status...",
+      style: "warning",
+    });
     expect(handle.config.sections).toContainEqual({
       type: "checkbox",
       id: "keep-branch",
@@ -593,7 +599,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     await pending;
   });
 
-  it("falls back to no warnings when the status check fails", async () => {
+  it("warns that the status is unknown when the check fails", async () => {
     const setup = createConfirmSetup();
     const pending = setup.confirm();
 
@@ -602,8 +608,17 @@ describe("DeletionDialogModule - remove confirm", () => {
       expect(setup.dialogManager.lastHandle!.configs.length).toBeGreaterThan(1);
     });
 
-    const texts = textsOf(setup.dialogManager.lastHandle!.config);
-    expect(texts).toEqual(["Remove Workspace", `Remove workspace "${WS_NAME_A}"?`]);
+    const config = setup.dialogManager.lastHandle!.config;
+    expect(textsOf(config)).toEqual([
+      "Remove Workspace",
+      `Remove workspace "${WS_NAME_A}"?`,
+      "Could not check workspace status. Uncommitted changes or unmerged commits may be lost.",
+    ]);
+    // A failed check must not render as a verified-clean workspace.
+    const warnings = config.sections.filter(
+      (s) => s.type === "text" && "style" in s && s.style === "warning"
+    );
+    expect(warnings).toHaveLength(1);
 
     setup.dialogManager.lastHandle!.emitAction("cancel");
     await pending;
