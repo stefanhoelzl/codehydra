@@ -8,12 +8,18 @@
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
-import { createSessionBoundaryMock } from "../../boundaries/shell/session.state-mock";
+import {
+  createSessionBoundaryMock,
+  type MockSessionBoundary,
+} from "../../boundaries/shell/session.state-mock";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The patches' own behavior is covered in bundle-patches.integration.test.ts;
 // here we only assert the start hook wires them in, against the bundle dir.
-vi.mock("./bundle-patches", () => ({ applyBundlePatches: vi.fn().mockResolvedValue(undefined) }));
+// Resolves false by default — the steady state is a bundle that is already
+// patched. Passed as vi.fn's implementation rather than mockResolvedValue so the
+// suite's `mockReset` restores it between tests; a rewrite is opted into per test.
+vi.mock("./bundle-patches", () => ({ applyBundlePatches: vi.fn(async () => false) }));
 import { delimiter, join } from "node:path";
 
 import { z } from "zod/v4";
@@ -639,6 +645,56 @@ describe("IdeServerModule", () => {
       const patchedAt = vi.mocked(applyBundlePatches).mock.invocationCallOrder[0]!;
       const startedAt = vi.mocked(deps.portManager.isPortAvailable).mock.invocationCallOrder[0]!;
       expect(patchedAt).toBeLessThan(startedAt);
+    });
+
+    /** How many times the workspace session's caches were dropped. */
+    function cacheClears(deps: ReturnType<typeof createMockDeps>): number {
+      const sessionLayer = deps.sessionLayer as MockSessionBoundary;
+      const handle = sessionLayer.fromPartition("persist:test");
+      return sessionLayer.$.sessions.get(handle.id)?.cacheClearCount ?? 0;
+    }
+
+    it("drops the stale caches when a patch rewrote the bundle", async () => {
+      vi.mocked(applyBundlePatches).mockResolvedValue(true);
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // The distribution serves the workbench with a year-long Cache-Control and
+      // no ETag, under a URL a patch does not change — so without this the iframe
+      // keeps loading the copy it cached before the patch existed.
+      expect(cacheClears(deps)).toBe(1);
+    });
+
+    it("leaves the caches alone when every patch was already applied", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Steady state on every startup: re-fetching 17 MB would cost real time
+      // for nothing.
+      expect(cacheClears(deps)).toBe(0);
+    });
+
+    it("starts the server anyway when the caches refuse to clear", async () => {
+      vi.mocked(applyBundlePatches).mockResolvedValue(true);
+      const deps = createMockDeps();
+      const sessionLayer = deps.sessionLayer as MockSessionBoundary;
+      vi.spyOn(sessionLayer, "clearCache").mockRejectedValue(new Error("cache locked"));
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      const ideServerPort = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as number | undefined;
+
+      // A cache that will not clear costs the patch, not every workspace.
+      expect(ideServerPort).toBe(25448);
     });
 
     it("checks port availability before spawning", async () => {

@@ -146,6 +146,19 @@ export interface SessionBoundary {
   setProtocolHandler(handle: SessionHandle, scheme: string, interceptor: ProtocolInterceptor): void;
 
   /**
+   * Drop everything this session has cached for the content it loads: the HTTP
+   * cache and the V8 code cache derived from it.
+   *
+   * Caches only — never storage. Cookies, localStorage and IndexedDB are
+   * untouched, so the extension `globalState` and `secretStorage` that live in
+   * this partition survive the call.
+   *
+   * @param handle - Handle to the session
+   * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
+   */
+  clearCache(handle: SessionHandle): Promise<void>;
+
+  /**
    * Dispose of all resources.
    */
   dispose(): Promise<void>;
@@ -256,6 +269,18 @@ export class DefaultSessionBoundary implements SessionBoundary {
     });
 
     this.logger.debug("Protocol handler set", { id: handle.id, scheme });
+  }
+
+  async clearCache(handle: SessionHandle): Promise<void> {
+    const state = this.getSession(handle);
+
+    // Both, and in this order: clearCache drops the response bodies, and
+    // clearCodeCaches ({urls: []} means every entry) drops the compiled form
+    // Chromium kept alongside them.
+    await state.session.clearCache();
+    await state.session.clearCodeCaches({ urls: [] });
+
+    this.logger.debug("Session cache cleared", { id: handle.id });
   }
 
   async dispose(): Promise<void> {

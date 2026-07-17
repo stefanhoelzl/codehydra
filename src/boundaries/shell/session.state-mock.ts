@@ -48,6 +48,11 @@ export interface MockSessionState {
    * drive them directly and assert what a URL resolves to.
    */
   readonly protocolInterceptors: ReadonlyMap<string, ProtocolInterceptor>;
+  /**
+   * How many times the caches were dropped. A count, not a flag: whether a
+   * startup clears once or not at all is the behavior under test.
+   */
+  readonly cacheClearCount: number;
 }
 
 /**
@@ -85,6 +90,7 @@ interface MutableSessionState {
   hasPermissionCheckHandler: boolean;
   hasHeadersReceivedHandler: boolean;
   protocolInterceptors: Map<string, ProtocolInterceptor>;
+  cacheClearCount: number;
 }
 
 class SessionBoundaryMockStateImpl implements SessionBoundaryMockState {
@@ -210,6 +216,7 @@ export function createSessionBoundaryMock(
         hasPermissionCheckHandler: sessionState.hasPermissionCheckHandler ?? false,
         hasHeadersReceivedHandler: sessionState.hasHeadersReceivedHandler ?? false,
         protocolInterceptors: new Map(),
+        cacheClearCount: 0,
       });
       partitionToId.set(partition, id);
     }
@@ -239,6 +246,7 @@ export function createSessionBoundaryMock(
         hasPermissionCheckHandler: false,
         hasHeadersReceivedHandler: false,
         protocolInterceptors: new Map(),
+        cacheClearCount: 0,
       });
       partitionToId.set(partition, id);
 
@@ -270,6 +278,11 @@ export function createSessionBoundaryMock(
     ): void {
       const session = getSession(handle);
       session.protocolInterceptors.set(scheme, interceptor);
+    },
+
+    async clearCache(handle: SessionHandle): Promise<void> {
+      const session = getSession(handle);
+      session.cacheClearCount++;
     },
 
     async dispose(): Promise<void> {
