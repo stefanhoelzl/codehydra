@@ -311,7 +311,32 @@ describe("applyBundlePatches", () => {
   it("never throws when the bundle is missing entirely", async () => {
     const fsLayer = createFileSystemMock();
 
-    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBeUndefined();
+    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(false);
+  });
+
+  it("reports a rewrite, so the caller knows the caches are now stale", async () => {
+    const fsLayer = bundle();
+
+    // The bundle on disk no longer matches what the IDE server may have served.
+    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(true);
+  });
+
+  it("reports no rewrite once every patch is already applied", async () => {
+    const fsLayer = bundle();
+
+    await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
+
+    // Steady state: nothing changed, so nothing needs invalidating.
+    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(false);
+  });
+
+  it("reports no rewrite when a patch merely drifted", async () => {
+    // Nothing was written, so there is nothing to invalidate — a stale anchor
+    // must not also cost a cache.
+    const fsLayer = createFileSystemMock();
+    fsLayer.$.setEntry(WORKBENCH, file("async writeText(y,w){return g.setClipboard(w,y)}"));
+
+    await expect(applyBundlePatches(deps(fsLayer, "linux"), "/bundle")).resolves.toBe(false);
   });
 });
 
@@ -372,7 +397,7 @@ describe("when a patch no longer matches the bundle", () => {
         { fileSystemLayer: fsLayer, logger, platform: "linux", isPackaged: true },
         "/bundle"
       )
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
 
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("neither the original nor the patched shape found"),
@@ -389,8 +414,8 @@ describe("when a patch no longer matches the bundle", () => {
       isPackaged: false,
     };
 
-    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBeUndefined();
+    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBe(true);
     // Second startup: everything is already applied, still no throw.
-    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBeUndefined();
+    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBe(false);
   });
 });

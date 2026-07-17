@@ -32,6 +32,16 @@
  * its own marker (`applied`), so there is no sidecar marker file that could go
  * stale when the bundle is re-downloaded.
  *
+ * ## Patching the file is only half of it
+ *
+ * The distribution serves its static assets with a year-long `Cache-Control` and
+ * no ETag, under a URL keyed on the VSCodium commit — which patching does not
+ * change. A patched file on disk is therefore *not* a patched workbench in the
+ * iframe: the session keeps serving the copy it cached the first time it loaded
+ * that version, and the patch sits inert behind it. `applyBundlePatches` reports
+ * whether it rewrote anything so its caller can drop those caches; the `start`
+ * hook in `ide-server-module.ts` is where that happens, and why.
+ *
  * ## When a patch stops matching
  *
  * A patch that finds neither its original nor its patched shape has drifted from
@@ -320,14 +330,22 @@ export async function applyTextPatch(
 /**
  * Apply every bundle patch that targets this platform.
  *
+ * Returns whether any patch actually rewrote a file — i.e. whether the bundle on
+ * disk now differs from what the IDE server may already have served. The caller
+ * owes the caches an invalidation when it does; see the module doc.
+ *
  * Unpackaged (dev): a patch that cannot be applied throws, failing startup, so the
  * developer who bumped the bundle cannot miss it. Packaged: every failure is
  * logged and swallowed — one stale anchor must not keep the IDE server (and with
  * it every workspace) from starting. See the module doc.
  */
-export async function applyBundlePatches(deps: BundlePatchDeps, bundleDir: string): Promise<void> {
+export async function applyBundlePatches(
+  deps: BundlePatchDeps,
+  bundleDir: string
+): Promise<boolean> {
   const { fileSystemLayer, logger, platform, isPackaged } = deps;
   const failed: string[] = [];
+  let rewroteBundle = false;
 
   for (const patch of TEXT_PATCHES) {
     if (patch.platform !== undefined && patch.platform !== platform) continue;
@@ -335,6 +353,7 @@ export async function applyBundlePatches(deps: BundlePatchDeps, bundleDir: strin
     try {
       const result = await applyTextPatch({ fileSystemLayer, logger }, bundleDir, patch);
       logger.debug("Bundle patch pass complete", { id: patch.id, result });
+      if (result === "applied") rewroteBundle = true;
       if (result === "not-found") failed.push(patch.id);
     } catch (error) {
       // An I/O failure (unwritable bundle, …) rather than a stale anchor.
@@ -351,4 +370,6 @@ export async function applyBundlePatches(deps: BundlePatchDeps, bundleDir: strin
         `patterns in bundle-patches.ts. (Packaged builds log this and start anyway.)`
     );
   }
+
+  return rewroteBundle;
 }

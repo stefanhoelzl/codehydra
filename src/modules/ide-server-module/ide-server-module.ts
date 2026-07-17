@@ -159,7 +159,10 @@ export interface IdeServerModuleDeps {
    * Session the workspace iframes load in. The module intercepts the webview
    * shell requests on it (see `IdeServer.webviewAsset`).
    */
-  readonly sessionLayer: Pick<SessionBoundary, "fromPartition" | "setProtocolHandler">;
+  readonly sessionLayer: Pick<
+    SessionBoundary,
+    "fromPartition" | "setProtocolHandler" | "clearCache"
+  >;
   /** Partition name of that session. */
   readonly sessionPartition: string;
   readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
@@ -360,6 +363,30 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     );
 
     logger.debug("Webview interceptor registered", { partition: deps.sessionPartition });
+  }
+
+  /**
+   * Drop what the workspace iframes have cached of the bundle, so a freshly
+   * patched file is the one they actually load (see the `start` hook).
+   *
+   * Caches only: the session's cookies, localStorage and IndexedDB are left
+   * alone, so extension `globalState` and `secretStorage` — including the GitHub
+   * sign-in — survive. Best-effort, because a cache that refuses to clear is not
+   * worth failing every workspace over; the patch simply stays dormant until the
+   * next startup, which is where it already was.
+   */
+  async function clearIdeCaches(): Promise<void> {
+    try {
+      const handle = deps.sessionLayer.fromPartition(deps.sessionPartition);
+      await deps.sessionLayer.clearCache(handle);
+      logger.info("Cleared IDE caches after patching the bundle", {
+        partition: deps.sessionPartition,
+      });
+    } catch (error) {
+      logger.error("Failed to clear IDE caches; bundle patches may not take effect", {
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -696,7 +723,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
             // missing; patches are idempotent, so installs that predate a patch
             // are fixed here too. Throws in dev if a patch no longer matches the
             // bundle, so a version bump can't silently un-fix it (bundle-patches.ts).
-            await applyBundlePatches(
+            const rewroteBundle = await applyBundlePatches(
               {
                 fileSystemLayer: deps.fileSystemLayer,
                 logger,
@@ -705,6 +732,21 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
               },
               resolveIdeServerPaths().ideServerDir
             );
+
+            // A patched file on disk is not a patched workbench in the iframe.
+            // The distribution serves its static assets with `Cache-Control:
+            // public, max-age=31536000` and no ETag, under a URL keyed on the
+            // VSCodium commit — which a patch does not change. So the session
+            // holds a year-long, never-revalidated copy of the *unpatched*
+            // workbench, and every patch we apply is inert until that copy goes.
+            // Dropping the caches here — before the server can serve a request
+            // and long before the first iframe loads — is what makes a patch
+            // reach the user. Only when a patch actually rewrote something:
+            // steady state is "already-applied", and re-fetching 17 MB on every
+            // startup would be a real cost for no gain.
+            if (rewroteBundle) {
+              await clearIdeCaches();
+            }
 
             // Ensure required directories exist
             await Promise.all([
