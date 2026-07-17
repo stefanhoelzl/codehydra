@@ -183,6 +183,7 @@ import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createCreationModule } from "./modules/creation-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
+import { createAutoTaggingModule } from "./modules/auto-tagging-module";
 import { createGitHubSource } from "./modules/auto-workspace/github-source";
 import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 // Shared
@@ -715,6 +716,11 @@ const autoWorkspaceModule = createAutoWorkspaceModule({
   configService,
   stateService,
 });
+const autoTaggingModule = createAutoTaggingModule({
+  dispatcher,
+  configService,
+  logger: loggingService.createLogger("auto-tagging"),
+});
 
 // 7. New modules
 
@@ -922,6 +928,7 @@ dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(settingsModule.module);
 dispatcher.registerModule(autoWorkspaceModule);
+dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);

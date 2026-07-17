@@ -54,6 +54,7 @@ import type {
   SetupHookInput,
   SetupHookResult,
   FinalizeHookInput,
+  FinalizeHookResult,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
 } from "./open-workspace";
@@ -339,9 +340,9 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
             void (ctx as FinalizeHookInput).envVars;
-            return { result: workspaceUrl };
+            return { result: { workspaceUrl } };
           },
         },
       },
@@ -991,9 +992,9 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             finalize: {
-              handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
+              handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
                 capturedEnvVars = (ctx as FinalizeHookInput).envVars;
-                return { result: WORKSPACE_URL };
+                return { result: { workspaceUrl: WORKSPACE_URL } };
               },
             },
           },

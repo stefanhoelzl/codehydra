@@ -44,7 +44,7 @@ import type {
   ExtensionsHookInput,
   SetupProgressPayload,
 } from "../../intents/setup";
-import type { FinalizeHookInput } from "../../intents/open-workspace";
+import type { FinalizeHookInput, FinalizeHookResult } from "../../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../../intents/delete-workspace";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
@@ -950,7 +950,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
             let workspaceUrl: string;
             const finalizeCtx = ctx as FinalizeHookInput;
             const ide = getIdeServer();
@@ -977,7 +977,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
               workspaceUrl = ide.urlForFolder(ideServerPort, finalizeCtx.workspacePath);
             }
 
-            return { result: workspaceUrl };
+            return { result: { workspaceUrl } };
           },
         },
       },

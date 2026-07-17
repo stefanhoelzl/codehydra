@@ -53,7 +53,11 @@ import type {
   SetupProgressPayload,
 } from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
+import type {
+  FinalizeHookInput,
+  FinalizeHookResult,
+  OpenWorkspaceIntent,
+} from "../../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -247,7 +251,7 @@ class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
   async execute(
     ctx: OperationContext<IntentOf<typeof finalizeSchemas>>
   ): Promise<string | undefined> {
-    const { errors, results } = await ctx.hooks.collect<string>("finalize", {
+    const { errors, results } = await ctx.hooks.collect<FinalizeHookResult>("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
@@ -255,7 +259,7 @@ class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
-    return results[0];
+    return results[0]?.workspaceUrl;
   }
 }
 

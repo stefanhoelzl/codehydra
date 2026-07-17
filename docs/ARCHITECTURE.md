@@ -197,6 +197,7 @@ Services are pure Node.js for testability without Electron:
 | McpServerManager             | MCP server for AI agent workspace API access                                                       | Implemented |
 | PosthogModule                | PostHog analytics for DAU, version, platform, errors                                               | Implemented |
 | AutoUpdater                  | Check for updates daily, apply on quit (electron-updater)                                          | Implemented |
+| AutoTaggingModule            | Tag background-created workspaces `new`, clear the tag on first switch (`auto-tag.new`)            | Implemented |
 
 ### IDE Server boundary
 
