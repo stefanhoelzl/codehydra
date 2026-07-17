@@ -293,7 +293,24 @@ describe("SwitchWorkspace Operation", () => {
         projectPath: TEST_PROJECT_PATH,
         workspaceName: TEST_WORKSPACE_NAME,
         path: TEST_WORKSPACE_PATH,
+        metadata: {},
       });
+    });
+
+    it("carries the resolved workspace's metadata", async () => {
+      const project = createTestProject();
+      project.workspaces[0]!.metadata = { title: "Fix login bug", "tags.wip": "{}" };
+      const { dispatcher } = createTestSetup({ projects: [project] });
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await dispatcher.dispatch(switchIntent());
+
+      const event = receivedEvents[0] as WorkspaceSwitchedEvent;
+      expect(event.payload?.metadata).toEqual({ title: "Fix login bug", "tags.wip": "{}" });
     });
   });
 

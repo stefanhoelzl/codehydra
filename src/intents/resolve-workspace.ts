@@ -41,6 +41,9 @@ export const resolveWorkspaceResultSchema = z
     active: z.boolean(),
     /** Current branch name, or null for detached HEAD. */
     branch: z.string().nullable(),
+    /** The workspace's raw domain metadata. Consumers interpret it (never store
+     *  it raw) — see `readTitle`/`extractTags` in shared/api/types. */
+    metadata: z.record(z.string(), z.string()).readonly(),
   })
   .readonly();
 
@@ -51,6 +54,7 @@ export const resolveHookResultSchema = z
     workspaceName: workspaceNameSchema.optional(),
     active: z.boolean().optional(),
     branch: z.string().nullable().optional(),
+    metadata: z.record(z.string(), z.string()).readonly().optional(),
   })
   .readonly();
 
@@ -108,17 +112,19 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
     // branch can legitimately be null (detached HEAD), so track "provided"
     // separately from the null value.
     let branch: string | null = null;
+    let metadata: Readonly<Record<string, string>> = {};
     for (const r of results) {
       if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
       if (r.active === true) active = true;
       if (r.branch !== undefined) branch = r.branch;
+      if (r.metadata !== undefined) metadata = r.metadata;
     }
 
     if (!projectPath || !workspaceName) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    return { projectPath, workspaceName, active, branch };
+    return { projectPath, workspaceName, active, branch, metadata };
   }
 }

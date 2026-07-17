@@ -124,6 +124,7 @@ class MinimalSwitchOperation implements Operation<typeof switchOpSchemas> {
           projectPath: "/projects/test",
           workspaceName: workspaceName as WorkspaceName,
           path: resolvedPath,
+          metadata: {},
         },
       };
       ctx.emit(event);

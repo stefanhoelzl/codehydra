@@ -40,7 +40,7 @@ import type { IViewManager } from "../../boundaries/shell/view-manager.interface
 import type { Theme } from "../../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../../shared/api/types";
-import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
+import { extractTags, readTitle, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
 import {
   APP_SHUTDOWN_OPERATION_ID,
   INTENT_APP_SHUTDOWN,
@@ -228,15 +228,6 @@ interface WorkspaceModel {
   tags: WorkspaceTag[];
   url: string | undefined;
   creating: boolean;
-}
-
-/**
- * Interpret a raw metadata `title` into the model field: trim, and treat an
- * empty string as unset (undefined) so an emptied title reverts to the branch.
- */
-function readTitle(value: string | null | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
 }
 
 /** Interpret a workspace's domain metadata into the semantic model fields. */
