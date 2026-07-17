@@ -29,6 +29,17 @@ const REAL_WIRING =
   'async writeText(y,w){return g.writeText(w,y==="p"?"selection":"clipboard")}}),' +
   "this.raw.loadAddon(this._clipboardAddon))});";
 
+/** The workbench bootstrap's secretStorageProvider wiring, as shipped. */
+const REAL_SECRET_WIRING =
+  'const s=Xe.document.getElementById("vscode-workbench-web-configuration"),' +
+  'e=s?s.getAttribute("data-settings"):void 0;const t=JSON.parse(e),i=ldo("vscode-secret-key-path"),' +
+  "n=i&&Yns.supported()?new Yns(i):new odo;sdo(Xe.document.body,{...t," +
+  "urlCallbackProvider:new rdo(t.callbackRoute)," +
+  "secretStorageProvider:t.remoteAuthority&&!i?void 0:new Qns(n)})})();";
+
+/** The workbench as shipped, carrying both of its patch targets. */
+const REAL_WORKBENCH = REAL_WIRING + REAL_SECRET_WIRING;
+
 /** The normalizeOptions loop the watcher patch anchors on, as shipped. */
 const REAL_WRAPPER_LOOP =
   "  if (Array.isArray(ignore)) {\n" +
@@ -37,8 +48,8 @@ const REAL_WRAPPER_LOOP =
   "    for (const value of ignore) {\n" +
   "      if (isGlob(value)) {\n";
 
-/** A bundle carrying both patch targets. */
-function bundle(workbench: string = REAL_WIRING): MockFileSystemBoundary {
+/** A bundle carrying every patch target. */
+function bundle(workbench: string = REAL_WORKBENCH): MockFileSystemBoundary {
   const fsLayer = createFileSystemMock();
   fsLayer.$.setEntry(WRAPPER, file(REAL_WRAPPER_LOOP));
   fsLayer.$.setEntry(WORKBENCH, file(workbench));
@@ -112,6 +123,51 @@ describe("OSC 52 clipboard patch", () => {
       await applyBundlePatches(deps(fsLayer, platform), "/bundle");
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, '?"selection":void 0');
+    }
+  });
+});
+
+// =============================================================================
+// The secret-storage persistence patch, through the registry
+// =============================================================================
+
+describe("secret storage persistence patch", () => {
+  it("installs the storage provider unconditionally, so secrets survive a reload", async () => {
+    const fsLayer = bundle();
+
+    await applyBundlePatches(deps(fsLayer), "/bundle");
+
+    // Without this, the provider is `void 0` under reh-web (which always sets a
+    // remoteAuthority) and every secret lives only in the iframe's heap.
+    expect(fsLayer).toHaveFileContaining(WORKBENCH, "secretStorageProvider:new Qns(n)");
+    expect(fsLayer).not.toHaveFileContaining(WORKBENCH, "?void 0:new Qns(n)");
+  });
+
+  it("keeps the crypto the bootstrap already built", async () => {
+    const fsLayer = bundle();
+
+    await applyBundlePatches(deps(fsLayer), "/bundle");
+
+    // `n` is the cookie-less bootstrap's transparent crypto — secrets persist as
+    // plaintext in localStorage, shared across every same-origin workspace.
+    expect(fsLayer).toHaveFileContaining(WORKBENCH, "n=i&&Yns.supported()?new Yns(i):new odo;");
+  });
+
+  it("matches regardless of the minifier's identifiers", async () => {
+    const fsLayer = bundle("secretStorageProvider:$c.remoteAuthority&&!$k?void 0:new $P($x)})");
+
+    await applyBundlePatches(deps(fsLayer), "/bundle");
+
+    expect(fsLayer).toHaveFile(WORKBENCH, "secretStorageProvider:new $P($x)})");
+  });
+
+  it("applies on every platform", async () => {
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      const fsLayer = bundle();
+
+      await applyBundlePatches(deps(fsLayer, platform), "/bundle");
+
+      expect(fsLayer).toHaveFileContaining(WORKBENCH, "secretStorageProvider:new Qns(n)");
     }
   });
 });
@@ -245,7 +301,7 @@ describe("applyBundlePatches", () => {
   it("applies the remaining patches when one target is missing", async () => {
     // No wrapper.js — the workbench patch must still land.
     const fsLayer = createFileSystemMock();
-    fsLayer.$.setEntry(WORKBENCH, file(REAL_WIRING));
+    fsLayer.$.setEntry(WORKBENCH, file(REAL_WORKBENCH));
 
     await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
 
@@ -304,7 +360,7 @@ describe("when a patch no longer matches the bundle", () => {
         },
         "/bundle"
       )
-    ).rejects.toThrow(/osc52-clipboard, watcher-ignore-separators/);
+    ).rejects.toThrow(/osc52-clipboard, secret-storage-persistence, watcher-ignore-separators/);
   });
 
   it("logs and starts anyway when packaged: a stale anchor must not brick the app", async () => {
