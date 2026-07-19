@@ -478,6 +478,10 @@ describe("CloseProjectOperation", () => {
     const event = receivedEvents[0] as ProjectClosedEvent;
     expect(event.type).toBe(EVENT_PROJECT_CLOSED);
     expect(event.payload.projectId).toBe(PROJECT_ID);
+    // Regression: project:closed must carry projectPath so the per-projectPath
+    // idempotency guard resets on success (not only on project:close-failed).
+    // Without it the guard leaks and a reopened project can never be closed again.
+    expect(event.payload.projectPath).toBe(PROJECT_PATH);
   });
 
   it("test 13: close with unknown projectPath throws", async () => {

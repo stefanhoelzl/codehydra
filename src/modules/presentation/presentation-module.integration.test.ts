@@ -898,7 +898,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       path: workspaceB.path,
     });
 
-    await emit(module, EVENT_PROJECT_CLOSED, { projectId: otherId });
+    await emit(module, EVENT_PROJECT_CLOSED, { projectId: otherId, projectPath: "/projects/beta" });
     await flush();
 
     const snapshot = lastSnapshot(deps);
