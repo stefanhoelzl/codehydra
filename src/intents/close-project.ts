@@ -70,6 +70,13 @@ export const closeProjectPayloadSchema = z
 export const projectClosedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
+    /**
+     * The closed project's path. Carried so the per-projectPath idempotency
+     * guard (keyed by projectPath) resets on this success event — not just on
+     * project:close-failed. Without it, getKey(payload) is undefined and a
+     * successfully-closed-then-reopened project can never be closed again.
+     */
+    projectPath: z.string(),
   })
   .readonly();
 
@@ -332,7 +339,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     // 6. Emit project:closed event
     const event: ProjectClosedEvent = {
       type: EVENT_PROJECT_CLOSED,
-      payload: { projectId },
+      payload: { projectId, projectPath },
     };
     ctx.emit(event);
   }

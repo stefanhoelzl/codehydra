@@ -1100,7 +1100,7 @@ describe("CreationModule", () => {
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
 
       projects.splice(0, 1); // PROJECT_A closed
-      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id });
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectPath: PROJECT_A.path });
 
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
     });
@@ -1111,7 +1111,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
 
       projects.splice(0, 1);
-      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id });
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectPath: PROJECT_A.path });
 
       expect(sectionById(panel.config, "project")).toBeUndefined();
       expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
