@@ -2198,6 +2198,73 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("cleanupOrphanedWorkspaces", () => {
+    it("prunes codehydra config left by branches that no longer exist", async () => {
+      // `git branch -D` drops the branch but not our [branch "<n>.codehydra"] section.
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [],
+            branchConfigs: {
+              "feature-x": { "codehydra.base": "main" },
+              "long-gone": { "codehydra.base": "main", "codehydra.tags.new": "{}" },
+            },
+          },
+        },
+      });
+      const spyFs = createSpyFileSystemBoundary({
+        entries: { [WORKSPACES_DIR.toString()]: directory() },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        spyFs,
+        worktreeLogger
+      );
+
+      await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
+
+      const remaining = await mockClient.getGitConfig(PROJECT_ROOT, {
+        regex: `^branch\\..*\\.codehydra\\.`,
+      });
+      expect([...remaining.keys()]).toEqual(["branch.feature-x.codehydra.base"]);
+    });
+
+    it("keeps metadata for an existing branch that has no worktree", async () => {
+      // A worktree removed outside CodeHydra leaves this shape; the branch may
+      // still hold unmerged work, so its metadata must survive.
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [],
+            branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+          },
+        },
+      });
+      const spyFs = createSpyFileSystemBoundary({
+        entries: { [WORKSPACES_DIR.toString()]: directory() },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        spyFs,
+        worktreeLogger
+      );
+
+      await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
+
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
+      const remaining = await mockClient.getGitConfig(PROJECT_ROOT, {
+        regex: `^branch\\..*\\.codehydra\\.`,
+      });
+      expect(remaining.size).toBe(1);
+    });
+
     it("removes orphaned directories", async () => {
       const mockClient = createMockGitClient({
         repositories: {

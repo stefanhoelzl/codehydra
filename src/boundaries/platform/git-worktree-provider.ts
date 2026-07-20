@@ -842,9 +842,67 @@ export class GitWorktreeProvider {
     registration.cleanupInProgress = true;
 
     try {
-      return await this.doCleanupOrphanedWorkspaces(projectRoot, registration.workspacesDir);
+      const result = await this.doCleanupOrphanedWorkspaces(
+        projectRoot,
+        registration.workspacesDir
+      );
+      await this.pruneOrphanedBranchMetadata(projectRoot);
+      return result;
     } finally {
       registration.cleanupInProgress = false;
+    }
+  }
+
+  /**
+   * Drop `codehydra.*` branch config left behind by branches that no longer exist.
+   *
+   * `git branch -D` removes the branch but not our `[branch "<name>.codehydra"]`
+   * section, so hand-deleted branches leave their metadata behind indefinitely.
+   *
+   * Config only — this never deletes a branch. A branch that still exists keeps its
+   * metadata regardless of whether it has a worktree, because "metadata but no
+   * worktree" is not evidence the branch is disposable: a worktree removed outside
+   * CodeHydra leaves exactly that shape, and the branch may hold unmerged work.
+   */
+  private async pruneOrphanedBranchMetadata(projectRoot: Path): Promise<void> {
+    let metadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
+    let branches: readonly { name: string; isRemote: boolean }[];
+    try {
+      metadata = await this.getAllBranchMetadata(projectRoot);
+      branches = await this.gitClient.listBranches(projectRoot);
+    } catch (error: unknown) {
+      // Best-effort: stale config is inert, so never fail cleanup over it.
+      this.logger.warn("Failed to read branch metadata for cleanup", {
+        error: getErrorMessage(error),
+      });
+      return;
+    }
+
+    const liveBranches = new Set(branches.filter((b) => !b.isRemote).map((b) => b.name));
+    let prunedBranches = 0;
+
+    for (const [branch, entries] of metadata) {
+      if (liveBranches.has(branch)) continue;
+      for (const key of Object.keys(entries)) {
+        try {
+          await this.gitClient.unsetBranchConfig(
+            projectRoot,
+            branch,
+            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
+          );
+        } catch (error: unknown) {
+          this.logger.warn("Failed to prune branch metadata", {
+            branch,
+            key,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+      prunedBranches++;
+    }
+
+    if (prunedBranches > 0) {
+      this.logger.info("Pruned metadata for deleted branches", { count: prunedBranches });
     }
   }
 
