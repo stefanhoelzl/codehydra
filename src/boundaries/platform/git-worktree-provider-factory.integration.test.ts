@@ -102,6 +102,45 @@ describe("Services Integration", () => {
       expect(finalWorkspaces).toHaveLength(0);
     }, 15000);
 
+    it("prunes codehydra config left behind by a hand-deleted branch", async () => {
+      const fileSystemLayer = new DefaultFileSystemBoundary(SILENT_LOGGER);
+      const gitClient = new SimpleGitClient(SILENT_LOGGER);
+      const workspacesDir = getWorkspacesDir(repoPath);
+      const provider = await createProvider(
+        new Path(repoPath),
+        gitClient,
+        new Path(workspacesDir),
+        fileSystemLayer,
+        SILENT_LOGGER
+      );
+      const projectRoot = new Path(repoPath);
+
+      const kept = await provider.createWorkspace(projectRoot, "still-here", "main");
+      await provider.createWorkspace(projectRoot, "hand-deleted", "main");
+
+      // Delete the branch the way a user would — the worktree and the
+      // [branch "hand-deleted.codehydra"] section both survive this.
+      await gitClient.removeWorktree(projectRoot, new Path(workspacesDir, "hand-deleted"));
+      await gitClient.deleteBranch(projectRoot, "hand-deleted");
+      const before = await gitClient.getGitConfig(projectRoot, {
+        regex: `^branch\\.hand-deleted\\.codehydra\\.`,
+      });
+      expect(before.size).toBeGreaterThan(0);
+
+      await provider.cleanupOrphanedWorkspaces(projectRoot);
+
+      const after = await gitClient.getGitConfig(projectRoot, {
+        regex: `^branch\\.hand-deleted\\.codehydra\\.`,
+      });
+      expect(after.size).toBe(0);
+      // The surviving branch keeps both its branch and its metadata.
+      const stillHere = await gitClient.getGitConfig(projectRoot, {
+        regex: `^branch\\.still-here\\.codehydra\\.`,
+      });
+      expect(stillHere.size).toBeGreaterThan(0);
+      expect(kept.branch).toBe("still-here");
+    }, 15000);
+
     it("deletes the branch of a detached workspace and clears its metadata", async () => {
       // Regression: a rebase that stops on a conflict leaves HEAD detached, so
       // `git worktree list` reports no branch for it. The branch name was then
