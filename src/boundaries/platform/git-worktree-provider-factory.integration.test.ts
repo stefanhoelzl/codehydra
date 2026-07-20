@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createTestGitRepo, createTempDir } from "../../utils/testing/test-utils";
+import { createTestGitRepo, createTempDir, detachHead } from "../../utils/testing/test-utils";
 import { SimpleGitClient } from "./simple-git-client";
 import { GitWorktreeProvider } from "./git-worktree-provider";
 import type { IGitClient } from "./git-client";
@@ -100,6 +100,42 @@ describe("Services Integration", () => {
       // 8. Verify workspace is gone
       const finalWorkspaces = await provider.discover(projectRoot);
       expect(finalWorkspaces).toHaveLength(0);
+    }, 15000);
+
+    it("deletes the branch of a detached workspace and clears its metadata", async () => {
+      // Regression: a rebase that stops on a conflict leaves HEAD detached, so
+      // `git worktree list` reports no branch for it. The branch name was then
+      // null, which skipped both the metadata cleanup and the branch delete —
+      // the worktree went away, no error was raised, and the branch was orphaned.
+      const fileSystemLayer = new DefaultFileSystemBoundary(SILENT_LOGGER);
+      const gitClient = new SimpleGitClient(SILENT_LOGGER);
+      const workspacesDir = getWorkspacesDir(repoPath);
+      const provider = await createProvider(
+        new Path(repoPath),
+        gitClient,
+        new Path(workspacesDir),
+        fileSystemLayer,
+        SILENT_LOGGER
+      );
+      const projectRoot = new Path(repoPath);
+
+      const workspace = await provider.createWorkspace(projectRoot, "detach-me", "main");
+
+      // Detach HEAD, exactly as an interrupted rebase leaves it.
+      await detachHead(workspace.path.toNative());
+      const worktrees = await gitClient.listWorktrees(projectRoot);
+      expect(worktrees.find((wt) => wt.path.equals(workspace.path))?.branch).toBeNull();
+
+      const result = await provider.removeWorkspace(projectRoot, workspace.path, true);
+
+      expect(result.workspaceRemoved).toBe(true);
+      expect(result.baseDeleted).toBe(true);
+      const branches = await gitClient.listBranches(projectRoot);
+      expect(branches.some((b) => b.name === "detach-me" && !b.isRemote)).toBe(false);
+      const metadata = await gitClient.getGitConfig(projectRoot, {
+        regex: `^branch\\.detach-me\\.codehydra\\.`,
+      });
+      expect(metadata.size).toBe(0);
     }, 15000);
 
     it("handles multiple workspaces", async () => {

@@ -594,10 +594,15 @@ export class GitWorktreeProvider {
     // Get the branch name before removal (also checks if worktree exists)
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
-    // If worktree not found (retry after partial failure), extract branch from path
-    // For git worktrees, the last path segment is the branch name
-    // Note: Use ternary (not ??) to preserve null for detached HEAD workspaces
-    const branchName = worktree ? worktree.branch : unsanitizeWorkspaceName(workspacePath.basename);
+    // A workspace's branch is named after its directory (see createWorkspace), so the
+    // basename recovers it in both cases where the worktree entry can't supply one:
+    // the entry is missing (retry after a partial failure), or HEAD is detached — a
+    // rebase that stopped on a conflict leaves it that way, and worktree.branch is then
+    // null. Falling back matters: on null, both the metadata cleanup and the branch
+    // delete below are skipped and the branch is orphaned with no error. Deleting is
+    // still guarded by the branch-exists check in step 3, so a workspace whose basename
+    // maps to no branch (detached on purpose) stays a no-op.
+    const branchName = worktree?.branch ?? unsanitizeWorkspaceName(workspacePath.basename);
 
     // Step 1: Clear codehydra metadata from branch config
     // Done before worktree removal because metadata lives in project root's .git/config,

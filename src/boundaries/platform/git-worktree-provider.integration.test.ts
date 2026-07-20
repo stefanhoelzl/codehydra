@@ -1474,7 +1474,7 @@ describe("GitWorktreeProvider", () => {
       );
     });
 
-    it("handles detached HEAD workspace (no branch to delete)", async () => {
+    it("leaves branches untouched when a detached workspace matches no branch", async () => {
       const worktreePath = new Path("/data/workspaces/detached");
       const mockClient = createMockGitClient({
         repositories: {
@@ -1496,7 +1496,36 @@ describe("GitWorktreeProvider", () => {
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
       expect(result.workspaceRemoved).toBe(true);
-      expect(result.baseDeleted).toBe(false);
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "main");
+    });
+
+    it("deletes the branch of a detached workspace", async () => {
+      // A rebase that stops on a conflict leaves HEAD detached, so the worktree
+      // reports no branch. The branch name is still recoverable from the directory,
+      // and skipping it here orphaned the branch with no error reported.
+      const worktreePath = new Path("/data/workspaces/feature-x");
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
+
+      expect(result.workspaceRemoved).toBe(true);
+      expect(result.baseDeleted).toBe(true);
+      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("returns success when worktree already removed (idempotent)", async () => {

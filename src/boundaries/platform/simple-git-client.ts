@@ -277,11 +277,12 @@ export class SimpleGitClient implements IGitClient {
   }
 
   async deleteBranch(repoPath: Path, name: string): Promise<void> {
-    return this.wrapGitOperation(async () => {
+    await this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
       // Use -D to force delete (handles unmerged branches)
       await git.branch(["-D", name]);
     }, `Failed to delete branch ${name}`);
+    this.logger.debug("DeleteBranch", { path: repoPath.toString(), branch: name });
   }
 
   async getCurrentBranch(repoPath: Path): Promise<string | null> {

@@ -44,7 +44,20 @@ import type {
   FlushHookInput,
   DeletePipelineHookInput,
 } from "./delete-workspace";
-import type { HookContext, HookOutput, OperationContext } from "./lib/operation";
+import type {
+  HookContext,
+  HookOutput,
+  OperationContext,
+  Operation,
+  OperationSchemas,
+} from "./lib/operation";
+import {
+  INTENT_GET_PROJECT_BASES,
+  GET_PROJECT_BASES_OPERATION_ID,
+  getProjectBasesPayloadSchema,
+  getProjectBasesResultSchema,
+  type GetProjectBasesIntent,
+} from "./get-project-bases";
 import type {
   BlockingProcess,
   DeletionProgress,
@@ -274,6 +287,8 @@ interface TestHarness {
   gitWorktreeProviderMock: {
     gitWorktreeProvider: { removeWorkspace: ReturnType<typeof vi.fn> };
   };
+  /** Payloads of every project:get-bases dispatched during the run. */
+  basesRefreshes: GetProjectBasesIntent["payload"][];
 }
 
 function createTestHarness(options?: {
@@ -290,6 +305,7 @@ function createTestHarness(options?: {
   initialProjects?: TestAppState["projects"];
   isDirty?: boolean;
   unmergedCommits?: number;
+  basesRefreshError?: string;
 }): TestHarness {
   const dispatcher = createMockDispatcher();
 
@@ -333,6 +349,23 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
   dispatcher.registerOperation(new SwitchWorkspaceOperation());
   dispatcher.registerOperation(new GetActiveWorkspaceOperation());
+
+  // Stub project:get-bases so the preflight's remote refresh is observable. The
+  // real operation fetches; here we only record that it was asked to.
+  const basesRefreshes: GetProjectBasesIntent["payload"][] = [];
+  dispatcher.registerOperation({
+    id: GET_PROJECT_BASES_OPERATION_ID,
+    schemas: {
+      type: INTENT_GET_PROJECT_BASES,
+      payload: getProjectBasesPayloadSchema,
+      result: getProjectBasesResultSchema,
+    },
+    execute: async (ctx: OperationContext<GetProjectBasesIntent>) => {
+      basesRefreshes.push(ctx.intent.payload);
+      if (options?.basesRefreshError) throw new Error(options.basesRefreshError);
+      return { bases: [], projectPath: PROJECT_PATH, projectId: PROJECT_ID };
+    },
+  } as unknown as Operation<OperationSchemas>);
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -803,6 +836,7 @@ function createTestHarness(options?: {
     gitWorktreeProviderState: gitWorktreeProviderMock,
     gitWorktreeProviderMock:
       gitWorktreeProviderMock as unknown as TestHarness["gitWorktreeProviderMock"],
+    basesRefreshes,
   };
 }
 
@@ -1761,6 +1795,39 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     expect(harness.testState.worktreeRemoved).toBe(false);
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
     expect(harness.progressCaptures).toHaveLength(0);
+  });
+
+  it("refreshes remotes before counting unmerged commits", async () => {
+    // Without this, a delete dispatched right after a server-side merge (/ship)
+    // measures against a stale origin/main and rejects the just-merged commits.
+    const harness = createTestHarness({ isDirty: false, unmergedCommits: 0 });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    expect(harness.basesRefreshes).toContainEqual(
+      expect.objectContaining({ projectPath: PROJECT_PATH, refresh: true })
+    );
+  });
+
+  it("proceeds with the preflight when the refresh fails", async () => {
+    const harness = createTestHarness({
+      isDirty: false,
+      unmergedCommits: 0,
+      basesRefreshError: "network down",
+    });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    // A fetch failure must not block deletion — fall through to stale refs.
+    expect(harness.testState.worktreeRemoved).toBe(true);
+  });
+
+  it("skips the refresh when preflight is skipped", async () => {
+    const harness = createTestHarness({ isDirty: true, unmergedCommits: 5 });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent({ ignoreWarnings: true }));
+
+    expect(harness.basesRefreshes).toHaveLength(0);
   });
 
   it("proceeds when workspace is clean", async () => {

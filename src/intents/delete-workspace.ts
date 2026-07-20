@@ -47,6 +47,7 @@ import {
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
 import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
 
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
@@ -512,6 +513,21 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   ): Promise<PipelineResult> {
     // --- Preflight (dirty/unmerged check) ---
     if (payload.removeWorktree && !payload.force && !payload.ignoreWarnings) {
+      // Fetch first so the unmerged count is measured against current refs. The
+      // interactive path gets this via get-workspace-status {refresh: true}; without
+      // it here, a programmatic delete right after a server-side merge (e.g. /ship)
+      // compares against a stale origin/main and rejects the just-merged commits as
+      // unmerged. Best-effort — a fetch failure falls through to the stale-ref read
+      // rather than blocking the delete.
+      try {
+        await ctx.dispatch({
+          type: INTENT_GET_PROJECT_BASES,
+          payload: { projectPath: identity.projectPath, refresh: true, wait: true },
+        } as GetProjectBasesIntent);
+      } catch {
+        // Fall through to the preflight read with possibly-stale refs.
+      }
+
       const { results: preflightResults, errors: preflightCollectErrors } =
         await ctx.hooks.collect<PreflightHookResult>("preflight", pipelineCtx);
 
