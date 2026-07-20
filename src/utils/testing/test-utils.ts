@@ -181,6 +181,14 @@ export async function createCommitInRemote(remotePath: string, message: string):
 }
 
 /**
+ * Detach a worktree's HEAD, reproducing the state an interrupted rebase leaves
+ * behind (`git worktree list` then reports no branch for it).
+ */
+export async function detachHead(worktreePath: string): Promise<void> {
+  await simpleGit(worktreePath).raw(["checkout", "--detach", "HEAD"]);
+}
+
+/**
  * Run a test function with a temporary git repository and remote.
  * Both are automatically cleaned up after the test, even if the test fails.
  *
