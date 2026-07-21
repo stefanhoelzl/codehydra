@@ -12,5 +12,10 @@
     }
   },
   "include": ["../env.d.ts", "./**/*", "../shared/**/*", "../intents/contract.ts", "../test/**/*"],
-  "exclude": ["../../node_modules", "../../app-data", "../test/setup-matchers.ts"]
+  "exclude": [
+    "../../node_modules",
+    "../../app-data",
+    "../test/setup-matchers.ts",
+    "../test/global-setup-boundary.ts"
+  ]
 }
