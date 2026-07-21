@@ -479,6 +479,7 @@ const presentationModule = createPresentationModule({
   dispatcher,
   sidebarWidthConfig,
   configService,
+  stateService,
   onOpenSettings: () => openSettings(),
 });
 const settingsModule = createSettingsModule({

@@ -45,6 +45,10 @@
     onRemoveWorkspace: (key: string) => void;
     /** Open the settings dialog (gear in the PROJECTS header). */
     onOpenSettings: () => void;
+    /** Whether hibernated workspaces are currently hidden (from the snapshot). */
+    hideHibernated?: boolean;
+    /** Toggle hiding of hibernated workspaces (bottom-of-sidebar toggle). */
+    onToggleHideHibernated: () => void;
   }
 
   let {
@@ -61,6 +65,8 @@
     onOpenNewWorkspace,
     onRemoveWorkspace,
     onOpenSettings,
+    hideHibernated = false,
+    onToggleHideHibernated,
   }: SidebarProps = $props();
 
   const totalWorkspaces = $derived(
@@ -505,6 +511,28 @@
 
   <NotificationStack {notifications} {isExpanded} />
 
+  <!-- Bottom toggle: hide/show hibernated workspaces. Always present. Icon
+       reflects the current state (eye = shown, eye-closed = hidden); the label
+       states the action. Collapsed, only the icon column shows. Mirrors the
+       Alt+X+T shortcut. -->
+  <button
+    type="button"
+    class="hibernated-toggle"
+    aria-pressed={hideHibernated}
+    aria-label={hideHibernated ? "Show hibernated workspaces" : "Hide hibernated workspaces"}
+    title={hideHibernated ? "Show hibernated workspaces" : "Hide hibernated workspaces"}
+    onclick={() => onToggleHideHibernated()}
+  >
+    <span class="ch-label-cell hibernated-toggle-label-cell">
+      <span class="hibernated-toggle-label">
+        {hideHibernated ? "Show hibernated" : "Hide hibernated"}
+      </span>
+    </span>
+    <span class="ch-icon-cell hibernated-toggle-icon">
+      <Icon name={hideHibernated ? "eye-closed" : "eye"} size={14} />
+    </span>
+  </button>
+
   <!-- Drag handle on the expanded sidebar's right edge. Mouse-only (no keyboard
        resize by design), so it is hidden from assistive tech. -->
   {#if isExpanded || dragging}
@@ -607,7 +635,8 @@
      spacing and is clipped while the width animates. */
   .header-label,
   .new-workspace-label-cell,
-  .workspace-label-cell {
+  .workspace-label-cell,
+  .hibernated-toggle-label-cell {
     flex: 1 1 0;
     min-width: 0;
     display: flex;
@@ -743,6 +772,48 @@
 
   .new-workspace-entry:hover .new-workspace-icon,
   .new-workspace-entry.active .new-workspace-icon {
+    opacity: 1;
+  }
+
+  /* ============ Hide-hibernated toggle (sidebar footer) ============ */
+
+  .hibernated-toggle {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 32px;
+    padding: 4px 0;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--ch-input-border);
+    color: var(--ch-foreground);
+    cursor: pointer;
+    font-size: 12px;
+    text-align: left;
+  }
+
+  .hibernated-toggle:hover {
+    background: var(--ch-list-hover-bg);
+  }
+
+  .hibernated-toggle:focus-visible {
+    outline: 1px solid var(--ch-focus-border);
+    outline-offset: -1px;
+  }
+
+  .hibernated-toggle-label {
+    margin-left: 28px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.85;
+  }
+
+  .hibernated-toggle-icon {
+    opacity: 0.7;
+  }
+
+  .hibernated-toggle:hover .hibernated-toggle-icon {
     opacity: 1;
   }
 

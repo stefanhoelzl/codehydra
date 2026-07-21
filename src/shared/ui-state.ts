@@ -144,6 +144,12 @@ export interface UiState {
     readonly projects: readonly UiProjectRow[];
     /** Persisted expanded-sidebar width (px), clamped to the shared minimum. */
     readonly width: number;
+    /**
+     * When true, hibernated workspaces are omitted from `projects[].workspaces`
+     * (persisted `sidebar.hide-hibernated` state). Drives the bottom sidebar
+     * toggle's label/icon; the presenter has already filtered the rows.
+     */
+    readonly hideHibernated: boolean;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a

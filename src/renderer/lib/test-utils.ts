@@ -49,7 +49,7 @@ export function makeUiState(
   overrides?: Partial<UiState>
 ): UiState {
   return {
-    sidebar: { projects, width: 250 },
+    sidebar: { projects, width: 250, hideHibernated: false },
     frames: {},
     main: { kind: "creation" },
     theme: "dark",

@@ -88,6 +88,7 @@ describe("Sidebar component", () => {
     onOpenNewWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
     onOpenSettings: vi.fn(),
+    onToggleHideHibernated: vi.fn(),
   };
 
   beforeEach(() => {
@@ -238,6 +239,28 @@ describe("Sidebar component", () => {
       await fireEvent.click(newWorkspaceButton);
 
       expect(onOpenNewWorkspace).toHaveBeenCalledWith();
+    });
+
+    it("bottom toggle calls onToggleHideHibernated and reflects the current state", async () => {
+      const onToggleHideHibernated = vi.fn();
+
+      // Showing: label offers to hide.
+      const { unmount } = render(Sidebar, {
+        props: { ...defaultProps, hideHibernated: false, onToggleHideHibernated },
+      });
+      const hideButton = screen.getByRole("button", { name: /hide hibernated workspaces/i });
+      await fireEvent.click(hideButton);
+      expect(onToggleHideHibernated).toHaveBeenCalledWith();
+      unmount();
+
+      // Hidden: label offers to show.
+      render(Sidebar, {
+        props: { ...defaultProps, hideHibernated: true, onToggleHideHibernated },
+      });
+      expect(screen.getByRole("button", { name: /show hibernated workspaces/i })).toHaveAttribute(
+        "aria-pressed",
+        "true"
+      );
     });
 
     it("[x] on project calls closeProject", async () => {

@@ -33,6 +33,7 @@ export const SHORTCUT_KEYS = [
   "enter",
   "delete",
   "h",
+  "t",
   "0",
   "1",
   "2",

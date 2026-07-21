@@ -63,6 +63,11 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // to the settings module, which opens the declarative settings dialog. The
   // Alt+X+S shortcut reaches the same module via the shortcut-key domain event.
   z.object({ kind: z.literal("open-settings") }),
+  // Toggle whether hibernated workspaces are hidden from the sidebar (bottom
+  // toggle click). The presenter flips the `sidebar.hide-hibernated` state key,
+  // persists it, and re-pushes the snapshot. The Alt+X+T shortcut drives the
+  // same presenter toggle via the shortcut-key domain event.
+  z.object({ kind: z.literal("toggle-hide-hibernated") }),
   // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat

@@ -6,6 +6,8 @@
     activeHibernated?: boolean;
     activeWorkspaceDeletionInProgress?: boolean;
     idleWorkspaceCount?: number;
+    /** Whether hibernated workspaces are currently hidden (drives the T hint label). */
+    hideHibernated?: boolean;
   }
 
   let {
@@ -15,6 +17,7 @@
     activeHibernated = false,
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
+    hideHibernated = false,
   }: Props = $props();
 
   // When there's no active workspace (e.g. the New workspace view is the
@@ -84,6 +87,15 @@
   >
     <vscode-badge>H</vscode-badge>
     {activeHibernated ? "Wake" : "Hibernate"}
+  </span>
+  <span
+    class="shortcut-hint"
+    aria-label={hideHibernated
+      ? "T key to show hibernated workspaces"
+      : "T key to hide hibernated workspaces"}
+  >
+    <vscode-badge>T</vscode-badge>
+    {hideHibernated ? "Show hibernated" : "Hide hibernated"}
   </span>
   <span class="shortcut-hint" aria-label="S key to open settings">
     <vscode-badge>S</vscode-badge> Settings
