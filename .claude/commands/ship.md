@@ -156,7 +156,7 @@ gh pr list --repo stefanhoelzl/codehydra --head <current-branch> --json number,u
 If a PR already exists for this branch:
 
 - If state is OPEN: skip to step 10 (run ship-wait script)
-- If state is MERGED: skip to step 12 (delete workspace) with exit code 0
+- If state is MERGED: skip to step 11 (resolve PostHog issue, then delete workspace) with exit code 0
 - If state is CLOSED: continue to create new PR
 
 ### 6. Rebase onto main
@@ -341,16 +341,7 @@ If ship-wait exited with code 1 and the output contains "CI failed":
 
 5. If code issue: proceed to FAILED report as usual.
 
-### 11. Delete workspace
-
-If `--keep-workspace` was NOT passed and merge succeeded (exit code 0):
-
-1. Call `codehydra_workspace_delete` tool with `keepBranch: false`
-2. Report: "Workspace deleted."
-
-If `--keep-workspace` was passed, report: "Workspace kept."
-
-### 12. Resolve PostHog issue
+### 11. Resolve PostHog issue
 
 If this conversation involved fixing a PostHog error tracking issue and the PostHog issue ID (UUID) is known from the conversation context:
 
@@ -359,6 +350,17 @@ If this conversation involved fixing a PostHog error tracking issue and the Post
 3. If the call fails, log a warning but do NOT fail the ship — the PR is already merged.
 
 If no PostHog issue was involved in this conversation, skip this step silently.
+
+### 12. Delete workspace
+
+This MUST be the very last step — perform it only after all other steps (including the PostHog issue resolution and the final report) are complete, since deleting the workspace removes the working directory.
+
+If `--keep-workspace` was NOT passed and merge succeeded (exit code 0):
+
+1. Output the MERGED report (see Report Formats below)
+2. Call `codehydra_workspace_delete` tool with `keepBranch: false`
+
+If `--keep-workspace` was passed, output the report and keep the workspace.
 
 ## Report Formats
 
@@ -369,7 +371,7 @@ PR merged successfully!
 
 **PR**: <url>
 **Commit**: <sha> merged to main
-**Workspace**: deleted (or "kept" if --keep-workspace)
+**Workspace**: deleting (or "kept" if --keep-workspace)
 **PostHog**: <issue-id> resolved (or omit this line if no PostHog issue)
 ```
 
