@@ -4,7 +4,7 @@
  * These tests use real git repositories to verify the implementation.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { SimpleGitClient } from "./simple-git-client";
 import { GitError } from "../../shared/errors/service-errors";
 import {
@@ -18,6 +18,11 @@ import nodePath from "path";
 import { simpleGit } from "simple-git";
 import { SILENT_LOGGER } from "./logging";
 import { Path } from "../../utils/path/path";
+
+// These tests spawn real git processes against temp-dir repos. On Windows CI,
+// process-spawn overhead plus Defender scanning of fresh temp files makes each
+// spawn slow under contention, so every test and hook gets a generous timeout.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 /** Read a single branch config value via getGitConfig (replaces the removed getBranchConfig). */
 async function readBranchConfig(
@@ -340,19 +345,19 @@ describe("SimpleGitClient", () => {
         const log = await git.log(["origin/main"]);
         expect(log.latest?.message).toBe("Remote commit");
       });
-    }, 15000);
+    });
 
     it("fetches with explicit remote name", async () => {
       await withTempRepoWithRemote(async (path) => {
         await expect(client.fetch(new Path(path), "origin")).resolves.not.toThrow();
       });
-    }, 15000);
+    });
 
     it("throws GitError when fetching from non-existent remote", async () => {
       await withTempRepoWithRemote(async (path) => {
         await expect(client.fetch(new Path(path), "nonexistent")).rejects.toThrow(GitError);
       });
-    }, 15000);
+    });
 
     it("prunes stale remote-tracking branches after fetch", async () => {
       await withTempRepoWithRemote(async (path, remotePath) => {
@@ -395,7 +400,7 @@ describe("SimpleGitClient", () => {
           await tempClone.cleanup();
         }
       });
-    }, 30000);
+    });
 
     it("creates the remote HEAD symref from the remote's default branch", async () => {
       await withTempRepoWithRemote(async (path, remotePath) => {
@@ -407,7 +412,7 @@ describe("SimpleGitClient", () => {
 
         expect(await client.getDefaultBranch(new Path(path), "origin")).toBe("main");
       });
-    }, 15000);
+    });
 
     it("updates a stale remote HEAD symref after the remote default changes", async () => {
       await withTempRepoWithRemote(async (path, remotePath) => {
@@ -423,7 +428,7 @@ describe("SimpleGitClient", () => {
 
         expect(await client.getDefaultBranch(new Path(path), "origin")).toBe("develop");
       });
-    }, 15000);
+    });
 
     it("does not throw when the remote HEAD cannot be determined", async () => {
       await withTempRepoWithRemote(async (path, remotePath) => {
@@ -433,7 +438,7 @@ describe("SimpleGitClient", () => {
         await expect(client.fetch(new Path(path), "origin")).resolves.not.toThrow();
         expect(await client.getDefaultBranch(new Path(path), "origin")).toBeNull();
       });
-    }, 15000);
+    });
   });
 
   describe("getDefaultBranch", () => {
@@ -474,7 +479,7 @@ describe("SimpleGitClient", () => {
         await sourceRepo.cleanup();
         await targetDir.cleanup();
       }
-    }, 15000);
+    });
   });
 
   describe("listRemotes", () => {
@@ -722,7 +727,7 @@ describe("SimpleGitClient", () => {
         await sourceRepo.cleanup();
         await targetDir.cleanup();
       }
-    }, 15000);
+    });
 
     it("sets up remote-tracking branches and removes local branches", async () => {
       // Create a source repo with multiple branches
