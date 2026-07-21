@@ -11,7 +11,12 @@ import { OpenCodeServerManager } from "./server-manager";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import { ensureBinaryForTests, getTestPathProvider } from "../../../utils/testing/ensure-binaries";
+import {
+  ensureBinaryForTests,
+  getTestPathProvider,
+  warmBinaryForTests,
+  BINARY_WARM_TIMEOUT_MS,
+} from "../../../utils/testing/ensure-binaries";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -33,6 +38,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     // Ensure opencode binary is available (downloads if missing)
     await ensureBinaryForTests("opencode");
 
+    // First exec of a fresh binary can stall on macOS (Gatekeeper assessment);
+    // pay that cost here instead of inside the first test's timeout
+    await warmBinaryForTests("opencode");
+
     // Create test directory
     testDir = join(tmpdir(), `opencode-server-test-${Date.now()}`);
     await mkdir(testDir, { recursive: true });
@@ -45,7 +54,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     // Create dependencies using silent loggers (no Electron dependency)
     networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
     processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-  });
+  }, BINARY_WARM_TIMEOUT_MS);
 
   afterEach(async () => {
     // Dispose manager to stop any running servers
