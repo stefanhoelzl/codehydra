@@ -75,6 +75,9 @@ export default defineConfig({
           environment: "node",
           include: ["src/**/*.boundary.test.{js,ts}"],
           setupFiles: ["./src/test/setup.ts", "./src/test/setup-matchers.ts"],
+          // Compiles the fake claude binary once per run; on Windows the pkg
+          // download/compile is too slow for a 10s test hook (see the file).
+          globalSetup: ["./src/test/global-setup-boundary.ts"],
           pool: "forks",
         },
       },

@@ -38,3 +38,52 @@ runs:
       with:
         path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
         key: ${{ steps.pnpm-store.outputs.cache-primary-key }}
+
+    # @yao-pkg/pkg base-binary cache, Windows only. wrapper.boundary.test.ts
+    # compiles a fake claude.exe with pkg (the wrapper spawns with shell:false,
+    # so a .cmd shim won't do); pkg-fetch first downloads a prebuilt base Node
+    # binary from GitHub into PKG_CACHE_PATH. Uncached, every Windows run paid
+    # that download inside vitest's hook-timeout budget — the dominant CI
+    # flake. Unix never invokes pkg (the fake binary is a shell script there).
+    #
+    # PKG_CACHE_PATH is exported for the whole job so the test process and the
+    # cache steps agree on the directory (default would be ~/.pkg-cache).
+    - if: runner.os == 'Windows'
+      shell: bash
+      run: echo "PKG_CACHE_PATH=${{ runner.temp }}/pkg-cache" >> $GITHUB_ENV
+
+    # pkg-fetch picks the base binary by host Node version, and its download
+    # tag moves with the pkg version — so both are part of the cache key.
+    # Must run after `pnpm install` (reads the installed package).
+    - id: pkg-cache-key
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        echo "NODE_MAJOR=$(node -p 'process.version.split(".")[0]')" >> $GITHUB_OUTPUT
+        echo "PKG_VERSION=$(node -p 'require("@yao-pkg/pkg/package.json").version')" >> $GITHUB_OUTPUT
+
+    - id: pkg-cache
+      if: runner.os == 'Windows'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ runner.temp }}/pkg-cache
+        key: ${{ runner.os }}-${{ runner.arch }}-pkg-cache-${{ steps.pkg-cache-key.outputs.NODE_MAJOR }}-pkg${{ steps.pkg-cache-key.outputs.PKG_VERSION }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-pkg-cache-
+
+    # pkg only populates the cache when it runs — at test time, after this
+    # composite action has finished — so saving here would capture an empty
+    # directory. On main + miss, warm it by compiling a trivial script (the
+    # same --target host fetch the tests trigger), then save. Same
+    # restore-always/save-only-on-main pattern as the pnpm store above.
+    - if: runner.os == 'Windows' && github.ref == 'refs/heads/main' && steps.pkg-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "console.log('pkg cache warmup')" > "$RUNNER_TEMP/pkg-warmup.js"
+        pnpm exec pkg "$RUNNER_TEMP/pkg-warmup.js" --target host --output "$RUNNER_TEMP/pkg-warmup/warmup.exe"
+
+    - if: runner.os == 'Windows' && github.ref == 'refs/heads/main' && steps.pkg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ runner.temp }}/pkg-cache
+        key: ${{ steps.pkg-cache.outputs.cache-primary-key }}
