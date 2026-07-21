@@ -36,6 +36,7 @@ import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
+import type { StateService } from "../../boundaries/platform/state-service";
 import type { IViewManager } from "../../boundaries/shell/view-manager.interface";
 import type { Theme } from "../../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../../shared/api/interfaces";
@@ -163,6 +164,13 @@ export interface PresentationModuleDeps {
    */
   readonly sidebarWidthConfig: Pick<PersistedAccessor<number>, "get" | "set">;
   readonly configService: Pick<Config, "register">;
+  /**
+   * Runtime state store (state.json). The presenter registers
+   * `sidebar.hide-hibernated` here — a user-toggled visibility preference, not a
+   * config setting — and reads/writes it directly (mirrors labelScroll/silent,
+   * but persisted to state.json rather than config.json).
+   */
+  readonly stateService: Pick<StateService, "register">;
   /**
    * Called when the renderer emits the `open-settings` ui event (the sidebar
    * gear). Wired in the composition root to the settings module's openSettings;
@@ -385,6 +393,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     default: false,
     description: "Silence the audible notification played when an agent goes idle",
     applies: "live",
+    ...storeBoolean(),
+  });
+
+  // Whether hibernated workspaces are hidden from the sidebar. A user-toggled
+  // runtime preference (bottom toggle / Alt+X+T), so it lives in state.json, not
+  // config. Read at snapshot-build time and when navigating, so flipping it
+  // re-pushes ui:state; the presenter both filters the rows and ships the flag.
+  const hideHibernatedState = deps.stateService.register("sidebar.hide-hibernated", {
+    default: false,
+    description: "Hide hibernated workspaces from the sidebar list",
     ...storeBoolean(),
   });
 
@@ -640,9 +658,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /**
    * All workspace rows in sidebar display order — the authoritative ordering
    * shared by the snapshot (buildSnapshot) and shortcut navigation. Projects
-   * and workspaces sort by display name (AaBbCc).
+   * and workspaces sort by display name (AaBbCc). When `sidebar.hide-hibernated`
+   * is on, hibernated rows are omitted so keyboard navigation matches the
+   * visible list (up/down can never land on a hidden row).
    */
   function currentRows(): RowEntry[] {
+    const hideHibernated = hideHibernatedState.get();
     const entries: RowEntry[] = [];
     for (const project of [...projects.values()].sort((a, b) =>
       compareDisplayNames(a.name, b.name)
@@ -650,6 +671,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       for (const workspace of [...project.workspaces.values()].sort((a, b) =>
         compareDisplayNames(a.name, b.name)
       )) {
+        if (hideHibernated && workspace.hibernated) continue;
         entries.push({ row: buildRow(project, workspace), project, workspace });
       }
     }
@@ -872,6 +894,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   function buildSnapshot(): UiState {
+    const hideHibernated = hideHibernatedState.get();
     const projectRows: UiProjectRow[] = [...projects.values()]
       .sort((a, b) => compareDisplayNames(a.name, b.name))
       .map((project) => ({
@@ -881,7 +904,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         remote: project.remoteUrl !== undefined,
         workspaces: [...project.workspaces.values()]
           .sort((a, b) => compareDisplayNames(a.name, b.name))
-          .map((workspace): UiWorkspaceRow => buildRow(project, workspace)),
+          .map((workspace): UiWorkspaceRow => buildRow(project, workspace))
+          // Omit hibernated rows when the visibility toggle is on. An active
+          // hibernated workspace is hidden too (main still shows its hibernated
+          // screen); recover via the bottom toggle, Alt+X+T, or Alt+X+H.
+          .filter((row) => !hideHibernated || !row.hibernated),
       }));
 
     const frames: Record<string, string> = {};
@@ -901,6 +928,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       sidebar: {
         projects: projectRows,
         width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
+        hideHibernated,
       },
       frames,
       main,
@@ -1055,6 +1083,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     if (event.kind === "open-settings") {
       deps.onOpenSettings?.();
+      return;
+    }
+    if (event.kind === "toggle-hide-hibernated") {
+      handleToggleHideHibernated();
       return;
     }
     if (event.kind === "resize-sidebar") {
@@ -1262,6 +1294,20 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     dispatchInteractiveDelete(active.workspace.path);
   }
 
+  /**
+   * Toggle the `sidebar.hide-hibernated` state and re-push. Driven by both the
+   * bottom sidebar toggle (ui:event) and the Alt+X+T shortcut. Persist failures
+   * are logged but not surfaced — the in-memory flip already took effect via the
+   * snapshot; the value simply won't survive a restart.
+   */
+  function handleToggleHideHibernated(): void {
+    const next = !hideHibernatedState.get();
+    void hideHibernatedState.set(next).catch((error: unknown) => {
+      logger.warn("Failed to persist hide-hibernated toggle", { error: getErrorMessage(error) });
+    });
+    scheduleUpdate();
+  }
+
   /** Run the navigation action for a normalized shortcut key. */
   function runShortcutKey(key: string): void {
     switch (key) {
@@ -1285,6 +1331,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         break;
       case "h":
         handleHibernateToggle();
+        break;
+      case "t":
+        handleToggleHideHibernated();
         break;
       default:
         if (/^[0-9]$/.test(key)) handleJump(key as JumpKey);

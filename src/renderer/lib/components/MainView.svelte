@@ -188,6 +188,12 @@
   function handleOpenSettings(): void {
     api.emitEvent({ kind: "open-settings" });
   }
+
+  // Toggle hiding of hibernated workspaces (bottom sidebar toggle / Alt+X+T).
+  // Main flips the persisted `sidebar.hide-hibernated` state and re-pushes.
+  function handleToggleHideHibernated(): void {
+    api.emitEvent({ kind: "toggle-hide-hibernated" });
+  }
 </script>
 
 <div class="main-view">
@@ -206,6 +212,8 @@
     onOpenNewWorkspace={handleOpenNewWorkspace}
     onRemoveWorkspace={handleRemoveWorkspace}
     onOpenSettings={handleOpenSettings}
+    hideHibernated={ui.sidebar.hideHibernated}
+    onToggleHideHibernated={handleToggleHideHibernated}
   />
 
   <ShortcutOverlay
@@ -215,6 +223,7 @@
     activeHibernated={main?.kind === "hibernated"}
     activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
+    hideHibernated={ui.sidebar.hideHibernated}
   />
 
   <!-- Creation panel ("modeless"): the backend creation module's always-alive

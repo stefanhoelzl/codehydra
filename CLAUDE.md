@@ -350,6 +350,7 @@ Values the **app writes at runtime** (not user-authored settings) live in `state
 | `telemetry.distinct-id`    | telemetry-module      | Auto-generated telemetry user id (sensitive)                                                                              |
 | `update.dismissed-version` | auto-updater-module   | The update version the user last dismissed (silences re-notify)                                                           |
 | `auto-workspaces`          | auto-workspace-module | `Record<"${source}/${item}", {workspacePath,workspaceName,createdAt}\|null>` tracking map; `null` = dismissed (sensitive) |
+| `sidebar.hide-hibernated`  | presentation-module   | Whether hibernated workspaces are hidden from the sidebar list (bottom toggle / Alt+X+T); default `false`                 |
 
 Two migration shapes feed `state.json`. (1) **config→state** (telemetry, update): the owning module registers the live key in `StateService` plus a read-only `deprecated` shadow in Config and contributes a `{from, to}` pair to the migration registry; the `state` module (`src/modules/state-module.ts`) drains it in the `app:start` "init" hook, seeding `state.json` from `config.json` and stripping the shadow via `reset()`. (2) **file→state** (auto-workspaces): the auto-workspace module does a one-shot import of the pre-state.json `auto-workspaces.json` at activation — if its key is still default and the old file exists, it imports the entries and deletes the file (guarded on `isDefault()`, so a lingering file is harmless).
 
