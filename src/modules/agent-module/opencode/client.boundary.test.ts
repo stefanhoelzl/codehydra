@@ -22,6 +22,8 @@ import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import {
   ensureBinaryForTests,
   getBinaryPathForTests,
+  warmBinaryForTests,
+  BINARY_WARM_TIMEOUT_MS,
 } from "../../../utils/testing/ensure-binaries";
 import type { ClientStatus } from "./types";
 
@@ -32,7 +34,11 @@ describe("OpenCodeClient boundary tests", () => {
   beforeAll(async () => {
     await ensureBinaryForTests("opencode");
     binaryPath = getBinaryPathForTests("opencode");
-  });
+
+    // First exec of a fresh binary can stall on macOS (Gatekeeper assessment);
+    // pay that cost here instead of inside the first test's timeout
+    await warmBinaryForTests("opencode");
+  }, BINARY_WARM_TIMEOUT_MS);
 
   // ===========================================================================
   // Phase 1.3: Mock LLM Integration

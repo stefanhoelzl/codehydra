@@ -22,6 +22,7 @@ import {
   getOpencodeExecutablePath,
 } from "../../modules/agent-module/opencode/setup-info";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { ExecaProcessRunner } from "../../boundaries/platform/process";
 import { createMockBuildInfo } from "../../boundaries/platform/build-info.test-utils";
 import { NodePlatformInfo } from "../../boundaries/platform/node-platform-info";
 import { downloadBinary } from "../binary-download";
@@ -159,6 +160,41 @@ export async function ensureBinaryForTests(
 
   process.stdout.write("\n");
   console.log(`Downloaded ${binary} to ${binaryPath}`);
+}
+
+/**
+ * Timeout for warmBinaryForTests, also intended as the beforeAll hook timeout
+ * of tests that call it (the default 10s hook timeout is too short for a
+ * first-exec Gatekeeper stall).
+ */
+export const BINARY_WARM_TIMEOUT_MS = 120_000;
+
+/**
+ * Warm a binary by executing it once (`--version`) and waiting for exit.
+ *
+ * On macOS, the first execution of a freshly written unsigned binary triggers
+ * a Gatekeeper/syspolicyd code-signature assessment that can stall for many
+ * seconds on CI runners. Calling this in a beforeAll hook (with
+ * BINARY_WARM_TIMEOUT_MS as the hook timeout) pays that one-time cost outside
+ * the per-test timeout budget.
+ *
+ * Best-effort: a non-zero exit is ignored (the exec itself is what warms the
+ * binary); a process still running after the timeout is killed.
+ *
+ * @param binary - Binary type (must already be installed)
+ * @param options - Options for path provider
+ */
+export async function warmBinaryForTests(
+  binary: TestBinaryType,
+  options?: EnsureBinaryOptions
+): Promise<void> {
+  const binaryPath = getBinaryPathForTests(binary, options);
+  const runner = new ExecaProcessRunner(SILENT_LOGGER);
+  const proc = runner.run(binaryPath, ["--version"]);
+  const result = await proc.wait(BINARY_WARM_TIMEOUT_MS);
+  if (result.running) {
+    await proc.kill(1000, 1000);
+  }
 }
 
 /**
