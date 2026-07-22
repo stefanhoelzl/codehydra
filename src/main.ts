@@ -183,8 +183,6 @@ import { createCreationModule } from "./modules/creation-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createAutoTaggingModule } from "./modules/auto-tagging-module";
-import { createGitHubSource } from "./modules/auto-workspace/github-source";
-import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 // Shared
 import { getErrorMessage } from "./shared/error-utils";
 
@@ -682,23 +680,12 @@ const mcpModule = createMcpModule({
   dispatcher,
   logger: loggingService.createLogger("mcp"),
 });
-const githubSource = createGitHubSource({
-  processRunner,
-  httpClient: networkLayer,
-  logger: loggingService.createLogger("auto-workspace:github"),
-  configService,
-});
-const youtrackSource = createYouTrackSource({
-  httpClient: networkLayer,
-  logger: loggingService.createLogger("auto-workspace:youtrack"),
-  configService,
-});
 const autoWorkspaceModule = createAutoWorkspaceModule({
   fs: fileSystemLayer,
   logger: loggingService.createLogger("auto-workspace"),
   legacyStateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
   dispatcher,
-  sources: [githubSource, youtrackSource],
+  processRunner,
   configService,
   stateService,
 });
