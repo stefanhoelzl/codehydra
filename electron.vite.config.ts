@@ -97,7 +97,12 @@ export default defineConfig({
       __APP_VERSION__: JSON.stringify(appVersion),
       __IS_DEV_BUILD__: JSON.stringify(isDevBuild),
     },
-    plugins: [codehydraDefaults(), svelte()],
+    plugins: [
+      codehydraDefaults(),
+      // renderer root is src/renderer, but svelte.config.js lives at the project
+      // root; point the plugin at it so it doesn't warn and fall back to defaults.
+      svelte({ configFile: resolve(__dirname, "svelte.config.js") }),
+    ],
     resolve: {
       alias: {
         $lib: resolve(__dirname, "src/renderer/lib"),
