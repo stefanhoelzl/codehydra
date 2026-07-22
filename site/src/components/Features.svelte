@@ -68,7 +68,7 @@
           </span>
           Real-time Status
         </h3>
-        <p>Monitor agent status (idle/busy/waiting) with visual indicators and app badge</p>
+        <p>Monitor agent status (idle/busy) with visual indicators and app badge</p>
       </div>
       <div class="feature-card">
         <h3>

@@ -15,6 +15,7 @@
       <li><a href="#quick-start">Quick Start</a></li>
       <li><a href="#core-concepts">Core Concepts</a></li>
       <li><a href="#using-codehydra">Using CodeHydra</a></li>
+      <li><a href="#automation">Configuration &amp; Automation</a></li>
       <li><a href="#mcp-integration">Advanced: MCP Integration</a></li>
     </ol>
   </nav>
@@ -66,9 +67,10 @@
     </p>
 
     <p>
-      On first launch, CodeHydra will guide you through opening a project and creating your first
-      workspace. Want to run multiple agents? Just create more workspaces &mdash; each one gets its
-      own worktree and agent session.
+      On first launch, CodeHydra asks which coding agent to use &mdash; <strong>Claude Code</strong>
+      or <strong>OpenCode</strong> &mdash; then guides you through opening a project and creating your
+      first workspace. Want to run multiple agents? Just create more workspaces &mdash; each one gets
+      its own worktree and agent session.
     </p>
   </section>
 
@@ -79,6 +81,8 @@
       <h4>Project</h4>
       <p>
         A git repository opened in CodeHydra. Projects are containers that hold your workspaces.
+        Open a local folder, or clone straight from a git URL &mdash; remote projects are kept as a
+        bare clone with worktrees created on demand.
       </p>
     </div>
 
@@ -87,6 +91,14 @@
       <p>
         An isolated development environment with its own branch, files, and AI agent session.
         Workspaces are backed by git worktrees, so changes in one never affect another.
+      </p>
+    </div>
+
+    <div class="concept-box">
+      <h4>Hibernation</h4>
+      <p>
+        Workspaces you're not using can be put to sleep to free up resources. A hibernated workspace
+        keeps its branch and files &mdash; wake it any time to pick up where you left off.
       </p>
     </div>
 
@@ -119,7 +131,8 @@
 
     <p>
       You'll hear a sound when an agent finishes its task, so you can stay productive without
-      constantly checking the screen.
+      constantly checking the screen. The app icon also carries a badge summarizing status across
+      all workspaces.
     </p>
   </section>
 
@@ -138,7 +151,17 @@
       <li>
         <strong>Delete</strong> &mdash; Hover and click the delete icon, or press <kbd>Delete</kbd>
       </li>
+      <li>
+        <strong>Hibernate / Wake</strong> &mdash; Put an idle workspace to sleep to free resources; click
+        it (or wake it from the sidebar) to bring it back
+      </li>
     </ul>
+
+    <p>
+      Workspaces created in the background &mdash; by the MCP server, a plugin, or automation
+      &mdash; get a blue <strong>new</strong> tag in the sidebar so they're easy to spot. The tag clears
+      the first time you switch to that workspace.
+    </p>
 
     <h3>Keyboard Shortcuts</h3>
     <p>
@@ -174,6 +197,14 @@
           <td>Remove workspace</td>
         </tr>
         <tr>
+          <td><kbd>H</kbd></td>
+          <td>Hibernate / wake workspace</td>
+        </tr>
+        <tr>
+          <td><kbd>T</kbd></td>
+          <td>Toggle hiding hibernated workspaces</td>
+        </tr>
+        <tr>
           <td><kbd>Escape</kbd></td>
           <td>Exit shortcut mode</td>
         </tr>
@@ -204,6 +235,42 @@
     </p>
   </section>
 
+  <section id="automation">
+    <h2>Configuration &amp; Automation</h2>
+
+    <h3>Settings</h3>
+    <p>
+      CodeHydra works out of the box, but most behavior is configurable. The same dot-separated keys
+      can be set in a <code>config.json</code>, as environment variables (a <code>CH_</code> prefix,
+      e.g. <code>CH_LOG__LEVEL=debug</code>), or as CLI flags (e.g. <code>--log.level=debug</code>).
+      Common ones:
+    </p>
+    <ul>
+      <li>
+        <code>agent</code> &mdash; which coding agent to launch (<code>claude</code> or
+        <code>opencode</code>)
+      </li>
+      <li><code>silent</code> &mdash; mute the sound played when an agent goes idle</li>
+      <li>
+        <code>sidebar.width</code> &mdash; expanded sidebar width (also set by dragging its edge)
+      </li>
+      <li>
+        <code>update.notification</code> &mdash; whether to notify when an update is available
+      </li>
+    </ul>
+
+    <h3>Automatic workspaces</h3>
+    <p>
+      CodeHydra can create workspaces for you on a schedule from any command that emits JSON &mdash;
+      for example, opening a workspace per assigned GitHub issue or review request. Each source runs
+      a command periodically and renders one workspace per returned item from a template, so agents
+      can start working before you even sit down. Configure these under <code
+        >auto-workspace.sources</code
+      >
+      in settings.
+    </p>
+  </section>
+
   <section id="mcp-integration">
     <h2>Advanced: MCP Integration</h2>
     <p>
@@ -211,9 +278,11 @@
       This enables powerful workflows where agents can:
     </p>
     <ul>
-      <li>Query workspace info (name, branch, uncommitted changes)</li>
+      <li>Query workspace info (name, branch, uncommitted changes, agent status)</li>
       <li>Create new workspaces and send them initial prompts</li>
       <li>Execute VS Code commands (save files, format code, navigate)</li>
+      <li>Hibernate and wake workspaces</li>
+      <li>Read and set workspace metadata and tags</li>
       <li>Clean up by deleting workspaces when done</li>
     </ul>
     <p>
@@ -473,7 +542,7 @@
     }
 
     .status-grid {
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     }
   }
 </style>
