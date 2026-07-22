@@ -188,7 +188,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     // Unix: Two-phase SIGTERM → SIGKILL
     // 1. Send SIGTERM
     await this.killProcess(pid, false);
-    this.logger.warn("Killed", { command: this.command, pid, signal: "SIGTERM" });
+    this.logger.info("Killed", { command: this.command, pid, signal: "SIGTERM" });
 
     // 2. If termTimeout defined, wait for graceful exit
     if (termTimeout !== undefined) {
