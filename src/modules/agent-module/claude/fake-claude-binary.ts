@@ -25,6 +25,7 @@ const output = {
   args: process.argv.slice(2),
   env: {
     CLAUDECODE: process.env.CLAUDECODE ?? null,
+    CLAUDE_CODE_CHILD_SESSION: process.env.CLAUDE_CODE_CHILD_SESSION ?? null,
   },
 };
 

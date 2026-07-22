@@ -423,8 +423,13 @@ async function main(): Promise<never> {
     ...getUserArgs(), // Auto-detect user args for both terminal and panel modes
   ];
 
-  // 5. Clear CLAUDECODE to allow nested Claude Code sessions inside CodeHydra
+  // 5. Clear inherited Claude Code session markers so the workspace agent runs
+  //    as a top-level session. CLAUDECODE enables nested sessions;
+  //    CLAUDE_CODE_CHILD_SESSION (set only by Claude Code when it spawns a
+  //    subprocess) would otherwise flag this as a child session and disable
+  //    transcript saving, breaking --resume/--continue in the workspace.
   delete process.env.CLAUDECODE;
+  delete process.env.CLAUDE_CODE_CHILD_SESSION;
 
   // 6. Spawn Claude with automatic session resume.
   // Skip --continue attempt for new workspaces (no prior session to resume).
