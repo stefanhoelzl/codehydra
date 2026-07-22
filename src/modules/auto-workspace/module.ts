@@ -1,49 +1,44 @@
 /**
- * AutoWorkspaceModule - Unified orchestrator for auto-workspace sources.
+ * AutoWorkspaceModule — polls user-defined command sources and creates
+ * workspaces to match.
  *
- * Polls external systems (via pluggable AutoWorkspaceSource implementations)
- * and automatically creates/deletes workspaces to match.
+ * Sources are data, not code: the `auto-workspace.sources` config value is a
+ * multi-document YAML stream (one document per source; see source-config.ts).
+ * Each source's `cmd` emits a JSON array of domain objects; the source's
+ * `template` renders one workspace definition per object (see template-render.ts).
  *
- * Each source is activated independently when its config is fully set.
- * A source needs both an inline template and source.isConfigured() to be active.
+ * A single 60s heartbeat drives everything: each tick re-reads the config
+ * (picking up edits without a restart), then polls every source. Per source:
+ *   - a key already tracked in state is skipped
+ *   - a new key creates a workspace (state entry written only on success)
+ *   - a tracked key absent from this tick is forgotten (so a re-appearing item
+ *     is recreated)
+ * There is no auto-deletion; a manually deleted workspace's entry simply
+ * persists (so it is not recreated while its item is still active) and is
+ * forgotten once the item disappears. Name collision on create is the
+ * idempotency backstop.
  *
  * Hooks:
- * - app:start -> "start": migrate any legacy template-path into the inline template key
- * - app:shutdown -> "stop": clear poll timer, dispose sources
+ * - app:start -> "start": migrate legacy config/state into the new keys
+ * - app:shutdown -> "stop": stop the heartbeat
  *
  * Events:
- * - app:started: initialize active sources, load state, run initial poll, start timer
- * - workspace:deleted: clean up state entry
- * - workspace:delete-failed: clear tracking metadata, set red tag
+ * - app:started: load state, run the first tick, start the heartbeat
  */
 
 import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import type { DomainEvent } from "../../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
-  INTENT_DELETE_WORKSPACE,
-  EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETE_FAILED,
-  type DeleteWorkspaceIntent,
-  type WorkspaceDeletedEvent,
-  type WorkspaceDeleteFailedEvent,
-} from "../../intents/delete-workspace";
-import {
-  INTENT_RESOLVE_WORKSPACE,
-  type ResolveWorkspaceIntent,
-} from "../../intents/resolve-workspace";
-import {
   INTENT_GET_PROJECT_BASES,
   type GetProjectBasesIntent,
 } from "../../intents/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
-import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
-import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
+import type { Config } from "../../boundaries/platform/config";
 import {
   storeString,
   storeText,
@@ -51,65 +46,44 @@ import {
   type PersistedAccessor,
   type DeprecatedPersistedAccessor,
 } from "../../boundaries/platform/store-definition";
-import { TEMPLATE_HELP } from "./template-defaults";
+import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
+import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
-import { renderTemplate, isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
-import { parseTemplateOutput } from "./template";
 import { Path } from "../../utils/path/path";
-import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
+import { parseSources, validateSourcesConfig, type ParsedSource } from "./source-config";
+import { renderDefinition } from "./template-render";
+import { runCmd } from "./cmd-runner";
+import { buildSeededSources, DEFAULT_GITHUB_QUERY } from "./migration";
 
 // =============================================================================
-// State Types
+// State
 // =============================================================================
 
 interface StateEntry {
-  readonly workspacePath: string;
   readonly workspaceName: string;
   readonly createdAt: string;
 }
 
-/**
- * Persisted tracking map: `${source}/${itemKey}` -> live workspace entry, or
- * `null` for a dismissed item (don't re-create). Stored as the single
- * `auto-workspaces` key in state.json.
- */
-type AutoWorkspaceEntries = Record<string, StateEntry | null>;
+/** Tracking map `${source}/${itemKey}` -> entry, stored under `auto-workspaces`. */
+type AutoWorkspaceEntries = Record<string, StateEntry>;
 
 function isStateEntry(value: unknown): value is StateEntry {
   if (typeof value !== "object" || value === null) return false;
   const o = value as Record<string, unknown>;
-  return (
-    typeof o.workspacePath === "string" &&
-    typeof o.workspaceName === "string" &&
-    typeof o.createdAt === "string"
-  );
+  return typeof o.workspaceName === "string" && typeof o.createdAt === "string";
 }
 
-/**
- * Validate an unknown value as an entries map, dropping malformed entries
- * (best-effort: one corrupt entry must not wipe all tracking). Returns
- * undefined only when the value isn't a plain object.
- */
 function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
-  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const out: AutoWorkspaceEntries = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (entry === null) {
-      out[key] = null;
-    } else if (isStateEntry(entry)) {
-      out[key] = {
-        workspacePath: entry.workspacePath,
-        workspaceName: entry.workspaceName,
-        createdAt: entry.createdAt,
-      };
+    if (isStateEntry(entry)) {
+      out[key] = { workspaceName: entry.workspaceName, createdAt: entry.createdAt };
     }
-    // else: drop the malformed entry
   }
   return out;
 }
@@ -122,51 +96,24 @@ function safeJsonParse(raw: string): unknown {
   }
 }
 
-/**
- * Redaction projection for the `auto-workspaces` state key (see the `redact`
- * field on its definition). Scrubs only `workspacePath` — it leaks the user's
- * home dir and on-disk layout — while keeping the map keys, `workspaceName`,
- * `createdAt`, and null/active state so a bug report still shows what is
- * tracked and in what state. Exported for focused testing.
- */
-export function redactAutoWorkspaceEntries(
-  entries: AutoWorkspaceEntries,
-  redacted: string
-): Record<string, (Omit<StateEntry, "workspacePath"> & { workspacePath: string }) | null> {
-  return Object.fromEntries(
-    Object.entries(entries).map(([key, entry]) => [
-      key,
-      entry === null ? null : { ...entry, workspacePath: redacted },
-    ])
-  );
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
 
-const POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+const HEARTBEAT_MS = 60 * 1000; // 60s reconcile-and-poll tick
 const METADATA_SOURCE_KEY = "source";
-const METADATA_URL_KEY = "url";
-const METADATA_TRACKED_KEY = "auto-workspace.tracked";
-const TAG_DELETION_FAILED_KEY = "tags.deletion-failed";
-const TAG_DELETION_FAILED_VALUE = JSON.stringify({ color: "#e74c3c" });
 
 // =============================================================================
-// Module Dependencies
+// Dependencies
 // =============================================================================
 
 export interface AutoWorkspaceModuleDeps {
   readonly fs: Pick<FileSystemBoundary, "readFile" | "rm">;
   readonly logger: Logger;
-  /**
-   * Path of the pre-state.json `auto-workspaces.json`. Read once on first launch
-   * to import its entries into state.json, then deleted. Kept only for that
-   * one-shot migration.
-   */
+  /** Path of the pre-state.json `auto-workspaces.json`, imported once then deleted. */
   readonly legacyStateFilePath: string;
   readonly dispatcher: Dispatcher;
-  readonly sources: readonly AutoWorkspaceSource[];
+  readonly processRunner: ProcessRunner;
   readonly configService: Config;
   readonly stateService: StateService;
 }
@@ -179,56 +126,63 @@ function stateKey(sourceName: string, itemKey: string): string {
   return `${sourceName}/${itemKey}`;
 }
 
+function sourceOfKey(key: string): string {
+  const slash = key.indexOf("/");
+  return slash === -1 ? key : key.slice(0, slash);
+}
+
 // =============================================================================
-// Module Factory
+// Factory
 // =============================================================================
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
-  // Register the inline-template config keys (sources register their own keys).
-  // The value IS the Liquid template content — empty/null means the source is
-  // inactive. The old `experimental.<source>.template-path` key stays registered
-  // as a deprecated migration source (see migrateTemplatePaths).
-  const templateConfigs = new Map<string, PersistedAccessor<string | null>>();
-  const legacyTemplatePathConfigs = new Map<string, DeprecatedPersistedAccessor>();
-  for (const source of deps.sources) {
-    const base = storeText({
-      nullable: true,
-      rows: 14,
-      helpLabel: "Available fields and front-matter keys",
-      ...(TEMPLATE_HELP[source.name] !== undefined && { helpPanel: TEMPLATE_HELP[source.name] }),
-    });
-    const tplConfig = deps.configService.register(`experimental.${source.name}.template`, {
+  const sourcesBase = storeText({
+    nullable: true,
+    rows: 20,
+    helpLabel: "Source format reference",
+    helpPanel: SOURCES_HELP,
+  });
+  const sourcesAccessor: PersistedAccessor<string | null> = deps.configService.register(
+    "auto-workspace.sources",
+    {
       default: null,
-      description: `Liquid template for ${source.name} auto-workspaces`,
+      description: "Auto-workspace sources (multi-document YAML; one document per source)",
       applies: "live",
-      // Kept out of bug reports (a template can embed private detail) but shown
-      // in the clear in the settings editor — hence omit, not redact.
+      // May embed secrets (e.g. an inlined API token in a cmd): kept out of bug
+      // reports, but shown in the clear in the settings editor — hence omit.
       omit: true,
-      ...base,
-      // Compose the base (nullable string) validation with a Liquid syntax check
-      // so a malformed template is rejected in the settings dialog and on set().
+      ...sourcesBase,
       validate: (v: unknown): string | null | undefined => {
-        const parsed = base.validate(v);
-        if (parsed === undefined || parsed === null) return parsed;
-        return isValidLiquidTemplate(parsed) ? parsed : undefined;
+        const parsed = sourcesBase.validate(v);
+        if (parsed === undefined) return undefined;
+        return validateSourcesConfig(parsed);
       },
-    });
-    templateConfigs.set(source.name, tplConfig);
+    }
+  );
 
-    const legacyConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
+  // Deprecated keys, kept readable so migration can drain them into the new
+  // sources value on first launch after upgrade.
+  const registerDeprecated = (key: string): DeprecatedPersistedAccessor =>
+    deps.configService.register(key, {
       default: null,
       deprecated: true,
-      description: `(deprecated) Path to Liquid template for ${source.name} auto-workspaces`,
+      description: `(deprecated) migrated into auto-workspace.sources`,
       ...storeString({ nullable: true }),
     });
-    legacyTemplatePathConfigs.set(source.name, legacyConfig);
-  }
+  const legacy = {
+    githubTemplate: registerDeprecated("experimental.github.template"),
+    githubTemplatePath: registerDeprecated("experimental.github.template-path"),
+    githubQuery: registerDeprecated("experimental.github.query"),
+    youtrackTemplate: registerDeprecated("experimental.youtrack.template"),
+    youtrackTemplatePath: registerDeprecated("experimental.youtrack.template-path"),
+    youtrackBaseUrl: registerDeprecated("experimental.youtrack.base-url"),
+    youtrackToken: registerDeprecated("experimental.youtrack.token"),
+    youtrackQuery: registerDeprecated("experimental.youtrack.query"),
+  };
 
-  // Persisted tracking map, owned in state.json under the `auto-workspaces` key.
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
     description: "Auto-workspace tracking entries (app-managed)",
-    redact: redactAutoWorkspaceEntries,
     ...storeCustom<AutoWorkspaceEntries>({
       parse: (raw) => validateEntries(safeJsonParse(raw)),
       validate: validateEntries,
@@ -236,16 +190,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   });
 
   let entries: AutoWorkspaceEntries = {};
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  // Per-source activation state
-  const activeSources = new Set<string>(); // currently polling source names
-  const deletingKeys = new Set<string>(); // sentinel for auto-deletions
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let reconciling = false;
 
-  // ------ State Persistence ------
+  // ------ State persistence ------
 
-  // This module is the sole in-process owner of the entries map, so it writes
-  // the whole value rather than read-modify-writing it. Cross-key safety (the
-  // shared state.json) comes from PersistedStore serializing its writes.
   async function persist(): Promise<void> {
     try {
       await stateAccessor.set(entries);
@@ -254,31 +203,22 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   }
 
-  /**
-   * One-shot import of the pre-state.json `auto-workspaces.json` file. Runs once
-   * on first launch after upgrade: if state.json has no entries yet and the old
-   * file exists, import its `entries` and delete it. Guarding on isDefault()
-   * (not file-existence) makes a lingering file harmless — once the key is
-   * populated, it wins. Best-effort: failures retry next launch.
-   */
+  // ------ Migrations (one-shot, on first launch after upgrade) ------
+
   async function migrateLegacyStateFile(): Promise<void> {
     if (!stateAccessor.isDefault()) return;
-
     let raw: string;
     try {
       raw = await deps.fs.readFile(deps.legacyStateFilePath);
     } catch {
-      return; // no legacy file — nothing to migrate
+      return;
     }
-
-    // Old shape was { version, entries }; tolerate a bare map too.
     const parsed = safeJsonParse(raw);
     const entriesValue =
       typeof parsed === "object" && parsed !== null && "entries" in parsed
         ? (parsed as { entries: unknown }).entries
         : parsed;
     const migrated = validateEntries(entriesValue);
-
     if (migrated && Object.keys(migrated).length > 0) {
       try {
         await stateAccessor.set(migrated);
@@ -286,198 +226,167 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           count: Object.keys(migrated).length,
         });
       } catch (error) {
-        // Leave the legacy file in place so the migration retries next launch.
         deps.logger.warn("Failed to migrate auto-workspaces.json into state.json", {
           error: getErrorMessage(error),
         });
         return;
       }
     }
-
-    // Best-effort cleanup of the superseded file (imported or empty/unusable).
     await deps.fs.rm(deps.legacyStateFilePath, { force: true }).catch(() => {});
   }
 
-  /**
-   * One-shot migration of the pre-inline `experimental.<source>.template-path`
-   * config key into the new inline `experimental.<source>.template` key. For each
-   * source, if the new key is still unset and the old path key points somewhere,
-   * read that file's content into the new key and strip the old key from
-   * config.json. If the file can't be read (missing/unreadable), the old key is
-   * left in place and a warning logged, so the user can fix the path — nothing is
-   * silently lost. Runs during app:start, before sources activate.
-   */
-  async function migrateTemplatePaths(): Promise<void> {
-    for (const source of deps.sources) {
-      const tplConfig = templateConfigs.get(source.name);
-      const legacyConfig = legacyTemplatePathConfigs.get(source.name);
-      if (!tplConfig || !legacyConfig) continue;
-      if (!tplConfig.isDefault()) continue; // new key already set — don't clobber
-
-      const legacyPath = legacyConfig.get();
-      if (typeof legacyPath !== "string" || legacyPath === "") continue;
-
-      let content: string;
-      try {
-        content = await deps.fs.readFile(legacyPath);
-      } catch (error) {
-        deps.logger.warn("Could not migrate template-path (file unreadable; leaving key)", {
-          source: source.name,
-          path: legacyPath,
-          error: getErrorMessage(error),
-        });
-        continue;
-      }
-
-      try {
-        await tplConfig.set(content);
-        await legacyConfig.reset();
-        deps.logger.info("Migrated template-path into inline template", { source: source.name });
-      } catch (error) {
-        // set() can reject if the file's content isn't valid Liquid; keep the old
-        // key so the migration can be retried after the user fixes the template.
-        deps.logger.warn("Could not migrate template-path (invalid template; leaving key)", {
-          source: source.name,
-          path: legacyPath,
-          error: getErrorMessage(error),
-        });
-      }
-    }
-  }
-
-  // ------ Tracked Paths (metadata-based) ------
-
-  async function buildTrackedPaths(): Promise<Set<string>> {
-    const projects = await deps.dispatcher.dispatch({
-      type: INTENT_LIST_PROJECTS,
-      payload: {},
-    } as ListProjectsIntent);
-
-    const tracked = new Set<string>();
-    for (const project of projects) {
-      for (const workspace of project.workspaces) {
-        if (workspace.metadata[METADATA_TRACKED_KEY]) {
-          tracked.add(workspace.path);
-        }
-      }
-    }
-    return tracked;
-  }
-
-  // ------ Workspace Lifecycle ------
-
-  async function createWorkspace(source: AutoWorkspaceSource, item: PollItem): Promise<void> {
-    const key = stateKey(source.name, item.key);
-    // Read the template content live so settings edits apply on the next poll.
-    const templateContent = templateConfigs.get(source.name)?.get() ?? null;
-    deps.logger.info("Creating auto-workspace", { source: source.name, key });
-
+  /** Resolve a source's template: inline value wins, else read a template-path file. */
+  async function resolveLegacyTemplate(
+    template: DeprecatedPersistedAccessor,
+    templatePath: DeprecatedPersistedAccessor
+  ): Promise<string | null> {
+    const inline = template.get();
+    if (typeof inline === "string" && inline.trim() !== "") return inline;
+    const path = templatePath.get();
+    if (typeof path !== "string" || path === "") return null;
     try {
-      if (templateContent === null) {
-        deps.logger.warn("Skipping auto-workspace (no template configured)", { key });
-        return;
-      }
-      const rendered = renderTemplate(templateContent, item.data);
-      const { config, warnings } = parseTemplateOutput(rendered);
+      return await deps.fs.readFile(path);
+    } catch (error) {
+      deps.logger.warn("Could not read legacy template-path during migration", {
+        path,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
 
-      for (const warning of warnings) {
-        deps.logger.warn("Template front-matter warning", {
-          warning,
-          source: source.name,
+  /**
+   * Seed `auto-workspace.sources` from the deprecated experimental.* keys, once,
+   * only when sources is still unset. Then reset the deprecated keys.
+   */
+  async function migrateSources(): Promise<void> {
+    if (!sourcesAccessor.isDefault()) return;
+
+    const githubTemplate = await resolveLegacyTemplate(
+      legacy.githubTemplate,
+      legacy.githubTemplatePath
+    );
+    const youtrackTemplate = await resolveLegacyTemplate(
+      legacy.youtrackTemplate,
+      legacy.youtrackTemplatePath
+    );
+    const youtrackBaseUrl = legacy.youtrackBaseUrl.get();
+    const youtrackToken = legacy.youtrackToken.get();
+    const youtrackQuery = legacy.youtrackQuery.get();
+
+    const yaml = buildSeededSources(
+      {
+        ...(githubTemplate !== null && {
+          github: {
+            template: githubTemplate,
+            query:
+              typeof legacy.githubQuery.get() === "string"
+                ? (legacy.githubQuery.get() as string)
+                : DEFAULT_GITHUB_QUERY,
+          },
+        }),
+        ...(youtrackTemplate !== null &&
+          typeof youtrackBaseUrl === "string" &&
+          typeof youtrackToken === "string" &&
+          typeof youtrackQuery === "string" && {
+            youtrack: {
+              template: youtrackTemplate,
+              baseUrl: youtrackBaseUrl,
+              token: youtrackToken,
+              query: youtrackQuery,
+            },
+          }),
+      },
+      deps.logger
+    );
+
+    if (yaml !== null) {
+      try {
+        await sourcesAccessor.set(yaml);
+        deps.logger.info(
+          "Migrated experimental.* auto-workspace config into auto-workspace.sources"
+        );
+      } catch (error) {
+        deps.logger.warn("Failed to seed auto-workspace.sources during migration", {
+          error: getErrorMessage(error),
         });
-      }
-
-      // Empty prompt → dismiss
-      if (!config.prompt.trim()) {
-        deps.logger.info("Skipping auto-workspace (template resolved to empty)", { key });
-        entries = { ...entries, [key]: null };
         return;
       }
+    }
 
-      // Determine project source: "project" wins over "git"
+    // Strip the deprecated keys regardless (nothing left to migrate from them).
+    for (const accessor of Object.values(legacy)) {
+      await accessor.reset().catch(() => {});
+    }
+  }
+
+  // ------ Workspace lifecycle ------
+
+  /**
+   * Create a workspace for a new item. Returns the state entry on success, or
+   * null on any failure — the caller then does NOT record the item, so it is
+   * retried next tick.
+   */
+  async function createWorkspace(
+    source: ParsedSource,
+    key: string,
+    data: unknown
+  ): Promise<StateEntry | null> {
+    try {
+      const { definition, warnings } = renderDefinition(source.template, data);
+      for (const warning of warnings) {
+        deps.logger.warn("Template warning", { source: source.name, key, warning });
+      }
+
       let projectPayload: OpenProjectIntent["payload"] | null = null;
-      if (config.project) {
-        projectPayload = { path: new Path(config.project) };
-      } else if (config.git) {
-        projectPayload = { git: config.git };
-      }
-
-      // No project source → dismiss
+      if (definition.project) projectPayload = { path: new Path(definition.project) };
+      else if (definition.git) projectPayload = { git: definition.git };
       if (!projectPayload) {
-        deps.logger.info("Skipping auto-workspace (no project/git in template)", { key });
-        entries = { ...entries, [key]: null };
-        return;
+        deps.logger.warn("Skipping auto-workspace (no project/git in template)", { key });
+        return null;
       }
 
-      // No name → dismiss with warning
-      if (!config.name) {
-        deps.logger.warn("Skipping auto-workspace (no name in template)", { key });
-        entries = { ...entries, [key]: null };
-        return;
-      }
-
-      // Open the project
       const project = await deps.dispatcher.dispatch({
         type: INTENT_OPEN_PROJECT,
         payload: projectPayload,
       } as OpenProjectIntent);
-
       if (!project) {
         deps.logger.warn("project:open returned null for auto-workspace", { key });
-        return;
+        return null;
       }
 
-      // Fetch latest remote state before creating workspace
-      try {
-        await deps.dispatcher.dispatch({
-          type: INTENT_GET_PROJECT_BASES,
-          payload: { projectPath: project.path, refresh: true, wait: true },
-        } as GetProjectBasesIntent);
-      } catch (error) {
-        deps.logger.warn("Failed to fetch bases before auto-create (will retry next poll)", {
-          key,
-          error: getErrorMessage(error),
-        });
-        return;
-      }
+      await deps.dispatcher.dispatch({
+        type: INTENT_GET_PROJECT_BASES,
+        payload: { projectPath: project.path, refresh: true, wait: true },
+      } as GetProjectBasesIntent);
 
-      // The template's `agent.*` front-matter (parsed into config.agent) carries
-      // the backend + launch config. With none set, fall back to a prompt-only
-      // "default" arm so the resolved-default backend runs the body.
-      const agent: AgentSpec = config.agent ?? {
+      const agent: AgentSpec = definition.agent ?? {
         type: "default",
-        ...(config.prompt !== "" && { prompt: config.prompt }),
+        ...(definition.prompt !== "" && { prompt: definition.prompt }),
       };
 
-      // Create the workspace
       const wsResult = await deps.dispatcher.dispatch({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          workspaceName: config.name,
-          ...(config.base !== undefined && { base: config.base }),
-          ...(config.tracking !== undefined && { tracking: config.tracking }),
-          stealFocus: config.focus ?? false,
+          workspaceName: definition.name,
+          ...(definition.base !== undefined && { base: definition.base }),
+          ...(definition.tracking !== undefined && { tracking: definition.tracking }),
+          stealFocus: definition.focus ?? false,
           projectPath: project.path,
           agent,
           source: "auto-workspace",
         },
       } as OpenWorkspaceIntent);
 
-      const workspacePath = wsResult.path;
-
-      // Set metadata
-      const autoMetadata: Record<string, string> = {
+      const allMetadata: Record<string, string> = {
         [METADATA_SOURCE_KEY]: source.name,
-        [METADATA_URL_KEY]: item.url,
-        [METADATA_TRACKED_KEY]: "true",
+        ...(definition.metadata ?? {}),
       };
-      const allMetadata = { ...autoMetadata, ...(config.metadata ?? {}) };
-
       for (const [metaKey, value] of Object.entries(allMetadata)) {
         try {
           await deps.dispatcher.dispatch({
             type: INTENT_SET_METADATA,
-            payload: { workspacePath, key: metaKey, value },
+            payload: { workspacePath: wsResult.path, key: metaKey, value },
           } as SetMetadataIntent);
         } catch (error) {
           deps.logger.warn("Failed to set workspace metadata", {
@@ -488,250 +397,134 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         }
       }
 
-      // Record in state
-      entries = {
-        ...entries,
-        [key]: {
-          workspacePath,
-          workspaceName: config.name,
-          createdAt: new Date().toISOString(),
-        },
-      };
-
       deps.logger.info("Auto-workspace created", {
         source: source.name,
         key,
-        workspaceName: config.name,
+        workspaceName: definition.name,
       });
+      return { workspaceName: definition.name, createdAt: new Date().toISOString() };
     } catch (error) {
-      deps.logger.warn("Failed to create auto-workspace", {
+      // No entry written → retried next tick (name collision, invalid name, or a
+      // transient failure all land here; the intent's source:"auto-workspace"
+      // suppresses a user-facing error notification).
+      deps.logger.warn("Failed to create auto-workspace (will retry)", {
+        source: source.name,
         key,
         error: getErrorMessage(error),
       });
-      // Dismiss to avoid re-evaluation every poll cycle
-      entries = { ...entries, [key]: null };
+      return null;
     }
   }
 
-  async function deleteWorkspace(
-    source: AutoWorkspaceSource,
-    key: string,
-    entry: StateEntry
-  ): Promise<void> {
-    deps.logger.info("Deleting auto-workspace (item disappeared)", {
-      key,
-      workspaceName: entry.workspaceName,
-    });
+  // ------ Poll cycle ------
 
-    if (source.fetchBasesBeforeDelete) {
-      try {
-        const { projectPath } = await deps.dispatcher.dispatch({
-          type: INTENT_RESOLVE_WORKSPACE,
-          payload: { workspacePath: entry.workspacePath },
-        } as ResolveWorkspaceIntent);
-
-        await deps.dispatcher.dispatch({
-          type: INTENT_GET_PROJECT_BASES,
-          payload: { projectPath, refresh: true, wait: true },
-        } as GetProjectBasesIntent);
-      } catch (error) {
-        deps.logger.warn("Failed to fetch bases before auto-delete (continuing)", {
-          key,
-          error: getErrorMessage(error),
-        });
-      }
-    }
-
-    deletingKeys.add(key);
+  async function pollSource(source: ParsedSource): Promise<boolean> {
+    let items: unknown[];
     try {
-      await deps.dispatcher.dispatch({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: entry.workspacePath,
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      } as DeleteWorkspaceIntent);
-
-      deps.logger.info("Auto-workspace deleted", {
-        key,
-        workspaceName: entry.workspaceName,
-      });
+      items = await runCmd({ processRunner: deps.processRunner }, source.cmd);
     } catch (error) {
-      deps.logger.warn("Failed to delete auto-workspace", {
-        key,
-        error: getErrorMessage(error),
-      });
-    }
-    deletingKeys.delete(key);
-  }
-
-  // ------ Poll Cycle ------
-
-  async function pollSource(source: AutoWorkspaceSource): Promise<boolean> {
-    const prefix = `${source.name}/`;
-
-    // Build trackedKeys from state entries for this source
-    const trackedKeys = new Set<string>();
-    for (const key of Object.keys(entries)) {
-      if (key.startsWith(prefix)) {
-        trackedKeys.add(key.slice(prefix.length));
-      }
-    }
-
-    let pollResult: PollResult;
-    try {
-      pollResult = await source.poll(trackedKeys);
-    } catch (error) {
-      deps.logger.warn("Poll failed for source, skipping", {
+      deps.logger.warn("Source cmd failed, skipping tick", {
         source: source.name,
         error: getErrorMessage(error),
       });
       return false;
     }
-    const { activeKeys, newItems } = pollResult;
 
-    deps.logger.debug("Poll completed", {
-      source: source.name,
-      total: activeKeys.size,
-      tracked: activeKeys.size - newItems.length,
-      new: newItems.length,
-    });
-    if (newItems.length > 0) {
-      deps.logger.debug("Poll new items", {
-        source: source.name,
-        keys: newItems.map((i) => i.key).join(","),
-      });
-    }
-
-    let stateChanged = false;
-    const entriesBefore = entries;
-
-    // Build set of full state keys that are still active
+    const prefix = `${source.name}/`;
     const activeStateKeys = new Set<string>();
-    for (const itemKey of activeKeys) {
-      activeStateKeys.add(stateKey(source.name, itemKey));
+    const newItems: { key: string; data: unknown }[] = [];
+
+    for (const data of items) {
+      let key: string;
+      try {
+        key = renderDefinition(source.template, data).definition.key;
+      } catch (error) {
+        deps.logger.warn("Failed to render item key, skipping item", {
+          source: source.name,
+          error: getErrorMessage(error),
+        });
+        continue;
+      }
+      const fullKey = stateKey(source.name, key);
+      activeStateKeys.add(fullKey);
+      if (!(fullKey in entries)) newItems.push({ key: fullKey, data });
     }
 
-    // Detect disappeared items
-    const trackedPaths = await buildTrackedPaths();
-    for (const [key, entry] of Object.entries(entries)) {
-      if (!key.startsWith(prefix)) continue;
-      if (activeStateKeys.has(key)) continue;
+    let changed = false;
 
-      if (entry === null) {
-        // Dismissed entry — remove from state
-        deps.logger.info("Forgot dismissed entry (item disappeared from poll)", {
+    // Forget entries for this source whose item is no longer active.
+    for (const key of Object.keys(entries)) {
+      if (key.startsWith(prefix) && !activeStateKeys.has(key)) {
+        delete entries[key];
+        changed = true;
+        deps.logger.info("Forgot auto-workspace entry (item disappeared)", {
           source: source.name,
           key,
-        });
-        entries = Object.fromEntries(Object.entries(entries).filter(([k]) => k !== key));
-      } else if (trackedPaths.has(entry.workspacePath)) {
-        // Active entry with tracked metadata — auto-delete (deleteWorkspace logs)
-        await deleteWorkspace(source, key, entry);
-      } else {
-        // Entry exists but workspace not tracked → previous failure, leave entry
-        deps.logger.info("Leaving stale entry to prevent recreation", {
-          source: source.name,
-          key,
-          workspaceName: entry.workspaceName,
         });
       }
     }
 
-    // Create workspaces for new items
-    for (const item of newItems) {
-      await createWorkspace(source, item);
-    }
-
-    if (entries !== entriesBefore) {
-      stateChanged = true;
-    }
-
-    return stateChanged;
-  }
-
-  async function poll(): Promise<void> {
-    let anyChanged = false;
-
-    for (const source of deps.sources) {
-      if (!activeSources.has(source.name)) continue;
-      const changed = await pollSource(source);
-      if (changed) anyChanged = true;
-    }
-
-    if (anyChanged) {
-      await persist();
-    }
-  }
-
-  // ------ Timer Management ------
-
-  function startPolling(): void {
-    if (pollTimer) return;
-    pollTimer = setInterval(() => {
-      void poll();
-    }, POLL_INTERVAL_MS);
-    deps.logger.info("Auto-workspace polling started", { intervalMs: POLL_INTERVAL_MS });
-  }
-
-  function stopPolling(): void {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-      deps.logger.info("Auto-workspace polling stopped");
-    }
-  }
-
-  // ------ Source Activation ------
-
-  function isSourceActive(source: AutoWorkspaceSource): boolean {
-    const template = templateConfigs.get(source.name)?.get() ?? null;
-    return template !== null && source.isConfigured();
-  }
-
-  async function activateSource(source: AutoWorkspaceSource): Promise<void> {
-    if (!isSourceActive(source)) return;
-
-    deps.logger.info("Activating auto-workspace source", { source: source.name });
-
-    const initialized = await source.initialize();
-    if (!initialized) return;
-
-    activeSources.add(source.name);
-  }
-
-  function deactivateSource(source: AutoWorkspaceSource): void {
-    activeSources.delete(source.name);
-    source.dispose();
-    deps.logger.info("Deactivated auto-workspace source", { source: source.name });
-  }
-
-  async function activateAll(): Promise<void> {
-    await migrateLegacyStateFile();
-    entries = stateAccessor.get();
-
-    for (const source of deps.sources) {
-      await activateSource(source);
-    }
-
-    if (activeSources.size > 0) {
-      await poll();
-      startPolling();
-    }
-  }
-
-  function deactivateAll(): void {
-    stopPolling();
-    for (const source of deps.sources) {
-      if (activeSources.has(source.name)) {
-        deactivateSource(source);
+    // Create workspaces for new items.
+    for (const { key, data } of newItems) {
+      const entry = await createWorkspace(source, key, data);
+      if (entry) {
+        entries[key] = entry;
+        changed = true;
       }
     }
+
+    return changed;
   }
 
-  // ------ Module Definition ------
+  async function reconcile(): Promise<void> {
+    if (reconciling) return;
+    reconciling = true;
+    try {
+      const { sources, errors } = parseSources(sourcesAccessor.get());
+      for (const err of errors) {
+        deps.logger.warn("Invalid auto-workspace source, ignoring", {
+          source: err.name ?? `#${err.index}`,
+          message: err.message,
+        });
+      }
+
+      let changed = false;
+
+      // Orphan cleanup: drop entries whose source no longer exists in config.
+      const validNames = new Set(sources.map((s) => s.name));
+      for (const key of Object.keys(entries)) {
+        if (!validNames.has(sourceOfKey(key))) {
+          delete entries[key];
+          changed = true;
+          deps.logger.info("Forgot auto-workspace entry (source removed)", { key });
+        }
+      }
+
+      for (const source of sources) {
+        if (await pollSource(source)) changed = true;
+      }
+
+      if (changed) await persist();
+    } finally {
+      reconciling = false;
+    }
+  }
+
+  function startHeartbeat(): void {
+    if (heartbeat) return;
+    heartbeat = setInterval(() => void reconcile(), HEARTBEAT_MS);
+    deps.logger.info("Auto-workspace heartbeat started", { intervalMs: HEARTBEAT_MS });
+  }
+
+  function stopHeartbeat(): void {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+      deps.logger.info("Auto-workspace heartbeat stopped");
+    }
+  }
+
+  // ------ Module definition ------
 
   return {
     name: "auto-workspace",
@@ -739,16 +532,15 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
-            // Migrate any legacy template-path into the inline template key before
-            // sources activate (on the app:started event).
-            await migrateTemplatePaths();
+            await migrateSources();
+            await migrateLegacyStateFile();
           },
         },
       },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            deactivateAll();
+            stopHeartbeat();
           },
         },
       },
@@ -756,82 +548,9 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     events: {
       [EVENT_APP_STARTED]: {
         handler: async (): Promise<void> => {
-          await activateAll();
-        },
-      },
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, worktreeRemoved } = (event as WorkspaceDeletedEvent).payload;
-
-          // Runtime-only teardown (e.g. the per-workspace teardown during
-          // project:close) is not a deletion: the worktree stays on disk and
-          // tracking must survive a close/reopen cycle.
-          if (!worktreeRemoved) return;
-
-          for (const [key, entry] of Object.entries(entries)) {
-            if (entry?.workspacePath === workspacePath) {
-              if (deletingKeys.has(key)) {
-                // Auto-deletion — remove entry entirely
-                entries = Object.fromEntries(Object.entries(entries).filter(([k]) => k !== key));
-              } else {
-                // Manual deletion — set to null to prevent re-creation
-                entries = { ...entries, [key]: null };
-              }
-              await persist();
-              deps.logger.info("Marked auto-workspace as dismissed", {
-                key,
-                workspaceName: entry.workspaceName,
-              });
-              break;
-            }
-          }
-        },
-      },
-      [EVENT_WORKSPACE_DELETE_FAILED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
-
-          // Runs inside the dispatch .catch() handlers below, so it can't be
-          // awaited here; PersistedStore serializes the write, so the
-          // fire-and-forget persist() stays race-safe.
-          const dismissEntry = (key: string): void => {
-            entries = { ...entries, [key]: null };
-            void persist();
-          };
-
-          for (const [key, entry] of Object.entries(entries)) {
-            if (entry?.workspacePath === workspacePath && deletingKeys.has(key)) {
-              void deps.dispatcher
-                .dispatch({
-                  type: INTENT_SET_METADATA,
-                  payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
-                } as SetMetadataIntent)
-                .catch((err: unknown) => {
-                  deps.logger.warn("Failed to clear tracked metadata after delete failure", {
-                    workspacePath,
-                    error: getErrorMessage(err),
-                  });
-                  dismissEntry(key);
-                });
-              void deps.dispatcher
-                .dispatch({
-                  type: INTENT_SET_METADATA,
-                  payload: {
-                    workspacePath,
-                    key: TAG_DELETION_FAILED_KEY,
-                    value: TAG_DELETION_FAILED_VALUE,
-                  },
-                } as SetMetadataIntent)
-                .catch((err: unknown) => {
-                  deps.logger.warn("Failed to set deletion-failed tag after delete failure", {
-                    workspacePath,
-                    error: getErrorMessage(err),
-                  });
-                  dismissEntry(key);
-                });
-              break;
-            }
-          }
+          entries = stateAccessor.get();
+          await reconcile();
+          startHeartbeat();
         },
       },
     },

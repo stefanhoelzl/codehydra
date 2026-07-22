@@ -2,15 +2,15 @@
 /**
  * Integration tests for AutoWorkspaceModule through the Dispatcher.
  *
- * Uses mock AutoWorkspaceSource implementations to test the orchestrator
- * independently of GitHub/YouTrack API specifics.
+ * The module polls user-defined command sources: a mock ProcessRunner supplies
+ * each cmd's stdout, and `auto-workspace.sources` config drives which sources
+ * run. A 60s heartbeat re-reads config and polls; tests drive it with fake
+ * timers.
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { Dispatcher } from "../../intents/lib/dispatcher";
-
 import { z } from "zod/v4";
 import type {
   Operation,
@@ -19,7 +19,7 @@ import type {
   IntentOf,
   HookContext,
 } from "../../intents/lib/operation";
-import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { Project, ProjectId } from "../../shared/api/types";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -34,59 +34,38 @@ import {
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
-  INTENT_DELETE_WORKSPACE,
-  EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETE_FAILED,
-  type DeleteWorkspaceIntent,
-  type WorkspaceDeletedEvent,
-  type WorkspaceDeleteFailedEvent,
-} from "../../intents/delete-workspace";
-import {
-  INTENT_RESOLVE_WORKSPACE,
-  type ResolveWorkspaceIntent,
-} from "../../intents/resolve-workspace";
-import {
   INTENT_GET_PROJECT_BASES,
   type GetProjectBasesIntent,
   type GetProjectBasesResult,
 } from "../../intents/get-project-bases";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import {
   createFileSystemMock,
   file,
   directory,
 } from "../../boundaries/platform/filesystem.state-mock";
-import { createAutoWorkspaceModule, redactAutoWorkspaceEntries } from "./module";
-import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
+import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
+import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
-import type { Config } from "../../boundaries/platform/config";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 
-// Entries currently persisted in the (mock) state.json `auto-workspaces` key.
-type StateEntry = { workspacePath: string; workspaceName: string; createdAt: string };
-function entriesOf(state: MockStateService): Record<string, StateEntry | null> {
-  return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry | null>;
+const HEARTBEAT_MS = 60 * 1000;
+
+type StateEntry = { workspaceName: string; createdAt: string };
+function entriesOf(state: MockStateService): Record<string, StateEntry> {
+  return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry>;
 }
 
-// =============================================================================
-// Minimal Test Operations
-// =============================================================================
+// ---- Minimal operations ----
 
-const activateSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-} satisfies OperationSchemas;
-
+const activateSchemas = { type: INTENT_APP_START, payload: z.unknown() } satisfies OperationSchemas;
 class MinimalActivateOperation implements Operation<typeof activateSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = activateSchemas;
-
   async execute(ctx: OperationContext<IntentOf<typeof activateSchemas>>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
     const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    // Simulate app:ready emitting app:started after projects are loaded
     await ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
   }
 }
@@ -96,171 +75,59 @@ const openProjectSchemas = {
   payload: z.custom<OpenProjectIntent["payload"]>(),
   result: z.custom<Project>(),
 } satisfies OperationSchemas;
-
-class TrackingOpenProjectOperation implements Operation<typeof openProjectSchemas> {
+class OpenProjectOp implements Operation<typeof openProjectSchemas> {
   readonly id = "open-project";
   readonly schemas = openProjectSchemas;
   readonly dispatched: IntentOf<typeof openProjectSchemas>[] = [];
-
   async execute(ctx: OperationContext<IntentOf<typeof openProjectSchemas>>): Promise<Project> {
     this.dispatched.push(ctx.intent);
-    const gitUrl = ctx.intent.payload.git ?? "";
-    const pathStr = ctx.intent.payload.path?.toString() ?? "";
-    const repoName =
-      gitUrl.replace(/.*\//, "").replace(/\.git$/, "") || pathStr.replace(/.*\//, "") || "repo";
-    return {
-      id: "project-1" as Project["id"],
-      name: repoName,
-      path: pathStr || `/home/user/projects/${repoName}`,
-      workspaces: [],
-    };
+    const pathStr = ctx.intent.payload.path?.toString() ?? "/home/user/projects/repo";
+    return { id: "project-1" as ProjectId, name: "repo", path: pathStr, workspaces: [] };
   }
 }
 
-interface OpenWorkspaceTestResult {
+interface WsResult {
   projectId: string;
   name: string;
   path: string;
   branch: string;
   metadata: Record<string, string>;
 }
-
 const openWorkspaceSchemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: z.custom<OpenWorkspaceIntent["payload"]>(),
-  result: z.custom<OpenWorkspaceTestResult>(),
+  result: z.custom<WsResult>(),
 } satisfies OperationSchemas;
-
-class TrackingOpenWorkspaceOperation implements Operation<typeof openWorkspaceSchemas> {
+class OpenWorkspaceOp implements Operation<typeof openWorkspaceSchemas> {
   readonly id = "open-workspace";
   readonly schemas = openWorkspaceSchemas;
   readonly dispatched: IntentOf<typeof openWorkspaceSchemas>[] = [];
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>>
-  ): Promise<OpenWorkspaceTestResult> {
+  readonly failFor = new Set<string>();
+  async execute(ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>>): Promise<WsResult> {
     this.dispatched.push(ctx.intent);
+    const name = ctx.intent.payload.workspaceName ?? "ws";
+    if (this.failFor.has(name)) throw new Error(`open failed for ${name}`);
     return {
       projectId: "project-1",
-      name: ctx.intent.payload.workspaceName ?? "ws",
-      path: `/home/user/projects/repo/${ctx.intent.payload.workspaceName ?? "ws"}`,
+      name,
+      path: `/home/user/projects/repo/${name}`,
       branch: "feature",
       metadata: {},
     };
   }
 }
 
-const deleteWorkspaceSchemas = {
-  type: INTENT_DELETE_WORKSPACE,
-  payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
-  result: z.custom<{ started: true }>(),
-} satisfies OperationSchemas;
-
-class TrackingDeleteWorkspaceOperation implements Operation<typeof deleteWorkspaceSchemas> {
-  readonly id = "delete-workspace";
-  readonly schemas = deleteWorkspaceSchemas;
-  readonly dispatched: IntentOf<typeof deleteWorkspaceSchemas>[] = [];
-  readonly failForPaths = new Set<string>();
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof deleteWorkspaceSchemas>>
-  ): Promise<{ started: true }> {
-    this.dispatched.push(ctx.intent);
-    if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
-      const failedEvent: WorkspaceDeleteFailedEvent = {
-        type: EVENT_WORKSPACE_DELETE_FAILED,
-        payload: { workspacePath: ctx.intent.payload.workspacePath },
-      };
-      ctx.emit(failedEvent);
-    } else {
-      const event: WorkspaceDeletedEvent = {
-        type: EVENT_WORKSPACE_DELETED,
-        payload: {
-          projectId: "project-1" as Project["id"],
-          workspaceName: "auto-ws" as WorkspaceName,
-          workspacePath: ctx.intent.payload.workspacePath,
-          projectPath: "/home/user/projects/repo",
-          worktreeRemoved: ctx.intent.payload.removeWorktree,
-        },
-      };
-      ctx.emit(event);
-    }
-    return { started: true };
-  }
-}
-
-const setMetadataSchemas = {
-  type: INTENT_SET_METADATA,
-  payload: z.custom<SetMetadataIntent["payload"]>(),
-} satisfies OperationSchemas;
-
-class TrackingSetMetadataOperation implements Operation<typeof setMetadataSchemas> {
-  readonly id = "set-metadata";
-  readonly schemas = setMetadataSchemas;
-  readonly dispatched: IntentOf<typeof setMetadataSchemas>[] = [];
-  readonly failForPaths = new Set<string>();
-
-  async execute(ctx: OperationContext<IntentOf<typeof setMetadataSchemas>>): Promise<void> {
-    this.dispatched.push(ctx.intent);
-    if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
-      throw new Error(`Workspace not found: ${ctx.intent.payload.workspacePath}`);
-    }
-  }
-}
-
-const listProjectsSchemas = {
-  type: INTENT_LIST_PROJECTS,
-  payload: z.unknown(),
-  result: z.custom<Project[]>(),
-} satisfies OperationSchemas;
-
-class TrackingListProjectsOperation implements Operation<typeof listProjectsSchemas> {
-  readonly id = "list-projects";
-  readonly schemas = listProjectsSchemas;
-  projects: Project[] = [];
-
-  async execute(): Promise<Project[]> {
-    return this.projects;
-  }
-}
-
-const resolveWorkspaceSchemas = {
-  type: INTENT_RESOLVE_WORKSPACE,
-  payload: z.custom<ResolveWorkspaceIntent["payload"]>(),
-  result: z.custom<{ projectPath: string; workspaceName: WorkspaceName }>(),
-} satisfies OperationSchemas;
-
-class TrackingResolveWorkspaceOperation implements Operation<typeof resolveWorkspaceSchemas> {
-  readonly id = "resolve-workspace";
-  readonly schemas = resolveWorkspaceSchemas;
-  readonly dispatched: IntentOf<typeof resolveWorkspaceSchemas>[] = [];
-  projectPath = "/home/user/projects/repo";
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof resolveWorkspaceSchemas>>
-  ): Promise<{ projectPath: string; workspaceName: WorkspaceName }> {
-    this.dispatched.push(ctx.intent);
-    return { projectPath: this.projectPath, workspaceName: "auto-ws" as WorkspaceName };
-  }
-}
-
-const getProjectBasesSchemas = {
+const getBasesSchemas = {
   type: INTENT_GET_PROJECT_BASES,
   payload: z.custom<GetProjectBasesIntent["payload"]>(),
   result: z.custom<GetProjectBasesResult>(),
 } satisfies OperationSchemas;
-
-class TrackingGetProjectBasesOperation implements Operation<typeof getProjectBasesSchemas> {
+class GetBasesOp implements Operation<typeof getBasesSchemas> {
   readonly id = "get-project-bases";
-  readonly schemas = getProjectBasesSchemas;
-  readonly dispatched: IntentOf<typeof getProjectBasesSchemas>[] = [];
-  shouldFail = false;
-
+  readonly schemas = getBasesSchemas;
   async execute(
-    ctx: OperationContext<IntentOf<typeof getProjectBasesSchemas>>
+    ctx: OperationContext<IntentOf<typeof getBasesSchemas>>
   ): Promise<GetProjectBasesResult> {
-    this.dispatched.push(ctx.intent);
-    if (this.shouldFail) throw new Error("fetch failed");
     return {
       bases: [],
       projectPath: ctx.intent.payload.projectPath,
@@ -269,114 +136,46 @@ class TrackingGetProjectBasesOperation implements Operation<typeof getProjectBas
   }
 }
 
-// =============================================================================
-// Mock Source
-// =============================================================================
-
-function createMockSource(
-  name: string,
-  options?: {
-    isConfigured?: boolean;
-    initializeFails?: boolean;
-    fetchBasesBeforeDelete?: boolean;
+const setMetaSchemas = {
+  type: INTENT_SET_METADATA,
+  payload: z.custom<SetMetadataIntent["payload"]>(),
+} satisfies OperationSchemas;
+class SetMetaOp implements Operation<typeof setMetaSchemas> {
+  readonly id = "set-metadata";
+  readonly schemas = setMetaSchemas;
+  readonly dispatched: IntentOf<typeof setMetaSchemas>[] = [];
+  async execute(ctx: OperationContext<IntentOf<typeof setMetaSchemas>>): Promise<void> {
+    this.dispatched.push(ctx.intent);
   }
-): AutoWorkspaceSource & {
-  pollResult: PollResult;
-  pollError: Error | null;
-  initializeCalled: boolean;
-  disposeCalled: boolean;
-  _isConfigured: boolean;
-} {
-  const mock = {
-    name,
-    fetchBasesBeforeDelete: options?.fetchBasesBeforeDelete ?? false,
-    pollResult: { activeKeys: new Set<string>(), newItems: [] as PollItem[] } as PollResult,
-    pollError: null as Error | null,
-    initializeCalled: false,
-    disposeCalled: false,
-    _isConfigured: options?.isConfigured ?? true,
-
-    isConfigured(): boolean {
-      return mock._isConfigured;
-    },
-
-    async initialize(): Promise<boolean> {
-      mock.initializeCalled = true;
-      return !options?.initializeFails;
-    },
-
-    async poll(): Promise<PollResult> {
-      if (mock.pollError) throw mock.pollError;
-      return mock.pollResult;
-    },
-
-    dispose(): void {
-      mock.disposeCalled = true;
-    },
-  };
-  return mock;
 }
 
-// =============================================================================
-// Test Setup
-// =============================================================================
+// ---- Setup ----
 
-const DEFAULT_TEMPLATE =
-  "---\ngit: https://github.com/org/repo.git\nname: {{ id }}\n---\nWork on {{ id }}";
-
-function trackedProject(workspacePath: string): Project {
-  return {
-    id: "project-1" as ProjectId,
-    name: "repo",
-    path: "/home/user/projects/repo",
-    workspaces: [
-      {
-        projectId: "project-1" as ProjectId,
-        name: "auto-ws" as WorkspaceName,
-        branch: "feature",
-        path: workspacePath,
-        metadata: {
-          source: "test-source",
-          "auto-workspace.tracked": "true",
-        },
-      },
-    ],
-  };
+function sourceYaml(name = "gh"): string {
+  return `name: ${name}
+cmd: fetch
+template:
+  name: "ws-{{ id }}"
+  key: "{{ id }}"
+  git: "https://github.com/org/repo.git"
+  prompt: "Work on {{ id }}"`;
 }
 
-interface TestSetup {
-  dispatcher: Dispatcher;
-  fs: ReturnType<typeof createFileSystemMock>;
-  state: MockStateService;
-  source: ReturnType<typeof createMockSource>;
-  mockConfig: Config;
-  openProjectOp: TrackingOpenProjectOperation;
-  openWorkspaceOp: TrackingOpenWorkspaceOperation;
-  deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
-  setMetadataOp: TrackingSetMetadataOperation;
-  listProjectsOp: TrackingListProjectsOperation;
-  resolveWorkspaceOp: TrackingResolveWorkspaceOperation;
-  getProjectBasesOp: TrackingGetProjectBasesOperation;
+interface CmdControl {
+  items: unknown[];
+  exitCode: number;
 }
 
-function createTestSetup(options?: {
-  disabled?: boolean;
-  sourceOptions?: Parameters<typeof createMockSource>[1];
-  /** Seed the mock state.json `auto-workspaces` key. Accepts the old
-   * `{version, entries}` JSON (entries extracted) for call-site compatibility. */
-  existingState?: string;
-  /** Seed the legacy on-disk auto-workspaces.json to exercise the one-shot migration. */
+function createSetup(options?: {
+  sources?: string | null;
+  configDefaults?: Record<string, unknown>;
   legacyStateFileContent?: string;
-  templateContent?: string;
-  /** Set the deprecated template-path key (leaving `template` unset) to exercise migration. */
-  migrateFromPath?: string;
-  /** Content written at migrateFromPath; omit to simulate a missing/unreadable file. */
-  migrateFileContent?: string;
-  sourceName?: string;
-}): TestSetup {
-  const sourceName = options?.sourceName ?? "test-source";
-
-  const source = createMockSource(sourceName, options?.sourceOptions);
+  existingEntries?: Record<string, StateEntry>;
+}) {
+  const cmd: CmdControl = { items: [], exitCode: 0 };
+  const processRunner = createMockProcessRunner({
+    onSpawn: () => ({ exitCode: cmd.exitCode, stdout: JSON.stringify(cmd.items) }),
+  });
 
   const fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
     "/data": directory(),
@@ -384,1093 +183,239 @@ function createTestSetup(options?: {
   if (options?.legacyStateFileContent !== undefined) {
     fsEntries["/data/auto-workspaces.json"] = file(options.legacyStateFileContent);
   }
-  if (options?.migrateFromPath !== undefined && options?.migrateFileContent !== undefined) {
-    fsEntries[options.migrateFromPath] = file(options.migrateFileContent);
-  }
   const fs = createFileSystemMock({ entries: fsEntries });
 
-  // Seed the mock state.json from the legacy {version, entries} shape.
-  const seededEntries = options?.existingState
-    ? ((JSON.parse(options.existingState) as { entries?: Record<string, unknown> }).entries ?? {})
-    : undefined;
   const state = createMockState(
-    seededEntries ? { values: { "auto-workspaces": seededEntries } } : undefined
+    options?.existingEntries
+      ? { values: { "auto-workspaces": options.existingEntries } }
+      : undefined
   );
 
   const dispatcher = createMockDispatcher();
+  const openProjectOp = new OpenProjectOp();
+  const openWorkspaceOp = new OpenWorkspaceOp();
+  const getBasesOp = new GetBasesOp();
+  const setMetaOp = new SetMetaOp();
 
-  const openProjectOp = new TrackingOpenProjectOperation();
-  const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
-  const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
-  const setMetadataOp = new TrackingSetMetadataOperation();
-  const listProjectsOp = new TrackingListProjectsOperation();
-  const resolveWorkspaceOp = new TrackingResolveWorkspaceOperation();
-  const getProjectBasesOp = new TrackingGetProjectBasesOperation();
-
-  const configValues: Record<string, unknown> = {};
-  if (options?.migrateFromPath !== undefined) {
-    configValues[`experimental.${sourceName}.template-path`] = options.migrateFromPath;
-  } else if (!options?.disabled) {
-    configValues[`experimental.${sourceName}.template`] =
-      options?.templateContent ?? DEFAULT_TEMPLATE;
+  const configDefaults: Record<string, unknown> = { ...(options?.configDefaults ?? {}) };
+  if (options?.sources !== undefined && options.sources !== null) {
+    configDefaults["auto-workspace.sources"] = options.sources;
   }
-
-  const mockConfig = createMockConfig({ defaults: configValues });
+  const mockConfig = createMockConfig({ defaults: configDefaults });
 
   dispatcher.registerOperation(new MinimalActivateOperation());
   dispatcher.registerOperation(new AppShutdownOperation());
   dispatcher.registerOperation(openProjectOp);
   dispatcher.registerOperation(openWorkspaceOp);
-  dispatcher.registerOperation(deleteWorkspaceOp);
-  dispatcher.registerOperation(setMetadataOp);
-  dispatcher.registerOperation(listProjectsOp);
-  dispatcher.registerOperation(resolveWorkspaceOp);
-  dispatcher.registerOperation(getProjectBasesOp);
+  dispatcher.registerOperation(getBasesOp);
+  dispatcher.registerOperation(setMetaOp);
 
   const module = createAutoWorkspaceModule({
     fs,
     logger: SILENT_LOGGER,
     legacyStateFilePath: "/data/auto-workspaces.json",
     dispatcher,
-    sources: [source],
+    processRunner,
     configService: mockConfig,
     stateService: state,
   });
-
   dispatcher.registerModule(module);
 
-  return {
-    dispatcher,
-    fs,
-    state,
-    source,
-    mockConfig,
-    openProjectOp,
-    openWorkspaceOp,
-    deleteWorkspaceOp,
-    setMetadataOp,
-    listProjectsOp,
-    resolveWorkspaceOp,
-    getProjectBasesOp,
-  };
+  return { dispatcher, fs, state, cmd, mockConfig, openProjectOp, openWorkspaceOp, setMetaOp };
 }
 
-function startIntent(): AppStartIntent {
-  return { type: INTENT_APP_START, payload: {} as AppStartIntent["payload"] };
-}
-
-function shutdownIntent(): AppShutdownIntent {
-  return { type: INTENT_APP_SHUTDOWN, payload: {} as AppShutdownIntent["payload"] };
-}
-
-// =============================================================================
-// Tests
-// =============================================================================
+const startIntent = (): AppStartIntent => ({
+  type: INTENT_APP_START,
+  payload: {} as AppStartIntent["payload"],
+});
+const shutdownIntent = (): AppShutdownIntent => ({
+  type: INTENT_APP_SHUTDOWN,
+  payload: {} as AppShutdownIntent["payload"],
+});
+const tick = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+};
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
 describe("AutoWorkspaceModule Integration", () => {
-  describe("activation", () => {
-    it("does nothing when no template path configured", async () => {
-      const { dispatcher, source } = createTestSetup({ disabled: true });
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(source.initializeCalled).toBe(false);
+  it("creates a workspace for a new item on the first tick", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, setMetaOp } = createSetup({
+      sources: sourceYaml(),
     });
+    cmd.items = [{ id: "1" }];
 
-    it("does not activate when source is not configured", async () => {
-      const { dispatcher, source } = createTestSetup({
-        sourceOptions: { isConfigured: false },
-      });
+    await dispatcher.dispatch(startIntent());
 
-      await dispatcher.dispatch(startIntent());
-
-      expect(source.initializeCalled).toBe(false);
+    expect(openProjectOp.dispatched).toHaveLength(1);
+    expect(openProjectOp.dispatched[0]!.payload.git).toBe("https://github.com/org/repo.git");
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
+    expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("ws-1");
+    expect(openWorkspaceOp.dispatched[0]!.payload.agent).toEqual({
+      type: "default",
+      prompt: "Work on 1",
     });
-
-    it("does not activate when source initialization fails", async () => {
-      const { dispatcher, source, openProjectOp } = createTestSetup({
-        sourceOptions: { initializeFails: true },
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(source.initializeCalled).toBe(true);
-      expect(openProjectOp.dispatched).toHaveLength(0);
-    });
-
-    it("polls on activation when enabled", async () => {
-      const { dispatcher, source, openProjectOp } = createTestSetup();
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(source.initializeCalled).toBe(true);
-      expect(openProjectOp.dispatched).toHaveLength(1);
-    });
+    expect(
+      setMetaOp.dispatched.some((d) => d.payload.key === "source" && d.payload.value === "gh")
+    ).toBe(true);
+    expect(entriesOf(state)).toHaveProperty("gh/1");
   });
 
-  describe("workspace creation", () => {
-    it("creates workspace when new item is detected", async () => {
-      const { dispatcher, source, openProjectOp, openWorkspaceOp } = createTestSetup();
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(1);
-      expect(openProjectOp.dispatched[0]!.payload.git).toBe("https://github.com/org/repo.git");
-
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("item-1");
-      // No `agent.*` in the default template → prompt-only "default" arm; the
-      // backend is resolved later from metadata/config.
-      expect(openWorkspaceOp.dispatched[0]!.payload.agent).toEqual({
-        type: "default",
-        prompt: "Work on item-1",
-      });
-    });
-
-    it("sets source, url, and tracked metadata on created workspace", async () => {
-      const { dispatcher, source, setMetadataOp } = createTestSetup();
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      const metaPayloads = setMetadataOp.dispatched.map((i) => ({
-        key: i.payload.key,
-        value: i.payload.value,
-      }));
-      expect(metaPayloads).toContainEqual({ key: "source", value: "test-source" });
-      expect(metaPayloads).toContainEqual({ key: "url", value: "https://example.com/1" });
-      expect(metaPayloads).toContainEqual({ key: "auto-workspace.tracked", value: "true" });
-    });
-
-    it("does not recreate workspace for already-tracked item", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: "/home/user/projects/repo/item-1",
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, openProjectOp } = createTestSetup({ existingState });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [], // source sees item-1 in trackedKeys and doesn't include it
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(0);
-    });
-
-    it("dismisses item when template resolves to empty", async () => {
-      const { dispatcher, source, openProjectOp, state } = createTestSetup({
-        templateContent: "   \n  ",
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
-    });
-
-    it("dismisses item when no project/git in template", async () => {
-      const { dispatcher, source, openProjectOp, state } = createTestSetup({
-        templateContent: "---\nname: ws\n---\nDo stuff",
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
-    });
-
-    it("dismisses item when no name in template", async () => {
-      const { dispatcher, source, openProjectOp, state } = createTestSetup({
-        templateContent: "---\ngit: https://github.com/org/repo.git\n---\nDo stuff",
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
-    });
-
-    it("uses project front-matter key for local path projects", async () => {
-      const { dispatcher, source, openProjectOp } = createTestSetup({
-        templateContent: "---\nproject: /home/user/my-repo\nname: ws-{{ id }}\n---\nFix {{ id }}",
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(1);
-      expect(openProjectOp.dispatched[0]!.payload.path?.toString()).toBe("/home/user/my-repo");
-      expect(openProjectOp.dispatched[0]!.payload.git).toBeUndefined();
-    });
-
-    it("project key takes precedence over git key", async () => {
-      const { dispatcher, source, openProjectOp } = createTestSetup({
-        templateContent:
-          "---\nproject: /home/user/my-repo\ngit: https://github.com/org/repo.git\nname: ws\n---\nFix it",
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched[0]!.payload.path?.toString()).toBe("/home/user/my-repo");
-      expect(openProjectOp.dispatched[0]!.payload.git).toBeUndefined();
-    });
-
-    it("applies all front-matter overrides together", async () => {
-      const template = [
-        "---",
-        "git: https://github.com/org/repo.git",
-        "name: ws/{{ id }}",
-        "agent.type: opencode",
-        "agent.name: build",
-        "base: origin/develop",
-        "focus: true",
-        "agent.model.provider: anthropic",
-        "agent.model.id: claude-sonnet-4-6",
-        "---",
-        "Work on {{ id }}",
-      ].join("\n");
-
-      const { dispatcher, source, openWorkspaceOp } = createTestSetup({
-        templateContent: template,
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      const payload = openWorkspaceOp.dispatched[0]!.payload;
-      expect(payload.workspaceName).toBe("ws/item-1");
-      expect(payload.base).toBe("origin/develop");
-      expect(payload.stealFocus).toBe(true);
-      expect(payload.agent).toEqual({
-        type: "opencode",
-        prompt: "Work on item-1",
-        agentName: "build",
-        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
-      });
-    });
-
-    it("passes tracking from template to workspace:open intent", async () => {
-      const template = [
-        "---",
-        "git: https://github.com/org/repo.git",
-        "name: review-{{ id }}",
-        "base: origin/main",
-        "tracking: origin/{{ id }}",
-        "---",
-        "Review PR for {{ id }}",
-      ].join("\n");
-
-      const { dispatcher, source, openWorkspaceOp } = createTestSetup({
-        templateContent: template,
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["feature-login"]),
-        newItems: [
-          {
-            key: "feature-login",
-            url: "https://example.com/pr/1",
-            data: { id: "feature-login" },
-          },
-        ],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      const payload = openWorkspaceOp.dispatched[0]!.payload;
-      expect(payload.tracking).toBe("origin/feature-login");
-      expect(payload.base).toBe("origin/main");
-    });
-
-    it("dispatches template metadata alongside auto metadata", async () => {
-      const template = [
-        "---",
-        "git: https://github.com/org/repo.git",
-        "name: ws/{{ id }}",
-        "metadata.custom-key: custom-value",
-        "---",
-        "Work on {{ id }}",
-      ].join("\n");
-
-      const { dispatcher, source, setMetadataOp } = createTestSetup({
-        templateContent: template,
-      });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      const metaPayloads = setMetadataOp.dispatched.map((i) => ({
-        key: i.payload.key,
-        value: i.payload.value,
-      }));
-      expect(metaPayloads).toContainEqual({ key: "source", value: "test-source" });
-      expect(metaPayloads).toContainEqual({ key: "url", value: "https://example.com/1" });
-      expect(metaPayloads).toContainEqual({ key: "custom-key", value: "custom-value" });
-    });
+  it("does nothing when no sources are configured", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: null });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
   });
 
-  describe("item disappearance", () => {
-    it("deletes workspace when tracked item disappears", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
+  it("dedups an already-tracked item across ticks", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
 
-      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp } = createTestSetup({
-        existingState,
-      });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-      expect(deleteWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(wsPath);
-      expect(deleteWorkspaceOp.dispatched[0]!.payload.removeWorktree).toBe(true);
-    });
-
-    it("removes state entry on successful auto-deletion", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, state, listProjectsOp } = createTestSetup({ existingState });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(entriesOf(state)).toEqual({});
-    });
-
-    it("cleans up null entry when item disappears", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: { "test-source/item-1": null },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, state } = createTestSetup({ existingState });
-
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)).toEqual({});
-    });
-
-    it("tags workspace and clears tracked metadata when auto-deletion fails", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, setMetadataOp, listProjectsOp } =
-        createTestSetup({ existingState });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      deleteWorkspaceOp.failForPaths.add(wsPath);
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-
-      const trackedDispatch = setMetadataOp.dispatched.find(
-        (i) => i.payload.key === "auto-workspace.tracked" && i.payload.value === null
-      );
-      expect(trackedDispatch).toBeDefined();
-      expect(trackedDispatch!.payload.workspacePath).toBe(wsPath);
-
-      const tagDispatch = setMetadataOp.dispatched.find(
-        (i) => i.payload.key === "tags.deletion-failed"
-      );
-      expect(tagDispatch).toBeDefined();
-      expect(tagDispatch!.payload.workspacePath).toBe(wsPath);
-      expect(tagDispatch!.payload.value).toBe(JSON.stringify({ color: "#e74c3c" }));
-    });
-
-    it("keeps state entry when deletion fails", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, state, listProjectsOp } = createTestSetup({
-        existingState,
-      });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      deleteWorkspaceOp.failForPaths.add(wsPath);
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
-    });
-
-    it("does not retry deletion on subsequent polls after failure", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp, setMetadataOp } =
-        createTestSetup({ existingState });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      deleteWorkspaceOp.failForPaths.add(wsPath);
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      // First poll: deletion attempted and fails
-      await dispatcher.dispatch(startIntent());
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-
-      const trackedDispatch = setMetadataOp.dispatched.find(
-        (i) => i.payload.key === "auto-workspace.tracked" && i.payload.value === null
-      );
-      expect(trackedDispatch).toBeDefined();
-
-      // Second poll: workspace still in state but not tracked
-      deleteWorkspaceOp.dispatched.length = 0;
-      listProjectsOp.projects = [];
-
-      await dispatcher.dispatch(shutdownIntent());
-      await dispatcher.dispatch(startIntent());
-
-      // Should NOT retry deletion
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-    });
-
-    it("dismisses state entry when set-metadata fails after delete failure (workspace gone)", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, setMetadataOp, listProjectsOp, state } =
-        createTestSetup({ existingState });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      deleteWorkspaceOp.failForPaths.add(wsPath);
-      setMetadataOp.failForPaths.add(wsPath);
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      // Both set-metadata dispatches were attempted
-      expect(setMetadataOp.dispatched.length).toBeGreaterThanOrEqual(2);
-
-      // State entry should be dismissed (null) so module stops retrying on restart
-      await vi.waitFor(() => {
-        expect(entriesOf(state)["test-source/item-1"]).toBeNull();
-      });
-    });
+    await tick(); // same item present again
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  describe("fetch bases before delete", () => {
-    it("fetches bases before auto-delete when source has fetchBasesBeforeDelete: true", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
+  it("forgets an entry when its item disappears, and recreates on reappearance", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)).toHaveProperty("gh/1");
 
-      const {
-        dispatcher,
-        source,
-        deleteWorkspaceOp,
-        listProjectsOp,
-        resolveWorkspaceOp,
-        getProjectBasesOp,
-      } = createTestSetup({
-        existingState,
-        sourceOptions: { fetchBasesBeforeDelete: true },
-      });
+    cmd.items = []; // item gone
+    await tick();
+    expect(entriesOf(state)).not.toHaveProperty("gh/1");
 
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(resolveWorkspaceOp.dispatched).toHaveLength(1);
-      expect(resolveWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(wsPath);
-
-      expect(getProjectBasesOp.dispatched).toHaveLength(1);
-      expect(getProjectBasesOp.dispatched[0]!.payload.projectPath).toBe("/home/user/projects/repo");
-      expect(getProjectBasesOp.dispatched[0]!.payload.refresh).toBe(true);
-      expect(getProjectBasesOp.dispatched[0]!.payload.wait).toBe(true);
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-    });
-
-    it("does not fetch bases when source has fetchBasesBeforeDelete: false", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const {
-        dispatcher,
-        source,
-        deleteWorkspaceOp,
-        listProjectsOp,
-        resolveWorkspaceOp,
-        getProjectBasesOp,
-      } = createTestSetup({ existingState });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(resolveWorkspaceOp.dispatched).toHaveLength(0);
-      expect(getProjectBasesOp.dispatched).toHaveLength(0);
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-    });
-
-    it("proceeds with delete when fetch bases fails", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp, getProjectBasesOp } =
-        createTestSetup({
-          existingState,
-          sourceOptions: { fetchBasesBeforeDelete: true },
-        });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      getProjectBasesOp.shouldFail = true;
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
-      expect(deleteWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(wsPath);
-    });
+    cmd.items = [{ id: "1" }]; // item back
+    await tick();
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(2);
   });
 
-  describe("fetch bases before create", () => {
-    it("fetches bases before creating workspace", async () => {
-      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp } = createTestSetup();
+  it("does not write an entry when creation fails, and retries next tick", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    openWorkspaceOp.failFor.add("ws-1");
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)).not.toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
 
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(getProjectBasesOp.dispatched).toHaveLength(1);
-      expect(getProjectBasesOp.dispatched[0]!.payload.projectPath).toBe("/home/user/projects/repo");
-      expect(getProjectBasesOp.dispatched[0]!.payload.refresh).toBe(true);
-      expect(getProjectBasesOp.dispatched[0]!.payload.wait).toBe(true);
-
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-    });
-
-    it("skips workspace creation when fetch fails", async () => {
-      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp, state } = createTestSetup();
-
-      getProjectBasesOp.shouldFail = true;
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openWorkspaceOp.dispatched).toHaveLength(0);
-      // Item should NOT be dismissed (no entry) — allows retry next poll
-      expect(entriesOf(state)["test-source/item-1"]).toBeUndefined();
-    });
-
-    it("retries on next poll after fetch failure", async () => {
-      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp } = createTestSetup();
-
-      getProjectBasesOp.shouldFail = true;
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      // First poll: fetch fails, workspace not created
-      await dispatcher.dispatch(startIntent());
-      expect(openWorkspaceOp.dispatched).toHaveLength(0);
-
-      // Fix fetch and restart
-      getProjectBasesOp.shouldFail = false;
-      getProjectBasesOp.dispatched.length = 0;
-
-      await dispatcher.dispatch(shutdownIntent());
-      await dispatcher.dispatch(startIntent());
-
-      // Second poll: fetch succeeds, workspace created
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-    });
+    openWorkspaceOp.failFor.clear(); // failure resolves
+    await tick();
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(2);
   });
 
-  describe("manual workspace deletion", () => {
-    it("does not recreate workspace after manual deletion", async () => {
-      const { dispatcher, source, openProjectOp, openWorkspaceOp } = createTestSetup();
+  it("skips a tick when the cmd exits non-zero, staying active", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    cmd.exitCode = 1;
+    await dispatcher.dispatch(startIntent());
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
 
-      // First poll: workspace gets created
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-
-      // User manually deletes the workspace
-      await dispatcher.dispatch({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: "/home/user/projects/repo/item-1",
-          keepBranch: false,
-          force: true,
-          removeWorktree: true,
-        },
-      } as DeleteWorkspaceIntent);
-
-      // Reset tracking and set up second poll with same item
-      openProjectOp.dispatched.length = 0;
-      openWorkspaceOp.dispatched.length = 0;
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [], // Source won't include it since it's still tracked (null entry)
-      };
-
-      await dispatcher.dispatch(shutdownIntent());
-      await dispatcher.dispatch(startIntent());
-
-      // Workspace should NOT be recreated
-      expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(openWorkspaceOp.dispatched).toHaveLength(0);
-    });
-
-    it("runtime-only teardown (project close) does not dismiss tracking", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-      const { dispatcher, source, listProjectsOp, state } = createTestSetup({ existingState });
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollResult = { activeKeys: new Set(["item-1"]), newItems: [] };
-      await dispatcher.dispatch(startIntent());
-
-      // project:close tears the workspace down WITHOUT removing the worktree
-      // (workspace:deleted with worktreeRemoved: false). Tracking must
-      // survive a close/reopen cycle.
-      await dispatcher.dispatch({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: wsPath,
-          keepBranch: true,
-          force: true,
-          removeWorktree: false,
-          skipSwitch: true,
-        },
-      } as DeleteWorkspaceIntent);
-
-      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspacePath: wsPath });
-    });
+    cmd.exitCode = 0; // cmd recovers
+    await tick();
+    expect(entriesOf(state)).toHaveProperty("gh/1");
   });
 
-  describe("poll failure resilience", () => {
-    it("preserves state when poll fails", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": null,
-          "test-source/item-2": {
-            workspacePath: "/home/user/projects/repo/item-2",
-            workspaceName: "item-2",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
+  it("picks up a newly added source without a restart (heartbeat re-reads config)", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({ sources: null });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
 
-      const { dispatcher, source, deleteWorkspaceOp, state, listProjectsOp } = createTestSetup({
-        existingState,
-      });
-
-      listProjectsOp.projects = [trackedProject("/home/user/projects/repo/item-2")];
-      source.pollError = new Error("fetch failed");
-
-      await dispatcher.dispatch(startIntent());
-
-      // Null entry must be preserved (not removed)
-      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
-      // Tracked entry must not be auto-deleted
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)["test-source/item-2"]).toMatchObject({ workspaceName: "item-2" });
-    });
-
-    it("does not auto-delete workspaces when poll fails", async () => {
-      const wsPath = "/home/user/projects/repo/item-1";
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: wsPath,
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp } = createTestSetup({
-        existingState,
-      });
-
-      listProjectsOp.projects = [trackedProject(wsPath)];
-      source.pollError = new Error("DNS resolution failed");
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-    });
+    await mockConfig.set("auto-workspace.sources", sourceYaml()); // user edits settings
+    await tick();
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  describe("state persistence", () => {
-    it("persists state after creating a workspace", async () => {
-      const { dispatcher, source, state } = createTestSetup();
+  it("forgets entries for a source removed from config (orphan cleanup)", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, mockConfig } = createSetup({ sources: sourceYaml("gh") });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)).toHaveProperty("gh/1");
 
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
-    });
-
-    it("loads existing state on startup", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: "/home/user/projects/repo/item-1",
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, openProjectOp } = createTestSetup({ existingState });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [],
-      };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openProjectOp.dispatched).toHaveLength(0);
-    });
+    cmd.items = [];
+    await mockConfig.set("auto-workspace.sources", sourceYaml("other")); // gh removed
+    await tick();
+    expect(entriesOf(state)).not.toHaveProperty("gh/1");
   });
 
-  describe("legacy state migration", () => {
-    it("imports legacy auto-workspaces.json into state.json and deletes the file", async () => {
+  it("stops the heartbeat on shutdown", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    await dispatcher.dispatch(shutdownIntent());
+
+    cmd.items = [{ id: "2" }];
+    await tick();
+    // No further work after shutdown: only the original item was created.
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
+  });
+
+  describe("migration", () => {
+    it("seeds sources from deprecated experimental.* keys and resets them", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, mockConfig, openWorkspaceOp, state } = createSetup({
+        configDefaults: {
+          "experimental.github.template":
+            "---\nname: pr-{{ number }}\ngit: https://github.com/o/r.git\n---\nReview {{ number }}",
+          "experimental.github.query": "is:open is:pr",
+        },
+      });
+      cmd.items = [{ number: 7, html_url: "https://github.com/o/r/pull/7" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      // sources seeded, deprecated key drained
+      expect(mockConfig.getEffective()["auto-workspace.sources"]).toContain("name: github");
+      expect(mockConfig.getEffective()["experimental.github.template"]).toBeUndefined();
+      // migrated github source keys on html_url (tracking preserved) and creates
+      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("pr-7");
+      expect(entriesOf(state)).toHaveProperty("github/https://github.com/o/r/pull/7");
+    });
+
+    it("imports the legacy auto-workspaces.json into state", async () => {
+      vi.useFakeTimers();
       const legacy = JSON.stringify({
         version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: "/home/user/projects/repo/item-1",
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-          "test-source/item-2": null,
-        },
+        entries: { "gh/old": { workspaceName: "old", createdAt: "2020-01-01T00:00:00Z" } },
       });
-
-      const { dispatcher, source, state, fs } = createTestSetup({ legacyStateFileContent: legacy });
-
-      // Both keys still active → no create/delete; just exercise the import.
-      source.pollResult = { activeKeys: new Set(["item-1", "item-2"]), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
-      expect(entriesOf(state)["test-source/item-2"]).toBeNull();
-      // The superseded file is removed once imported.
-      expect(fs).not.toHaveFile("/data/auto-workspaces.json");
-    });
-
-    it("leaves state empty and removes an empty legacy file", async () => {
-      const legacy = JSON.stringify({ version: 1, entries: {} });
-
-      const { dispatcher, source, state, fs } = createTestSetup({ legacyStateFileContent: legacy });
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(entriesOf(state)).toEqual({});
-      expect(fs).not.toHaveFile("/data/auto-workspaces.json");
-    });
-
-    it("does not import when state.json already has entries", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        entries: { "test-source/item-9": null },
-      });
-      const legacy = JSON.stringify({
-        version: 1,
-        entries: {
-          "test-source/item-1": {
-            workspacePath: "/home/user/projects/repo/item-1",
-            workspaceName: "item-1",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
-
-      const { dispatcher, source, state } = createTestSetup({
-        existingState,
+      const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({
+        sources: sourceYaml(),
         legacyStateFileContent: legacy,
       });
-      source.pollResult = { activeKeys: new Set(["item-9"]), newItems: [] };
-
+      cmd.items = [{ id: "old" }]; // item still active → imported entry is preserved (and deduped)
       await dispatcher.dispatch(startIntent());
-
-      // state.json wins; legacy entries are not merged in.
-      expect(entriesOf(state)["test-source/item-1"]).toBeUndefined();
-      expect(entriesOf(state)["test-source/item-9"]).toBeNull();
-    });
-  });
-
-  describe("shutdown", () => {
-    it("clears poll timer and disposes active sources on shutdown", async () => {
-      const { dispatcher, source } = createTestSetup();
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-      expect(source.disposeCalled).toBe(false);
-
-      await dispatcher.dispatch(shutdownIntent());
-      expect(source.disposeCalled).toBe(true);
-    });
-  });
-
-  describe("config toggling", () => {
-    it("activates source when template path is configured", async () => {
-      const { dispatcher, source } = createTestSetup();
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-      expect(source.initializeCalled).toBe(true);
+      expect(entriesOf(state)).toHaveProperty("gh/old");
+      expect(openWorkspaceOp.dispatched).toHaveLength(0); // not recreated — tracking survived
     });
 
-    it("does not activate source when template path is null (disabled)", async () => {
-      const { dispatcher, source } = createTestSetup({ disabled: true });
-
-      await dispatcher.dispatch(startIntent());
-      expect(source.initializeCalled).toBe(false);
-    });
-  });
-
-  describe("template-path migration", () => {
-    it("migrates a legacy template-path into the inline template and activates", async () => {
-      const { dispatcher, source, mockConfig } = createTestSetup({
-        migrateFromPath: "/data/legacy.liquid",
-        migrateFileContent: DEFAULT_TEMPLATE,
+    it("forgets an imported legacy entry whose item is no longer active", async () => {
+      vi.useFakeTimers();
+      const legacy = JSON.stringify({
+        entries: { "gh/gone": { workspaceName: "gone", createdAt: "2020-01-01T00:00:00Z" } },
       });
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(source.initializeCalled).toBe(true);
-      const eff = mockConfig.getEffective();
-      expect(eff["experimental.test-source.template"]).toBe(DEFAULT_TEMPLATE);
-      // The legacy key is stripped once migrated.
-      expect(eff["experimental.test-source.template-path"]).toBeUndefined();
-    });
-
-    it("leaves the legacy key and stays inactive when the file is unreadable", async () => {
-      const { dispatcher, source, openProjectOp, mockConfig } = createTestSetup({
-        migrateFromPath: "/data/nonexistent.liquid",
+      const { dispatcher, cmd, state } = createSetup({
+        sources: sourceYaml(),
+        legacyStateFileContent: legacy,
       });
-
-      source.pollResult = {
-        activeKeys: new Set(["item-1"]),
-        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
-      };
-
+      cmd.items = [];
       await dispatcher.dispatch(startIntent());
-
-      // Migration failed → template still unset → source never activates.
-      expect(source.initializeCalled).toBe(false);
-      expect(openProjectOp.dispatched).toHaveLength(0);
-      // The legacy key is left in place so the user can fix the path and retry.
-      expect(mockConfig.getEffective()["experimental.test-source.template-path"]).toBe(
-        "/data/nonexistent.liquid"
-      );
-    });
-  });
-});
-
-describe("redactAutoWorkspaceEntries", () => {
-  it("scrubs only workspacePath, preserving keys, names, timestamps, and dismissals", () => {
-    const redacted = redactAutoWorkspaceEntries(
-      {
-        "github/123": {
-          workspacePath: "/home/alice/ws/pr-123",
-          workspaceName: "pr-123-fix-foo",
-          createdAt: "2026-06-09T00:00:00Z",
-        },
-        "youtrack/PROJ-1": null,
-      },
-      "<redacted>"
-    );
-
-    expect(redacted).toEqual({
-      "github/123": {
-        workspacePath: "<redacted>",
-        workspaceName: "pr-123-fix-foo",
-        createdAt: "2026-06-09T00:00:00Z",
-      },
-      "youtrack/PROJ-1": null,
+      expect(entriesOf(state)).not.toHaveProperty("gh/gone");
     });
   });
 });

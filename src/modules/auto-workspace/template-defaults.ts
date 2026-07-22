@@ -1,89 +1,64 @@
 /**
- * Example Liquid templates shown (read-only) in the settings help panel as a
- * copyable starting point. Keyed by source name.
+ * Reference text shown beside the `auto-workspace.sources` editor in settings.
  *
- * Each is a minimal, valid starting point: front-matter (name) plus a prompt
- * body, using the fields each source exposes on its poll item's `data` (see
- * github-source.ts / youtrack-source.ts). Users are expected to refine these —
- * they are scaffolding, not a finished workflow.
+ * Sources are user-defined, so the reference is source-agnostic: it documents
+ * the document shape and the template keys, then shows the migrated github /
+ * youtrack sources as copyable starting points. The `template` values render as
+ * Liquid over whatever JSON each source's `cmd` emits.
  */
 
-/** GitHub PR data exposes number, title, html_url, user.login, body, head.ref, base.ref, clone_url. */
-const GITHUB_TEMPLATE = `---
-name: {{ title }}
----
-Review pull request #{{ number }} "{{ title }}" opened by {{ user.login }}.
+const FORMAT = `Format — a multi-document YAML stream, one document per source
+(separated by "---"):
 
-{{ body }}
+  name       source name (also the state-key prefix); must be unique
+  type       cron (default; the only supported type)
+  cmd        shell command line, run via sh -c / cmd /c. Must print a
+             top-level JSON array of objects to stdout. Inherits the
+             app environment; inline any secrets (kept out of bug reports).
+  template   mapping rendered once per emitted object — every string leaf
+             is a Liquid template over that object's JSON:
+    name                 workspace name (required)
+    key                  dedup identity (defaults to the rendered name)
+    base                 branch to fork the new worktree from
+    tracking             remote branch to check out with upstream set
+    focus                true = switch to the workspace once created
+    project              local project path  (or use git)
+    git                  git URL to clone as the project
+    agent: { type, name, permission-mode, model: { provider, id } }
+    metadata: { title, tags: { <name>: { color } }, <key>: <value> }
+    prompt               agent prompt (empty = no prompt)`;
 
-PR: {{ html_url }}
-`;
+const GITHUB_EXAMPLE = `name: github
+type: cron
+cmd: |
+  gh api graphql -f q='is:open is:pr review-requested:@me' \\
+    -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body headRefName baseRefName author{login} repository{url}}}}}' \\
+    --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},head:{ref:.headRefName},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
+template:
+  name: "{{ title }}"
+  key: "{{ html_url }}"
+  base: "{{ base.ref }}"
+  project: "{{ clone_url }}"
+  prompt: |
+    Review pull request #{{ number }} "{{ title }}" opened by {{ user.login }}.
 
-/** YouTrack issue data exposes idReadable, summary, description, project.name, reporter.fullName. */
-const YOUTRACK_TEMPLATE = `---
-name: {{ summary }}
----
-Work on {{ idReadable }} "{{ summary }}" in {{ project.name }}.
+    {{ body }}
 
-{{ description }}
-`;
+    PR: {{ html_url }}`;
 
-/**
- * Front-matter keys a rendered template may set (shared across sources). The
- * body after the `---` front-matter block becomes the agent prompt.
- */
-const OUTPUT_KEYS = `Output — front-matter keys the template may set (--- ... ---):
-  name                    workspace name (required)
-  base                    branch to fork the new worktree from
-  tracking                remote branch to check out with upstream set
-                          (e.g. origin/feature-x), instead of forking base
-  focus                   true = switch to the workspace once it is created
-  project                 local project path  (or use git)
-  git                     git URL to clone as the project
-  agent.type              backend arm (e.g. claude, opencode, default)
-  agent.name              named launch config
-  agent.permission-mode   agent permission mode
-  agent.model.provider    model provider id
-  agent.model.id          model id
-  metadata.title          sidebar display title (defaults to branch name)
-  metadata.tags.<name>    a colored tag, value e.g. {"color":"#e74c3c"}
-  metadata.<key>          any other custom workspace metadata
-The text after the front-matter becomes the agent prompt (empty = skip).`;
+const YOUTRACK_EXAMPLE = `name: youtrack
+type: cron
+cmd: |
+  curl -s -G -H "Authorization: Bearer perm:XXXX" \\
+    --data-urlencode "query=for:me State: {In Progress}" \\
+    --data-urlencode "fields=id,idReadable,summary,description,project(name)" \\
+    "https://youtrack.example.com/api/issues"
+template:
+  name: "{{ summary }}"
+  key: "https://youtrack.example.com/api/issues/{{ id }}"
+  prompt: |
+    Work on {{ idReadable }} "{{ summary }}" in {{ project.name }}.
 
-/** Per-source Liquid input variables available inside the template. */
-const GITHUB_FIELDS = `Available fields (from the GitHub pull request):
-  number        PR number
-  title         PR title
-  html_url      PR URL
-  body          PR description
-  user.login    author login
-  head.ref      source branch
-  base.ref      target branch
-  clone_url     repository clone URL
-  (the full GitHub PR JSON is available too — see
-   https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request)`;
+    {{ description }}`;
 
-const YOUTRACK_FIELDS = `Available fields (from the YouTrack issue):
-  idReadable            human id (e.g. PROJ-123)
-  summary               issue summary
-  description           issue description
-  reporter.login        reporter login
-  reporter.fullName     reporter full name
-  project.name          project name
-  project.shortName     project short name
-  created / updated / resolved
-  customFields[]        .name and .value.name`;
-
-function helpPanel(fields: string, example: string): string {
-  return `${fields}\n\n${OUTPUT_KEYS}\n\nExample:\n${example}`;
-}
-
-/**
- * Reference text shown beside the inline template editor in settings: the input
- * fields a source exposes, the front-matter keys a template may set, and the
- * built-in default as a copyable example. Keyed by source name.
- */
-export const TEMPLATE_HELP: Readonly<Record<string, string>> = {
-  github: helpPanel(GITHUB_FIELDS, GITHUB_TEMPLATE),
-  youtrack: helpPanel(YOUTRACK_FIELDS, YOUTRACK_TEMPLATE),
-};
+export const SOURCES_HELP = `${FORMAT}\n\nExample — github:\n${GITHUB_EXAMPLE}\n\nExample — youtrack:\n${YOUTRACK_EXAMPLE}`;
