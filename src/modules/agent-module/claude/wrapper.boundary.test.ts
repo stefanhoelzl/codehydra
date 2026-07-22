@@ -37,6 +37,7 @@ interface FakeClaudeOutput {
   args: string[];
   env: {
     CLAUDECODE: string | null;
+    CLAUDE_CODE_CHILD_SESSION: string | null;
   };
 }
 
@@ -195,6 +196,29 @@ describe("ch-claude.cjs boundary tests", () => {
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.env.CLAUDECODE).toBeNull();
+    });
+
+    it("deletes inherited CLAUDE_CODE_CHILD_SESSION env var before spawning", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          PATH: buildPath(fakeBinDir),
+          CLAUDE_CODE_CHILD_SESSION: "1",
+        },
+        tempDir.path
+      );
+
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
+      const output = parseFakeClaudeOutput(result.stdout);
+      expect(output).not.toBeNull();
+      // A leaked marker would make the workspace agent a "child session" and
+      // disable transcript saving, so the wrapper must strip it.
+      expect(output!.env.CLAUDE_CODE_CHILD_SESSION).toBeNull();
     });
 
     it("propagates exit code from claude binary", async () => {
@@ -470,7 +494,10 @@ if (process.argv.includes("--version")) {
 
 const output = {
   args: process.argv.slice(2),
-  env: { CLAUDECODE: process.env.CLAUDECODE ?? null },
+  env: {
+    CLAUDECODE: process.env.CLAUDECODE ?? null,
+    CLAUDE_CODE_CHILD_SESSION: process.env.CLAUDE_CODE_CHILD_SESSION ?? null,
+  },
 };
 
 const counterFile = process.env.CLAUDE_COUNTER_FILE;
