@@ -130,6 +130,8 @@ describe("createClaudeModuleProvider", () => {
         "ch-claude.cjs",
         "ch-claude.cmd",
         "claude-code-hook-handler.cjs",
+        "ch-bg",
+        "ch-bg.cmd",
       ]);
     });
   });

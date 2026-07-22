@@ -14,9 +14,9 @@ import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { configBusyDuringBackgroundShell } from "./agent-module/claude/types";
 import {
   storeBoolean,
+  storeCustom,
   storeEnum,
   storeEnumList,
   storeNumber,
@@ -58,9 +58,34 @@ function registerKeys(config: Config): void {
     redact: true,
     ...storeString({ nullable: true }),
   });
-  config.register("experimental.busy-during-background-shell", {
+  // A neutral guarded-text key, purely to exercise the settings dialog's
+  // checkbox-guarded-text control rendering/decoding.
+  config.register("experimental.guarded-example", {
     default: true,
-    ...configBusyDuringBackgroundShell(),
+    ...storeCustom<boolean | readonly string[]>({
+      parse: (s) => (s === "true" ? true : s === "false" ? false : undefined),
+      validate: (v) =>
+        typeof v === "boolean" || (Array.isArray(v) && v.every((p) => typeof p === "string"))
+          ? (v as boolean | readonly string[])
+          : undefined,
+      validValues: "true|false|[<text>, ...]",
+      settingsControl: {
+        kind: "guarded-text",
+        offValue: false,
+        onEmptyValue: true,
+        fromText: (text: string) =>
+          text
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0),
+        toText: (value: unknown) => {
+          if (value === false) return { active: false, text: "" };
+          if (value === true) return { active: true, text: "" };
+          if (Array.isArray(value)) return { active: true, text: value.join(", ") };
+          return { active: false, text: "" };
+        },
+      },
+    }),
   });
   config.register("experimental.youtrack.template", {
     default: null,
@@ -209,8 +234,8 @@ describe("SettingsModule — population", () => {
   it("renders the guarded-text union as a checkbox + input", () => {
     const { openSettings, dialogs } = setup();
     openSettings();
-    const busy = rowByLabel(dialogs.lastHandle!.config, "busy-during-background-shell")!;
-    expect(busy.fields.map((f) => f.type)).toEqual(["checkbox", "input"]);
+    const guarded = rowByLabel(dialogs.lastHandle!.config, "guarded-example")!;
+    expect(guarded.fields.map((f) => f.type)).toEqual(["checkbox", "input"]);
   });
 
   it("footer offers Save / Save & Restart / Cancel / Reset all", () => {
@@ -239,8 +264,8 @@ describe("SettingsModule — save", () => {
       "sidebar.width": "300",
       "log.output": "file",
       "experimental.youtrack.token": "",
-      "experimental.busy-during-background-shell::on": "true",
-      "experimental.busy-during-background-shell": "",
+      "experimental.guarded-example::on": "true",
+      "experimental.guarded-example": "",
     });
     await flush();
 
@@ -260,8 +285,8 @@ describe("SettingsModule — save", () => {
       "sidebar.width": "250",
       "log.output": "file",
       "experimental.youtrack.token": "",
-      "experimental.busy-during-background-shell::on": "true",
-      "experimental.busy-during-background-shell": "",
+      "experimental.guarded-example::on": "true",
+      "experimental.guarded-example": "",
     });
     await flush();
 
@@ -276,26 +301,6 @@ describe("SettingsModule — save", () => {
     dialogs.lastHandle!.emitAction("cancel", {});
     expect(setSpy).not.toHaveBeenCalled();
     expect(dialogs.lastHandle!.closed).toBe(true);
-  });
-
-  it("decodes the guarded union: off → false, on+text → regex array", async () => {
-    const { openSettings, config, dialogs } = setup();
-    const setSpy = vi.spyOn(config, "set");
-    openSettings();
-    dialogs.lastHandle!.emitAction("save", {
-      agent: "claude",
-      "telemetry.enabled": "true",
-      "sidebar.width": "250",
-      "log.output": "file",
-      "experimental.youtrack.token": "",
-      "experimental.busy-during-background-shell::on": "true",
-      "experimental.busy-during-background-shell": "wait, deploy",
-    });
-    await flush();
-    expect(setSpy).toHaveBeenCalledWith("experimental.busy-during-background-shell", [
-      "wait",
-      "deploy",
-    ]);
   });
 });
 
@@ -312,8 +317,6 @@ describe("SettingsModule — validation", () => {
       "sidebar.width": "abc",
       "log.output": "file",
       "experimental.youtrack.token": "",
-      "experimental.busy-during-background-shell::on": "true",
-      "experimental.busy-during-background-shell": "",
     });
 
     expect(saveDisabled(handle.config)).toBe(true);

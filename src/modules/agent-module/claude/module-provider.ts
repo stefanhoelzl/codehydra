@@ -107,7 +107,14 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       displayName: "Claude Code",
       icon: "sparkle",
       serverName: "Claude Code hook",
-      scripts: ["ch-claude", "ch-claude.cjs", "ch-claude.cmd", "claude-code-hook-handler.cjs"],
+      scripts: [
+        "ch-claude",
+        "ch-claude.cjs",
+        "ch-claude.cmd",
+        "claude-code-hook-handler.cjs",
+        "ch-bg",
+        "ch-bg.cmd",
+      ],
 
       serverManager,
 

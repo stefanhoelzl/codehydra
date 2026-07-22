@@ -20,7 +20,6 @@ import {
   createFileSystemMock,
   directory,
 } from "../../../boundaries/platform/filesystem.state-mock";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem.state-mock";
@@ -1262,9 +1261,9 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
-    it("a background sub-agent keeps busy even when busy-during-background-shell is off", async () => {
-      // The default manager leaves the shell toggle at its false fallback;
-      // sub-agents are unconditional, proving they don't consult that config.
+    it("a background sub-agent keeps busy unconditionally (no ch-bg escape hatch)", async () => {
+      // Sub-agents are unconditional agent work: unlike shells they cannot be
+      // opted out via the ch-bg wrapper, so a running sub-agent always suppresses idle.
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()]));
       expect(lastStatus(statusChanges)).toBe("busy");
@@ -1600,7 +1599,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
   });
 
-  describe("background shell handling (experimental.busy-during-background-shell)", () => {
+  describe("background shell handling (ch-bg wrapper)", () => {
     const WORKSPACE = "/workspace/feature-a";
 
     /** Background task entry as carried by the Stop payload (Claude Code 2.1.170). */
@@ -1613,18 +1612,13 @@ describe("ClaudeCodeServerManager integration", () => {
       return { workspacePath: WORKSPACE, background_tasks: tasks };
     }
 
-    function createManager(value: boolean | readonly string[]): ClaudeCodeServerManager {
+    function createManager(): ClaudeCodeServerManager {
       return new ClaudeCodeServerManager({
         portManager: mockPortManager,
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,
         logger: SILENT_LOGGER,
         config: { hookHandlerPath: "/mock/hook-handler.js" },
-        busyDuringBackgroundShell: createMockAccessor<boolean | readonly string[]>(
-          "experimental.busy-during-background-shell",
-          value,
-          false
-        ),
       });
     }
 
@@ -1642,8 +1636,8 @@ describe("ClaudeCodeServerManager integration", () => {
       return { port, statusChanges };
     }
 
-    it("true: Stop with a running background shell stays busy", async () => {
-      serverManager = createManager(true);
+    it("unwrapped running background shell stays busy by default", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
@@ -1651,8 +1645,8 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
-    it("true: Stop with no background tasks goes idle", async () => {
-      serverManager = createManager(true);
+    it("Stop with no background tasks goes idle", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([]));
@@ -1660,8 +1654,8 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    it("true: Stop without a background_tasks field goes idle", async () => {
-      serverManager = createManager(true);
+    it("Stop without a background_tasks field goes idle", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", { workspacePath: WORKSPACE });
@@ -1669,8 +1663,8 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    it("true: idle_prompt Notification after suppressed Stop stays busy", async () => {
-      serverManager = createManager(true);
+    it("idle_prompt Notification after a suppressed Stop stays busy", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
@@ -1683,8 +1677,8 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(lastStatus(statusChanges)).toBe("busy");
     });
 
-    it("true: full cycle — resume after shell exit, final Stop goes idle", async () => {
-      serverManager = createManager(true);
+    it("full cycle — resume after shell exit, final Stop goes idle", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
@@ -1696,46 +1690,43 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    it("patterns: matching command keeps busy", async () => {
-      serverManager = createManager(["ship-wait"]);
+    it("ch-bg: a wrapped background shell (dev server) goes idle", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
-      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+      await sendHook(port, "Stop", stopWithTasks([shellTask("ch-bg npm run serve")]));
 
-      expect(lastStatus(statusChanges)).toBe("busy");
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    it("patterns: non-matching command (dev server) goes idle", async () => {
-      serverManager = createManager(["ship-wait"]);
+    it("ch-bg: the marker is detected inside a bash -c invocation", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(
         port,
         "Stop",
-        stopWithTasks([shellTask("python3 -m http.server 8000 --bind 127.0.0.1")])
+        stopWithTasks([shellTask('bash -c "ch-bg python3 -m http.server 8000"')])
       );
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
-    it("patterns: one matching among non-matching tasks keeps busy", async () => {
-      serverManager = createManager(["ship-wait"]);
+    it("ch-bg: one unwrapped shell among wrapped ones still keeps busy", async () => {
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(
         port,
         "Stop",
-        stopWithTasks([
-          shellTask("python3 -m http.server 8000"),
-          shellTask("npx tsx ship-wait.ts 512"),
-        ])
+        stopWithTasks([shellTask("ch-bg npm run serve"), shellTask("npx tsx ship-wait.ts 512")])
       );
 
       expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("non-shell task types do not keep busy", async () => {
-      serverManager = createManager(true);
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(
@@ -1748,7 +1739,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("real user prompt clears the stash — idle_prompt then goes idle", async () => {
-      serverManager = createManager(true);
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));
@@ -1768,7 +1759,7 @@ describe("ClaudeCodeServerManager integration", () => {
       // StopFailure is an API error and carries no background_tasks in practice;
       // even if one is present it must not suppress — the stuck main agent needs
       // the user, so we surface idle regardless of background work.
-      serverManager = createManager(true);
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "StopFailure", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
@@ -1776,17 +1767,8 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(lastStatus(statusChanges)).toBe("idle");
     });
 
-    it("flag disabled: Stop goes idle even with a running background shell", async () => {
-      serverManager = createManager(false);
-      const { port, statusChanges } = await startBusyWorkspace(serverManager);
-
-      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
-
-      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-    });
-
     it("WrapperEnd clears the stash", async () => {
-      serverManager = createManager(true);
+      serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));

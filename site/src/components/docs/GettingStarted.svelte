@@ -179,6 +179,29 @@
         </tr>
       </tbody>
     </table>
+
+    <h3>Background processes: the <code>ch-bg</code> wrapper</h3>
+    <p>
+      When an agent leaves a process running in the background &mdash; a dev server, a file watcher,
+      a <code>tail -f</code> &mdash; the workspace stays <strong>busy</strong> (red) so you know work
+      is still in flight and your machine won't sleep mid-task. That's the right default for something
+      you're waiting on, but a dev server you started just to test a change shouldn't pin the workspace
+      red forever.
+    </p>
+    <p>
+      CodeHydra ships a small <code>ch-bg</code> command on the agent's <code>PATH</code>. Prefix a
+      long-lived background command with it and that shell no longer keeps the workspace busy:
+    </p>
+    <div class="code-block">
+      <code>ch-bg npm run dev</code>
+    </div>
+    <p>
+      <code>ch-bg</code> runs the command unchanged &mdash; same output, same exit code &mdash; it
+      only tells CodeHydra to leave the workspace status alone. The easiest way to make an agent use
+      it is a line in your project's <code>CLAUDE.md</code>, e.g. &ldquo;start dev servers and
+      watchers with <code>ch-bg</code> so they don't pin the workspace busy.&rdquo; Everything not wrapped
+      keeps the default busy behavior.
+    </p>
   </section>
 
   <section id="mcp-integration">

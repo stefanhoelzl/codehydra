@@ -58,7 +58,6 @@ import {
 import { getClaudeExecutablePath, CLAUDE_VERSION } from "./modules/agent-module/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
-import { configBusyDuringBackgroundShell } from "./modules/agent-module/claude/types";
 import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
 import { createClaudeModuleProvider } from "./modules/agent-module/claude/module-provider";
 import { createOpenCodeModuleProvider } from "./modules/agent-module/opencode/module-provider";
@@ -250,19 +249,6 @@ const helpConfig = configService.register("help", {
   description: "Print config help and exit",
   ...storeBoolean(),
 });
-const busyDuringBackgroundShellConfig = configService.register(
-  "experimental.busy-during-background-shell",
-  {
-    default: true,
-    description:
-      "Keep workspace status busy while the agent has a background shell " +
-      "running. true = every background shell; false = never; array of " +
-      "regexes (config.json only) = only shells whose command matches " +
-      "(e.g. a CI-wait script), so dev servers don't pin the workspace busy.",
-    applies: "live",
-    ...configBusyDuringBackgroundShell(),
-  }
-);
 // Agent version keys. Registered here (composition root) rather than inside the
 // agent module so the accessors exist before the server managers and providers
 // that read them are constructed (those are built below, before the modules).
@@ -371,7 +357,6 @@ const agentServerManagers = {
     pathProvider: serverManagerDeps.pathProvider,
     fileSystem: serverManagerDeps.fileSystem,
     logger: serverManagerDeps.logger,
-    busyDuringBackgroundShell: busyDuringBackgroundShellConfig,
   }),
   opencode: new OpenCodeServerManager(
     serverManagerDeps.processRunner,

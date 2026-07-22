@@ -3,10 +3,6 @@
  * Defines hook payloads and status mapping for the Claude Code agent.
  */
 
-import {
-  storeCustom,
-  type PersistedTypeBuilder,
-} from "../../../boundaries/platform/store-definition";
 import type { AgentStatus } from "../types";
 
 /**
@@ -155,76 +151,28 @@ export function isValidHookName(name: string): name is ClaudeCodeHookName {
 }
 
 /**
- * Value of the experimental.busy-during-background-shell config key:
- * false = off, true = every running background shell keeps the workspace busy,
- * string[] = regexes selecting the waited-on commands (match ⇒ keep busy).
+ * Detect the `ch-bg` background-wrapper marker in a shell command.
+ *
+ * `ch-bg` is a passthrough wrapper CodeHydra ships onto the agent's PATH. A
+ * background shell invoked through it (`ch-bg npm run dev`) carries the marker
+ * in the command string Claude Code reports, which excludes it from keeping the
+ * workspace busy. The match is a word boundary so it fires for `ch-bg foo`,
+ * `bash -c "ch-bg foo"`, and `/path/to/ch-bg foo`, but not `xch-bg`/`ch-bgx`.
  */
-export type BusyDuringBackgroundShell = boolean | readonly string[];
-
-/**
- * Config type builder for experimental.busy-during-background-shell.
- * CLI/env accept booleans only (regexes can contain commas, so no list
- * syntax); the pattern array form is config.json-only. Invalid regexes are
- * rejected at validation time so misconfiguration fails at startup.
- */
-export function configBusyDuringBackgroundShell(): PersistedTypeBuilder<BusyDuringBackgroundShell> {
-  return storeCustom<BusyDuringBackgroundShell>({
-    parse: (s) =>
-      s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined,
-    validate: (v) => {
-      if (typeof v === "boolean") {
-        return v;
-      }
-      if (!Array.isArray(v) || !v.every((p) => typeof p === "string")) {
-        return undefined;
-      }
-      try {
-        for (const pattern of v) {
-          new RegExp(pattern);
-        }
-      } catch {
-        return undefined;
-      }
-      return v as readonly string[];
-    },
-    validValues: "true|false|[<regex>, ...] (array via config.json only)",
-    // Settings UI: a checkbox guarding a comma-separated regex field.
-    //   unchecked            → false (never busy)
-    //   checked, empty text  → true  (every background shell keeps busy)
-    //   checked, "a, b"      → ["a","b"] (only matching commands keep busy)
-    settingsControl: {
-      kind: "guarded-text",
-      offValue: false,
-      onEmptyValue: true,
-      fromText: (text: string) =>
-        text
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0),
-      toText: (value: unknown) => {
-        if (value === false) return { active: false, text: "" };
-        if (value === true) return { active: true, text: "" };
-        if (Array.isArray(value)) return { active: true, text: value.join(", ") };
-        return { active: false, text: "" };
-      },
-    },
-  });
+export function isBackgroundWrapped(command: string): boolean {
+  return /\bch-bg\b/.test(command);
 }
 
 /**
  * Decide whether a running background task keeps the workspace busy.
  *
  * A background sub-agent (type "subagent") is unambiguous agent work and always
- * keeps the workspace busy, independent of config. A background shell (type
- * "shell") keeps it busy only when the experimental.busy-during-background-shell
- * config selects it: true keeps every shell busy; a pattern array keeps a shell
- * busy if any regex tests true against its command (partial, case-sensitive);
- * false never matches. Non-running tasks and other types never qualify.
+ * keeps the workspace busy. A background shell (type "shell") keeps it busy by
+ * default — the exception is a shell invoked through the `ch-bg` wrapper, which
+ * opts out (see isBackgroundWrapped). Non-running tasks and other types never
+ * qualify.
  */
-export function taskKeepsBusy(
-  config: BusyDuringBackgroundShell,
-  task: ClaudeCodeBackgroundTask
-): boolean {
+export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
   if (task.status !== undefined && task.status !== "running") {
     return false;
   }
@@ -234,14 +182,7 @@ export function taskKeepsBusy(
   if (task.type !== "shell") {
     return false;
   }
-  if (typeof config === "boolean") {
-    return config;
-  }
-  const command = task.command;
-  if (typeof command !== "string") {
-    return false;
-  }
-  return config.some((pattern) => new RegExp(pattern).test(command));
+  return !isBackgroundWrapped(task.command ?? "");
 }
 
 /**

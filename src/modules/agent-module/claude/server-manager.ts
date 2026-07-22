@@ -12,7 +12,6 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
 import type { PortManager } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
@@ -27,7 +26,6 @@ import type {
 } from "../types";
 import { Path } from "../../../utils/path/path";
 import {
-  type BusyDuringBackgroundShell,
   type ClaudeCodeHookName,
   type ClaudeCodeBridgePayload,
   isValidHookName,
@@ -104,8 +102,6 @@ export interface ClaudeCodeServerManagerDeps {
   readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly config?: ClaudeCodeServerManagerConfig;
-  /** Accessor for experimental.busy-during-background-shell */
-  readonly busyDuringBackgroundShell?: PersistedAccessor<BusyDuringBackgroundShell>;
 }
 
 /**
@@ -122,9 +118,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private readonly fileSystem: FileSystemBoundary;
   private readonly logger: Logger;
   private readonly hookHandlerPath: string;
-  private readonly busyDuringBackgroundShell:
-    | PersistedAccessor<BusyDuringBackgroundShell>
-    | undefined;
 
   /** Single HTTP server for all workspaces */
   private httpServer: Server | null = null;
@@ -149,7 +142,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.pathProvider = deps.pathProvider;
     this.fileSystem = deps.fileSystem;
     this.logger = deps.logger;
-    this.busyDuringBackgroundShell = deps.busyDuringBackgroundShell;
 
     // Default hook handler path uses runtime dir (outside ASAR in production)
     // Use toString() for POSIX-style paths - works on all platforms including Windows
@@ -796,8 +788,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Background task handling: the Stop payload carries background_tasks — the
     // live list of still-running background work (shells and background
     // sub-agents). taskKeepsBusy() decides which keep the workspace busy:
-    // sub-agents always do; shells only when experimental.busy-during-background-
-    // shell selects them (true = all, string[] = command regexes). When any
+    // sub-agents always do; shells do by default, unless invoked through the
+    // `ch-bg` wrapper (its marker in the command opts the shell out). When any
     // qualifies, the idle transition is suppressed and the decision is stashed so
     // the ~60s-later idle_prompt Notification (handled above) stays suppressed
     // too. When a task finishes, Claude Code re-invokes the agent
@@ -808,10 +800,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // auth, max-tokens — and the payload omits the field), so it always goes idle
     // to surface the stuck main agent regardless of background work; clear the
     // stash there.
-    const busyConfig: BusyDuringBackgroundShell = this.busyDuringBackgroundShell?.get() ?? false;
     if (hookName === "Stop") {
       const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
-      const busyTasks = tasks.filter((task) => taskKeepsBusy(busyConfig, task));
+      const busyTasks = tasks.filter((task) => taskKeepsBusy(task));
       state.busyForBackgroundTasks = busyTasks.length > 0;
       if (busyTasks.length > 0) {
         newStatus = null;
