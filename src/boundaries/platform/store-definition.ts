@@ -37,10 +37,9 @@ export interface SettingsOption {
  * `validValues` help string. A key is shown in the dialog iff its definition
  * carries a `settingsControl` (storeCustom keys opt in by passing one).
  *
- * `guarded-text` is the checkbox-guarded text field used by the two keys whose
- * "off" state is a distinct value rather than empty/null of a simple type
- * (experimental.busy-during-background-shell → off = false;
- * electron.disabled-features → off = null). The four functions bridge the
+ * `guarded-text` is the checkbox-guarded text field used by a key whose "off"
+ * state is a distinct value rather than empty/null of a simple type
+ * (electron.disabled-features → off = null). The four functions bridge the
  * two-widget UI (checkbox + text) to the single typed config value.
  */
 export type SettingsControl =
