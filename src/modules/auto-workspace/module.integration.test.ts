@@ -4,8 +4,9 @@
  *
  * The module polls user-defined command sources: a mock ProcessRunner supplies
  * each cmd's stdout, and `auto-workspace.sources` config drives which sources
- * run. A 60s heartbeat re-reads config and polls; tests drive it with fake
- * timers.
+ * run. A chained timer re-reads config and polls, waiting
+ * `auto-workspace.poll-interval` seconds (default 60) between the end of one
+ * cycle and the start of the next; tests drive it with fake timers.
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
@@ -50,7 +51,7 @@ import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath } from "../../shared/test-fixtures";
 
-const HEARTBEAT_MS = 60 * 1000;
+const DEFAULT_INTERVAL_MS = 60 * 1000;
 
 type StateEntry = { workspaceName: string; createdAt: string };
 function entriesOf(state: MockStateService): Record<string, StateEntry> {
@@ -108,10 +109,13 @@ class OpenWorkspaceOp implements Operation<typeof openWorkspaceSchemas> {
   readonly schemas = openWorkspaceSchemas;
   readonly dispatched: IntentOf<typeof openWorkspaceSchemas>[] = [];
   readonly failFor = new Set<string>();
+  /** Set to a pending promise to hold creation open (simulates a slow cycle). */
+  gate: Promise<void> | null = null;
   async execute(
     ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>, typeof openWorkspaceSchemas>
   ): Promise<WsResult> {
     this.dispatched.push(ctx.intent);
+    if (this.gate) await this.gate;
     const name = ctx.intent.payload.workspaceName ?? "ws";
     if (this.failFor.has(name)) throw new Error(`open failed for ${name}`);
     return {
@@ -241,8 +245,11 @@ const shutdownIntent = (): AppShutdownIntent => ({
   type: INTENT_APP_SHUTDOWN,
   payload: {} as AppShutdownIntent["payload"],
 });
+const advance = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+};
 const tick = async (): Promise<void> => {
-  await vi.advanceTimersByTimeAsync(HEARTBEAT_MS);
+  await advance(DEFAULT_INTERVAL_MS);
 };
 
 afterEach(() => {
@@ -337,7 +344,7 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(entriesOf(state)).toHaveProperty("gh/1");
   });
 
-  it("picks up a newly added source without a restart (heartbeat re-reads config)", async () => {
+  it("picks up a newly added source without a restart (each cycle re-reads config)", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({ sources: null });
     cmd.items = [{ id: "1" }];
@@ -362,7 +369,78 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(entriesOf(state)).not.toHaveProperty("gh/1");
   });
 
-  it("stops the heartbeat on shutdown", async () => {
+  describe("poll interval", () => {
+    it("honors a configured interval instead of the 60s default", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, openWorkspaceOp } = createSetup({
+        sources: sourceYaml(),
+        configDefaults: { "auto-workspace.poll-interval": 10 },
+      });
+      cmd.items = [{ id: "1" }];
+      await dispatcher.dispatch(startIntent());
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+
+      cmd.items = [{ id: "1" }, { id: "2" }];
+      await advance(9_000);
+      expect(openWorkspaceOp.dispatched).toHaveLength(1); // not due yet
+      await advance(1_000);
+      expect(openWorkspaceOp.dispatched).toHaveLength(2);
+    });
+
+    it("picks up a changed interval on the next cycle (applies: live)", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({
+        sources: sourceYaml(),
+      });
+      cmd.items = [{ id: "1" }];
+      await dispatcher.dispatch(startIntent());
+
+      // User edits the setting; the current 60s wait still has to elapse.
+      await mockConfig.set("auto-workspace.poll-interval", 10);
+      cmd.items = [{ id: "1" }, { id: "2" }];
+      await advance(10_000);
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      await tick();
+      expect(openWorkspaceOp.dispatched).toHaveLength(2);
+
+      // From here on the new value paces the loop.
+      cmd.items = [{ id: "1" }, { id: "2" }, { id: "3" }];
+      await advance(10_000);
+      expect(openWorkspaceOp.dispatched).toHaveLength(3);
+    });
+
+    it("waits a full interval after a slow cycle ends, without stacking polls", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+      cmd.items = [{ id: "1" }];
+      await dispatcher.dispatch(startIntent());
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+
+      let release = (): void => {};
+      openWorkspaceOp.gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      cmd.items = [{ id: "1" }, { id: "2" }];
+      await tick(); // cycle 2 starts and blocks mid-creation
+      expect(openWorkspaceOp.dispatched).toHaveLength(2);
+
+      cmd.items = [{ id: "1" }, { id: "2" }, { id: "3" }];
+      await tick();
+      await tick();
+      expect(openWorkspaceOp.dispatched).toHaveLength(2); // no cycle stacked up behind it
+
+      openWorkspaceOp.gate = null;
+      release();
+      await advance(0); // cycle 2 settles; only now is the next wait armed
+
+      await advance(DEFAULT_INTERVAL_MS - 1);
+      expect(openWorkspaceOp.dispatched).toHaveLength(2);
+      await advance(1);
+      expect(openWorkspaceOp.dispatched).toHaveLength(3);
+    });
+  });
+
+  it("stops polling on shutdown", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
     cmd.items = [{ id: "1" }];

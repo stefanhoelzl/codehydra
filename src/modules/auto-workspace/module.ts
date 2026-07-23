@@ -7,23 +7,28 @@
  * Each source's `cmd` emits a JSON array of domain objects; the source's
  * `template` renders one workspace definition per object (see template-render.ts).
  *
- * A single 60s heartbeat drives everything: each tick re-reads the config
+ * A single chained timer drives everything: each cycle re-reads the config
  * (picking up edits without a restart), then polls every source. Per source:
  *   - a key already tracked in state is skipped
  *   - a new key creates a workspace (state entry written only on success)
- *   - a tracked key absent from this tick is forgotten (so a re-appearing item
+ *   - a tracked key absent from this cycle is forgotten (so a re-appearing item
  *     is recreated)
  * There is no auto-deletion; a manually deleted workspace's entry simply
  * persists (so it is not recreated while its item is still active) and is
  * forgotten once the item disappears. Name collision on create is the
  * idempotency backstop.
  *
+ * `auto-workspace.poll-interval` (seconds, default 60) is the *gap between
+ * runs*: the next wait is armed only once a cycle has settled, so a slow poll
+ * never stacks. The value is re-read when each wait is armed, so a change made
+ * in the settings dialog applies once the current wait elapses.
+ *
  * Hooks:
  * - app:start -> "start": import the pre-state.json auto-workspaces.json, once
- * - app:shutdown -> "stop": stop the heartbeat
+ * - app:shutdown -> "stop": stop polling
  *
  * Events:
- * - app:started: load state, run the first tick, start the heartbeat
+ * - app:started: load state, run the first cycle, start polling
  */
 
 import type { IntentModule } from "../../intents/lib/module";
@@ -43,6 +48,7 @@ import {
   storeString,
   storeText,
   storeCustom,
+  storeNumber,
   type PersistedAccessor,
 } from "../../boundaries/platform/store-definition";
 import { SOURCES_HELP } from "./template-defaults";
@@ -99,7 +105,8 @@ function safeJsonParse(raw: string): unknown {
 // Constants
 // =============================================================================
 
-const HEARTBEAT_MS = 60 * 1000; // 60s reconcile-and-poll tick
+/** Default gap between the end of one reconcile-and-poll cycle and the next. */
+const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const METADATA_SOURCE_KEY = "source";
 
 // =============================================================================
@@ -159,6 +166,18 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   );
 
+  const intervalAccessor: PersistedAccessor<number> = deps.configService.register(
+    "auto-workspace.poll-interval",
+    {
+      default: DEFAULT_POLL_INTERVAL_SECONDS,
+      description:
+        "Seconds to wait between the end of one auto-workspace poll and the start of the next " +
+        "(a change applies after the current wait elapses)",
+      applies: "live",
+      ...storeNumber({ min: 1 }),
+    }
+  );
+
   // The retired experimental.* keys of the hardcoded GitHub/YouTrack sources.
   // Nothing reads them — they stay registered only so that an upgrade does not
   // silently delete them: an unregistered key is "unknown", which Config warns
@@ -193,8 +212,10 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   });
 
   let entries: AutoWorkspaceEntries = {};
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
-  let reconciling = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  /** Interval the last wait was armed with, so a live change can be logged once. */
+  let armedIntervalSeconds: number | null = null;
 
   // ------ State persistence ------
 
@@ -397,50 +418,72 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   }
 
   async function reconcile(): Promise<void> {
-    if (reconciling) return;
-    reconciling = true;
-    try {
-      const { sources, errors } = parseSources(sourcesAccessor.get());
-      for (const err of errors) {
-        deps.logger.warn("Invalid auto-workspace source, ignoring", {
-          source: err.name ?? `#${err.index}`,
-          message: err.message,
-        });
-      }
-
-      let changed = false;
-
-      // Orphan cleanup: drop entries whose source no longer exists in config.
-      const validNames = new Set(sources.map((s) => s.name));
-      for (const key of Object.keys(entries)) {
-        if (!validNames.has(sourceOfKey(key))) {
-          delete entries[key];
-          changed = true;
-          deps.logger.info("Forgot auto-workspace entry (source removed)", { key });
-        }
-      }
-
-      for (const source of sources) {
-        if (await pollSource(source)) changed = true;
-      }
-
-      if (changed) await persist();
-    } finally {
-      reconciling = false;
+    const { sources, errors } = parseSources(sourcesAccessor.get());
+    for (const err of errors) {
+      deps.logger.warn("Invalid auto-workspace source, ignoring", {
+        source: err.name ?? `#${err.index}`,
+        message: err.message,
+      });
     }
+
+    let changed = false;
+
+    // Orphan cleanup: drop entries whose source no longer exists in config.
+    const validNames = new Set(sources.map((s) => s.name));
+    for (const key of Object.keys(entries)) {
+      if (!validNames.has(sourceOfKey(key))) {
+        delete entries[key];
+        changed = true;
+        deps.logger.info("Forgot auto-workspace entry (source removed)", { key });
+      }
+    }
+
+    for (const source of sources) {
+      if (await pollSource(source)) changed = true;
+    }
+
+    if (changed) await persist();
   }
 
-  function startHeartbeat(): void {
-    if (heartbeat) return;
-    heartbeat = setInterval(() => void reconcile(), HEARTBEAT_MS);
-    deps.logger.info("Auto-workspace heartbeat started", { intervalMs: HEARTBEAT_MS });
+  /**
+   * Arm the next wait. Chained rather than periodic: the wait is the gap between
+   * the end of one cycle and the start of the next, so a slow poll never stacks.
+   * The interval is re-read here, so a live change applies from the next wait on.
+   */
+  function scheduleNext(): void {
+    if (stopped || timer) return;
+    const intervalSeconds = intervalAccessor.get();
+    if (armedIntervalSeconds !== null && armedIntervalSeconds !== intervalSeconds) {
+      deps.logger.info("Auto-workspace poll interval changed", {
+        from: armedIntervalSeconds,
+        to: intervalSeconds,
+      });
+    }
+    armedIntervalSeconds = intervalSeconds;
+    timer = setTimeout(() => {
+      timer = null;
+      void reconcile()
+        .catch((error: unknown) => {
+          deps.logger.warn("Auto-workspace poll failed", { error: getErrorMessage(error) });
+        })
+        .finally(scheduleNext);
+    }, intervalSeconds * 1000);
   }
 
-  function stopHeartbeat(): void {
-    if (heartbeat) {
-      clearInterval(heartbeat);
-      heartbeat = null;
-      deps.logger.info("Auto-workspace heartbeat stopped");
+  function startPolling(): void {
+    if (stopped || timer) return;
+    deps.logger.info("Auto-workspace polling started", {
+      intervalSeconds: intervalAccessor.get(),
+    });
+    scheduleNext();
+  }
+
+  function stopPolling(): void {
+    stopped = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      deps.logger.info("Auto-workspace polling stopped");
     }
   }
 
@@ -459,7 +502,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            stopHeartbeat();
+            stopPolling();
           },
         },
       },
@@ -469,7 +512,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         handler: async (): Promise<void> => {
           entries = stateAccessor.get();
           await reconcile();
-          startHeartbeat();
+          startPolling();
         },
       },
     },
