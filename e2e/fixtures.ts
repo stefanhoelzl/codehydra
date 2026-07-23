@@ -7,7 +7,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { createDriver, type AppDriver } from "../scripts/appctrl";
+// Explicit .ts extension so `scripts/record-demo.ts` can import these fixtures
+// under bare node (which requires extensions in relative ESM specifiers).
+import { createDriver, type AppDriver } from "../scripts/appctrl.ts";
 import {
   DATA_ROOT,
   REPO_ROOT,
@@ -18,7 +20,7 @@ import {
   resetDataState,
   resetRoot,
   type Agent,
-} from "./env";
+} from "./env.ts";
 
 export interface LaunchAppOptions {
   /**

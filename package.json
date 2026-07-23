@@ -50,6 +50,7 @@
     "site:dev": "vite --config site/vite.config.js",
     "site:build": "vite build --config site/vite.config.js",
     "site:preview": "vite preview --config site/vite.config.js",
+    "demo:record": "node scripts/record-demo.ts",
     "site:check": "svelte-check --tsconfig site/tsconfig.web.json",
     "check:e2e": "tsc -p e2e/tsconfig.json --noEmit"
   },
@@ -96,6 +97,7 @@
     "eslint": "^10.0.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.15.2",
+    "ffmpeg-static": "^5.3.0",
     "globals": "^17.4.0",
     "happy-dom": "^20.8.4",
     "playwright": "^1.58.2",

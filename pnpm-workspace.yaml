@@ -10,3 +10,4 @@ onlyBuiltDependencies:
   - keytar
   - sleep
   - electron-winstaller
+  - ffmpeg-static
