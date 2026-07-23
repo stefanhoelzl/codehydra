@@ -143,7 +143,8 @@
     gap: 0.3rem;
     padding: 2px 6px;
     font-size: 0.8rem;
-    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.7));
+    color: var(--ch-foreground);
+    opacity: 0.7;
     background: transparent;
     border: none;
     border-radius: var(--ch-radius-sm, 6px);
@@ -151,7 +152,7 @@
   }
 
   .setting-help-toggle:hover {
-    color: var(--ch-foreground);
+    opacity: 1;
     background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.08));
   }
 
@@ -168,7 +169,8 @@
     line-height: 1.5;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.7));
+    color: var(--ch-foreground);
+    opacity: 0.7;
     background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.04));
     border: 1px solid var(--ch-border);
     border-radius: var(--ch-radius-sm, 6px);
@@ -201,7 +203,8 @@
     line-height: 1.4;
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.6));
+    color: var(--ch-foreground);
+    opacity: 0.6;
     background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.08));
     border-radius: var(--ch-radius-sm, 6px);
   }

@@ -201,7 +201,8 @@
   }
 
   .input-textarea::placeholder {
-    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.5));
+    color: var(--ch-foreground);
+    opacity: 0.5;
   }
 
   .input-textfield {
