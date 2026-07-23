@@ -32,13 +32,15 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const PROJECT_ROOT = projPath("/project");
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -50,7 +52,7 @@ type RestartServerResult =
 
 interface MockAgentServerManager {
   restartResult: RestartServerResult;
-  restartServer(workspacePath: string): Promise<RestartServerResult>;
+  restartServer(workspacePath: WorkspacePath): Promise<RestartServerResult>;
 }
 
 function createMockAgentServerManager(result: RestartServerResult): MockAgentServerManager {
@@ -112,7 +114,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 // Helpers
 // =============================================================================
 
-function restartIntent(workspacePath: string): RestartAgentIntent {
+function restartIntent(workspacePath: WorkspacePath): RestartAgentIntent {
   return {
     type: INTENT_RESTART_AGENT,
     payload: { workspacePath },
@@ -216,9 +218,9 @@ describe("RestartAgent Operation", () => {
         serverManager: createMockAgentServerManager({ success: true, port: 9090 }),
       });
 
-      await expect(setup.dispatcher.dispatch(restartIntent("/nonexistent/path"))).rejects.toThrow(
-        "Workspace not found: /nonexistent/path"
-      );
+      await expect(
+        setup.dispatcher.dispatch(restartIntent(wsPath("/nonexistent/path")))
+      ).rejects.toThrow("Workspace not found: /nonexistent/path");
     });
   });
 

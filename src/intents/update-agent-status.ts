@@ -17,6 +17,7 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { projectIdSchema, workspaceNameSchema, workspacePathSchema } from "./contract";
+import type { ProjectPath } from "./contract";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
@@ -77,7 +78,11 @@ export const agentStatusUpdatedPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_UPDATE_AGENT_STATUS,
   payload: updateAgentStatusPayloadSchema,
   events: {
@@ -107,23 +112,23 @@ export class UpdateAgentStatusOperation implements Operation<typeof schemas> {
   readonly id = UPDATE_AGENT_STATUS_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<UpdateAgentStatusIntent>): Promise<void> {
+  async execute(ctx: OperationContext<UpdateAgentStatusIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
 
     // Resolve workspace + project, silently bail if unknown
-    let projectPath: string;
+    let projectPath: ProjectPath;
     let workspaceName: WorkspaceName;
     let projectId: ProjectId;
     let active: boolean;
     try {
-      ({ projectPath, workspaceName, active } = await ctx.dispatch({
+      ({ projectPath, workspaceName, active } = await ctx.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: payload.workspacePath },
-      } as ResolveWorkspaceIntent));
-      ({ projectId } = await ctx.dispatch({
+      }));
+      ({ projectId } = await ctx.dispatch<ResolveProjectIntent>({
         type: INTENT_RESOLVE_PROJECT,
         payload: { projectPath },
-      } as ResolveProjectIntent));
+      }));
     } catch {
       return; // silently bail — unknown workspace/project
     }

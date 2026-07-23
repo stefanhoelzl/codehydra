@@ -25,6 +25,8 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "../intents/contract";
 
 // =============================================================================
 // Test Constants
@@ -42,7 +44,7 @@ interface TestSetup {
   mockClient: ReturnType<typeof createMockGitClient>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
-  workspacePath: string;
+  workspacePath: WorkspacePath;
 }
 
 function createTestSetup(): TestSetup {
@@ -54,7 +56,7 @@ function createTestSetup(): TestSetup {
         worktrees: [
           {
             name: "feature-x",
-            path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+            path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
             branch: "feature-x",
           },
         ],
@@ -84,7 +86,7 @@ function createTestSetup(): TestSetup {
 
   registerTestInfrastructure(dispatcher, {
     workspaces: {
-      [workspacePath.toString()]: { projectPath: PROJECT_ROOT.toString(), workspaceName },
+      [workspacePath.toString()]: { projectPath: projPath(PROJECT_ROOT.toString()), workspaceName },
     },
     projects: { [PROJECT_ROOT.toString()]: { projectId } },
   });
@@ -98,7 +100,7 @@ function createTestSetup(): TestSetup {
     mockClient,
     projectId,
     workspaceName,
-    workspacePath: workspacePath.toString(),
+    workspacePath: wsPath(workspacePath.toString()),
   };
 }
 

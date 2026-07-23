@@ -47,9 +47,11 @@ const BROKEN_CONFIG_FILENAME = "config.json.broken";
  * Agent types that can be selected by the user. Non-nullable: the default is
  * "claude". First-run onboarding is gated on whether config.json existed at load
  * (Config.wasConfigured()), not on a null agent.
- * Config-specific (not a generic store type), so it lives with the Config service.
+ *
+ * Type-only re-export of the intent contract's `agentTypeSchema` — one definition of the
+ * agent vocabulary, rather than a hand-written union per consumer.
  */
-export type ConfigAgentType = "claude" | "opencode";
+export type { AgentType as ConfigAgentType } from "../../intents/contract";
 
 /**
  * Where a config key's effective value came from, in precedence order.

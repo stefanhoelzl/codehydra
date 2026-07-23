@@ -9,6 +9,7 @@
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
+import { projPath } from "../shared/test-fixtures";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -26,6 +27,7 @@ import type { HookOutput, Operation, OperationSchemas } from "./lib/operation";
 import type { Project } from "../shared/api/types";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { ConfigAgentType } from "../boundaries/platform/config";
+import { projectSchema } from "./contract";
 
 // =============================================================================
 // Test Helpers
@@ -50,7 +52,7 @@ function createProjectModule(projectPaths: readonly string[]): IntentModule {
       [APP_READY_OPERATION_ID]: {
         "load-projects": {
           handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
-            return { result: { projectPaths } };
+            return { result: { projectPaths: projectPaths.map(projPath) } };
           },
         },
       },
@@ -61,7 +63,7 @@ function createProjectModule(projectPaths: readonly string[]): IntentModule {
 const openProjectStubSchemas = {
   type: INTENT_OPEN_PROJECT,
   payload: z.unknown(),
-  result: z.custom<Project>(),
+  result: projectSchema,
 } satisfies OperationSchemas;
 
 function createProjectOpenStub(

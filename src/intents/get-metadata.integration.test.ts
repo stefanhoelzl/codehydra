@@ -33,6 +33,8 @@ import { isValidMetadataKey } from "../shared/api/types";
 import type { IntentModule } from "./lib/module";
 import type { Intent } from "./lib/types";
 import type { HookContext, HookOutput } from "./lib/operation";
+import type { WorkspacePath } from "./contract";
+import { projPath, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
@@ -49,7 +51,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
-  workspacePath: string;
+  workspacePath: WorkspacePath;
 }
 
 function createTestSetup(): TestSetup {
@@ -71,7 +73,7 @@ function createTestSetup(): TestSetup {
   registerTestInfrastructure(dispatcher, {
     workspaces: {
       [workspacePath.toString()]: {
-        projectPath: PROJECT_ROOT.toString(),
+        projectPath: projPath(PROJECT_ROOT.toString()),
         workspaceName,
       },
     },
@@ -122,7 +124,7 @@ function createTestSetup(): TestSetup {
     dispatcher,
     projectId,
     workspaceName,
-    workspacePath: workspacePath.toString(),
+    workspacePath: wsPath(workspacePath.toString()),
   };
 }
 
@@ -131,7 +133,7 @@ function createTestSetup(): TestSetup {
 // =============================================================================
 
 function setMetadataIntent(
-  workspacePath: string,
+  workspacePath: WorkspacePath,
   key: string,
   value: string | null
 ): SetMetadataIntent {
@@ -141,7 +143,7 @@ function setMetadataIntent(
   };
 }
 
-function getMetadataIntent(workspacePath: string): GetMetadataIntent {
+function getMetadataIntent(workspacePath: WorkspacePath): GetMetadataIntent {
   return {
     type: INTENT_GET_METADATA,
     payload: { workspacePath },

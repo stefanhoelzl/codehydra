@@ -68,10 +68,10 @@ describe("TempDirModule Integration", () => {
     it("creates the temp directory", async () => {
       const { dispatcher, fileSystem } = createTestSetup();
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(fileSystem.mkdir).toHaveBeenCalledWith(
         expect.objectContaining({ toString: expect.any(Function) })
@@ -81,10 +81,10 @@ describe("TempDirModule Integration", () => {
     it("uses the temp path under data root", async () => {
       const { dispatcher, fileSystem } = createTestSetup();
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       const mkdirPath = fileSystem.mkdir.mock.calls[0]![0];
       expect(mkdirPath.toString()).toBe("/test/app-data/temp");

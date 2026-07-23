@@ -37,21 +37,24 @@ import {
   GET_PROJECT_BASES_OPERATION_ID,
   INTENT_GET_PROJECT_BASES,
 } from "../intents/get-project-bases";
-import type { ListBasesHookResult } from "../intents/get-project-bases";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
+  preflightResultSchema,
+  deleteResultSchema,
 } from "../intents/delete-workspace";
 import type { DeleteWorkspaceIntent, DeletePipelineHookInput } from "../intents/delete-workspace";
-import type { DeleteHookResult, PreflightHookResult } from "../intents/delete-workspace";
+import type { DeleteHookResult } from "../intents/delete-workspace";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   INTENT_GET_WORKSPACE_STATUS,
+  getStatusHookResultSchema,
 } from "../intents/get-workspace-status";
-import type { GetStatusHookInput, GetStatusHookResult } from "../intents/get-workspace-status";
+import type { GetStatusHookInput } from "../intents/get-workspace-status";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
+  resolveHookResultSchema,
 } from "../intents/resolve-workspace";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
@@ -68,6 +71,8 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath, ProjectPath } from "../intents/contract";
 
 // =============================================================================
 // Mock Dependencies
@@ -102,7 +107,7 @@ const openProjectOperation = createMinimalOperation<DiscoverHookResult>(
   {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
+      projectPath: (ctx.intent.payload as { projectPath: ProjectPath }).projectPath,
     }),
   }
 );
@@ -114,7 +119,7 @@ const closeProjectOperation = createMinimalOperation<Record<string, never>>(
   {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
+      projectPath: (ctx.intent.payload as { projectPath: ProjectPath }).projectPath,
       removeLocalRepo: false,
     }),
   }
@@ -127,7 +132,7 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
   {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath?: string }).projectPath ?? "",
+      projectPath: (ctx.intent.payload as { projectPath?: ProjectPath }).projectPath ?? "",
     }),
   }
 );
@@ -146,6 +151,7 @@ const preflightSchemas = {
   type: INTENT_DELETE_WORKSPACE,
   payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
   result: z.custom<PreflightResult>(),
+  hooks: { preflight: { result: preflightResultSchema } },
 } satisfies OperationSchemas;
 
 const minimalPreflightOperation: Operation<typeof preflightSchemas> = {
@@ -167,15 +173,12 @@ const minimalPreflightOperation: Operation<typeof preflightSchemas> = {
 
     const preflightInput: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: resolvedProjectPath,
+      projectPath: projPath(resolvedProjectPath),
       workspacePath: payload.workspacePath,
       workspaceName: "test-workspace" as WorkspaceName,
       active: false,
     };
-    const { results, errors } = await ctx.hooks.collect<PreflightHookResult>(
-      "preflight",
-      preflightInput
-    );
+    const { results, errors } = await ctx.hooks.collect("preflight", preflightInput);
     if (errors.length > 0) return { error: errors[0]!.message };
     return results[0] ?? {};
   },
@@ -193,6 +196,7 @@ const deleteWorkspaceSchemas = {
   type: INTENT_DELETE_WORKSPACE,
   payload: z.custom<DeleteWorkspaceIntent["payload"]>(),
   result: z.custom<DeleteResult>(),
+  hooks: { delete: { result: deleteResultSchema } },
 } satisfies OperationSchemas;
 
 const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> = {
@@ -216,13 +220,15 @@ const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> 
     // delete (enriched with both paths, matching real operation's DeletePipelineHookInput)
     const deleteInput: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: resolvedProjectPath,
+      projectPath: projPath(resolvedProjectPath),
       workspacePath: payload.workspacePath,
       workspaceName: "test-workspace" as WorkspaceName,
       active: false,
     };
-    const { results: deleteResults, errors: deleteErrors } =
-      await ctx.hooks.collect<DeleteHookResult>("delete", deleteInput);
+    const { results: deleteResults, errors: deleteErrors } = await ctx.hooks.collect(
+      "delete",
+      deleteInput
+    );
     if (deleteErrors.length > 0 && !payload.force) throw deleteErrors[0]!;
 
     return {
@@ -234,7 +240,7 @@ const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> 
 
 /** Result from workspace path resolution (reverse lookup: workspacePath → projectPath + workspaceName). */
 interface ResolveResult {
-  readonly projectPath?: string | undefined;
+  readonly projectPath?: ProjectPath | undefined;
   readonly workspaceName?: string | undefined;
 }
 
@@ -249,21 +255,19 @@ const resolveWorkspaceSchemas = {
   type: INTENT_RESOLVE_WORKSPACE,
   payload: z.unknown(),
   result: z.custom<ResolveResult>(),
+  hooks: { resolve: { result: resolveHookResultSchema } },
 } satisfies OperationSchemas;
 
 const minimalResolveWorkspaceOperation: Operation<typeof resolveWorkspaceSchemas> = {
   id: RESOLVE_WORKSPACE_OPERATION_ID,
   schemas: resolveWorkspaceSchemas,
   async execute(ctx): Promise<ResolveResult> {
-    const payload = ctx.intent.payload as { workspacePath: string };
+    const payload = ctx.intent.payload as { workspacePath: WorkspacePath };
     const resolveInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
     };
-    const { results: resolveResults } = await ctx.hooks.collect<{
-      projectPath?: string;
-      workspaceName?: string;
-    }>("resolve", resolveInput);
+    const { results: resolveResults } = await ctx.hooks.collect("resolve", resolveInput);
     const projectPath = resolveResults[0]?.projectPath;
     const workspaceName = resolveResults[0]?.workspaceName;
     return projectPath ? { projectPath, workspaceName } : {};
@@ -292,7 +296,7 @@ const minimalGetProjectBasesOperation: Operation<typeof getProjectBasesSchemas> 
   schemas: getProjectBasesSchemas,
   async execute(ctx): Promise<GetProjectBasesTestResult> {
     const payload = ctx.intent.payload as {
-      projectPath: string;
+      projectPath: ProjectPath;
       hookPoint?: "list" | "refresh";
     };
     const hookCtx = { intent: ctx.intent, projectPath: payload.projectPath };
@@ -304,7 +308,7 @@ const minimalGetProjectBasesOperation: Operation<typeof getProjectBasesSchemas> 
     }
 
     // Default: list
-    const { results, errors } = await ctx.hooks.collect<ListBasesHookResult>("list", hookCtx);
+    const { results, errors } = await ctx.hooks.collect("list", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
   },
@@ -324,13 +328,14 @@ const getStatusSchemas = {
   type: INTENT_GET_WORKSPACE_STATUS,
   payload: z.unknown(),
   result: z.custom<GetStatusResult>(),
+  hooks: { get: { result: getStatusHookResultSchema } },
 } satisfies OperationSchemas;
 
 const minimalGetStatusOperation: Operation<typeof getStatusSchemas> = {
   id: GET_WORKSPACE_STATUS_OPERATION_ID,
   schemas: getStatusSchemas,
   async execute(ctx): Promise<GetStatusResult> {
-    const payload = ctx.intent.payload as { workspacePath: string };
+    const payload = ctx.intent.payload as { workspacePath: WorkspacePath };
 
     // Dispatch workspace:resolve (matching real operation)
     const resolved = (await ctx.dispatch({
@@ -344,9 +349,9 @@ const minimalGetStatusOperation: Operation<typeof getStatusSchemas> = {
     // get
     const getInput: GetStatusHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspacePath: wsPath(payload.workspacePath),
     };
-    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getInput);
+    const { results, errors } = await ctx.hooks.collect("get", getInput);
     if (errors.length > 0) throw errors[0]!;
 
     let isDirty = false;
@@ -459,7 +464,7 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
 // Test Helpers
 // =============================================================================
 
-function makeWorkspace(name: string, projectPath: string): Workspace {
+function makeWorkspace(name: string, projectPath: ProjectPath): Workspace {
   return {
     name,
     path: new Path(`${projectPath}/.worktrees/${name}`),
@@ -472,7 +477,7 @@ function makeWorkspace(name: string, projectPath: string): Workspace {
 
 async function dispatchOpenProject(
   dispatcher: Dispatcher,
-  projectPath: string
+  projectPath: ProjectPath
 ): Promise<DiscoverHookResult> {
   return (await dispatcher.dispatch({
     type: "project:open",
@@ -480,7 +485,10 @@ async function dispatchOpenProject(
   } as Intent)) as DiscoverHookResult;
 }
 
-async function dispatchCloseProject(dispatcher: Dispatcher, projectPath: string): Promise<void> {
+async function dispatchCloseProject(
+  dispatcher: Dispatcher,
+  projectPath: ProjectPath
+): Promise<void> {
   await dispatcher.dispatch({
     type: "project:close",
     payload: { projectPath },
@@ -489,7 +497,7 @@ async function dispatchCloseProject(dispatcher: Dispatcher, projectPath: string)
 
 async function dispatchResolveWorkspace(
   dispatcher: Dispatcher,
-  workspacePath: string
+  workspacePath: WorkspacePath
 ): Promise<ResolveResult> {
   return (await dispatcher.dispatch({
     type: "workspace:resolve",
@@ -499,7 +507,7 @@ async function dispatchResolveWorkspace(
 
 async function dispatchListBases(
   dispatcher: Dispatcher,
-  projectPath: string
+  projectPath: ProjectPath
 ): Promise<GetProjectBasesTestResult> {
   return (await dispatcher.dispatch({
     type: "project:get-bases",
@@ -507,7 +515,10 @@ async function dispatchListBases(
   } as Intent)) as GetProjectBasesTestResult;
 }
 
-async function dispatchRefreshBases(dispatcher: Dispatcher, projectPath: string): Promise<void> {
+async function dispatchRefreshBases(
+  dispatcher: Dispatcher,
+  projectPath: ProjectPath
+): Promise<void> {
   await dispatcher.dispatch({
     type: "project:get-bases",
     payload: { projectPath, hookPoint: "refresh" },
@@ -516,7 +527,7 @@ async function dispatchRefreshBases(dispatcher: Dispatcher, projectPath: string)
 
 async function dispatchGetStatus(
   dispatcher: Dispatcher,
-  workspacePath: string
+  workspacePath: WorkspacePath
 ): Promise<GetStatusResult> {
   return (await dispatcher.dispatch({
     type: "workspace:get-status",
@@ -556,7 +567,7 @@ async function dispatchListWorkspaces(dispatcher: Dispatcher): Promise<ListWorks
 
 async function dispatchPreflight(
   dispatcher: Dispatcher,
-  workspacePath: string
+  workspacePath: WorkspacePath
 ): Promise<PreflightResult> {
   const intent: DeleteWorkspaceIntent = {
     type: "workspace:delete",
@@ -583,13 +594,13 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("open-project -> discover", () => {
     it("registers project, discovers workspaces, returns them", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws1 = makeWorkspace("feature-1", projectPath);
-      const ws2 = makeWorkspace("feature-2", projectPath);
+      const ws1 = makeWorkspace("feature-1", projPath(projectPath));
+      const ws2 = makeWorkspace("feature-2", projPath(projectPath));
       provider.discover.mockResolvedValue([ws1, ws2]);
 
-      const result = await dispatchOpenProject(dispatcher, projectPath);
+      const result = await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       expect(provider.registerProject).toHaveBeenCalledWith(
         new Path(projectPath),
@@ -604,18 +615,18 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     it("calls fire-and-forget cleanupOrphanedWorkspaces", async () => {
       const { dispatcher, provider } = setup;
 
-      await dispatchOpenProject(dispatcher, "/projects/my-app");
+      await dispatchOpenProject(dispatcher, projPath("/projects/my-app"));
 
       expect(provider.cleanupOrphanedWorkspaces).toHaveBeenCalledWith(new Path("/projects/my-app"));
     });
 
     it("caches the default base from discover and surfaces it via list-workspaces", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
       provider.discover.mockResolvedValue([]);
       provider.defaultBase.mockResolvedValue("origin/main");
 
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
       const listed = await dispatchListWorkspaces(dispatcher);
 
       const entry = listed.entries!.find((e) => e.projectPath === new Path(projectPath).toString());
@@ -630,34 +641,34 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("close-project -> close", () => {
     it("unregisters project and clears state", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
       // Open first
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // Close
-      await dispatchCloseProject(dispatcher, projectPath);
+      await dispatchCloseProject(dispatcher, projPath(projectPath));
 
       expect(provider.unregisterProject).toHaveBeenCalledWith(new Path(projectPath));
 
       // Subsequent resolve should return empty (no projectPath)
       const resolveResult = await dispatchResolveWorkspace(
         dispatcher,
-        `${projectPath}/.worktrees/feature-1`
+        wsPath(`${projectPath}/.worktrees/feature-1`)
       );
       expect(resolveResult.projectPath).toBeUndefined();
     });
 
     it("contributes the project's workspaces to the close resolve hook", async () => {
       const { dispatcher, provider, module } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
       provider.discover.mockResolvedValue([
-        makeWorkspace("feature-1", projectPath),
-        makeWorkspace("feature-2", projectPath),
+        makeWorkspace("feature-1", projPath(projectPath)),
+        makeWorkspace("feature-2", projPath(projectPath)),
       ]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // The CloseProjectOperation collects this hook to drive its
       // per-workspace teardown (and the close confirm dialog's count).
@@ -682,11 +693,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     describe("new workspace", () => {
       it("calls createWorkspace and updates state", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         // Open project first
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         // Mock createWorkspace
         const createdWs: Workspace = {
@@ -718,7 +729,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.branch).toBe("new-feature");
 
         // Verify state was updated (resolve should find it)
-        const resolveResult = await dispatchResolveWorkspace(dispatcher, "/workspaces/new-feature");
+        const resolveResult = await dispatchResolveWorkspace(
+          dispatcher,
+          wsPath("/workspaces/new-feature")
+        );
         expect(resolveResult.projectPath).toBe(projectPath);
       });
     });
@@ -726,11 +740,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     describe("existing workspace", () => {
       it("skips provider call and updates state", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         // Open project first
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         const createIntent: OpenWorkspaceIntent = {
           type: "workspace:open",
@@ -739,7 +753,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
             base: "origin/main",
             projectPath,
             existingWorkspace: {
-              path: "/workspaces/existing-ws",
+              path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
               branch: "existing-ws",
               metadata: { base: "origin/main" },
@@ -754,7 +768,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.branch).toBe("existing-ws");
 
         // Verify state was updated
-        const resolveResult = await dispatchResolveWorkspace(dispatcher, "/workspaces/existing-ws");
+        const resolveResult = await dispatchResolveWorkspace(
+          dispatcher,
+          wsPath("/workspaces/existing-ws")
+        );
         expect(resolveResult.projectPath).toBe(projectPath);
       });
     });
@@ -762,10 +779,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
     describe("base resolution", () => {
       it("resolves default base via defaultBase() when base is omitted", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         provider.defaultBase.mockResolvedValue("origin/main");
 
@@ -799,10 +816,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       it("throws when base is omitted and no default branch exists", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         provider.defaultBase.mockResolvedValue(undefined);
 
@@ -821,10 +838,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       it("includes base branch in error when createWorkspace fails", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         provider.createWorkspace.mockRejectedValue(
           new Error("Failed to create branch focus-test-1: fatal: not a valid object name: 'main'")
@@ -846,10 +863,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       it("uses explicit base without calling defaultBase()", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         const createdWs: Workspace = {
           name: "explicit-base",
@@ -883,10 +900,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       it("returns resolvedBase for existing workspace path", async () => {
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
 
         provider.discover.mockResolvedValue([]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         const createIntent: OpenWorkspaceIntent = {
           type: "workspace:open",
@@ -895,7 +912,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
             base: "origin/main",
             projectPath,
             existingWorkspace: {
-              path: "/workspaces/existing-ws",
+              path: wsPath("/workspaces/existing-ws"),
               name: "existing-ws",
               branch: "existing-ws",
               metadata: { base: "origin/main" },
@@ -918,11 +935,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       d: Dispatcher,
       p: ReturnType<typeof createMockGitWorktreeProvider>
     ) {
-      const projectPath = "/projects/my-app";
-      const ws = makeWorkspace("feature-1", projectPath);
+      const projectPath = projPath("/projects/my-app");
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       p.discover.mockResolvedValue([ws]);
 
-      await dispatchOpenProject(d, projectPath);
+      await dispatchOpenProject(d, projPath(projectPath));
 
       return { projectPath, ws };
     }
@@ -934,7 +951,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
         const result = await dispatchResolveWorkspace(
           dispatcher,
-          `${projectPath}/.worktrees/feature-1`
+          wsPath(`${projectPath}/.worktrees/feature-1`)
         );
         expect(result.projectPath).toBe(projectPath);
       });
@@ -943,7 +960,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const { dispatcher, provider } = setup;
         await setupWithWorkspace(dispatcher, provider);
 
-        const result = await dispatchResolveWorkspace(dispatcher, "/nonexistent/path");
+        const result = await dispatchResolveWorkspace(dispatcher, wsPath("/nonexistent/path"));
         expect(result.projectPath).toBeUndefined();
       });
 
@@ -953,7 +970,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         // branch-cased name ("SDK-214") and breaks the renderer's
         // case-sensitive name matching for metadata updates.
         const { dispatcher, provider } = setup;
-        const projectPath = "/projects/my-app";
+        const projectPath = projPath("/projects/my-app");
         const ws: Workspace = {
           name: "SDK-214",
           path: new Path(`${projectPath}/.worktrees/sdk-214`),
@@ -961,11 +978,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           metadata: { base: "origin/main" },
         };
         provider.discover.mockResolvedValue([ws]);
-        await dispatchOpenProject(dispatcher, projectPath);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
 
         const result = await dispatchResolveWorkspace(
           dispatcher,
-          `${projectPath}/.worktrees/sdk-214`
+          wsPath(`${projectPath}/.worktrees/sdk-214`)
         );
         expect(result.workspaceName).toBe("SDK-214");
       });
@@ -979,7 +996,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            workspacePath: ws.path.toString(),
+            workspacePath: wsPath(ws.path.toString()),
             keepBranch: false,
             force: false,
             removeWorktree: true,
@@ -998,7 +1015,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            workspacePath: ws.path.toString(),
+            workspacePath: wsPath(ws.path.toString()),
             keepBranch: true,
             force: false,
             removeWorktree: false,
@@ -1017,7 +1034,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            workspacePath: ws.path.toString(),
+            workspacePath: wsPath(ws.path.toString()),
             keepBranch: false,
             force: false,
             removeWorktree: true,
@@ -1029,7 +1046,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         // Workspace should no longer be resolvable
         const resolveResult = await dispatchResolveWorkspace(
           dispatcher,
-          `${projectPath}/.worktrees/feature-1`
+          wsPath(`${projectPath}/.worktrees/feature-1`)
         );
         expect(resolveResult.projectPath).toBeUndefined();
       });
@@ -1045,7 +1062,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const deleteIntent: DeleteWorkspaceIntent = {
           type: "workspace:delete",
           payload: {
-            workspacePath: ws.path.toString(),
+            workspacePath: wsPath(ws.path.toString()),
             keepBranch: false,
             force: true,
             removeWorktree: true,
@@ -1059,7 +1076,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         // Workspace should still be unregistered from state
         const resolveResult = await dispatchResolveWorkspace(
           dispatcher,
-          `${projectPath}/.worktrees/feature-1`
+          wsPath(`${projectPath}/.worktrees/feature-1`)
         );
         expect(resolveResult.projectPath).toBeUndefined();
       });
@@ -1073,7 +1090,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("get-project-bases -> list", () => {
     it("returns bases and defaultBaseBranch from provider", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
       const bases = [
         { name: "origin/main", isRemote: true, base: "origin/main" },
@@ -1082,7 +1099,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       provider.listBases.mockResolvedValue(bases);
       provider.defaultBase.mockResolvedValue("origin/main");
 
-      const result = await dispatchListBases(dispatcher, projectPath);
+      const result = await dispatchListBases(dispatcher, projPath(projectPath));
 
       expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath));
       // defaultBase reuses the already-enumerated bases (no second listBases).
@@ -1099,9 +1116,9 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("get-project-bases -> refresh", () => {
     it("calls updateBases on provider", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      await dispatchRefreshBases(dispatcher, projectPath);
+      await dispatchRefreshBases(dispatcher, projPath(projectPath));
 
       expect(provider.updateBases).toHaveBeenCalledWith(new Path(projectPath));
     });
@@ -1114,15 +1131,15 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("get-workspace-status -> get", () => {
     it("calls isDirty and returns result", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       provider.isDirty.mockResolvedValue(true);
 
-      const result = await dispatchGetStatus(dispatcher, ws.path.toString());
+      const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
       expect(result.isDirty).toBe(true);
@@ -1130,15 +1147,15 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
     it("returns isDirty=false when workspace is clean", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       provider.isDirty.mockResolvedValue(false);
 
-      const result = await dispatchGetStatus(dispatcher, ws.path.toString());
+      const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(result.isDirty).toBe(false);
     });
@@ -1151,16 +1168,16 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   describe("delete-workspace -> preflight", () => {
     it("returns isDirty and unmergedCommits from provider", async () => {
       const preflightSetup = createPreflightTestSetup();
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       preflightSetup.provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(preflightSetup.dispatcher, projectPath);
+      await dispatchOpenProject(preflightSetup.dispatcher, projPath(projectPath));
 
       preflightSetup.provider.isDirty.mockResolvedValue(true);
       preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
 
-      const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
+      const result = await dispatchPreflight(preflightSetup.dispatcher, wsPath(ws.path.toString()));
 
       expect(result.isDirty).toBe(true);
       expect(result.unmergedCommits).toBe(3);
@@ -1168,15 +1185,15 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
     it("returns error when provider throws", async () => {
       const preflightSetup = createPreflightTestSetup();
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       preflightSetup.provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(preflightSetup.dispatcher, projectPath);
+      await dispatchOpenProject(preflightSetup.dispatcher, projPath(projectPath));
 
       preflightSetup.provider.isDirty.mockRejectedValue(new Error("git failed"));
 
-      const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
+      const result = await dispatchPreflight(preflightSetup.dispatcher, wsPath(ws.path.toString()));
 
       expect(result.error).toBe("git failed");
     });
@@ -1191,10 +1208,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       d: Dispatcher,
       p: ReturnType<typeof createMockGitWorktreeProvider>
     ) {
-      const projectPath = "/projects/my-app";
-      const ws = makeWorkspace("feature-1", projectPath);
+      const projectPath = projPath("/projects/my-app");
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       p.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(d, projectPath);
+      await dispatchOpenProject(d, projPath(projectPath));
       return { projectPath, ws };
     }
 
@@ -1207,7 +1224,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1218,10 +1235,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Re-discover project — git no longer lists the workspace
       provider.discover.mockResolvedValue([]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // Workspace should still be resolvable via deletionPending
-      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, wsPath(ws.path.toString()));
       expect(resolveResult.projectPath).toBe(projectPath);
     });
 
@@ -1234,7 +1251,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1243,7 +1260,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       await dispatchDeleteWorkspace(dispatcher, deleteIntent);
 
       // Workspace should not be resolvable
-      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, wsPath(ws.path.toString()));
       expect(resolveResult.projectPath).toBeUndefined();
     });
 
@@ -1256,7 +1273,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: true,
           removeWorktree: true,
@@ -1266,10 +1283,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Re-discover with empty list
       provider.discover.mockResolvedValue([]);
-      await dispatchOpenProject(dispatcher, "/projects/my-app");
+      await dispatchOpenProject(dispatcher, projPath("/projects/my-app"));
 
       // Workspace should not be resolvable (force cleared deletionPending)
-      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, wsPath(ws.path.toString()));
       expect(resolveResult.projectPath).toBeUndefined();
     });
 
@@ -1282,7 +1299,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1291,9 +1308,9 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       await dispatchDeleteWorkspace(dispatcher, deleteIntent);
 
       // Re-discover — git no longer lists the workspace, but a new one exists
-      const ws2 = makeWorkspace("feature-2", projectPath);
+      const ws2 = makeWorkspace("feature-2", projPath(projectPath));
       provider.discover.mockResolvedValue([ws2]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // list-workspaces should include both: feature-2 from git + feature-1 from deletionPending
       const listResult = await dispatchListWorkspaces(dispatcher);
@@ -1312,7 +1329,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1322,7 +1339,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Re-discover without the deleted workspace
       provider.discover.mockResolvedValue([]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // find-candidates should still include the deletion-pending workspace
       const result = await dispatchFindCandidates(dispatcher);
@@ -1339,7 +1356,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: "workspace:delete",
         payload: {
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1348,14 +1365,14 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       await dispatchDeleteWorkspace(dispatcher, deleteIntent);
 
       // Close project — should clear deletionPending too
-      await dispatchCloseProject(dispatcher, projectPath);
+      await dispatchCloseProject(dispatcher, projPath(projectPath));
 
       // Re-open with empty list
       provider.discover.mockResolvedValue([]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       // Workspace should not be resolvable (close cleared deletionPending)
-      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, wsPath(ws.path.toString()));
       expect(resolveResult.projectPath).toBeUndefined();
     });
   });
@@ -1386,18 +1403,18 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
     it("updates metadata when a key is set", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       const event: MetadataChangedEvent = {
         type: EVENT_METADATA_CHANGED,
         payload: {
           projectId: "test-project" as ProjectId,
           workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           key: "auto-workspace.tracked",
           value: "true",
         },
@@ -1415,7 +1432,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
     it("removes metadata key when value is null", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
       const ws: Workspace = {
         name: "feature-1",
@@ -1424,14 +1441,14 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         metadata: { base: "origin/main", "auto-workspace.tracked": "true" },
       };
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       const event: MetadataChangedEvent = {
         type: EVENT_METADATA_CHANGED,
         payload: {
           projectId: "test-project" as ProjectId,
           workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: ws.path.toString(),
+          workspacePath: wsPath(ws.path.toString()),
           key: "auto-workspace.tracked",
           value: null,
         },
@@ -1446,18 +1463,18 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
     it("ignores event for unknown workspace path", async () => {
       const { dispatcher, provider } = setup;
-      const projectPath = "/projects/my-app";
+      const projectPath = projPath("/projects/my-app");
 
-      const ws = makeWorkspace("feature-1", projectPath);
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
       provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(dispatcher, projectPath);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       const event: MetadataChangedEvent = {
         type: EVENT_METADATA_CHANGED,
         payload: {
           projectId: "test-project" as ProjectId,
           workspaceName: "unknown" as WorkspaceName,
-          workspacePath: "/nonexistent/workspace",
+          workspacePath: wsPath("/nonexistent/workspace"),
           key: "auto-workspace.tracked",
           value: "true",
         },

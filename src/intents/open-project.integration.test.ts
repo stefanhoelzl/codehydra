@@ -67,6 +67,8 @@ import {
 import type { TestViewManager } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { DiscoveredWorkspace, ProjectPath, WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Helpers
@@ -85,10 +87,10 @@ function testProjectId(path: string): ProjectId {
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/test/project";
+const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = testProjectId(PROJECT_PATH);
-const WORKSPACE_A_PATH = "/test/project/workspaces/feature-a";
-const WORKSPACE_B_PATH = "/test/project/workspaces/feature-b";
+const WORKSPACE_A_PATH = wsPath("/test/project/workspaces/feature-a");
+const WORKSPACE_B_PATH = wsPath("/test/project/workspaces/feature-b");
 const WORKSPACE_URL = "http://127.0.0.1:8080/?folder=test";
 
 // =============================================================================
@@ -100,12 +102,16 @@ interface TestProjectState {
   registeredProjects: Array<{
     id: ProjectId;
     name: string;
-    path: string;
-    workspaces: Array<{ path: string; branch: string | null; metadata: Record<string, string> }>;
+    path: ProjectPath;
+    workspaces: Array<{
+      path: WorkspacePath;
+      branch: string | null;
+      metadata: Record<string, string>;
+    }>;
     remoteUrl?: string;
   }>;
   /** Workspaces registered via stateModule event handler */
-  registeredWorkspaces: Array<{ projectPath: string; workspacePath: string }>;
+  registeredWorkspaces: Array<{ projectPath: ProjectPath; workspacePath: WorkspacePath }>;
   /** Whether the project is considered "open" */
   openProjectPaths: Set<string>;
   /** Last base branch cache */
@@ -121,12 +127,7 @@ interface TestHarness {
   preloadedPaths: string[];
   projectState: TestProjectState;
   /** Mock for provider.discover() */
-  discoverResult: Array<{
-    name: string;
-    path: Path;
-    branch: string | null;
-    metadata: Readonly<Record<string, string>>;
-  }>;
+  discoverResult: DiscoveredWorkspace[];
   /** Whether validateRepository should throw */
   validateThrows: boolean;
   /** Mock projectStore state */
@@ -152,14 +153,14 @@ function createTestHarness(options?: {
 
   const discoverResult: TestHarness["discoverResult"] = options?.discoverResult ?? [
     {
-      name: "feature-a",
-      path: new Path(WORKSPACE_A_PATH),
+      name: "feature-a" as WorkspaceName,
+      path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
       branch: "feature-a",
       metadata: { base: "main" },
     },
     {
-      name: "feature-b",
-      path: new Path(WORKSPACE_B_PATH),
+      name: "feature-b" as WorkspaceName,
+      path: wsPath(new Path(WORKSPACE_B_PATH).toString()),
       branch: "feature-b",
       metadata: { base: "main" },
     },
@@ -209,9 +210,9 @@ function createTestHarness(options?: {
         projectState.registeredProjects.push({
           id: project.id,
           name: project.name,
-          path: project.path.toString(),
+          path: projPath(project.path.toString()),
           workspaces: project.workspaces.map((w) => ({
-            path: w.path.toString(),
+            path: wsPath(w.path.toString()),
             branch: w.branch,
             metadata: w.metadata,
           })),
@@ -221,7 +222,7 @@ function createTestHarness(options?: {
     ),
     registerWorkspace: vi.fn().mockImplementation(
       (
-        projectPath: string,
+        projectPath: ProjectPath,
         workspace: {
           path: Path;
           branch: string | null;
@@ -230,7 +231,7 @@ function createTestHarness(options?: {
       ) => {
         projectState.registeredWorkspaces.push({
           projectPath,
-          workspacePath: workspace.path.toString(),
+          workspacePath: wsPath(workspace.path.toString()),
         });
         // Also add to the project's workspaces (matches real behavior)
         const project = projectState.registeredProjects.find(
@@ -238,7 +239,7 @@ function createTestHarness(options?: {
         );
         if (project) {
           project.workspaces.push({
-            path: workspace.path.toString(),
+            path: wsPath(workspace.path.toString()),
             branch: workspace.branch,
             metadata: workspace.metadata,
           });
@@ -321,7 +322,7 @@ function createTestHarness(options?: {
             }
 
             await gitWorktreeProvider.validateRepository(path);
-            return { result: { projectPath: path.toString() } };
+            return { result: { projectPath: projPath(path.toString()) } };
           },
         },
       },
@@ -357,7 +358,7 @@ function createTestHarness(options?: {
             });
             projectStoreState.configs.set(gitPath.toString(), { remoteUrl });
 
-            return { result: { projectPath: gitPath.toString(), remoteUrl } };
+            return { result: { projectPath: projPath(gitPath.toString()), remoteUrl } };
           },
         },
       },
@@ -514,7 +515,7 @@ function createTestHarness(options?: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
           appState.registerWorkspace(payload.projectPath, {
-            path: new Path(payload.workspacePath),
+            path: wsPath(new Path(payload.workspacePath).toString()),
             name: payload.workspaceName,
             branch: payload.branch,
             metadata: payload.metadata,
@@ -579,7 +580,7 @@ function createTestHarness(options?: {
                   ? {
                       projectId: testProjectId(project.path),
                       workspaceName: name as WorkspaceName,
-                      path,
+                      path: wsPath(path),
                     }
                   : null,
               },
@@ -619,7 +620,7 @@ function createTestHarness(options?: {
   };
 }
 
-function buildOpenIntent(input: { path: Path } | { git: string }): OpenProjectIntent {
+function buildOpenIntent(input: { path: ProjectPath } | { git: string }): OpenProjectIntent {
   return {
     type: INTENT_OPEN_PROJECT,
     payload: "path" in input ? { path: input.path } : { git: input.git },
@@ -633,7 +634,7 @@ function buildOpenIntent(input: { path: Path } | { git: string }): OpenProjectIn
 describe("OpenProjectOperation", () => {
   it("test 1: opens local project and activates workspaces", async () => {
     const harness = createTestHarness();
-    const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });
+    const intent = buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) });
 
     const result = await harness.dispatcher.dispatch(intent);
 
@@ -686,7 +687,9 @@ describe("OpenProjectOperation", () => {
     const harness = createTestHarness();
 
     // First open populates state
-    await harness.dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
 
     // Reset tracking
     harness.createdViews.length = 0;
@@ -703,7 +706,7 @@ describe("OpenProjectOperation", () => {
     // so we test the operation behavior by adding a module that sets alreadyOpen)
     // Instead, test at operation level: re-dispatch and verify project returned
     const result = await harness.dispatcher.dispatch(
-      buildOpenIntent({ path: new Path(PROJECT_PATH) })
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
     );
 
     expect(result).toBeDefined();
@@ -738,7 +741,7 @@ describe("OpenProjectOperation", () => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
               if (!path) return { result: {} };
-              return { result: { projectPath: path.toString(), alreadyOpen: true } };
+              return { result: { projectPath: projPath(path.toString()), alreadyOpen: true } };
             },
           },
         },
@@ -772,8 +775,8 @@ describe("OpenProjectOperation", () => {
                 result: {
                   workspaces: [
                     {
-                      name: "feature-a",
-                      path: new Path(WORKSPACE_A_PATH),
+                      name: "feature-a" as WorkspaceName,
+                      path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
                       branch: "feature-a",
                       metadata: { base: "main" },
                     },
@@ -796,7 +799,9 @@ describe("OpenProjectOperation", () => {
       receivedEvents.push(event);
     });
 
-    const result = await dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+    const result = await dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
 
     // Returns project data
     expect(result).toBeDefined();
@@ -842,7 +847,9 @@ describe("OpenProjectOperation", () => {
       receivedEvents.push(event);
     });
 
-    await harness.dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
 
     expect(receivedEvents).toHaveLength(1);
     const event = receivedEvents[0] as ProjectOpenedEvent;
@@ -861,7 +868,7 @@ describe("OpenProjectOperation", () => {
       workspaceCreateThrowsForPath: WORKSPACE_A_PATH,
     });
 
-    const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });
+    const intent = buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) });
     const result = await harness.dispatcher.dispatch(intent);
 
     // Operation succeeds despite one workspace failure
@@ -877,7 +884,7 @@ describe("OpenProjectOperation", () => {
   it("test 7: rejects invalid git path", async () => {
     const harness = createTestHarness({ validateThrows: true });
 
-    const intent = buildOpenIntent({ path: new Path("/invalid/path") });
+    const intent = buildOpenIntent({ path: projPath(new Path("/invalid/path").toString()) });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Not a valid git repository");
   });
@@ -945,10 +952,10 @@ describe("OpenProjectOperation", () => {
 
     dispatcher.registerModule(selectFolderModule);
 
-    const result = await dispatcher.dispatch({
+    const result = await dispatcher.dispatch<OpenProjectIntent>({
       type: INTENT_OPEN_PROJECT,
       payload: {},
-    } as OpenProjectIntent);
+    });
 
     expect(result).toBeNull();
   });
@@ -965,7 +972,7 @@ describe("OpenProjectOperation", () => {
           "select-folder": {
             handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
               selectFolderSpy();
-              return { result: { folderPath: "/should-not-be-used" } };
+              return { result: { folderPath: projPath("/should-not-be-used") } };
             },
           },
         },
@@ -974,7 +981,7 @@ describe("OpenProjectOperation", () => {
     harness.dispatcher.registerModule(selectFolderModule);
 
     // Dispatch with a path — should skip select-folder
-    const intent = buildOpenIntent({ path: new Path(PROJECT_PATH) });
+    const intent = buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) });
     await harness.dispatcher.dispatch(intent);
 
     expect(selectFolderSpy).not.toHaveBeenCalled();
@@ -992,14 +999,14 @@ describe("OpenProjectOperation", () => {
       failedEvents.push(event);
     });
 
-    const intent = buildOpenIntent({ path: new Path("/invalid/path") });
+    const intent = buildOpenIntent({ path: projPath(new Path("/invalid/path").toString()) });
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Not a valid git repository");
 
     expect(failedEvents).toHaveLength(1);
     const event = failedEvents[0] as ProjectOpenFailedEvent;
     expect(event.type).toBe(EVENT_PROJECT_OPEN_FAILED);
     expect(event.payload.reason).toBe("Not a valid git repository");
-    expect(event.payload.path).toEqual(new Path("/invalid/path"));
+    expect(event.payload.path).toEqual(projPath("/invalid/path"));
     expect(event.payload.git).toBeUndefined();
   });
 
@@ -1039,7 +1046,7 @@ describe("OpenProjectOperation", () => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
               if (!path) return { result: {} };
-              return { result: { projectPath: path.toString(), alreadyOpen: true } };
+              return { result: { projectPath: projPath(path.toString()), alreadyOpen: true } };
             },
           },
           register: {
@@ -1068,7 +1075,9 @@ describe("OpenProjectOperation", () => {
       failedEvents.push(event);
     });
 
-    const result = await dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+    const result = await dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
 
     // Returns project data (it's not a hard failure)
     expect(result).toBeDefined();
@@ -1080,7 +1089,7 @@ describe("OpenProjectOperation", () => {
     expect(failedEvents).toHaveLength(1);
     const event = failedEvents[0] as ProjectOpenFailedEvent;
     expect(event.payload.reason).toBe("already-open");
-    expect(event.payload.path).toEqual(new Path(PROJECT_PATH));
+    expect(event.payload.path).toEqual(PROJECT_PATH);
   });
 
   it("project:opened event includes intent-origin fields", async () => {
@@ -1091,12 +1100,14 @@ describe("OpenProjectOperation", () => {
       receivedEvents.push(event);
     });
 
-    await harness.dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
 
     expect(receivedEvents).toHaveLength(1);
     const event = receivedEvents[0] as ProjectOpenedEvent;
     expect(event.payload.project.id).toBe(PROJECT_ID);
-    expect(event.payload.path).toEqual(new Path(PROJECT_PATH));
+    expect(event.payload.path).toEqual(PROJECT_PATH);
     expect(event.payload.git).toBeUndefined();
   });
 
@@ -1119,7 +1130,7 @@ describe("OpenProjectOperation", () => {
     harness.dispatcher.registerModule(prepareModule);
 
     const result = await harness.dispatcher.dispatch(
-      buildOpenIntent({ path: new Path(PROJECT_PATH) })
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
     );
 
     expect(result).toBeNull();

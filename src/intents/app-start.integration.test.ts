@@ -1088,7 +1088,10 @@ describe("AppStart Operation", () => {
 
       expect(captured.ctx).toBeDefined();
       expect(captured.ctx!.phase).toBe("start");
-      expect(captured.ctx!.error).toBeInstanceOf(Error);
+      // The contract carries the failure as plain data — an Error instance could not cross a
+      // backend tunnel. error-report-module rebuilds a real Error for the telemetry boundary.
+      expect(captured.ctx!.error).not.toBeInstanceOf(Error);
+      expect(captured.ctx!.error.name).toBe("Error");
       expect(captured.ctx!.error.message).toBe("IdeServer failed to start");
     });
 

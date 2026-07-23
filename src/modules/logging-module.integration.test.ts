@@ -17,7 +17,7 @@ import type {
   IntentOf,
 } from "../intents/lib/operation";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
-import type { AppStartIntent, InitHookContext, ConfigureResult } from "../intents/app-start";
+import type { AppStartIntent, InitHookContext } from "../intents/app-start";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { createLoggingModule } from "./logging-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
@@ -35,13 +35,12 @@ const appStartSchemas = {
 class MinimalAppStartOperation implements Operation<typeof appStartSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = appStartSchemas;
-  async execute(ctx: OperationContext<IntentOf<typeof appStartSchemas>>): Promise<void> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof appStartSchemas>, typeof appStartSchemas>
+  ): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
 
-    const { errors: beforeReadyErrors } = await ctx.hooks.collect<ConfigureResult>(
-      "before-ready",
-      hookCtx
-    );
+    const { errors: beforeReadyErrors } = await ctx.hooks.collect("before-ready", hookCtx);
     if (beforeReadyErrors.length > 0) throw beforeReadyErrors[0]!;
 
     const initCtx: InitHookContext = {
@@ -49,7 +48,7 @@ class MinimalAppStartOperation implements Operation<typeof appStartSchemas> {
       requiredScripts: [],
       capabilities: { "app-ready": true },
     };
-    const { errors: initErrors } = await ctx.hooks.collect<void>("init", initCtx);
+    const { errors: initErrors } = await ctx.hooks.collect("init", initCtx);
     if (initErrors.length > 0) throw initErrors[0]!;
   }
 }
@@ -103,10 +102,10 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     expect(deps.logger.info).toHaveBeenCalledWith("App starting", {
       version: "2026.2.0-test",
@@ -124,10 +123,10 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     expect(deps.loggingService.initialize).toHaveBeenCalledOnce();
   });
@@ -139,10 +138,10 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     const logOrder = deps.logger.info.mock.invocationCallOrder[0]!;
     const initOrder = deps.loggingService.initialize.mock.invocationCallOrder[0]!;
@@ -160,10 +159,10 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     expect(deps.loggingService.configure).toHaveBeenCalledWith({
       logLevel: "debug",
@@ -185,10 +184,10 @@ describe("LoggingModule Integration", () => {
     dispatcher.registerOperation(new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     expect(deps.loggingService.configure).toHaveBeenCalledWith({
       logLevel: "warn",

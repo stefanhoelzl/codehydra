@@ -73,6 +73,7 @@ import {
   EVENT_BUG_REPORT_SUBMITTED,
   type BugReportSubmittedEvent,
 } from "../intents/submit-bug-report";
+import { fromSerializedError } from "../shared/error-utils";
 
 // =============================================================================
 // Constants
@@ -324,10 +325,10 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         defaultId: 0,
       })
       .then(() =>
-        deps.dispatcher.dispatch({
+        deps.dispatcher.dispatch<AppShutdownIntent>({
           type: INTENT_APP_SHUTDOWN,
           payload: {},
-        } as AppShutdownIntent)
+        })
       )
       .catch(() => {
         // Dialog failure must not mask the crash; log + report already happened.
@@ -394,10 +395,10 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         // Log-gathering lives in the bug-report:submitted handler, so the
         // dialog only forwards the description. Fire-and-forget: the dialog
         // closes immediately (the awaited flush happens in the subscriber).
-        void deps.dispatcher.dispatch({
+        void deps.dispatcher.dispatch<SubmitBugReportIntent>({
           type: INTENT_SUBMIT_BUG_REPORT,
           payload: { description },
-        } as SubmitBugReportIntent);
+        });
 
         handle.close();
         activeHandle = null;
@@ -443,7 +444,9 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
             const { error, phase } = ctx as AppStartErrorHookContext;
             if (deps.telemetryEnabled.get()) {
               try {
-                await captureCrash(error, { crash_source: "startup", phase });
+                // The contract carries the failure as plain data; PostHog groups issues by
+                // reading `name`/`message`/`stack` off a real Error, so rebuild one here.
+                await captureCrash(fromSerializedError(error), { crash_source: "startup", phase });
                 await flushWithTimeout();
               } catch {
                 // Best-effort: reporting must never block or alter the fatal path.

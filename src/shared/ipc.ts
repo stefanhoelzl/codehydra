@@ -76,20 +76,16 @@ export const ApiIpcChannels = {
 // ============ Lifecycle Event Payload Types ============
 
 /**
- * Agent types for agent selection.
- * Mirrors ConfigAgentType from api/types.ts but defined here to avoid circular imports.
+ * Agent types for agent selection, and the agent info the selection dialog renders
+ * (provided by per-agent modules via the register-agents hook).
+ *
+ * Type-only re-exports of the intent contract's `agentTypeSchema` / `agentInfoSchema`. zod is
+ * the single source of truth and stays confined to the intent system; these re-exports are
+ * erased at build, so renderer/preload keep importing from here without pulling zod in. There
+ * used to be four hand-written declarations of this two-member union (here, api/types.ts,
+ * config.ts, app-start.ts) — two of them sharing the name `ConfigAgentType`.
  */
-export type LifecycleAgentType = "opencode" | "claude";
-
-/**
- * Agent info for the selection dialog.
- * Provided by per-agent modules via the register-agents hook.
- */
-export interface AgentInfo {
-  readonly agent: LifecycleAgentType;
-  readonly label: string;
-  readonly icon: string;
-}
+export type { AgentType as LifecycleAgentType, AgentInfo } from "../intents/contract";
 
 // ============ Log API Types ============
 

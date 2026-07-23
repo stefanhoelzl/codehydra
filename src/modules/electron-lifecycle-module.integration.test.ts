@@ -19,7 +19,11 @@ import type {
   IntentOf,
 } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
+import {
+  INTENT_APP_START,
+  APP_START_OPERATION_ID,
+  configureResultSchema,
+} from "../intents/app-start";
 import type { AppStartIntent, ConfigureResult } from "../intents/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
@@ -38,6 +42,7 @@ const beforeReadySchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<ConfigureResult>(),
+  hooks: { "before-ready": { result: configureResultSchema } },
 } satisfies OperationSchemas;
 
 /** Runs "before-ready" hook point only. */
@@ -45,9 +50,9 @@ class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = beforeReadySchemas;
   async execute(
-    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>, typeof beforeReadySchemas>
   ): Promise<ConfigureResult> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
+    const { results, errors } = await ctx.hooks.collect("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -112,10 +117,10 @@ describe("ElectronLifecycleModule Integration", () => {
     );
     dispatcher.registerModule(module);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     expect(mockApp.whenReady).toHaveBeenCalledOnce();
   });
@@ -138,10 +143,10 @@ describe("ElectronLifecycleModule Integration", () => {
     dispatcher.registerModule(module);
 
     await expect(
-      dispatcher.dispatch({
+      dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent)
+      })
     ).rejects.toThrow("app failed to initialize");
   });
 
@@ -159,10 +164,10 @@ describe("ElectronLifecycleModule Integration", () => {
     );
     dispatcher.registerModule(module);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppShutdownIntent>({
       type: INTENT_APP_SHUTDOWN,
       payload: {},
-    } as AppShutdownIntent);
+    });
 
     expect(mockApp.quit).toHaveBeenCalledOnce();
   });
@@ -188,10 +193,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       const originalNoAsar = process.noAsar;
       try {
-        await dispatcher.dispatch({
+        await dispatcher.dispatch<AppStartIntent>({
           type: INTENT_APP_START,
           payload: {},
-        } as AppStartIntent);
+        });
 
         expect(process.noAsar).toBe(true);
       } finally {
@@ -218,10 +223,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "userData",
@@ -259,10 +264,10 @@ describe("ElectronLifecycleModule Integration", () => {
       const originalNoAsar = process.noAsar;
       try {
         process.noAsar = false;
-        await dispatcher.dispatch({
+        await dispatcher.dispatch<AppStartIntent>({
           type: INTENT_APP_START,
           payload: {},
-        } as AppStartIntent);
+        });
 
         expect(process.noAsar).toBe(false);
       } finally {
@@ -287,10 +292,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
@@ -311,10 +316,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("no-proxy-server");
     });
@@ -333,10 +338,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       const expected = DEFAULT_DISABLED_FEATURES.join(",");
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", expected);
@@ -359,10 +364,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith(
         "disable-features",
@@ -391,10 +396,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       const disableFeaturesCalls = (
         mockApp.commandLine.appendSwitch as ReturnType<typeof vi.fn>
@@ -417,10 +422,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       const expected = DEFAULT_DISABLED_FEATURES.join(",");
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", expected);
@@ -445,10 +450,10 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(logger.info).toHaveBeenCalledWith(
         "Disabled Chromium features",
@@ -486,10 +491,10 @@ describe("ElectronLifecycleModule Integration", () => {
       );
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       // Simulate resume
       expect(resumeCallbacks.length).toBe(1);

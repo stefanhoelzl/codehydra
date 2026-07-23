@@ -70,14 +70,15 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
 import { INTENT_SUBMIT_BUG_REPORT } from "../intents/submit-bug-report";
 import type { SubmitBugReportIntent } from "../intents/submit-bug-report";
+import { workspacePathSchema, projectPathSchema } from "../intents/contract";
+import type { WorkspacePath } from "../intents/contract";
 
 /**
  * Optional target workspace path for tools that can act on a workspace other
  * than the session's own (hibernate/wake/delete). Omit to target the current
  * workspace; use project_list to discover other workspaces' paths.
  */
-const targetWorkspacePathSchema = z
-  .string()
+const targetWorkspacePathSchema = workspacePathSchema
   .min(1)
   .optional()
   .describe(
@@ -177,7 +178,7 @@ export function createDefaultMcpServer(): McpServerSdk {
 interface McpSession {
   mcpServer: McpServerSdk;
   transport: StreamableHTTPServerTransport;
-  workspacePath: string;
+  workspacePath: WorkspacePath;
 }
 
 /**
@@ -440,10 +441,11 @@ export class McpServer {
   /**
    * Get workspace path from request header.
    */
-  private getWorkspacePath(req: IncomingMessage): string | null {
+  private getWorkspacePath(req: IncomingMessage): WorkspacePath | null {
     const header = req.headers[WORKSPACE_PATH_HEADER];
     if (typeof header === "string" && header.length > 0) {
-      return header;
+      // An HTTP header is raw input from outside the app: mint the brand by parsing.
+      return workspacePathSchema.parse(header);
     }
     return null;
   }
@@ -453,7 +455,7 @@ export class McpServer {
    * The MCP SDK's StreamableHTTPServerTransport.handleRequest() accepts req.auth of type AuthInfo
    * which has an extra field for custom data that gets passed to tool handlers.
    */
-  private attachAuth(req: IncomingMessage, workspacePath: string): void {
+  private attachAuth(req: IncomingMessage, workspacePath: WorkspacePath): void {
     const reqWithAuth = req as IncomingMessage & {
       auth?: { token: string; clientId: string; scopes: string[]; extra?: Record<string, unknown> };
     };
@@ -479,7 +481,7 @@ export class McpServer {
    * Create a workspace tool handler that passes workspacePath and handles errors.
    */
   private createWorkspaceHandler<TArgs, TResult>(
-    fn: (workspacePath: string, args: TArgs) => Promise<TResult>
+    fn: (workspacePath: WorkspacePath, args: TArgs) => Promise<TResult>
   ): (
     args: TArgs,
     extra: unknown
@@ -512,13 +514,13 @@ export class McpServer {
       },
       this.createWorkspaceHandler(
         async (workspacePath, args: { refresh?: boolean | undefined }) => {
-          const result = await this.dispatcher.dispatch({
+          const result = await this.dispatcher.dispatch<GetWorkspaceStatusIntent>({
             type: INTENT_GET_WORKSPACE_STATUS,
             payload: {
               workspacePath,
               ...(typeof args.refresh === "boolean" && { refresh: args.refresh }),
             },
-          } as GetWorkspaceStatusIntent);
+          });
           if (!result) throw new Error("Get workspace status dispatch returned no result");
           return result;
         }
@@ -534,10 +536,10 @@ export class McpServer {
         inputSchema: z.object({}),
       },
       this.createWorkspaceHandler(async (workspacePath) => {
-        const result = await this.dispatcher.dispatch({
+        const result = await this.dispatcher.dispatch<GetMetadataIntent>({
           type: INTENT_GET_METADATA,
           payload: { workspacePath },
-        } as GetMetadataIntent);
+        });
         if (!result) throw new Error("Get metadata dispatch returned no result");
         return result;
       })
@@ -564,10 +566,10 @@ export class McpServer {
       },
       this.createWorkspaceHandler(
         async (workspacePath, args: { key: string; value: string | null }) => {
-          await this.dispatcher.dispatch({
+          await this.dispatcher.dispatch<SetMetadataIntent>({
             type: INTENT_SET_METADATA,
             payload: { workspacePath, key: args.key, value: args.value },
-          } as SetMetadataIntent);
+          });
           return null;
         }
       )
@@ -581,10 +583,10 @@ export class McpServer {
         inputSchema: z.object({}),
       },
       this.createWorkspaceHandler(async (workspacePath) => {
-        return this.dispatcher.dispatch({
+        return this.dispatcher.dispatch<GetAgentSessionIntent>({
           type: INTENT_GET_AGENT_SESSION,
           payload: { workspacePath },
-        } as GetAgentSessionIntent);
+        });
       })
     );
 
@@ -596,10 +598,10 @@ export class McpServer {
         inputSchema: z.object({}),
       },
       this.createWorkspaceHandler(async (workspacePath) => {
-        const result = await this.dispatcher.dispatch({
+        const result = await this.dispatcher.dispatch<RestartAgentIntent>({
           type: INTENT_RESTART_AGENT,
           payload: { workspacePath },
-        } as RestartAgentIntent);
+        });
         if (result === undefined) throw new Error("Restart agent dispatch returned no result");
         return result;
       })
@@ -620,7 +622,7 @@ export class McpServer {
         }),
       },
       this.createWorkspaceHandler(
-        async (sessionWorkspacePath, args: { workspacePath?: string | undefined }) => {
+        async (sessionWorkspacePath, args: { workspacePath?: WorkspacePath | undefined }) => {
           const workspacePath = args.workspacePath ?? sessionWorkspacePath;
           const intent: HibernateWorkspaceIntent = {
             type: INTENT_HIBERNATE_WORKSPACE,
@@ -650,16 +652,16 @@ export class McpServer {
         }),
       },
       this.createWorkspaceHandler(
-        async (sessionWorkspacePath, args: { workspacePath?: string | undefined }) => {
+        async (sessionWorkspacePath, args: { workspacePath?: WorkspacePath | undefined }) => {
           const workspacePath = args.workspacePath ?? sessionWorkspacePath;
           // The wake operation clears the hibernated flag AND reopens the
           // workspace (restarts the agent server, rebuilds the view) in one step.
           // stealFocus:false keeps it in the background for API callers; source
           // "mcp" suppresses interactive error notifications.
-          const result = await this.dispatcher.dispatch({
+          const result = await this.dispatcher.dispatch<WakeWorkspaceIntent>({
             type: INTENT_WAKE_WORKSPACE,
             payload: { workspacePath, stealFocus: false, source: "mcp" },
-          } as WakeWorkspaceIntent);
+          });
           if (!result) throw new Error("Wake workspace dispatch returned no result");
           return result as Workspace;
         }
@@ -677,10 +679,10 @@ export class McpServer {
       },
       async () => {
         try {
-          const result = await this.dispatcher.dispatch({
+          const result = await this.dispatcher.dispatch<ListProjectsIntent>({
             type: INTENT_LIST_PROJECTS,
             payload: {} as Record<string, never>,
-          } as ListProjectsIntent);
+          });
           if (!result) throw new Error("List projects dispatch returned no result");
           return this.successResult(result);
         } catch (error) {
@@ -733,7 +735,8 @@ export class McpServer {
       },
       async (args) => {
         try {
-          const projectPath = args.projectPath as string;
+          // MCP tool arguments arrive from an external client: mint the brand by parsing.
+          const projectPath = projectPathSchema.parse(args.projectPath);
           const name = args.name as string;
           const base = args.base as string;
           const tracking = args.tracking as string | undefined;
@@ -795,7 +798,7 @@ export class McpServer {
         async (
           sessionWorkspacePath,
           args: {
-            workspacePath?: string | undefined;
+            workspacePath?: WorkspacePath | undefined;
             keepBranch: boolean;
             ignoreWarnings: boolean;
           }
@@ -873,10 +876,10 @@ export class McpServer {
       },
       this.createWorkspaceHandler(
         async (workspacePath, args: { command: string; args?: unknown[] | undefined }) => {
-          return this.dispatcher.dispatch({
+          return this.dispatcher.dispatch<VscodeCommandIntent>({
             type: INTENT_VSCODE_COMMAND,
             payload: { workspacePath, command: args.command, args: args.args },
-          } as VscodeCommandIntent);
+          });
         }
       )
     );
@@ -946,7 +949,7 @@ export class McpServer {
           }
         ) => {
           const timeoutMs = args.timeout ? args.timeout * 1000 : undefined;
-          const result = await this.dispatcher.dispatch({
+          const result = await this.dispatcher.dispatch<VscodeShowMessageIntent>({
             type: INTENT_VSCODE_SHOW_MESSAGE,
             payload: {
               workspacePath,
@@ -956,7 +959,7 @@ export class McpServer {
               ...(args.options !== undefined && { options: args.options }),
               ...(timeoutMs !== undefined && { timeoutMs }),
             },
-          } as VscodeShowMessageIntent);
+          });
           return { result };
         }
       )
@@ -1014,10 +1017,10 @@ export class McpServer {
       },
       async (args: { description: string }) => {
         try {
-          await this.dispatcher.dispatch({
+          await this.dispatcher.dispatch<SubmitBugReportIntent>({
             type: INTENT_SUBMIT_BUG_REPORT,
             payload: { description: args.description },
-          } as SubmitBugReportIntent);
+          });
           return this.successResult({ submitted: true });
         } catch (error) {
           return this.handleError(error);
@@ -1033,17 +1036,19 @@ export class McpServer {
    * The workspace path is passed via req.auth.extra.workspacePath which becomes
    * extra.authInfo.extra.workspacePath in tool handlers.
    */
-  private getWorkspacePathFromExtra(extra: unknown): string {
+  private getWorkspacePathFromExtra(extra: unknown): WorkspacePath {
     if (extra && typeof extra === "object" && "authInfo" in extra) {
       const authInfo = (extra as { authInfo?: unknown }).authInfo;
       if (authInfo && typeof authInfo === "object" && "extra" in authInfo) {
         const authExtra = (authInfo as { extra?: unknown }).extra;
         if (authExtra && typeof authExtra === "object" && "workspacePath" in authExtra) {
-          return String((authExtra as { workspacePath: unknown }).workspacePath);
+          return workspacePathSchema.parse(
+            String((authExtra as { workspacePath: unknown }).workspacePath)
+          );
         }
       }
     }
-    return "";
+    return workspacePathSchema.parse("");
   }
 
   /**

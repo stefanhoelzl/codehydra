@@ -19,7 +19,12 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+} from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
@@ -35,7 +40,7 @@ const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
 
 export const restartAgentPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
   })
   .readonly();
 
@@ -46,7 +51,7 @@ export const agentRestartedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    path: z.string(),
+    path: workspacePathSchema,
     port: z.number(),
   })
   .readonly();
@@ -62,7 +67,7 @@ export const restartAgentHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "restart" hook point (beyond the base HookContext). */
-const restartEnrichmentSchema = z.object({ workspacePath: z.string() });
+const restartEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "restart". */
 export const restartAgentHookInputSchema = hookCtxSchema(
@@ -70,7 +75,11 @@ export const restartAgentHookInputSchema = hookCtxSchema(
   restartEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_RESTART_AGENT,
   payload: restartAgentPayloadSchema,
   result: restartAgentResultSchema,
@@ -103,15 +112,13 @@ export type RestartAgentHookInput = HookContext & z.infer<typeof restartEnrichme
 // Operation
 // =============================================================================
 
-export class RestartAgentOperation extends WorkspaceHookOperation<
-  typeof schemas,
-  RestartAgentHookResult
-> {
+export class RestartAgentOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(RESTART_AGENT_OPERATION_ID, {
       hookPoint: "restart",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       resolveProject: true,
       errorLabel: "restart-agent restart hooks failed",
       extract: (results) =>

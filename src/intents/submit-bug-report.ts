@@ -36,7 +36,11 @@ export const bugReportSubmittedPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SUBMIT_BUG_REPORT,
   payload: submitBugReportPayloadSchema,
   events: {
@@ -65,7 +69,7 @@ export class SubmitBugReportOperation implements Operation<typeof schemas> {
   readonly id = SUBMIT_BUG_REPORT_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<SubmitBugReportIntent>): Promise<void> {
+  async execute(ctx: OperationContext<SubmitBugReportIntent, typeof schemas>): Promise<void> {
     const event: BugReportSubmittedEvent = {
       type: EVENT_BUG_REPORT_SUBMITTED,
       payload: {

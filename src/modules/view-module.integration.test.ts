@@ -38,10 +38,10 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
+  switchWorkspaceHookResultSchema,
 } from "../intents/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
@@ -50,13 +50,18 @@ import type { IdeServerRestartedEvent } from "../intents/app-resume";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
+  shutdownResultSchema,
 } from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
   ShutdownHookResult,
 } from "../intents/delete-workspace";
-import { INTENT_OPEN_PROJECT, OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import {
+  INTENT_OPEN_PROJECT,
+  OPEN_PROJECT_OPERATION_ID,
+  selectFolderHookResultSchema,
+} from "../intents/open-project";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
@@ -67,6 +72,9 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "../intents/contract";
+import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
 // Mock IViewManager
@@ -90,6 +98,7 @@ function createMockShellLayers() {
 const switchOpSchemas = {
   type: INTENT_SWITCH_WORKSPACE,
   payload: z.unknown(),
+  hooks: { activate: { result: switchWorkspaceHookResultSchema } },
 } satisfies OperationSchemas;
 
 /** Runs "activate" hook point + emits workspace:switched event. */
@@ -97,17 +106,16 @@ class MinimalSwitchOperation implements Operation<typeof switchOpSchemas> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
   readonly schemas = switchOpSchemas;
   constructor(private readonly active: boolean = false) {}
-  async execute(ctx: OperationContext<IntentOf<typeof switchOpSchemas>>): Promise<void> {
-    const workspacePath = (ctx.intent.payload as { workspacePath: string }).workspacePath;
+  async execute(
+    ctx: OperationContext<IntentOf<typeof switchOpSchemas>, typeof switchOpSchemas>
+  ): Promise<void> {
+    const workspacePath = (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath;
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
       workspacePath,
       active: this.active,
     };
-    const { results, errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
-      "activate",
-      activateCtx
-    );
+    const { results, errors } = await ctx.hooks.collect("activate", activateCtx);
     if (errors.length > 0) throw errors[0]!;
     let resolvedPath: string | undefined;
     for (const r of results) {
@@ -121,9 +129,9 @@ class MinimalSwitchOperation implements Operation<typeof switchOpSchemas> {
         payload: {
           projectId: "test-project" as ProjectId,
           projectName: "test",
-          projectPath: "/projects/test",
+          projectPath: projPath("/projects/test"),
           workspaceName: workspaceName as WorkspaceName,
-          path: resolvedPath,
+          path: wsPath(resolvedPath),
           metadata: {},
         },
       };
@@ -136,6 +144,7 @@ const deleteOpSchemas = {
   type: INTENT_DELETE_WORKSPACE,
   payload: z.unknown(),
   result: z.custom<ShutdownHookResult>(),
+  hooks: { shutdown: { result: shutdownResultSchema } },
 } satisfies OperationSchemas;
 
 /** Runs "shutdown" hook point only. */
@@ -144,17 +153,17 @@ class MinimalDeleteOperation implements Operation<typeof deleteOpSchemas> {
   readonly schemas = deleteOpSchemas;
   constructor(private readonly active: boolean = false) {}
   async execute(
-    ctx: OperationContext<IntentOf<typeof deleteOpSchemas>>
+    ctx: OperationContext<IntentOf<typeof deleteOpSchemas>, typeof deleteOpSchemas>
   ): Promise<ShutdownHookResult> {
     const payload = ctx.intent.payload as DeleteWorkspaceIntent["payload"];
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
-      projectPath: "/projects/test",
+      projectPath: projPath("/projects/test"),
       workspacePath: payload.workspacePath,
       workspaceName: "test-workspace" as WorkspaceName,
       active: this.active,
     };
-    const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
+    const { results, errors } = await ctx.hooks.collect("shutdown", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     const merged: ShutdownHookResult = {};
     for (const r of results) {
@@ -169,6 +178,7 @@ const selectFolderOpSchemas = {
   type: INTENT_OPEN_PROJECT,
   payload: z.unknown(),
   result: z.custom<SelectFolderHookResult | null>(),
+  hooks: { "select-folder": { result: selectFolderHookResultSchema } },
 } satisfies OperationSchemas;
 
 /** Runs "select-folder" hook point (matches OpenProjectOperation's conditional hook). */
@@ -176,13 +186,13 @@ class MinimalSelectFolderOperation implements Operation<typeof selectFolderOpSch
   readonly id = OPEN_PROJECT_OPERATION_ID;
   readonly schemas = selectFolderOpSchemas;
   async execute(
-    ctx: OperationContext<IntentOf<typeof selectFolderOpSchemas>>
+    ctx: OperationContext<IntentOf<typeof selectFolderOpSchemas>, typeof selectFolderOpSchemas>
   ): Promise<SelectFolderHookResult | null> {
-    const { results, errors } = await ctx.hooks.collect<SelectFolderHookResult>("select-folder", {
+    const { results, errors } = await ctx.hooks.collect("select-folder", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    let folderPath: string | null = null;
+    let folderPath: ProjectPath | null = null;
     for (const r of results) {
       if (r.folderPath) folderPath = r.folderPath;
     }
@@ -240,7 +250,7 @@ function createTestSetup<S extends OperationSchemas = OperationSchemas>(
 }
 
 /** Run the module's resolve-workspace hook and return the `active` flag. */
-async function resolveActive(module: IntentModule, workspacePath: string): Promise<boolean> {
+async function resolveActive(module: IntentModule, workspacePath: WorkspacePath): Promise<boolean> {
   const hookCtx = {
     intent: { type: "workspace:resolve", payload: { workspacePath } },
     workspacePath,
@@ -285,15 +295,15 @@ describe("ViewModule Integration", () => {
         operation: new MinimalDeleteOperation(true),
       });
 
-      const result = await dispatcher.dispatch({
+      const result = await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent);
+      });
 
       expect(result).toEqual(expect.objectContaining({ wasActive: true }));
     });
@@ -305,23 +315,23 @@ describe("ViewModule Integration", () => {
       });
       dispatcher.registerOperation(new MinimalDeleteOperation(true));
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: "/workspaces/ws1" },
-      } as SwitchWorkspaceIntent);
-      expect(await resolveActive(module, "/workspaces/ws1")).toBe(true);
+        payload: { workspacePath: wsPath("/workspaces/ws1") },
+      });
+      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(true);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent);
+      });
 
-      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
+      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
     });
   });
 
@@ -335,15 +345,15 @@ describe("ViewModule Integration", () => {
         operation: new MinimalSwitchOperation(),
       });
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
         },
-      } as SwitchWorkspaceIntent);
+      });
 
-      expect(await resolveActive(module, "/workspaces/ws1")).toBe(true);
-      expect(await resolveActive(module, "/workspaces/ws2")).toBe(false);
+      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(true);
+      expect(await resolveActive(module, wsPath("/workspaces/ws2"))).toBe(false);
     });
 
     it("does not record anything when already active (short-circuit)", async () => {
@@ -352,16 +362,16 @@ describe("ViewModule Integration", () => {
         operation: new MinimalSwitchOperation(true),
       });
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
         },
-      } as SwitchWorkspaceIntent);
+      });
 
       // The hook short-circuited: module state was not updated by activate
       // (the switched event also isn't emitted in this minimal operation).
-      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
+      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
     });
   });
 
@@ -380,18 +390,18 @@ describe("ViewModule Integration", () => {
       dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
       // Switch to ws1 first to populate cache
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
         },
-      } as SwitchWorkspaceIntent);
+      });
 
       // Verify cache is populated
-      const refBefore = await dispatcher.dispatch({
+      const refBefore = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {} as Record<string, never>,
-      } as GetActiveWorkspaceIntent);
+      });
       expect(refBefore).toEqual(expect.objectContaining({ path: "/workspaces/ws1" }));
 
       // Now emit workspace:switched with null payload by dispatching delete
@@ -419,14 +429,14 @@ describe("ViewModule Integration", () => {
       });
 
       // Verify cache is cleared
-      const refAfter = await dispatcher.dispatch({
+      const refAfter = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {} as Record<string, never>,
-      } as GetActiveWorkspaceIntent);
+      });
       expect(refAfter).toBeNull();
 
       // Verify the active surface was cleared too
-      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
+      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
     });
   });
 
@@ -442,17 +452,17 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: "/workspaces/ws1",
+          workspacePath: wsPath("/workspaces/ws1"),
         },
-      } as SwitchWorkspaceIntent);
+      });
 
-      const ref = await dispatcher.dispatch({
+      const ref = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {} as Record<string, never>,
-      } as GetActiveWorkspaceIntent);
+      });
 
       expect(ref).toEqual({
         projectId: "test-project",
@@ -494,10 +504,10 @@ describe("ViewModule Integration", () => {
       dispatcher.registerModule(module);
       dispatcher.registerModule(quitModule);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppShutdownIntent>({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
-      } as AppShutdownIntent);
+      });
 
       expect(viewManager.destroy).toHaveBeenCalled();
       expect(layers.viewLayer.dispose).toHaveBeenCalled();
@@ -537,10 +547,10 @@ describe("ViewModule Integration", () => {
       dispatcher.registerModule(quitModule);
 
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<AppShutdownIntent>({
           type: INTENT_APP_SHUTDOWN,
           payload: {},
-        } as AppShutdownIntent)
+        })
       ).resolves.not.toThrow();
     });
   });
@@ -579,10 +589,10 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       // Verify call sequence
       expect(menuLayer.setApplicationMenu).toHaveBeenCalledWith(null);
@@ -616,10 +626,10 @@ describe("ViewModule Integration", () => {
 
       // Should not throw when optional deps are omitted
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<AppStartIntent>({
           type: INTENT_APP_START,
           payload: {},
-        } as AppStartIntent)
+        })
       ).resolves.not.toThrow();
 
       // viewManager.create() and focus() are always called

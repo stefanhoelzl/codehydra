@@ -18,7 +18,7 @@ import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined } from "./lib/hook-helpers";
-import { hookCtxSchema } from "./contract";
+import { hookCtxSchema, workspacePathSchema } from "./contract";
 
 export const INTENT_VSCODE_COMMAND = "vscode:command" as const;
 export const VSCODE_COMMAND_OPERATION_ID = "vscode-command";
@@ -29,7 +29,7 @@ export const VSCODE_COMMAND_OPERATION_ID = "vscode-command";
 
 export const vscodeCommandPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     command: z.string(),
     args: z.array(z.unknown()).readonly().optional(),
   })
@@ -46,7 +46,7 @@ export const executeHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "execute" hook point (beyond the base HookContext). */
-const executeEnrichmentSchema = z.object({ workspacePath: z.string() });
+const executeEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "execute". */
 export const executeHookInputSchema = hookCtxSchema(
@@ -54,7 +54,11 @@ export const executeHookInputSchema = hookCtxSchema(
   executeEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_VSCODE_COMMAND,
   payload: vscodeCommandPayloadSchema,
   result: vscodeCommandResultSchema,
@@ -78,15 +82,13 @@ export type ExecuteHookInput = HookContext & z.infer<typeof executeEnrichmentSch
 // Operation
 // =============================================================================
 
-export class VscodeCommandOperation extends WorkspaceHookOperation<
-  typeof schemas,
-  ExecuteHookResult
-> {
+export class VscodeCommandOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(VSCODE_COMMAND_OPERATION_ID, {
       hookPoint: "execute",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       errorLabel: "vscode-command execute hooks failed",
       // No required result — a command may legitimately return undefined.
       extract: (results) => lastDefined(results, (r) => r.result),

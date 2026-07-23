@@ -20,6 +20,7 @@ import { Path } from "../../utils/path/path";
 import type { IGitClient } from "./git-client";
 import type { FileSystemBoundary } from "./filesystem";
 import type { Logger } from "./logging";
+import { projPath } from "../../shared/test-fixtures";
 
 /** Construct a provider the way production does: new + validateRepository + registerProject. */
 async function createProvider(
@@ -2274,7 +2275,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+                path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
                 branch: "feature-x",
               },
             ],
@@ -2316,7 +2317,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+                path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
                 branch: "feature-x",
               },
             ],

@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { workspaceStatusSchema, hookCtxSchema } from "./contract";
+import { hookCtxSchema, workspacePathSchema, workspaceStatusSchema } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
@@ -31,7 +31,7 @@ export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
 
 export const getWorkspaceStatusPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     /**
      * If true, fetch remotes (via project:get-bases with refresh+wait) before
      * reading status. Best-effort: fetch failures are swallowed and the status
@@ -66,7 +66,7 @@ export const getStatusHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getStatusEnrichmentSchema = z.object({ workspacePath: z.string() });
+const getStatusEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "get". */
 export const getStatusHookInputSchema = hookCtxSchema(
@@ -74,7 +74,11 @@ export const getStatusHookInputSchema = hookCtxSchema(
   getStatusEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_WORKSPACE_STATUS,
   payload: getWorkspaceStatusPayloadSchema,
   result: workspaceStatusSchema,
@@ -102,23 +106,25 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
   readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<GetWorkspaceStatusIntent>): Promise<WorkspaceStatus> {
+  async execute(
+    ctx: OperationContext<GetWorkspaceStatusIntent, typeof schemas>
+  ): Promise<WorkspaceStatus> {
     const { payload } = ctx.intent;
 
     // 1. Dispatch shared workspace resolution
-    const { projectPath } = await ctx.dispatch({
+    const { projectPath } = await ctx.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
       payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
+    });
 
     // 2. Optional refresh — fetch remotes so unmerged-commit counts reflect
     // server-merged branches. Best-effort; errors are swallowed.
     if (payload.refresh) {
       try {
-        await ctx.dispatch({
+        await ctx.dispatch<GetProjectBasesIntent>({
           type: INTENT_GET_PROJECT_BASES,
           payload: { projectPath, refresh: true, wait: true },
-        } as GetProjectBasesIntent);
+        });
       } catch {
         // Fall through to status read with possibly-stale refs.
       }
@@ -129,7 +135,7 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
     };
-    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getCtx);
+    const { results, errors } = await ctx.hooks.collect("get", getCtx);
     throwHookErrors(errors, "get-workspace-status get hooks failed");
 
     // Merge results — isDirty uses OR, unmergedCommits uses max

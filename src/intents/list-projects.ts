@@ -16,14 +16,16 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type { Project } from "../shared/api/types";
-import type { Path } from "../utils/path/path";
-import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
-import { projectIdSchema, projectSchema } from "./contract";
+import {
+  discoveredWorkspaceSchema,
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  projectSchema,
+} from "./contract";
+import type { DiscoveredWorkspace } from "./contract";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { throwHookErrors } from "./lib/hook-helpers";
-
-/** Re-exported for use by operation integration tests (avoids direct service import). */
-export type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
 
 export const INTENT_LIST_PROJECTS = "project:list" as const;
 export const LIST_PROJECTS_OPERATION_ID = "list-projects";
@@ -40,7 +42,7 @@ export const listProjectsHookEntrySchema = z
   .object({
     projectId: projectIdSchema,
     name: z.string(),
-    path: z.string(),
+    path: projectPathSchema,
   })
   .readonly();
 
@@ -50,23 +52,10 @@ export const listProjectsHookResultSchema = z
   })
   .readonly();
 
-/**
- * Local schema for the internal Workspace shape (from boundaries/git-types) — not in
- * contract.ts because it carries a `Path` instance (a class), not an IPC string.
- */
-const internalWorkspaceSchema = z
-  .object({
-    name: z.string(),
-    path: z.custom<Path>(),
-    branch: z.string().nullable(),
-    metadata: z.record(z.string(), z.string()).readonly(),
-  })
-  .readonly();
-
 export const listWorkspacesHookEntrySchema = z
   .object({
-    projectPath: z.string(),
-    workspaces: z.array(internalWorkspaceSchema).readonly(),
+    projectPath: projectPathSchema,
+    workspaces: z.array(discoveredWorkspaceSchema).readonly(),
     /**
      * Per-project default base branch, computed once at project:open and cached
      * by the contributing module. Carried here so the creation form can seed the
@@ -82,13 +71,23 @@ export const listWorkspacesHookResultSchema = z
   })
   .readonly();
 
-const schemas = {
+/** Both hook points receive the bare intent — declared so the context type is derived. */
+const listProjectsHookInputSchema = hookCtxSchema(listProjectsPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_LIST_PROJECTS,
   payload: listProjectsPayloadSchema,
   result: listProjectsResultSchema,
   hooks: {
-    "list-projects": { result: listProjectsHookResultSchema },
-    "list-workspaces": { result: listWorkspacesHookResultSchema },
+    "list-projects": { input: listProjectsHookInputSchema, result: listProjectsHookResultSchema },
+    "list-workspaces": {
+      input: listProjectsHookInputSchema,
+      result: listWorkspacesHookResultSchema,
+    },
   },
 } satisfies OperationSchemas;
 
@@ -110,27 +109,21 @@ export class ListProjectsOperation implements Operation<typeof schemas> {
   readonly id = LIST_PROJECTS_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<ListProjectsIntent>): Promise<Project[]> {
+  async execute(ctx: OperationContext<ListProjectsIntent, typeof schemas>): Promise<Project[]> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Collect project identity from "list-projects" hook
-    const projectsResult = await ctx.hooks.collect<ListProjectsHookResult>(
-      "list-projects",
-      hookCtx
-    );
+    const projectsResult = await ctx.hooks.collect("list-projects", hookCtx);
     throwHookErrors(projectsResult.errors, "Multiple errors listing projects");
 
     // Collect workspace data from "list-workspaces" hook
-    const workspacesResult = await ctx.hooks.collect<ListWorkspacesHookResult>(
-      "list-workspaces",
-      hookCtx
-    );
+    const workspacesResult = await ctx.hooks.collect("list-workspaces", hookCtx);
     throwHookErrors(workspacesResult.errors, "Multiple errors listing workspaces");
 
     // Build workspace + default-base lookups by projectPath
-    const workspaceMap = new Map<string, InternalWorkspace[]>();
+    const workspaceMap = new Map<string, DiscoveredWorkspace[]>();
     const defaultBaseMap = new Map<string, string>();
     for (const result of workspacesResult.results) {
       if (result.entries) {

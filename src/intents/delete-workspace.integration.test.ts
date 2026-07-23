@@ -102,6 +102,8 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath, ProjectPath } from "./contract";
 
 // =============================================================================
 // Test Helpers
@@ -115,12 +117,12 @@ function testProjectId(path: string): ProjectId {
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/test/project";
+const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = testProjectId(PROJECT_PATH);
-const WORKSPACE_PATH = "/test/project/workspaces/feature-a";
+const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 
-const WORKSPACE_PATH_B = "/test/project/workspaces/feature-b";
+const WORKSPACE_PATH_B = wsPath("/test/project/workspaces/feature-b");
 
 // =============================================================================
 // Helper: Build Intent
@@ -154,7 +156,7 @@ interface TestProject {
 interface TestAppState {
   projects: TestProject[];
   serverStopped: boolean;
-  removedWorkspaces: Array<{ projectPath: string; workspacePath: string }>;
+  removedWorkspaces: Array<{ projectPath: ProjectPath; workspacePath: WorkspacePath }>;
   worktreeRemoved: boolean;
 }
 
@@ -169,7 +171,7 @@ interface MockAppState {
   } | null;
   getAllProjects: () => Promise<TestProject[]>;
   getProject: (path: string) => TestProject | undefined;
-  unregisterWorkspace: (projectPath: string, workspacePath: string) => void;
+  unregisterWorkspace: (projectPath: ProjectPath, workspacePath: WorkspacePath) => void;
   findProjectForWorkspace: (wsPath: string) => TestProject | undefined;
 }
 
@@ -247,7 +249,7 @@ function createTestAppState(initial?: Partial<TestAppState>): {
     }),
     unregisterWorkspace: vi
       .fn()
-      .mockImplementation((projectPath: string, workspacePath: string) => {
+      .mockImplementation((projectPath: ProjectPath, workspacePath: WorkspacePath) => {
         state.removedWorkspaces.push({ projectPath, workspacePath });
         // Actually remove from state
         const project = state.projects.find((p) => p.path === projectPath);
@@ -299,7 +301,7 @@ function createTestHarness(options?: {
     killProcesses: (...args: unknown[]) => Promise<void>;
     closeHandles: (...args: unknown[]) => Promise<void>;
   };
-  killTerminalsCallback?: (workspacePath: string) => Promise<void>;
+  killTerminalsCallback?: (workspacePath: WorkspacePath) => Promise<void>;
   serverStopError?: string;
   worktreeRemoveError?: string;
   initialProjects?: TestAppState["projects"];
@@ -421,14 +423,14 @@ function createTestHarness(options?: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            const { workspacePath: wsPath } = ctx as { workspacePath: WorkspacePath } & HookContext;
             // Reverse lookup: find which project owns this workspace path
             const project = appState.findProjectForWorkspace(wsPath);
             if (!project) return { result: {} };
             const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
             return {
               result: {
-                projectPath: project.path,
+                projectPath: projPath(project.path),
                 workspaceName: workspaceName as WorkspaceName,
                 active: viewManager.getActiveWorkspacePath() === wsPath,
               },
@@ -445,7 +447,7 @@ function createTestHarness(options?: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectPath } = ctx as { projectPath: string } & HookContext;
+            const { projectPath } = ctx as { projectPath: ProjectPath } & HookContext;
             const allProjects = await appState.getAllProjects();
             const project = allProjects.find((p) => p.path === projectPath);
             return {
@@ -711,17 +713,17 @@ function createTestHarness(options?: {
           handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
             const allProjects = await appState.getAllProjects();
             const candidates: Array<{
-              projectPath: string;
+              projectPath: ProjectPath;
               projectName: string;
-              workspacePath: string;
+              workspacePath: WorkspacePath;
               workspaceName: string;
             }> = [];
             for (const project of allProjects) {
               for (const ws of project.workspaces) {
                 candidates.push({
-                  projectPath: project.path,
+                  projectPath: projPath(project.path),
                   projectName: project.name,
-                  workspacePath: ws.path,
+                  workspacePath: wsPath(ws.path),
                   workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
                 });
               }
@@ -746,7 +748,7 @@ function createTestHarness(options?: {
                 workspaceRef: {
                   projectId: PROJECT_ID,
                   workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-                  path,
+                  path: wsPath(path),
                 },
               },
             };
@@ -1637,7 +1639,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        workspacePath: "/unknown/workspace",
+        workspacePath: wsPath("/unknown/workspace"),
         keepBranch: true,
         force: false,
         removeWorktree: true,

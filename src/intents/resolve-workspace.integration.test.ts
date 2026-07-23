@@ -24,13 +24,15 @@ import type { ResolveWorkspaceIntent, ResolveHookResult } from "./resolve-worksp
 import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspaceName } from "../shared/api/types";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/projects/my-app";
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const PROJECT_PATH = projPath("/projects/my-app");
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_NAME = "feature-x" as WorkspaceName;
 
 // =============================================================================
@@ -61,7 +63,7 @@ function createTestSetup(
   return { dispatcher };
 }
 
-function resolveIntent(workspacePath: string): ResolveWorkspaceIntent {
+function resolveIntent(workspacePath: WorkspacePath): ResolveWorkspaceIntent {
   return {
     type: INTENT_RESOLVE_WORKSPACE,
     payload: { workspacePath },

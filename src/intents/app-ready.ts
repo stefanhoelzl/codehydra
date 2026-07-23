@@ -14,18 +14,18 @@
  *
  * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/
  * event schemas are declared once and hung on the operation's `schemas` field; the `Intent`
- * and result types are **derived** via `IntentOf`/`z.infer`. `AgentInfo`/`LifecycleAgentType`
- * are shared IPC types modeled with `z.custom` so their exact named types flow through.
+ * and result types are **derived** via `IntentOf`/`z.infer`. The agent vocabulary
+ * (`agentTypeSchema`/`agentInfoSchema`) lives in the contract; `shared/ipc` re-exports those
+ * types, so there is one definition rather than a schema mirroring an interface.
  */
 
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
-import { Path } from "../utils/path/path";
-import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
+import { agentInfoSchema, agentTypeSchema, projectPathSchema, hookCtxSchema } from "./contract";
+import type { AgentInfo, AgentType, ProjectPath } from "./contract";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
-import type { ConfigAgentType } from "../boundaries/platform/config";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_APP_READY = "app:ready" as const;
@@ -56,9 +56,9 @@ export const appReadyPayloadSchema = z.object({}).readonly();
 export const appReadyResultSchema = z
   .object({
     /** Global default agent (config.agent). Null when not yet chosen (first-run pending). */
-    defaultAgent: z.custom<LifecycleAgentType>().nullable(),
+    defaultAgent: agentTypeSchema.nullable(),
     /** Agents whose binaries are currently present on disk. */
-    availableAgents: z.array(z.custom<AgentInfo>()).readonly(),
+    availableAgents: z.array(agentInfoSchema).readonly(),
   })
   .readonly();
 
@@ -68,7 +68,7 @@ export const appReadyResultSchema = z
  */
 export const loadProjectsResultSchema = z
   .object({
-    projectPaths: z.array(z.string()).readonly().optional(),
+    projectPaths: z.array(projectPathSchema).readonly().optional(),
   })
   .readonly();
 
@@ -78,20 +78,27 @@ export const loadProjectsResultSchema = z
  */
 export const availableAgentsResultSchema = z
   .object({
-    agent: z.custom<AgentInfo>().optional(),
+    agent: agentInfoSchema.optional(),
   })
   .readonly();
 
 /** Payload emitted by `app:started`. */
 export const appStartedPayloadSchema = z.object({}).readonly();
 
-const schemas = {
+/** Both hook points receive the bare intent — declared so the context type is derived. */
+const appReadyHookInputSchema = hookCtxSchema(appReadyPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_APP_READY,
   payload: appReadyPayloadSchema,
   result: appReadyResultSchema,
   hooks: {
-    "load-projects": { result: loadProjectsResultSchema },
-    "available-agents": { result: availableAgentsResultSchema },
+    "load-projects": { input: appReadyHookInputSchema, result: loadProjectsResultSchema },
+    "available-agents": { input: appReadyHookInputSchema, result: availableAgentsResultSchema },
   },
   events: {
     [EVENT_APP_STARTED]: appStartedPayloadSchema,
@@ -116,15 +123,15 @@ export class AppReadyOperation implements Operation<typeof schemas> {
   readonly id = APP_READY_OPERATION_ID;
   readonly schemas = schemas;
 
-  constructor(private readonly agentConfig: PersistedAccessor<ConfigAgentType>) {}
+  constructor(private readonly agentConfig: PersistedAccessor<AgentType>) {}
 
-  async execute(ctx: OperationContext<AppReadyIntent>): Promise<AppReadyResult> {
+  async execute(ctx: OperationContext<AppReadyIntent, typeof schemas>): Promise<AppReadyResult> {
     const hookCtx: HookContext = { intent: ctx.intent };
 
     // Collect bootstrap data: available agents + saved project paths in parallel.
     const [agentsResult, projectsResult] = await Promise.all([
-      ctx.hooks.collect<AvailableAgentsResult>("available-agents", hookCtx),
-      ctx.hooks.collect<LoadProjectsResult>("load-projects", hookCtx),
+      ctx.hooks.collect("available-agents", hookCtx),
+      ctx.hooks.collect("load-projects", hookCtx),
     ]);
     throwHookErrors(projectsResult.errors, "app:ready load-projects hooks failed");
     // available-agents errors are best-effort: an agent that fails preflight just
@@ -136,10 +143,9 @@ export class AppReadyOperation implements Operation<typeof schemas> {
     }
 
     const defaultAgentRaw = this.agentConfig.get();
-    const defaultAgent: LifecycleAgentType | null =
-      defaultAgentRaw === "claude" || defaultAgentRaw === "opencode" ? defaultAgentRaw : null;
+    const defaultAgent: AgentType | null = agentTypeSchema.safeParse(defaultAgentRaw).data ?? null;
 
-    const projectPaths: string[] = [];
+    const projectPaths: ProjectPath[] = [];
     for (const result of projectsResult.results) {
       if (result.projectPaths) projectPaths.push(...result.projectPaths);
     }
@@ -150,10 +156,10 @@ export class AppReadyOperation implements Operation<typeof schemas> {
     // not git repos, etc.) are silently dropped without aborting the rest.
     await Promise.allSettled(
       projectPaths.map((projectPath) =>
-        ctx.dispatch({
+        ctx.dispatch<OpenProjectIntent>({
           type: INTENT_OPEN_PROJECT,
-          payload: { path: new Path(projectPath) },
-        } as OpenProjectIntent)
+          payload: { path: projectPath },
+        })
       )
     );
 

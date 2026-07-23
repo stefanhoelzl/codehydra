@@ -23,7 +23,7 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, baseInfoSchema, hookCtxSchema } from "./contract";
+import { baseInfoSchema, hookCtxSchema, projectIdSchema, projectPathSchema } from "./contract";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
@@ -37,7 +37,7 @@ export const GET_PROJECT_BASES_OPERATION_ID = "get-project-bases";
 
 export const getProjectBasesPayloadSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     refresh: z.boolean().optional(),
     /** When true (and refresh is true), await the refresh and return fresh data. */
     wait: z.boolean().optional(),
@@ -48,7 +48,7 @@ export const getProjectBasesResultSchema = z
   .object({
     bases: z.array(baseInfoSchema).readonly(),
     defaultBaseBranch: z.string().optional(),
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     projectId: projectIdSchema,
   })
   .readonly();
@@ -56,7 +56,7 @@ export const getProjectBasesResultSchema = z
 export const basesUpdatedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     bases: z.array(baseInfoSchema).readonly(),
     /** Fresh default base branch; absent when detection found none (authoritative). */
     defaultBaseBranch: z.string().optional(),
@@ -71,8 +71,8 @@ export const listBasesHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "list" / "refresh" hook points. */
-const listBasesEnrichmentSchema = z.object({ projectPath: z.string() });
-const refreshBasesEnrichmentSchema = z.object({ projectPath: z.string() });
+const listBasesEnrichmentSchema = z.object({ projectPath: projectPathSchema });
+const refreshBasesEnrichmentSchema = z.object({ projectPath: projectPathSchema });
 
 export const listBasesHookInputSchema = hookCtxSchema(
   getProjectBasesPayloadSchema,
@@ -83,7 +83,11 @@ export const refreshBasesHookInputSchema = hookCtxSchema(
   refreshBasesEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_PROJECT_BASES,
   payload: getProjectBasesPayloadSchema,
   result: getProjectBasesResultSchema,
@@ -124,19 +128,20 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
   readonly id = GET_PROJECT_BASES_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<GetProjectBasesIntent>): Promise<GetProjectBasesResult> {
+  async execute(
+    ctx: OperationContext<GetProjectBasesIntent, typeof schemas>
+  ): Promise<GetProjectBasesResult> {
     const { projectPath, refresh } = ctx.intent.payload;
 
     // 1. Dispatch project:resolve to get projectId
-    const { projectId } = await ctx.dispatch({
+    const { projectId } = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
       payload: { projectPath },
-    } as ResolveProjectIntent);
+    });
 
     // 2. Collect "list" hook — fast local read
     const listCtx: ListBasesHookInput = { intent: ctx.intent, projectPath };
-    const { results: listResults, errors: listErrors } =
-      await ctx.hooks.collect<ListBasesHookResult>("list", listCtx);
+    const { results: listResults, errors: listErrors } = await ctx.hooks.collect("list", listCtx);
 
     throwHookErrors(listErrors, "project:get-bases list hooks failed");
 
@@ -151,10 +156,7 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
         const { errors: refreshErrors } = await ctx.hooks.collect("refresh", refreshCtx);
         if (refreshErrors.length > 0) return undefined;
 
-        const { results: freshListResults } = await ctx.hooks.collect<ListBasesHookResult>(
-          "list",
-          listCtx
-        );
+        const { results: freshListResults } = await ctx.hooks.collect("list", listCtx);
         const freshMerged = mergeHookResults(freshListResults, "list");
         const freshBases = freshMerged.bases ?? [];
         return {

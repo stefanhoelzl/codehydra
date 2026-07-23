@@ -69,13 +69,14 @@ import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type { SwitchWorkspaceHookResult, ActivateHookInput } from "./switch-workspace";
 import { registerTestInfrastructure } from "./operations.test-utils";
 import type { WorkspaceRef } from "../shared/api/types";
+import { projPath, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const PROJECT_ROOT = projPath("/project");
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_BRANCH = "feature-x";
 const WORKSPACE_METADATA: Readonly<Record<string, string>> = { base: "main" };
 const WORKSPACE_URL = "http://127.0.0.1:8080/?folder=/workspaces/feature-x";
@@ -256,7 +257,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
             return {
               result: {
-                workspacePath: workspace.path.toString(),
+                workspacePath: wsPath(workspace.path.toString()),
                 branch: workspace.branch,
                 metadata: workspace.metadata,
               },
@@ -373,7 +374,7 @@ function createIntent(overrides?: Partial<OpenWorkspacePayload>): OpenWorkspaceI
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
-      projectPath: PROJECT_ROOT,
+      projectPath: projPath(PROJECT_ROOT),
       workspaceName: "feature-x",
       base: "main",
       ...overrides,
@@ -493,7 +494,7 @@ describe("OpenWorkspace Operation", () => {
 
       const intentWithoutBase: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
-        payload: { projectPath: PROJECT_ROOT, workspaceName: "feature-x" },
+        payload: { projectPath: projPath(PROJECT_ROOT), workspaceName: "feature-x" },
       };
       await setup.dispatcher.dispatch(intentWithoutBase);
 
@@ -578,7 +579,7 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectPath: "/nonexistent/project",
+          projectPath: projPath("/nonexistent/project"),
           workspaceName: "feature-x",
           base: "main",
         },
@@ -643,7 +644,7 @@ describe("OpenWorkspace Operation", () => {
         activeWorkspaceRef: {
           projectId: PROJECT_ID,
           workspaceName: "other" as WorkspaceName,
-          path: "/workspaces/other",
+          path: wsPath("/workspaces/other"),
         },
       });
 
@@ -757,7 +758,7 @@ describe("OpenWorkspace Operation", () => {
       const setup = createTestSetup();
 
       const existingWorkspace: ExistingWorkspaceData = {
-        path: "/existing/workspace/feature-y",
+        path: wsPath("/existing/workspace/feature-y"),
         name: "feature-y",
         branch: "feature-y",
         metadata: { base: "main" },
@@ -774,7 +775,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "feature-y",
           base: "main",
           existingWorkspace,
-          projectPath: PROJECT_ROOT,
+          projectPath: projPath(PROJECT_ROOT),
         },
       };
 
@@ -801,7 +802,7 @@ describe("OpenWorkspace Operation", () => {
       setup.knownProjectPaths.add(customProjectPath);
 
       const existingWorkspace: ExistingWorkspaceData = {
-        path: "/custom/workspace/my-ws",
+        path: wsPath("/custom/workspace/my-ws"),
         name: "my-ws",
         branch: null,
         metadata: { base: "develop" },
@@ -818,7 +819,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "my-ws",
           base: "develop",
           existingWorkspace,
-          projectPath: customProjectPath,
+          projectPath: projPath(customProjectPath),
         },
       };
 
@@ -863,7 +864,7 @@ describe("OpenWorkspace Operation", () => {
       const setup = createTestSetup();
 
       const existingWorkspace: ExistingWorkspaceData = {
-        path: "/existing/workspace/sdk-214", // lowercased by Path on Windows
+        path: wsPath("/existing/workspace/sdk-214"), // lowercased by Path on Windows
         name: "SDK-214",
         branch: "SDK-214",
         metadata: { base: "main" },
@@ -880,7 +881,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "SDK-214",
           base: "main",
           existingWorkspace,
-          projectPath: PROJECT_ROOT,
+          projectPath: projPath(PROJECT_ROOT),
         },
       };
 
@@ -901,7 +902,7 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectPath: "/nonexistent/project",
+          projectPath: projPath("/nonexistent/project"),
           workspaceName: "feature-x",
           base: "main",
         },
@@ -1044,7 +1045,7 @@ describe("OpenWorkspace Operation", () => {
         activeWorkspaceRef: {
           projectId: PROJECT_ID,
           workspaceName: "other-ws" as WorkspaceName,
-          path: "/workspaces/other-ws",
+          path: wsPath("/workspaces/other-ws"),
         },
       });
 

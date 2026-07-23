@@ -45,11 +45,13 @@ import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createAutoTaggingModule } from "./auto-tagging-module";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "../intents/contract";
 
-const PROJECT_ROOT = "/project";
+const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
-const WORKSPACE_PATH = "/workspaces/feature-x";
-const OTHER_WORKSPACE_PATH = "/workspaces/feature-y";
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const OTHER_WORKSPACE_PATH = wsPath("/workspaces/feature-y");
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const NEW_TAG_KEY = "tags.new";
 const NEW_TAG_VALUE = JSON.stringify({ color: "#3498db" });
@@ -59,12 +61,12 @@ interface TestSetup {
   /** Metadata written through the real SetMetadataOperation's "set" hook. */
   readonly metadata: Map<string, Map<string, string>>;
   /** Every set-metadata intent that reached the operation, in order. */
-  readonly writes: Array<{ workspacePath: string; key: string; value: string | null }>;
+  readonly writes: Array<{ workspacePath: WorkspacePath; key: string; value: string | null }>;
   readonly createdEvents: WorkspaceCreatedEvent[];
   readonly views: TestViewManagerHarness;
 }
 
-function metadataFor(setup: TestSetup, workspacePath: string): Record<string, string> {
+function metadataFor(setup: TestSetup, workspacePath: WorkspacePath): Record<string, string> {
   return Object.fromEntries(setup.metadata.get(workspacePath) ?? new Map());
 }
 
@@ -76,7 +78,7 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
   const views = createTestViewManager(options?.activeWorkspace ?? null);
 
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: string) => ({
+    workspaces: (workspacePath: WorkspacePath) => ({
       projectPath: PROJECT_ROOT,
       workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
     }),
@@ -104,7 +106,7 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
                     : {
                         projectId: PROJECT_ID,
                         workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-                        path,
+                        path: wsPath(path),
                       },
               },
             };
@@ -196,11 +198,11 @@ async function flushEvents(): Promise<void> {
 }
 
 /** Switches, then lets the workspace:switched subscribers run. */
-async function switchTo(setup: TestSetup, workspacePath: string | null): Promise<void> {
-  await setup.dispatcher.dispatch({
+async function switchTo(setup: TestSetup, workspacePath: WorkspacePath | null): Promise<void> {
+  await setup.dispatcher.dispatch<SwitchWorkspaceIntent>({
     type: INTENT_SWITCH_WORKSPACE,
     payload: { workspacePath },
-  } as SwitchWorkspaceIntent);
+  });
   await flushEvents();
 }
 
@@ -382,10 +384,10 @@ describe("AutoTaggingModule", () => {
       const setup = createTestSetup({ activeWorkspace: WORKSPACE_PATH });
 
       await expect(
-        setup.dispatcher.dispatch({
+        setup.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
           payload: { workspacePath: null },
-        } as SwitchWorkspaceIntent)
+        })
       ).resolves.not.toThrow();
     });
   });
@@ -396,10 +398,10 @@ describe("AutoTaggingModule", () => {
       await setup.dispatcher.dispatch(openIntent({ stealFocus: false }));
 
       // Simulates sidekick/MCP deleting the tag.
-      await setup.dispatcher.dispatch({
+      await setup.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: { workspacePath: WORKSPACE_PATH, key: NEW_TAG_KEY, value: null },
-      } as SetMetadataIntent);
+      });
       await flushEvents();
       const writesBeforeSwitch = setup.writes.length;
 
@@ -411,10 +413,10 @@ describe("AutoTaggingModule", () => {
     it("clears a tag the user added by hand", async () => {
       const setup = createTestSetup({ activeWorkspace: OTHER_WORKSPACE_PATH });
 
-      await setup.dispatcher.dispatch({
+      await setup.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: { workspacePath: WORKSPACE_PATH, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
-      } as SetMetadataIntent);
+      });
       await flushEvents();
 
       await switchTo(setup, WORKSPACE_PATH);

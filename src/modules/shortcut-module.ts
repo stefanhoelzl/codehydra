@@ -156,10 +156,10 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     shortcutActive = true;
     if (restricted) return;
     broadcasted = true;
-    void deps.dispatcher.dispatch({
+    void deps.dispatcher.dispatch<SetShortcutActiveIntent>({
       type: INTENT_SET_SHORTCUT_ACTIVE,
       payload: { active: true },
-    } as SetShortcutActiveIntent);
+    });
   }
 
   /** Exit shortcut mode. Broadcasts active:false only if entry broadcast true. */
@@ -168,17 +168,17 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     shortcutActive = false;
     if (!broadcasted) return;
     broadcasted = false;
-    void deps.dispatcher.dispatch({
+    void deps.dispatcher.dispatch<SetShortcutActiveIntent>({
       type: INTENT_SET_SHORTCUT_ACTIVE,
       payload: { active: false },
-    } as SetShortcutActiveIntent);
+    });
   }
 
   function dispatchShortcutKey(key: string): void {
-    void deps.dispatcher.dispatch({
+    void deps.dispatcher.dispatch<ShortcutKeyIntent>({
       type: INTENT_SHORTCUT_KEY,
       payload: { key },
-    } as ShortcutKeyIntent);
+    });
   }
 
   function registerView(target: KeyboardTarget): void {
@@ -242,10 +242,10 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     // the Alt+X state machine, so it fires in any state (including shortcut mode).
     if (deps.platform === "linux" && input.key === QUIT_KEY && input.alt) {
       deps.logger.info("Alt+F4 pressed — dispatching app:shutdown");
-      void deps.dispatcher.dispatch({
+      void deps.dispatcher.dispatch<AppShutdownIntent>({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
-      } as AppShutdownIntent);
+      });
       return;
     }
 

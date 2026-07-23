@@ -18,7 +18,13 @@ import type {
   IntentOf,
 } from "../../intents/lib/operation";
 import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID, INTENT_APP_START } from "../../intents/app-start";
+import {
+  APP_START_OPERATION_ID,
+  INTENT_APP_START,
+  configureResultSchema,
+  checkDepsResultSchema,
+  registerAgentResultSchema,
+} from "../../intents/app-start";
 import {
   AgentLaunchOptionsOperation,
   INTENT_GET_LAUNCH_OPTIONS,
@@ -33,12 +39,12 @@ import type {
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import type { BinaryHookInput, SetupProgressPayload } from "../../intents/setup";
-import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
-import type {
-  SetupHookResult,
-  SetupHookInput,
-  OpenWorkspaceIntent,
+import {
+  INTENT_OPEN_WORKSPACE,
+  OPEN_WORKSPACE_OPERATION_ID,
+  setupResultSchema,
 } from "../../intents/open-workspace";
+import type { SetupHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -69,11 +75,13 @@ import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
-import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
+import type { AggregatedAgentStatus } from "../../shared/ipc";
 import type { WorkspaceName } from "../../shared/api/types";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
+import { wsPath, projPath } from "../../shared/test-fixtures";
+import type { WorkspacePath } from "../../intents/contract";
 
 // =============================================================================
 // Mock AgentModuleProvider Factory
@@ -130,6 +138,7 @@ const beforeReadySchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<readonly ConfigureResult[]>(),
+  hooks: { "before-ready": { result: configureResultSchema } },
 } satisfies OperationSchemas;
 
 class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
@@ -137,9 +146,9 @@ class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas
   readonly schemas = beforeReadySchemas;
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>, typeof beforeReadySchemas>
   ): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
+    const { results, errors } = await ctx.hooks.collect("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -151,6 +160,7 @@ const checkDepsSchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<CheckDepsResult>(),
+  hooks: { "check-deps": { result: checkDepsResultSchema } },
 } satisfies OperationSchemas;
 
 function minimalCheckDeps(
@@ -165,7 +175,7 @@ function minimalCheckDeps(
         configuredAgent: configuredAgent as CheckDepsHookContext["configuredAgent"],
         extensionRequirements: [],
       };
-      const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
+      const { results } = await ctx.hooks.collect("check-deps", hookCtx);
       const merged: CheckDepsResult = {};
       for (const r of results) {
         if (r.missingBinaries) {
@@ -194,6 +204,7 @@ const registerAgentsSchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<readonly RegisterAgentResult[]>(),
+  hooks: { "register-agents": { result: registerAgentResultSchema } },
 } satisfies OperationSchemas;
 
 class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsSchemas> {
@@ -201,9 +212,9 @@ class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsS
   readonly schemas = registerAgentsSchemas;
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof registerAgentsSchemas>>
+    ctx: OperationContext<IntentOf<typeof registerAgentsSchemas>, typeof registerAgentsSchemas>
   ): Promise<readonly RegisterAgentResult[]> {
-    const { results, errors } = await ctx.hooks.collect<RegisterAgentResult>("register-agents", {
+    const { results, errors } = await ctx.hooks.collect("register-agents", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -264,6 +275,7 @@ const setupSchemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: z.unknown(),
   result: z.custom<SetupOperationResult | undefined>(),
+  hooks: { setup: { result: setupResultSchema } },
 } satisfies OperationSchemas;
 
 function minimalSetup(
@@ -274,7 +286,7 @@ function minimalSetup(
     id: OPEN_WORKSPACE_OPERATION_ID,
     schemas: setupSchemas,
     async execute(ctx): Promise<SetupOperationResult | undefined> {
-      const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
+      const { results, errors } = await ctx.hooks.collect("setup", {
         intent: ctx.intent,
         workspacePath: "/test/workspace",
         projectPath: "/test/project",
@@ -305,11 +317,11 @@ function minimalShutdown(agentCapability: string | null = "claude"): Operation<O
     "shutdown",
     {
       hookContext: (ctx): DeletePipelineHookInput => {
-        const payload = ctx.intent.payload as { workspacePath?: string };
+        const payload = ctx.intent.payload as { workspacePath?: WorkspacePath };
         return {
           intent: ctx.intent,
-          projectPath: "/test/project",
-          workspacePath: payload.workspacePath ?? "/test/workspace",
+          projectPath: projPath("/test/project"),
+          workspacePath: payload.workspacePath ?? wsPath("/test/workspace"),
           workspaceName: "test-workspace" as WorkspaceName,
           active: false,
           ...(agentCapability !== null && {
@@ -539,8 +551,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -564,8 +576,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -588,8 +600,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -612,8 +624,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
       await dispatcher.dispatch({
@@ -644,8 +656,8 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation(
         minimalSetup(
           {
-            workspacePath: "/test/workspace",
-            projectPath: "/test/project",
+            workspacePath: wsPath("/test/workspace"),
+            projectPath: projPath("/test/project"),
           },
           "opencode"
         )
@@ -827,8 +839,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -855,8 +867,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -882,8 +894,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
 
@@ -913,8 +925,8 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation(
         minimalSetup(
           {
-            workspacePath: "/test/workspace",
-            projectPath: "/test/project",
+            workspacePath: wsPath("/test/workspace"),
+            projectPath: projPath("/test/project"),
           },
           "opencode"
         )
@@ -945,15 +957,15 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: "/test/workspace",
+          workspacePath: wsPath("/test/workspace"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
+      })) as ShutdownHookResult | undefined;
 
       expect(mockProvider.stopWorkspace).toHaveBeenCalledWith("/test/workspace");
       expect(result).toBeDefined();
@@ -966,15 +978,15 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: "/test/workspace",
+          workspacePath: wsPath("/test/workspace"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent);
+      });
 
       expect(mockProvider.clearWorkspaceTracking).toHaveBeenCalledWith("/test/workspace");
     });
@@ -987,15 +999,15 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: "/test/workspace",
+          workspacePath: wsPath("/test/workspace"),
           keepBranch: false,
           force: true,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
+      })) as ShutdownHookResult | undefined;
 
       expect(result).toBeDefined();
       expect(result!.error).toBe("server busy");
@@ -1010,15 +1022,15 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation(minimalShutdown());
 
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<DeleteWorkspaceIntent>({
           type: "workspace:delete",
           payload: {
-            workspacePath: "/test/workspace",
+            workspacePath: wsPath("/test/workspace"),
             keepBranch: false,
             force: false,
             removeWorktree: true,
           },
-        } as DeleteWorkspaceIntent)
+        })
       ).rejects.toThrow("server busy");
     });
 
@@ -1027,15 +1039,15 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown("opencode"));
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: "/test/workspace",
+          workspacePath: wsPath("/test/workspace"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
+      })) as ShutdownHookResult | undefined;
 
       expect(result).toBeUndefined();
       expect(mockProvider.stopWorkspace).not.toHaveBeenCalled();
@@ -1306,7 +1318,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: (ctx.intent.payload as { workspacePath: string }).workspacePath,
+              workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
               event: (ctx.intent.payload as { event: "open" | "close" }).event,
               capabilities: { agent },
             }),
@@ -1369,8 +1381,8 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
       await dispatcher.dispatch({
@@ -1415,8 +1427,8 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
       dispatcher.registerOperation(
         minimalSetup({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/workspace"),
+          projectPath: projPath("/test/project"),
         })
       );
       await dispatcher.dispatch({

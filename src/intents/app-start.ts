@@ -41,24 +41,30 @@
  * Contract schemas (item 2): zod is the single source of truth. Payload, per-hook-point
  * (result/input) schemas are declared once and hung on the operation's `schemas` field; the
  * `Intent`, result, and hook-input-context types are **derived** via `IntentOf`/`z.infer`.
- * The "start" and "await-retry" hook points return void (no schema). `BinaryType` is a shared
- * binary-resolution type modeled with `z.custom` so its exact named type flows through.
+ * Every hook point declares an input schema, including those whose context is just the
+ * intent ("start", "await-retry"), so a handler's context type is derived rather than
+ * hand-written and nothing undeclared can ride along.
  */
 
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { configAgentTypeSchema, hookCtxSchema } from "./contract";
-import type { ConfigAgentType } from "../shared/api/types";
-import type { LifecycleAgentType } from "../shared/ipc";
+import {
+  agentInfoSchema,
+  agentTypeSchema,
+  binaryTypeSchema,
+  hookCtxSchema,
+  serializedErrorSchema,
+} from "./contract";
+import type { AgentType, BinaryType } from "./contract";
+import { toSerializedError } from "../shared/error-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
-import type { BinaryType } from "../utils/binary-resolution/types";
 import { INTENT_SETUP } from "./setup";
 import { INTENT_APP_READY, type AppReadyIntent } from "./app-ready";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
-export type { BinaryType } from "../utils/binary-resolution/types";
+export type { BinaryType } from "./contract";
 
 export const INTENT_APP_START = "app:start" as const;
 
@@ -110,20 +116,11 @@ export const appStartPhaseSchema = z.enum([
   "start",
 ]);
 
-/** Selectable agent backend. Local schema; mirrors shared/ipc's LifecycleAgentType. */
-const lifecycleAgentTypeSchema = z.enum(["opencode", "claude"]);
-
 /**
  * Per-handler result for the "register-agents" hook point.
  * Each per-agent module returns its agent info for the selection UI.
  */
-export const registerAgentResultSchema = z
-  .object({
-    agent: lifecycleAgentTypeSchema,
-    label: z.string(),
-    icon: z.string(),
-  })
-  .readonly();
+export const registerAgentResultSchema = agentInfoSchema;
 
 /**
  * Per-handler result for "before-ready" hook point.
@@ -161,7 +158,7 @@ export const showUIHookResultSchema = z
 /** Per-handler result for "check-deps" hook point. Arrays only -- booleans derived by operation. */
 export const checkDepsResultSchema = z
   .object({
-    missingBinaries: z.array(z.custom<BinaryType>()).readonly().optional(),
+    missingBinaries: z.array(binaryTypeSchema).readonly().optional(),
     extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
   })
   .readonly();
@@ -182,7 +179,7 @@ const agentSelectionInputSchema = hookCtxSchema(
 );
 
 /** Operation-added enrichment for the "save-agent" hook (selectedAgent from agent-selection). */
-const saveAgentEnrichmentSchema = z.object({ selectedAgent: configAgentTypeSchema });
+const saveAgentEnrichmentSchema = z.object({ selectedAgent: agentTypeSchema });
 const saveAgentInputSchema = hookCtxSchema(appStartPayloadSchema, saveAgentEnrichmentSchema.shape);
 
 /**
@@ -190,7 +187,7 @@ const saveAgentInputSchema = hookCtxSchema(appStartPayloadSchema, saveAgentEnric
  * Non-nullable: agent selection runs first, so the agent is always known here.
  */
 const checkDepsEnrichmentSchema = z.object({
-  configuredAgent: configAgentTypeSchema,
+  configuredAgent: agentTypeSchema,
   extensionRequirements: z.array(extensionRequirementSchema).readonly(),
 });
 const checkDepsHookInputSchema = hookCtxSchema(
@@ -199,11 +196,12 @@ const checkDepsHookInputSchema = hookCtxSchema(
 );
 
 /**
- * Operation-added enrichment for the "error" hook point. Carries the live fatal error
- * (a real Error instance — host-only) and the phase it occurred in.
+ * Operation-added enrichment for the "error" hook point. Carries the fatal error as plain
+ * data (with its `cause` chain) and the phase it occurred in. The operation converts with
+ * `toSerializedError()`; a handler that needs a real `Error` rebuilds one.
  */
 const appStartErrorEnrichmentSchema = z.object({
-  error: z.instanceof(Error),
+  error: serializedErrorSchema,
   phase: appStartPhaseSchema,
 });
 const appStartErrorHookInputSchema = hookCtxSchema(
@@ -211,15 +209,27 @@ const appStartErrorHookInputSchema = hookCtxSchema(
   appStartErrorEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * The hook points whose context is just the intent. Declared rather than omitted: a hook
+ * point with no input schema has no contract, and `InputOf` has nothing to derive from.
+ */
+const bareHookInputSchema = hookCtxSchema(appStartPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_APP_START,
   payload: appStartPayloadSchema,
   hooks: {
-    "before-ready": { result: configureResultSchema },
+    "before-ready": { input: bareHookInputSchema, result: configureResultSchema },
     init: { input: initHookInputSchema, result: initResultSchema },
-    "show-ui": { result: showUIHookResultSchema },
-    "register-agents": { result: registerAgentResultSchema },
-    "agent-selection": { input: agentSelectionInputSchema, result: lifecycleAgentTypeSchema },
+    "show-ui": { input: bareHookInputSchema, result: showUIHookResultSchema },
+    "register-agents": { input: bareHookInputSchema, result: registerAgentResultSchema },
+    start: { input: bareHookInputSchema },
+    "await-retry": { input: bareHookInputSchema },
+    "agent-selection": { input: agentSelectionInputSchema, result: agentTypeSchema },
     "save-agent": { input: saveAgentInputSchema },
     "check-deps": { input: checkDepsHookInputSchema, result: checkDepsResultSchema },
     [APP_START_ERROR_HOOK]: { input: appStartErrorHookInputSchema },
@@ -284,12 +294,12 @@ export class AppStartOperation implements Operation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor(
-    private readonly agentConfig: PersistedAccessor<ConfigAgentType>,
+    private readonly agentConfig: PersistedAccessor<AgentType>,
     /** Whether config.json existed at load; false = first run → agent selection. */
     private readonly wasConfigured: () => boolean
   ) {}
 
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
+  async execute(ctx: OperationContext<AppStartIntent, typeof schemas>): Promise<void> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
@@ -303,8 +313,10 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // --- Hook 1: "before-ready" (pre-ready) ---
       // Script declarations, noAsar, data paths, electron flags. All independent.
       phase = "before-ready";
-      const { results: configResults, errors: configErrors } =
-        await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
+      const { results: configResults, errors: configErrors } = await ctx.hooks.collect(
+        "before-ready",
+        hookCtx
+      );
       throwHookErrors(configErrors, "app:start before-ready hooks failed");
       const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
@@ -314,10 +326,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // Receives requiredScripts from before-ready results.
       phase = "init";
       const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
-      const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
-        "init",
-        initCtx
-      );
+      const { results: initResults, errors: initErrors } = await ctx.hooks.collect("init", initCtx);
       throwHookErrors(initErrors, "app:start init hooks failed");
 
       // Extract extensionRequirements from init results
@@ -331,20 +340,22 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // null drives the agent-selection hook points below. The `agent` config key is
       // non-nullable (it defaults to "claude"), so file existence — not the value —
       // is what distinguishes "never chosen" from "chose Claude".
-      const configuredAgent: ConfigAgentType | null = this.wasConfigured()
+      const configuredAgent: AgentType | null = this.wasConfigured()
         ? this.agentConfig.get()
         : null;
 
       // Hook 3: "show-ui" -- Show starting screen; learn whether a retry loop is supported.
       phase = "show-ui";
-      const { results: showUiResults, errors: showUiErrors } =
-        await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
+      const { results: showUiResults, errors: showUiErrors } = await ctx.hooks.collect(
+        "show-ui",
+        hookCtx
+      );
       throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
       const retrySupported = showUiResults.some((r) => r.retrySupported === true);
 
       // Hook 4: agent selection (first run only) -- register-agents, agent-selection, save-agent.
       // Runs BEFORE check-deps so the deps check knows which agent's binary to look for.
-      let agent: ConfigAgentType;
+      let agent: AgentType;
       if (configuredAgent === null) {
         phase = "agent-selection";
         agent = await this.selectAgent(ctx, hookCtx, retrySupported);
@@ -381,7 +392,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
             // hook point blocks (host-side, in the UI handler) until the user clicks
             // Retry and returns data — no closure crosses the hook contract.
             if (retrySupported) {
-              const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
+              const { errors: retryErrors } = await ctx.hooks.collect("await-retry", hookCtx);
               throwHookErrors(retryErrors, "app:start await-retry hooks failed");
               // Re-run check hooks to get fresh preflight state for retry
               checkResult = await this.runChecks(ctx, agent, extensionRequirements);
@@ -404,7 +415,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // read from ctx.capabilities. Capability-based ordering replaces the former
       // separate "activate" hook point.
       phase = "start";
-      const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
+      const { errors: startErrors } = await ctx.hooks.collect("start", hookCtx);
       throwHookErrors(startErrors, "app:start start hooks failed");
 
       // After all start handlers (IDE server included) are up, load initial projects.
@@ -426,7 +437,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // box + app.quit path unchanged.
       const errorCtx: AppStartErrorHookContext = {
         intent: ctx.intent,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: toSerializedError(error),
         phase,
       };
       await ctx.hooks.collect(APP_START_ERROR_HOOK, errorCtx);
@@ -443,29 +454,33 @@ export class AppStartOperation implements Operation<typeof schemas> {
    * app:shutdown during selection), save-agent never runs and the next launch re-prompts.
    */
   private async selectAgent(
-    ctx: OperationContext<AppStartIntent>,
+    ctx: OperationContext<AppStartIntent, typeof schemas>,
     hookCtx: HookContext,
     retrySupported: boolean
-  ): Promise<ConfigAgentType> {
+  ): Promise<AgentType> {
     for (;;) {
       try {
-        const { results: agentInfos, errors: registerErrors } =
-          await ctx.hooks.collect<RegisterAgentResult>("register-agents", hookCtx);
+        const { results: agentInfos, errors: registerErrors } = await ctx.hooks.collect(
+          "register-agents",
+          hookCtx
+        );
         throwHookErrors(registerErrors, "app:start register-agents hooks failed");
 
         const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
-        const { results: agentResults, errors: agentErrors } =
-          await ctx.hooks.collect<LifecycleAgentType>("agent-selection", selectionCtx);
+        const { results: agentResults, errors: agentErrors } = await ctx.hooks.collect(
+          "agent-selection",
+          selectionCtx
+        );
         throwHookErrors(agentErrors, "app:start agent-selection hooks failed");
 
         // Single result-producer (the picker); results[0] is the chosen agent.
-        const selectedAgent = agentResults[0] as ConfigAgentType | undefined;
+        const selectedAgent = agentResults[0];
         if (selectedAgent === undefined) {
           throw new Error("app:start agent-selection produced no agent");
         }
 
         const saveAgentInput: SaveAgentHookInput = { intent: ctx.intent, selectedAgent };
-        const { errors: saveErrors } = await ctx.hooks.collect<void>("save-agent", saveAgentInput);
+        const { errors: saveErrors } = await ctx.hooks.collect("save-agent", saveAgentInput);
         throwHookErrors(saveErrors, "app:start save-agent hooks failed");
 
         return selectedAgent;
@@ -475,7 +490,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
             cause: selectionError,
           });
         }
-        const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
+        const { errors: retryErrors } = await ctx.hooks.collect("await-retry", hookCtx);
         throwHookErrors(retryErrors, "app:start await-retry hooks failed");
       }
     }
@@ -490,8 +505,8 @@ export class AppStartOperation implements Operation<typeof schemas> {
    * a null agent would silently produce an empty binary list.
    */
   private async runChecks(
-    ctx: OperationContext<AppStartIntent>,
-    configuredAgent: ConfigAgentType,
+    ctx: OperationContext<AppStartIntent, typeof schemas>,
+    configuredAgent: AgentType,
     extensionRequirements: readonly ExtensionRequirement[]
   ): Promise<CheckResult> {
     // check-deps: binary + extension checks (collect, isolated contexts)
@@ -500,7 +515,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
       configuredAgent,
       extensionRequirements,
     };
-    const { results: depsResults, errors: depsErrors } = await ctx.hooks.collect<CheckDepsResult>(
+    const { results: depsResults, errors: depsErrors } = await ctx.hooks.collect(
       "check-deps",
       depsCtx
     );

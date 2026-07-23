@@ -18,7 +18,13 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { workspaceNameSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+} from "./contract";
+import type { ProjectPath } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_RESOLVE_WORKSPACE = "workspace:resolve" as const;
@@ -30,13 +36,13 @@ export const RESOLVE_WORKSPACE_OPERATION_ID = "resolve-workspace";
 
 export const resolveWorkspacePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
   })
   .readonly();
 
 export const resolveWorkspaceResultSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     workspaceName: workspaceNameSchema,
     active: z.boolean(),
     /** Current branch name, or null for detached HEAD. */
@@ -50,7 +56,7 @@ export const resolveWorkspaceResultSchema = z
 /** Per-handler result for "resolve" (fields optional — each handler contributes a subset). */
 export const resolveHookResultSchema = z
   .object({
-    projectPath: z.string().optional(),
+    projectPath: projectPathSchema.optional(),
     workspaceName: workspaceNameSchema.optional(),
     active: z.boolean().optional(),
     branch: z.string().nullable().optional(),
@@ -59,7 +65,7 @@ export const resolveHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "resolve" hook point (beyond the base HookContext). */
-const resolveEnrichmentSchema = z.object({ workspacePath: z.string() });
+const resolveEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "resolve" (its inferred type isn't the ctx type). */
 export const resolveHookInputSchema = hookCtxSchema(
@@ -67,7 +73,11 @@ export const resolveHookInputSchema = hookCtxSchema(
   resolveEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_RESOLVE_WORKSPACE,
   payload: resolveWorkspacePayloadSchema,
   result: resolveWorkspaceResultSchema,
@@ -96,17 +106,19 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = RESOLVE_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<ResolveWorkspaceIntent>): Promise<ResolveWorkspaceResult> {
+  async execute(
+    ctx: OperationContext<ResolveWorkspaceIntent, typeof schemas>
+  ): Promise<ResolveWorkspaceResult> {
     const { payload } = ctx.intent;
 
     const resolveCtx: ResolveHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
     };
-    const { results, errors } = await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    const { results, errors } = await ctx.hooks.collect("resolve", resolveCtx);
     throwHookErrors(errors, "workspace:resolve hooks failed");
 
-    let projectPath: string | undefined;
+    let projectPath: ProjectPath | undefined;
     let workspaceName: ResolveWorkspaceResult["workspaceName"] | undefined;
     let active = false;
     // branch can legitimately be null (detached HEAD), so track "provided"

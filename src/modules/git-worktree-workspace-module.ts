@@ -72,6 +72,9 @@ import { Path } from "../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
+import { projectPathSchema, workspacePathSchema } from "../intents/contract";
+import type { ProjectPath, WorkspacePath } from "../intents/contract";
+import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
 
 // =============================================================================
 // Module Factory
@@ -91,24 +94,38 @@ export function createGitWorktreeWorkspaceModule(
   logger: Logger
 ): IntentModule {
   // Internal state
-  const workspaces = new Map<string, Workspace[]>();
-  const deletionPending = new Map<string, { projectPath: string; workspace: Workspace }>();
+  // Keyed by branded paths: these maps feed hook results directly, so keeping the brand on
+  // the key means a project/workspace path never has to be re-minted on the way out.
+  const workspaces = new Map<ProjectPath, Workspace[]>();
+  const deletionPending = new Map<
+    WorkspacePath,
+    { projectPath: ProjectPath; workspace: Workspace }
+  >();
   // Per-project default base branch, computed at project:open (discover) and
   // refreshed by the get-project-bases list hook. Surfaced via list-workspaces
   // so the creation form can seed the base field without a git round-trip.
-  const projectDefaults = new Map<string, string>();
+  const projectDefaults = new Map<ProjectPath, string>();
 
   // ---------------------------------------------------------------------------
   // Private Helpers
   // ---------------------------------------------------------------------------
 
   /**
+   * Normalize a path and keep its brand. `new Path(p).toString()` is how this module
+   * canonicalizes its map keys, but it returns a plain string — parsing re-mints the brand so
+   * a key can go straight back onto a hook result without a cast.
+   */
+  const projectKey = (p: string): ProjectPath => projectPathSchema.parse(new Path(p).toString());
+  const workspaceKey = (p: string): WorkspacePath =>
+    workspacePathSchema.parse(new Path(p).toString());
+
+  /**
    * Shared reverse-lookup: workspacePath → (projectPath, workspaceName).
    * Used by the resolve-workspace operation.
    */
-  function resolveFromWorkspacePath(workspacePath: string):
+  function resolveFromWorkspacePath(workspacePath: WorkspacePath):
     | {
-        projectPath: string;
+        projectPath: ProjectPath;
         workspaceName: WorkspaceName;
         branch: string | null;
         metadata: Readonly<Record<string, string>>;
@@ -135,8 +152,11 @@ export function createGitWorktreeWorkspaceModule(
     return undefined;
   }
 
-  function unregisterWorkspaceFromState(projectPath: string, workspacePath: string): void {
-    const key = new Path(projectPath).toString();
+  function unregisterWorkspaceFromState(
+    projectPath: ProjectPath,
+    workspacePath: WorkspacePath
+  ): void {
+    const key = projectKey(projectPath);
     const projectWorkspaces = workspaces.get(key);
     if (!projectWorkspaces) return;
 
@@ -147,9 +167,9 @@ export function createGitWorktreeWorkspaceModule(
     }
   }
 
-  function addToDeletionPending(projectPath: string, workspacePath: string): void {
-    const key = new Path(projectPath).toString();
-    const normalizedWsPath = new Path(workspacePath).toString();
+  function addToDeletionPending(projectPath: ProjectPath, workspacePath: WorkspacePath): void {
+    const key = projectKey(projectPath);
+    const normalizedWsPath = workspaceKey(workspacePath);
     const wsList = workspaces.get(key);
     if (!wsList) return;
     const ws = wsList.find((w) => w.path.toString() === normalizedWsPath);
@@ -157,8 +177,8 @@ export function createGitWorktreeWorkspaceModule(
     deletionPending.set(normalizedWsPath, { projectPath: key, workspace: ws });
   }
 
-  function removeFromDeletionPending(workspacePath: string): void {
-    const normalizedWsPath = new Path(workspacePath).toString();
+  function removeFromDeletionPending(workspacePath: WorkspacePath): void {
+    const normalizedWsPath = workspaceKey(workspacePath);
     deletionPending.delete(normalizedWsPath);
   }
 
@@ -166,8 +186,8 @@ export function createGitWorktreeWorkspaceModule(
    * Returns the full workspace list: git cache merged with deletion-pending entries.
    * This is the single source of truth for resolve/list/find-candidates consumers.
    */
-  function getMergedWorkspaces(): Map<string, Workspace[]> {
-    const merged = new Map<string, Workspace[]>();
+  function getMergedWorkspaces(): Map<ProjectPath, Workspace[]> {
+    const merged = new Map<ProjectPath, Workspace[]>();
     const seen = new Set<string>();
 
     for (const [key, wsList] of workspaces) {
@@ -212,7 +232,7 @@ export function createGitWorktreeWorkspaceModule(
             const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
 
             gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
-            const key = projectPathObj.toString();
+            const key = projectKey(projectPathObj.toString());
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
             workspaces.set(key, [...discovered]);
@@ -234,7 +254,7 @@ export function createGitWorktreeWorkspaceModule(
 
             return {
               result: {
-                workspaces: discovered,
+                workspaces: toDiscoveredWorkspaces(discovered),
                 ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
               },
             };
@@ -250,12 +270,14 @@ export function createGitWorktreeWorkspaceModule(
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
             const intent = ctx.intent as CloseProjectIntent;
-            const key = new Path(intent.payload.projectPath).toString();
+            const key = projectKey(intent.payload.projectPath);
             const list = workspaces.get(key) ?? [];
-            // IPC-shaped contract: paths cross the hook boundary as strings.
+            // The contract carries paths as plain branded data, not `Path` instances.
             return {
               result: {
-                workspaces: list.map((workspace) => ({ path: workspace.path.toString() })),
+                workspaces: list.map((workspace) => ({
+                  path: workspaceKey(workspace.path.toString()),
+                })),
               },
             };
           },
@@ -266,7 +288,7 @@ export function createGitWorktreeWorkspaceModule(
             const projectPathObj = new Path(projectPath);
 
             gitWorktreeProvider.unregisterProject(projectPathObj);
-            const key = projectPathObj.toString();
+            const key = projectKey(projectPathObj.toString());
             workspaces.delete(key);
             projectDefaults.delete(key);
 
@@ -297,7 +319,7 @@ export function createGitWorktreeWorkspaceModule(
               const branch = existing.branch ?? existing.name;
               const metadata = existing.metadata;
 
-              const key = new Path(projectPath).toString();
+              const key = projectKey(projectPath);
               const projectWorkspaces = workspaces.get(key) ?? [];
 
               // Avoid duplicates
@@ -352,7 +374,7 @@ export function createGitWorktreeWorkspaceModule(
             }
 
             // Update state
-            const key = projectPathObj.toString();
+            const key = projectKey(projectPathObj.toString());
             const projectWorkspaces = workspaces.get(key) ?? [];
 
             const normalizedPath = internalWorkspace.path.toString();
@@ -367,7 +389,7 @@ export function createGitWorktreeWorkspaceModule(
 
             return {
               result: {
-                workspacePath: internalWorkspace.path.toString(),
+                workspacePath: workspaceKey(internalWorkspace.path.toString()),
                 branch: internalWorkspace.branch ?? internalWorkspace.name,
                 metadata: internalWorkspace.metadata,
                 resolvedBase: base,
@@ -389,7 +411,7 @@ export function createGitWorktreeWorkspaceModule(
             const bases = await gitWorktreeProvider.listBases(projectPathObj);
             const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj, bases);
             if (defaultBaseBranch !== undefined) {
-              projectDefaults.set(projectPathObj.toString(), defaultBaseBranch);
+              projectDefaults.set(projectKey(projectPathObj.toString()), defaultBaseBranch);
             }
 
             return {
@@ -467,9 +489,9 @@ export function createGitWorktreeWorkspaceModule(
         "find-candidates": {
           handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
             const candidates: Array<{
-              projectPath: string;
+              projectPath: ProjectPath;
               projectName: string;
-              workspacePath: string;
+              workspacePath: WorkspacePath;
               workspaceName: string;
               hibernated?: boolean;
             }> = [];
@@ -480,7 +502,7 @@ export function createGitWorktreeWorkspaceModule(
                 candidates.push({
                   projectPath: key,
                   projectName,
-                  workspacePath: ws.path.toString(),
+                  workspacePath: workspaceKey(ws.path.toString()),
                   workspaceName: ws.name,
                   ...(hibernated && { hibernated: true }),
                 });
@@ -514,7 +536,7 @@ export function createGitWorktreeWorkspaceModule(
               const defaultBaseBranch = projectDefaults.get(key);
               entries.push({
                 projectPath: key,
-                workspaces: wsList,
+                workspaces: toDiscoveredWorkspaces(wsList),
                 ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
               });
             }

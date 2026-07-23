@@ -34,6 +34,8 @@ import { isValidMetadataKey } from "../shared/api/types";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { HookContext, HookOutput } from "./lib/operation";
+import type { WorkspacePath } from "./contract";
+import { projPath, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
@@ -51,7 +53,7 @@ interface TestSetup {
   metadataStore: Map<string, Record<string, string>>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
-  workspacePath: string;
+  workspacePath: WorkspacePath;
 }
 
 function createTestSetup(): TestSetup {
@@ -73,7 +75,7 @@ function createTestSetup(): TestSetup {
   registerTestInfrastructure(dispatcher, {
     workspaces: {
       [workspacePath.toString()]: {
-        projectPath: PROJECT_ROOT.toString(),
+        projectPath: projPath(PROJECT_ROOT.toString()),
         workspaceName,
       },
     },
@@ -125,7 +127,7 @@ function createTestSetup(): TestSetup {
     metadataStore,
     projectId,
     workspaceName,
-    workspacePath: workspacePath.toString(),
+    workspacePath: wsPath(workspacePath.toString()),
   };
 }
 
@@ -134,7 +136,7 @@ function createTestSetup(): TestSetup {
 // =============================================================================
 
 function setMetadataIntent(
-  workspacePath: string,
+  workspacePath: WorkspacePath,
   key: string,
   value: string | null
 ): SetMetadataIntent {
@@ -236,7 +238,7 @@ describe("SetMetadata Operation", () => {
       const { dispatcher } = setup;
 
       await expect(
-        dispatcher.dispatch(setMetadataIntent("/nonexistent/path", "key", "value"))
+        dispatcher.dispatch(setMetadataIntent(wsPath("/nonexistent/path"), "key", "value"))
       ).rejects.toThrow("Workspace not found: /nonexistent/path");
     });
 

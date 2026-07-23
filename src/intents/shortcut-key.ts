@@ -36,7 +36,11 @@ export const shortcutKeyPressedPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SHORTCUT_KEY,
   payload: shortcutKeyPayloadSchema,
   events: {
@@ -65,7 +69,7 @@ export class ShortcutKeyOperation implements Operation<typeof schemas> {
   readonly id = SHORTCUT_KEY_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<ShortcutKeyIntent>): Promise<void> {
+  async execute(ctx: OperationContext<ShortcutKeyIntent, typeof schemas>): Promise<void> {
     const event: ShortcutKeyPressedEvent = {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: ctx.intent.payload.key },

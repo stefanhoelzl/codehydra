@@ -6,9 +6,18 @@
  * optionally throws the first error, and returns the first result.
  *
  * Since operations are parameterized by their schema bundle (`Operation<S>`), a minimal
- * operation carries a permissive schema (payload `z.unknown()`, result `z.custom<TResult>()`)
- * so the dispatcher's validation is a no-op for it while the dispatched result stays typed.
- * `intentType` becomes the operation's `schemas.type` — the dispatcher registration key.
+ * operation carries a permissive schema (`z.unknown()` for payload and result) so the
+ * dispatcher's validation is a no-op for it. `intentType` becomes the operation's
+ * `schemas.type` — the dispatcher registration key.
+ *
+ * The result schema is `z.unknown()` rather than `z.custom<TResult>()`. Both accept anything,
+ * but only one of them says so: `z.custom<T>()` runs no validator at all, so it reads like a
+ * typed schema while behaving as an assertion — the pattern the intent contract now bans. It
+ * was never buying the typing it appeared to, either. A dispatched result is typed by the
+ * *intent's* phantom carrier, not by the registered operation's schema (the dispatcher erases
+ * it at `registerOperation`), and `execute` already narrows to `TResult` on its way out. So
+ * `TResult` stays as a parameter for `defaultResult` and the return type, and the schema
+ * honestly declares that this test double validates nothing.
  */
 
 import { z } from "zod/v4";
@@ -17,7 +26,8 @@ import type { Operation, OperationContext, HookContext, OperationSchemas } from 
 import { DELETE_WORKSPACE_OPERATION_ID, INTENT_DELETE_WORKSPACE } from "../delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { ProjectId, ProjectPath, WorkspaceName } from "../contract";
+import { projectPathSchema } from "../contract";
 
 /** Options for `createMinimalOperation`. */
 export interface MinimalOperationOptions<TResult = void> {
@@ -30,17 +40,17 @@ export interface MinimalOperationOptions<TResult = void> {
 }
 
 /** The permissive schema shape a minimal test operation carries. */
-type MinimalSchemas<TResult> = {
+type MinimalSchemas = {
   readonly type: string;
   readonly payload: z.ZodUnknown;
-  readonly result: z.ZodType<TResult>;
+  readonly result: z.ZodUnknown;
 };
 
 /**
  * Create a minimal test operation that collects a single hook point.
  *
  * Behavior:
- * 1. Calls `ctx.hooks.collect<TResult>(hookPoint, hookContext)`
+ * 1. Calls `ctx.hooks.collect(hookPoint, hookContext)`
  * 2. If `throwOnError !== false` and `errors.length > 0`: throws `errors[0]`
  * 3. Returns `results[0] ?? defaultResult`
  *
@@ -60,11 +70,11 @@ export function createMinimalOperation<TResult = void>(
   intentType: string,
   hookPoint: string,
   options?: MinimalOperationOptions<TResult>
-): Operation<MinimalSchemas<TResult>> {
+): Operation<MinimalSchemas> {
   const schemas = {
     type: intentType,
     payload: z.unknown(),
-    result: z.custom<TResult>(),
+    result: z.unknown(),
   } satisfies OperationSchemas;
   const throwOnError = options?.throwOnError !== false;
   const buildHookContext = options?.hookContext;
@@ -76,7 +86,7 @@ export function createMinimalOperation<TResult = void>(
       const hookCtx = buildHookContext
         ? buildHookContext(ctx)
         : { intent: ctx.intent, capabilities: {} };
-      const { results, errors } = await ctx.hooks.collect<TResult>(hookPoint, hookCtx);
+      const { results, errors } = await ctx.hooks.collect(hookPoint, hookCtx);
       if (throwOnError && errors.length > 0) throw errors[0]!;
       return (results[0] ?? options?.defaultResult) as TResult;
     },
@@ -88,13 +98,15 @@ export function createMinimalOperation<TResult = void>(
 export interface DeleteEventOperationFields {
   readonly projectId?: ProjectId;
   readonly workspaceName?: WorkspaceName;
-  readonly projectPath?: string;
+  readonly projectPath?: ProjectPath;
 }
 
+// This one's result is trivially expressible, so it is a real schema rather than a
+// permissive one — there was never a reason for it to opt out of validation.
 const deleteEventSchemas = {
   type: INTENT_DELETE_WORKSPACE,
   payload: z.unknown(),
-  result: z.custom<{ started: true }>(),
+  result: z.object({ started: z.literal(true) }).readonly(),
 } satisfies OperationSchemas;
 
 /**
@@ -117,7 +129,7 @@ export function createDeleteEventOperation(
           workspaceName: fields.workspaceName ?? ("ws" as WorkspaceName),
           workspacePath: intent.payload.workspacePath,
           worktreeRemoved: intent.payload.removeWorktree,
-          projectPath: fields.projectPath ?? "/projects/test",
+          projectPath: fields.projectPath ?? projectPathSchema.parse("/projects/test"),
         },
       };
       ctx.emit(event);

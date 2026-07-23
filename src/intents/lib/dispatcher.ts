@@ -277,19 +277,19 @@ export class Dispatcher implements IDispatcher {
   // Hook collection (capability-based topological sort)
   // ===========================================================================
 
-  private async collectHookResults<T>(
+  private async collectHookResults(
     hookHandlers: HookHandler[],
     inputCtx: HookContext,
     initialCaps: Readonly<Record<string, unknown>>,
     onYield?: (frame: unknown) => void | Promise<void>,
     hookSchemas?: HookPointSchemas
-  ): Promise<CollectResult<T>> {
+  ): Promise<CollectResult> {
     const capabilities: Record<string, unknown> = {
       ...initialCaps,
       ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
     };
     let pending = [...hookHandlers];
-    const results: T[] = [];
+    const results: unknown[] = [];
     const errors: Error[] = [];
     const ran: string[] = [];
 
@@ -326,7 +326,7 @@ export class Dispatcher implements IDispatcher {
               const validated = hookSchemas?.result
                 ? hookSchemas.result.parse(output.result)
                 : output.result;
-              results.push(validated as T);
+              results.push(validated);
             }
             // Merge provided capabilities from returned data (no host-side closure).
             // Skip undefined-valued keys: requires/ANY_VALUE test key *presence*, so a
@@ -381,18 +381,21 @@ export class Dispatcher implements IDispatcher {
     const opHooks = this.operationSchemas.get(operationId)?.hooks;
     const initCaps = this.initialCapabilities;
     const logger = this.logger;
+    // Erased: the dispatcher stores handlers without their operation's schema bundle, so it
+    // collects as `unknown` and the typed `ResolvedHooks<S>` view is applied at the operation
+    // boundary (where the bundle is known). The runtime behaviour is identical either way.
     return {
-      collect: async <T>(
+      collect: async (
         hookPointId: string,
         ctx: HookContext,
         options?: CollectOptions
-      ): Promise<HookResult<T>> => {
+      ): Promise<HookResult> => {
         const hookHandlers = opMap?.get(hookPointId);
         if (!hookHandlers) {
           return { results: [], errors: [], capabilities: initCaps };
         }
         const start = performance.now();
-        const { ran, skipped, ...hookResult } = await this.collectHookResults<T>(
+        const { ran, skipped, ...hookResult } = await this.collectHookResults(
           hookHandlers,
           ctx,
           initCaps,

@@ -58,6 +58,7 @@ import { parseSources, validateSourcesConfig, type ParsedSource } from "./source
 import { renderDefinition } from "./template-render";
 import { runCmd } from "./cmd-runner";
 import { buildSeededSources, DEFAULT_GITHUB_QUERY } from "./migration";
+import { projectPathSchema } from "../../intents/contract";
 
 // =============================================================================
 // State
@@ -339,33 +340,35 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       }
 
       let projectPayload: OpenProjectIntent["payload"] | null = null;
-      if (definition.project) projectPayload = { path: new Path(definition.project) };
+      if (definition.project)
+        // A user-authored template value: normalize, then mint the brand by parsing.
+        projectPayload = { path: projectPathSchema.parse(new Path(definition.project).toString()) };
       else if (definition.git) projectPayload = { git: definition.git };
       if (!projectPayload) {
         deps.logger.warn("Skipping auto-workspace (no project/git in template)", { key });
         return null;
       }
 
-      const project = await deps.dispatcher.dispatch({
+      const project = await deps.dispatcher.dispatch<OpenProjectIntent>({
         type: INTENT_OPEN_PROJECT,
         payload: projectPayload,
-      } as OpenProjectIntent);
+      });
       if (!project) {
         deps.logger.warn("project:open returned null for auto-workspace", { key });
         return null;
       }
 
-      await deps.dispatcher.dispatch({
+      await deps.dispatcher.dispatch<GetProjectBasesIntent>({
         type: INTENT_GET_PROJECT_BASES,
         payload: { projectPath: project.path, refresh: true, wait: true },
-      } as GetProjectBasesIntent);
+      });
 
       const agent: AgentSpec = definition.agent ?? {
         type: "default",
         ...(definition.prompt !== "" && { prompt: definition.prompt }),
       };
 
-      const wsResult = await deps.dispatcher.dispatch({
+      const wsResult = await deps.dispatcher.dispatch<OpenWorkspaceIntent>({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           workspaceName: definition.name,
@@ -376,7 +379,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           agent,
           source: "auto-workspace",
         },
-      } as OpenWorkspaceIntent);
+      });
 
       const allMetadata: Record<string, string> = {
         [METADATA_SOURCE_KEY]: source.name,
@@ -384,10 +387,10 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       };
       for (const [metaKey, value] of Object.entries(allMetadata)) {
         try {
-          await deps.dispatcher.dispatch({
+          await deps.dispatcher.dispatch<SetMetadataIntent>({
             type: INTENT_SET_METADATA,
             payload: { workspacePath: wsResult.path, key: metaKey, value },
-          } as SetMetadataIntent);
+          });
         } catch (error) {
           deps.logger.warn("Failed to set workspace metadata", {
             key: metaKey,

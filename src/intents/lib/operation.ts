@@ -123,18 +123,78 @@ export interface CollectOptions {
 }
 
 /**
+ * The hook-point ids an operation's schema bundle declares.
+ *
+ * Falls back to `string` for the open `OperationSchemas` (whose `hooks` is optional), which is
+ * what the dispatcher holds internally after erasing an operation's concrete bundle.
+ */
+export type HookPointOf<S extends OperationSchemas> = S extends {
+  readonly hooks: infer H;
+}
+  ? keyof H & string
+  : string;
+
+/**
+ * The input-context type for hook point `K`, derived from its declared `input` schema.
+ *
+ * The schema's own `intent` and `capabilities` members are dropped and taken from
+ * {@link HookContext} instead. Those two exist in the schema for its runtime job — re-affirming
+ * the payload and shape-checking the capability bag — and describing them structurally would
+ * force every operation to restate the dispatcher's own bookkeeping. What is worth checking at
+ * compile time is the **enrichment**: the fields the operation itself puts on the context.
+ *
+ * Falls back to the base {@link HookContext} for a hook point that declares no input schema.
+ * Every hook point in this codebase declares one — see `hookCtxSchema` — so the fallback
+ * exists only to keep the type total.
+ */
+export type InputOf<S extends OperationSchemas, K extends HookPointOf<S>> = S extends {
+  readonly hooks: infer H;
+}
+  ? K extends keyof H
+    ? H[K] extends { readonly input: infer I extends z.ZodType }
+      ? Omit<z.infer<I>, "intent" | "capabilities"> & HookContext
+      : HookContext
+    : HookContext
+  : HookContext;
+
+/**
+ * The per-handler result type for hook point `K`, derived from its declared `result` schema.
+ *
+ * `void` when the hook point declares no `result` (a side-effect-only hook point), but
+ * `unknown` when the bundle declares no `hooks` at all — the erased view the dispatcher holds
+ * internally, and the permissive bundle a minimal test operation carries.
+ */
+export type HookResultOf<S extends OperationSchemas, K extends HookPointOf<S>> = S extends {
+  readonly hooks: infer H;
+}
+  ? K extends keyof H
+    ? H[K] extends { readonly result: infer R extends z.ZodType }
+      ? z.infer<R>
+      : void
+    : void
+  : unknown;
+
+/**
  * Resolved hooks for a specific operation.
  *
  * `collect()` provides isolated-context execution: each handler receives a frozen
  * clone of the input context. All handlers always run. Returns typed results + errors.
  * Streaming handlers' yielded frames are delivered to `options.onYield` as they occur.
+ *
+ * Typed off the operation's own schema bundle: the hook-point id must be one the operation
+ * declares, the context is checked against that hook point's `input` schema, and the result
+ * type comes from its `result` schema. Previously all three were free — `hookPointId` was a
+ * bare `string` (so a typo silently collected nothing), `ctx` was widened to the base
+ * `HookContext` (so any enrichment was accepted anywhere), and `T` was supplied by the caller
+ * and applied with an `as T` inside the dispatcher. The schemas were already the source of
+ * truth; this makes the compiler read them.
  */
-export interface ResolvedHooks {
-  collect<T = unknown>(
-    hookPointId: string,
-    ctx: HookContext,
+export interface ResolvedHooks<S extends OperationSchemas = OperationSchemas> {
+  collect<K extends HookPointOf<S>>(
+    hookPointId: K,
+    ctx: InputOf<S, K>,
     options?: CollectOptions
-  ): Promise<HookResult<T>>;
+  ): Promise<HookResult<HookResultOf<S, K>>>;
 }
 
 // =============================================================================
@@ -143,14 +203,41 @@ export interface ResolvedHooks {
 
 /**
  * Context injected into operations by the dispatcher.
+ *
+ * Parameterized by the operation's schema bundle so `hooks` and `emit` are typed against the
+ * hook points and events that operation actually declares. `S` defaults to the open
+ * `OperationSchemas`, which keeps the erased `OperationContext` the dispatcher passes around
+ * internally assignable.
  */
-export interface OperationContext<I extends Intent = Intent> {
+export interface OperationContext<
+  I extends Intent = Intent,
+  S extends OperationSchemas = OperationSchemas,
+> {
   readonly intent: I;
   readonly dispatch: DispatchFn;
-  readonly emit: (event: DomainEvent) => Promise<void>;
-  readonly hooks: ResolvedHooks;
+  readonly emit: (event: EventOf<S>) => Promise<void>;
+  readonly hooks: ResolvedHooks<S>;
   readonly causation: readonly string[];
 }
+
+/**
+ * The domain events an operation may emit: its declared event types, each paired with the
+ * payload its schema describes.
+ *
+ * An operation emits only events it declares — the dispatcher rejects a duplicate event-schema
+ * registration, so a type is owned by exactly one operation. Falls back to the open
+ * `DomainEvent` when a bundle declares no events.
+ */
+export type EventOf<S extends OperationSchemas> = S extends {
+  readonly events: infer E;
+}
+  ? {
+      [K in keyof E]: {
+        readonly type: K;
+        readonly payload: E[K] extends z.ZodType ? z.infer<E[K]> : never;
+      };
+    }[keyof E]
+  : DomainEvent;
 
 /**
  * An operation that handles a specific intent type.
@@ -166,7 +253,7 @@ export interface Operation<S extends OperationSchemas = OperationSchemas> {
    * are **derived** from this bundle via {@link IntentOf} / {@link ResultOf}.
    */
   readonly schemas: S;
-  execute(ctx: OperationContext<IntentOf<S>>): Promise<ResultOf<S>>;
+  execute(ctx: OperationContext<IntentOf<S>, S>): Promise<ResultOf<S>>;
 }
 
 /** Per-hook-point schemas: whole input context, each handler's partial result, provided data. */

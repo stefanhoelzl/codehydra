@@ -42,7 +42,11 @@ export const shortcutActiveChangedPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SET_SHORTCUT_ACTIVE,
   payload: setShortcutActivePayloadSchema,
   events: {
@@ -71,7 +75,7 @@ export class SetShortcutActiveOperation implements Operation<typeof schemas> {
   readonly id = SET_SHORTCUT_ACTIVE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<SetShortcutActiveIntent>): Promise<void> {
+  async execute(ctx: OperationContext<SetShortcutActiveIntent, typeof schemas>): Promise<void> {
     const event: ShortcutActiveChangedEvent = {
       type: EVENT_SHORTCUT_ACTIVE_CHANGED,
       payload: { active: ctx.intent.payload.active },

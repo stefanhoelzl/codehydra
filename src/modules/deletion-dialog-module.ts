@@ -48,6 +48,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
+import type { WorkspacePath } from "../intents/contract";
 
 /**
  * Dependencies for the deletion dialog module.
@@ -240,7 +241,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   let activeWorkspacePath: string | null = null;
 
   /** Wire retry/dismiss event handlers on a dialog handle. */
-  function wireEvents(handle: DialogHandle, workspacePath: string): void {
+  function wireEvents(handle: DialogHandle, workspacePath: WorkspacePath): void {
     function dismiss(): void {
       deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
       handle.close();
@@ -280,7 +281,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   }
 
   /** Open the deletion dialog for a workspace from its current progress. */
-  function showDialog(path: string, progress: DeletionProgress): void {
+  function showDialog(path: WorkspacePath, progress: DeletionProgress): void {
     const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel" });
     activeDialog = { path, handle };
     wireEvents(handle, path);
@@ -372,14 +373,14 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     void (async (): Promise<void> => {
       try {
         const [status, metadata] = await Promise.all([
-          deps.dispatcher.dispatch({
+          deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
             type: INTENT_GET_WORKSPACE_STATUS,
             payload: { workspacePath: input.workspacePath, refresh: true },
-          } as GetWorkspaceStatusIntent),
-          deps.dispatcher.dispatch({
+          }),
+          deps.dispatcher.dispatch<GetMetadataIntent>({
             type: INTENT_GET_METADATA,
             payload: { workspacePath: input.workspacePath },
-          } as GetMetadataIntent),
+          }),
         ]);
         state = {
           ...state,

@@ -25,14 +25,16 @@ import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "../resolv
 import type { ResolveHookResult as ResolveProjectHookResult } from "../resolve-project";
 import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import { workspacePathSchema } from "../contract";
+import { projPath, wsPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test operation
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
+const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "proj-1" as ProjectId;
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_NAME = "feature-x" as WorkspaceName;
 
 const INTENT_TEST = "test:workspace-hook" as const;
@@ -44,22 +46,22 @@ interface TestIntent extends Intent<string> {
   readonly payload: { readonly workspacePath: string };
 }
 
-interface TestHookResult {
-  readonly value?: string;
-}
+const testHookResultSchema = z.object({ value: z.string().optional() }).readonly();
 
 const testSchemas = {
   type: INTENT_TEST,
-  payload: z.object({ workspacePath: z.string() }).readonly(),
+  payload: z.object({ workspacePath: workspacePathSchema }).readonly(),
   result: z.string(),
+  hooks: { work: { result: testHookResultSchema } },
 } satisfies OperationSchemas;
 
-class TestOperation extends WorkspaceHookOperation<typeof testSchemas, TestHookResult> {
+class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
   readonly schemas = testSchemas;
 
   constructor(opts?: { resolveProject?: boolean; emitEvent?: boolean }) {
     super(TEST_OPERATION_ID, {
       hookPoint: "work",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       ...(opts?.resolveProject !== undefined && { resolveProject: opts.resolveProject }),
       errorLabel: "test-workspace-hook work hooks failed",
       extract: (results) =>
@@ -106,7 +108,9 @@ function createSetup(opts: {
           handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const intent = ctx.intent as TestIntent;
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
-              return { result: { projectPath: PROJECT_ROOT, workspaceName: WORKSPACE_NAME } };
+              return {
+                result: { projectPath: projPath(PROJECT_ROOT), workspaceName: WORKSPACE_NAME },
+              };
             }
             return { result: {} };
           },

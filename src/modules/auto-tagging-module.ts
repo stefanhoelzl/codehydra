@@ -80,10 +80,10 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
 
             const { workspacePath } = ctx as SetupHookInput;
             try {
-              await deps.dispatcher.dispatch({
+              await deps.dispatcher.dispatch<SetMetadataIntent>({
                 type: INTENT_SET_METADATA,
                 payload: { workspacePath, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
-              } as SetMetadataIntent);
+              });
             } catch (error) {
               // Cosmetic — never fail a workspace creation over a tag.
               deps.logger.warn("Failed to tag background workspace", {
@@ -128,10 +128,10 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
           if (!tagged.has(payload.path)) return;
 
           try {
-            await deps.dispatcher.dispatch({
+            await deps.dispatcher.dispatch<SetMetadataIntent>({
               type: INTENT_SET_METADATA,
               payload: { workspacePath: payload.path, key: NEW_TAG_KEY, value: null },
-            } as SetMetadataIntent);
+            });
           } catch (error) {
             // Leave it in the set — the next switch retries.
             deps.logger.warn("Failed to clear new tag", {

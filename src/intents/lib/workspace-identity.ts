@@ -6,15 +6,14 @@
  */
 
 import type { DispatchFn } from "./operation";
-import type { DomainEvent } from "./types";
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { ProjectId, WorkspaceName, ProjectPath, WorkspacePath } from "../contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "../resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "../resolve-project";
 import { getErrorMessage } from "../../shared/error-utils";
 
 /** A workspace's full identity, resolved from its path. */
 export interface ResolvedWorkspaceIdentity {
-  readonly projectPath: string;
+  readonly projectPath: ProjectPath;
   readonly workspaceName: WorkspaceName;
   readonly projectId: ProjectId;
   readonly active: boolean;
@@ -29,30 +28,32 @@ export interface ResolvedWorkspaceIdentity {
  */
 export async function resolveWorkspaceIdentity(
   dispatch: DispatchFn,
-  workspacePath: string
+  workspacePath: WorkspacePath
 ): Promise<ResolvedWorkspaceIdentity> {
-  const { projectPath, workspaceName, active, branch } = await dispatch({
+  const { projectPath, workspaceName, active, branch } = await dispatch<ResolveWorkspaceIntent>({
     type: INTENT_RESOLVE_WORKSPACE,
     payload: { workspacePath },
-  } as ResolveWorkspaceIntent);
+  });
 
-  const { projectId } = await dispatch({
+  const { projectId } = await dispatch<ResolveProjectIntent>({
     type: INTENT_RESOLVE_PROJECT,
     payload: { projectPath },
-  } as ResolveProjectIntent);
+  });
 
   return { projectPath, workspaceName, projectId, active, branch };
 }
 
 /**
- * Emit a `{workspacePath, error}` failure domain event. Used by the
- * hibernate/wake `catch` blocks before rethrowing.
+ * Build the `{workspacePath, error}` payload the hibernate/wake failure events carry.
+ *
+ * Returns the payload rather than emitting it: `ctx.emit` is now typed to the events its own
+ * operation declares, so a shared helper cannot emit on the operation's behalf without either
+ * a cast or a type parameter that defeats the check. The caller emits, and the event type it
+ * names is validated against its own bundle.
  */
-export function emitWorkspaceFailure(
-  emit: (event: DomainEvent) => void,
-  type: string,
-  workspacePath: string,
+export function workspaceFailurePayload(
+  workspacePath: WorkspacePath,
   error: unknown
-): void {
-  emit({ type, payload: { workspacePath, error: getErrorMessage(error) } });
+): { readonly workspacePath: WorkspacePath; readonly error: string } {
+  return { workspacePath, error: getErrorMessage(error) };
 }

@@ -26,9 +26,10 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, hookCtxSchema } from "./contract";
+import { hookCtxSchema, projectIdSchema, projectPathSchema, workspacePathSchema } from "./contract";
+import type { ProjectPath } from "./contract";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
-import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
+import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
@@ -51,7 +52,7 @@ export const EVENT_PROJECT_CLOSE_FAILED = "project:close-failed" as const;
 
 export const closeProjectPayloadSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     removeLocalRepo: z.boolean().optional(),
     /**
      * The dispatch is user-interactive: the "confirm" hook point runs after
@@ -76,13 +77,13 @@ export const projectClosedPayloadSchema = z
      * project:close-failed. Without it, getKey(payload) is undefined and a
      * successfully-closed-then-reopened project can never be closed again.
      */
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
   })
   .readonly();
 
 export const projectCloseFailedPayloadSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
   })
   .readonly();
 
@@ -95,7 +96,7 @@ export const closeResolveHookResultSchema = z
   .object({
     remoteUrl: z.string().optional(),
     workspaces: z
-      .array(z.object({ path: z.string() }))
+      .array(z.object({ path: workspacePathSchema }))
       .readonly()
       .optional(),
   })
@@ -131,9 +132,9 @@ export const closeHookResultSchema = z
 
 /** Operation-added enrichment for the "confirm" hook point (interactive dispatches only). */
 const closeConfirmEnrichmentSchema = z.object({
-  projectPath: z.string(),
+  projectPath: projectPathSchema,
   remoteUrl: z.string().optional(),
-  workspaces: z.array(z.object({ path: z.string() })).readonly(),
+  workspaces: z.array(z.object({ path: workspacePathSchema })).readonly(),
 });
 
 /** Runtime whole-context validation schema for "confirm". */
@@ -144,7 +145,7 @@ export const closeConfirmHookInputSchema = hookCtxSchema(
 
 /** Operation-added enrichment for the "close" hook point. */
 const closeEnrichmentSchema = z.object({
-  projectPath: z.string(),
+  projectPath: projectPathSchema,
   remoteUrl: z.string().optional(),
   removeLocalRepo: z.boolean(),
 });
@@ -155,11 +156,18 @@ export const closeHookInputSchema = hookCtxSchema(
   closeEnrichmentSchema.shape
 );
 
-const schemas = {
+/** The resolve hook point receives the bare intent. */
+const bareCloseHookInputSchema = hookCtxSchema(closeProjectPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_CLOSE_PROJECT,
   payload: closeProjectPayloadSchema,
   hooks: {
-    resolve: { result: closeResolveHookResultSchema },
+    resolve: { input: bareCloseHookInputSchema, result: closeResolveHookResultSchema },
     confirm: { input: closeConfirmHookInputSchema, result: closeConfirmHookResultSchema },
     close: { input: closeHookInputSchema, result: closeHookResultSchema },
   },
@@ -213,7 +221,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
   readonly id = CLOSE_PROJECT_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<CloseProjectIntent>): Promise<void> {
+  async execute(ctx: OperationContext<CloseProjectIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
     const projectPath = payload.projectPath;
 
@@ -226,7 +234,10 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     }
   }
 
-  private emitCloseFailed(ctx: OperationContext<CloseProjectIntent>, projectPath: string): void {
+  private emitCloseFailed(
+    ctx: OperationContext<CloseProjectIntent, typeof schemas>,
+    projectPath: ProjectPath
+  ): void {
     const event: ProjectCloseFailedEvent = {
       type: EVENT_PROJECT_CLOSE_FAILED,
       payload: { projectPath },
@@ -234,23 +245,25 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     ctx.emit(event);
   }
 
-  private async run(ctx: OperationContext<CloseProjectIntent>): Promise<void> {
+  private async run(ctx: OperationContext<CloseProjectIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
     const projectPath = payload.projectPath;
 
     // 1. Dispatch project:resolve to get projectId from projectPath
-    const projResolved = await ctx.dispatch({
+    const projResolved = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
       payload: { projectPath },
-    } as ResolveProjectIntent);
+    });
     const projectId = projResolved.projectId;
 
     // 2. Run "resolve" hook -- returns remoteUrl, workspaces
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<CloseResolveHookResult>("resolve", hookCtx);
+    const { results: resolveResults, errors: resolveErrors } = await ctx.hooks.collect(
+      "resolve",
+      hookCtx
+    );
     throwHookErrors(resolveErrors, "close-project resolve hooks failed");
 
     // Merge resolve results — last-write-wins
@@ -269,8 +282,10 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
         ...(remoteUrl !== undefined && { remoteUrl }),
         workspaces,
       };
-      const { results: confirmResults, errors: confirmErrors } =
-        await ctx.hooks.collect<CloseConfirmHookResult>("confirm", confirmCtx);
+      const { results: confirmResults, errors: confirmErrors } = await ctx.hooks.collect(
+        "confirm",
+        confirmCtx
+      );
       throwHookErrors(confirmErrors, "close-project confirm hooks failed");
       if (confirmResults.some((r) => r.canceled)) {
         this.emitCloseFailed(ctx, projectPath);
@@ -318,7 +333,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
       removeLocalRepo,
       ...(remoteUrl !== undefined && { remoteUrl }),
     };
-    const { results: closeResults, errors: closeErrors } = await ctx.hooks.collect<CloseHookResult>(
+    const { results: closeResults, errors: closeErrors } = await ctx.hooks.collect(
       "close",
       closeHookInput
     );
@@ -327,13 +342,21 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     // Merge close results — last-write-wins for otherProjectsExist
     const otherProjectsExist = lastDefined(closeResults, (r) => r.otherProjectsExist);
 
-    // 5. Emit workspace:switched(null) if no other projects remain
+    // 5. Deselect if no other projects remain.
+    //
+    // Dispatches workspace:switch(null) rather than emitting workspace:switched(null)
+    // directly. `workspace:switched` is switch-workspace's event — an operation emits only
+    // events it declares, and the dispatcher rejects a duplicate event-schema registration,
+    // so this operation cannot own it. The switch operation's null path is the proper route
+    // and is documented as idempotent: it runs the `activate` hooks with a null target (so
+    // main-side active-workspace bookkeeping clears) and then announces. The extra handler
+    // that runs is view-module's `activate`, which clears the same state the
+    // `workspace:switched` event handler already clears — so the end state is unchanged.
     if (otherProjectsExist === false) {
-      const nullEvent: WorkspaceSwitchedEvent = {
-        type: EVENT_WORKSPACE_SWITCHED,
-        payload: null,
-      };
-      ctx.emit(nullEvent);
+      await ctx.dispatch<SwitchWorkspaceIntent>({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: null },
+      });
     }
 
     // 6. Emit project:closed event

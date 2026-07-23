@@ -182,7 +182,7 @@ export type {
   AgentStatus,
   AgentStatusCounts,
   BaseInfo,
-  ConfigAgentType,
+  AgentType as ConfigAgentType,
   SetupRowId,
   SetupRowStatus,
   BlockingProcess,

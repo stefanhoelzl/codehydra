@@ -70,7 +70,11 @@ export const launchOptionsHookInputSchema = hookCtxSchema(
   launchOptionsEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_LAUNCH_OPTIONS,
   payload: getLaunchOptionsPayloadSchema,
   result: launchOptionsResultSchema,
@@ -102,12 +106,14 @@ export class AgentLaunchOptionsOperation implements Operation<typeof schemas> {
   readonly id = GET_LAUNCH_OPTIONS_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<GetLaunchOptionsIntent>): Promise<LaunchOptionsResult> {
+  async execute(
+    ctx: OperationContext<GetLaunchOptionsIntent, typeof schemas>
+  ): Promise<LaunchOptionsResult> {
     const hookCtx: LaunchOptionsHookInput = {
       intent: ctx.intent,
       backend: ctx.intent.payload.backend,
     };
-    const { results } = await ctx.hooks.collect<LaunchOptionsHookResult>("launch-options", hookCtx);
+    const { results } = await ctx.hooks.collect("launch-options", hookCtx);
 
     const permissionModes: string[] = [];
     for (const result of results) {

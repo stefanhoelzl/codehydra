@@ -36,8 +36,11 @@ import type {
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
 import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+
 import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
+import { wsPath } from "../shared/test-fixtures";
+import { projPath } from "../shared/test-fixtures";
+import type { WorkspaceName } from "../intents/contract";
 
 // =============================================================================
 // Minimal Test Operations
@@ -53,8 +56,10 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = startSchemas;
 
-  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | null> {
-    const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
+  ): Promise<number | null> {
+    const { errors, capabilities } = await ctx.hooks.collect("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -78,8 +83,10 @@ function createMinimalFinalizeOperation(
   return {
     id: OPEN_WORKSPACE_OPERATION_ID,
     schemas: finalizeSchemas,
-    async execute(ctx: OperationContext<IntentOf<typeof finalizeSchemas>>): Promise<void> {
-      const { errors } = await ctx.hooks.collect<void>("finalize", {
+    async execute(
+      ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
+    ): Promise<void> {
+      const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
         workspacePath: "/test/project/.worktrees/feature-1",
         envVars: { OPENCODE_PORT: "8080" },
@@ -100,9 +107,9 @@ function createMinimalDeleteOperation() {
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
-        projectPath: "/projects/test",
-        workspacePath: (ctx.intent.payload as DeleteWorkspaceIntent["payload"]).workspacePath ?? "",
-        workspaceName: "test-workspace" as WorkspaceName,
+        projectPath: projPath("/test/project"),
+        workspaceName: "feature-1" as WorkspaceName,
+        workspacePath: (ctx.intent.payload as DeleteWorkspaceIntent["payload"]).workspacePath,
         active: false,
       }),
       defaultResult: {},
@@ -214,21 +221,21 @@ describe("PluginServerModule", () => {
 
       dispatcher.registerOperation(
         createMinimalFinalizeOperation({
-          workspacePath: "/test/project/.worktrees/feature-1",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
         })
       );
 
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<OpenWorkspaceIntent>({
           type: "workspace:open",
           payload: {
-            projectPath: "/test/project",
             workspaceName: "feature-1",
+            projectPath: projPath("/test/project"),
             base: "main",
           },
-        } as OpenWorkspaceIntent)
+        })
       ).resolves.not.toThrow();
     });
 
@@ -239,7 +246,7 @@ describe("PluginServerModule", () => {
       // Do NOT start the server
       dispatcher.registerOperation(
         createMinimalFinalizeOperation({
-          workspacePath: "/test/project/.worktrees/feature-1",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
         })
@@ -247,14 +254,14 @@ describe("PluginServerModule", () => {
 
       // Should resolve without error (no-op when io is null)
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<OpenWorkspaceIntent>({
           type: "workspace:open",
           payload: {
-            projectPath: "/test/project",
             workspaceName: "feature-1",
+            projectPath: projPath("/test/project"),
             base: "main",
           },
-        } as OpenWorkspaceIntent)
+        })
       ).resolves.not.toThrow();
     });
 
@@ -264,21 +271,21 @@ describe("PluginServerModule", () => {
 
       dispatcher.registerOperation(
         createMinimalFinalizeOperation({
-          workspacePath: "/test/project/.worktrees/feature-1",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { OPENCODE_PORT: "8080" },
           agentType: "opencode",
         })
       );
 
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<OpenWorkspaceIntent>({
           type: "workspace:open",
           payload: {
-            projectPath: "/test/project",
             workspaceName: "feature-1",
+            projectPath: projPath("/test/project"),
             base: "main",
           },
-        } as OpenWorkspaceIntent)
+        })
       ).resolves.not.toThrow();
     });
   });
@@ -298,18 +305,15 @@ describe("PluginServerModule", () => {
 
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: "/test/project/.worktrees/feature-1",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as DeleteHookResult;
+      })) as DeleteHookResult;
 
       expect(result).toEqual({});
     });
@@ -319,18 +323,15 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: "/test/project/.worktrees/feature-1",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as DeleteHookResult;
+      })) as DeleteHookResult;
 
       expect(result).toEqual({});
     });
@@ -341,18 +342,15 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: "/test/project/.worktrees/feature-1",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           keepBranch: false,
           force: true,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as DeleteHookResult;
+      })) as DeleteHookResult;
 
       expect(result).toEqual({});
     });

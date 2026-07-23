@@ -21,7 +21,7 @@ import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined } from "./lib/hook-helpers";
-import { hookCtxSchema } from "./contract";
+import { hookCtxSchema, workspacePathSchema } from "./contract";
 
 export const INTENT_VSCODE_SHOW_MESSAGE = "vscode:show-message" as const;
 export const VSCODE_SHOW_MESSAGE_OPERATION_ID = "vscode-show-message";
@@ -34,7 +34,7 @@ export const vscodeShowMessageTypeSchema = z.enum(["info", "warning", "error", "
 
 export const vscodeShowMessagePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     type: vscodeShowMessageTypeSchema,
     /** Display text. null = dismiss (only valid for status). */
     message: z.string().nullable(),
@@ -57,7 +57,7 @@ export const showHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "show" hook point (beyond the base HookContext). */
-const showEnrichmentSchema = z.object({ workspacePath: z.string() });
+const showEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "show". */
 export const showHookInputSchema = hookCtxSchema(
@@ -65,7 +65,11 @@ export const showHookInputSchema = hookCtxSchema(
   showEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_VSCODE_SHOW_MESSAGE,
   payload: vscodeShowMessagePayloadSchema,
   result: vscodeShowMessageResultSchema,
@@ -90,15 +94,13 @@ export type ShowHookInput = HookContext & z.infer<typeof showEnrichmentSchema>;
 // Operation
 // =============================================================================
 
-export class VscodeShowMessageOperation extends WorkspaceHookOperation<
-  typeof schemas,
-  ShowHookResult
-> {
+export class VscodeShowMessageOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(VSCODE_SHOW_MESSAGE_OPERATION_ID, {
       hookPoint: "show",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       errorLabel: "vscode-show-message show hooks failed",
       extract: (results) => lastDefined(results, (r) => r.result) ?? null,
     });
