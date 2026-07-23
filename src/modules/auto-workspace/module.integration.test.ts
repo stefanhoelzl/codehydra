@@ -375,13 +375,14 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  describe("migration", () => {
-    it("seeds sources from deprecated experimental.* keys and resets them", async () => {
+  describe("retired experimental.* keys", () => {
+    it("leaves them untouched and seeds nothing from them", async () => {
       vi.useFakeTimers();
-      const { dispatcher, cmd, mockConfig, openWorkspaceOp, state } = createSetup({
+      const template =
+        "---\nname: pr-{{ number }}\ngit: https://github.com/o/r.git\n---\nReview {{ number }}";
+      const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({
         configDefaults: {
-          "experimental.github.template":
-            "---\nname: pr-{{ number }}\ngit: https://github.com/o/r.git\n---\nReview {{ number }}",
+          "experimental.github.template": template,
           "experimental.github.query": "is:open is:pr",
         },
       });
@@ -389,14 +390,16 @@ describe("AutoWorkspaceModule Integration", () => {
 
       await dispatcher.dispatch(startIntent());
 
-      // sources seeded, deprecated key drained
-      expect(mockConfig.getEffective()["auto-workspace.sources"]).toContain("name: github");
-      expect(mockConfig.getEffective()["experimental.github.template"]).toBeUndefined();
-      // migrated github source keys on html_url (tracking preserved) and creates
-      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("pr-7");
-      expect(entriesOf(state)).toHaveProperty("github/https://github.com/o/r/pull/7");
+      // Still registered (so config.json is not stripped) and still readable,
+      // but nothing drains them: sources stays unset and no workspace is created.
+      const effective = mockConfig.getEffective();
+      expect(effective["experimental.github.template"]).toBe(template);
+      expect(effective["auto-workspace.sources"]).toBeNull();
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
     });
+  });
 
+  describe("legacy state file import", () => {
     it("imports the legacy auto-workspaces.json into state", async () => {
       vi.useFakeTimers();
       const legacy = JSON.stringify({
