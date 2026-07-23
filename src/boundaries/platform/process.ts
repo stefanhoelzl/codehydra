@@ -31,6 +31,20 @@ export interface ProcessOptions {
    * When provided, replaces process.env entirely (no merging).
    */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Run `command` as a shell command line rather than an executable + argv.
+   * Pass the whole line as `command` and `[]` as `args`.
+   *
+   * Use this for any command line that needs shell features (pipes, quoting,
+   * env-var expansion). Do NOT hand-roll `sh -c` / `cmd /c` instead: spawning
+   * `cmd` with `["/c", line]` leaves the line to be escaped as an ordinary
+   * argument, and the resulting `\"` escapes are not something cmd.exe
+   * understands, so any embedded double quote breaks. Node builds the correct
+   * platform invocation here — `/bin/sh -c` on POSIX, and on Windows
+   * `cmd.exe /d /s /c` with verbatim arguments so the line reaches cmd.exe
+   * unmangled.
+   */
+  readonly shell?: boolean;
 }
 
 /**
@@ -465,6 +479,7 @@ export class ExecaProcessRunner implements ProcessRunner {
       cleanup: true,
       encoding: "utf8",
       reject: false, // Don't throw on non-zero exit - check exitCode instead
+      ...(options?.shell && { shell: true }),
       ...(options?.cwd && { cwd: options.cwd }),
       // When custom env is provided, disable extendEnv so that deleted keys
       // from the custom env are actually removed (not inherited from process.env)

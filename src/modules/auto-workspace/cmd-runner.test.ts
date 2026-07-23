@@ -17,12 +17,20 @@ describe("runCmd", () => {
     await expect(runCmd({ processRunner }, "echo")).resolves.toEqual([{ a: 1 }, { a: 2 }]);
   });
 
-  it("invokes the cmd through a shell", async () => {
+  it("hands the raw cmd to the runner with shell:true", async () => {
     const processRunner = createMockProcessRunner({ onSpawn: () => ({ stdout: "[]" }) });
-    await runCmd({ processRunner }, "gh api");
+    const cmd = `curl -H "Authorization: Bearer x" 'https://example.com'`;
+
+    await runCmd({ processRunner }, cmd);
+
+    // Must NOT hand-roll `sh -c` / `cmd /c`: passing the line as an argv entry
+    // leaves it to be escaped as an ordinary argument, and the `\"` that Windows
+    // escaping produces is not something cmd.exe understands. Node builds the
+    // platform invocation from shell:true instead.
     const spawned = processRunner.$.spawned(0);
-    // sh -c "gh api" on posix, cmd /c "gh api" on windows
-    expect(spawned.$.args[spawned.$.args.length - 1]).toBe("gh api");
+    expect(spawned.$.command).toBe(cmd);
+    expect(spawned.$.args).toEqual([]);
+    expect(spawned.$.shell).toBe(true);
   });
 
   it("throws on a non-zero exit code", async () => {
