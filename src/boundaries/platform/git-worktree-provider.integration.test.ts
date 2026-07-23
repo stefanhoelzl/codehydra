@@ -2835,8 +2835,38 @@ describe("GitWorktreeProvider isDirty", () => {
     expect(await provider.isDirty(WORKSPACE_PATH)).toBe(false);
   });
 
-  it("rethrows the git error when the workspace directory still exists", async () => {
-    // getStatus fails for a genuine reason but the directory is present — the
+  it("returns false when the directory lingers but its .git is gone (Windows deletion race)", async () => {
+    // Worktree removal is not atomic: the directory can survive after `.git` is
+    // unlinked (notably on Windows, where a retrying recursive rm removes the
+    // small `.git` marker before locked files clear). git then reports "not a
+    // git repository" while readdir on the directory still succeeds — this must
+    // still be treated as the deletion race, not surfaced as an error.
+    const mockClient = createMockGitClient({
+      repositories: {
+        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
+      },
+    });
+    const mockFs = createFileSystemMock({
+      entries: {
+        [WORKSPACES_DIR.toString()]: directory(),
+        [WORKSPACE_PATH.toString()]: directory(),
+        // `.git` marker absent — leftover working-tree files only.
+        [new Path(WORKSPACE_PATH, "src").toString()]: directory(),
+      },
+    });
+    const provider = await createProvider(
+      PROJECT_ROOT,
+      mockClient,
+      WORKSPACES_DIR,
+      mockFs,
+      SILENT_LOGGER
+    );
+
+    expect(await provider.isDirty(WORKSPACE_PATH)).toBe(false);
+  });
+
+  it("rethrows the git error when the path is still a git worktree", async () => {
+    // getStatus fails for a genuine reason but the `.git` marker is present — the
     // error must surface (the delete-preflight dirty check depends on this).
     const mockClient = createMockGitClient({
       repositories: {
@@ -2847,6 +2877,7 @@ describe("GitWorktreeProvider isDirty", () => {
       entries: {
         [WORKSPACES_DIR.toString()]: directory(),
         [WORKSPACE_PATH.toString()]: directory(),
+        [new Path(WORKSPACE_PATH, ".git").toString()]: file("gitdir: /project/.git/worktrees/x"),
       },
     });
     const provider = await createProvider(

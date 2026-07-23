@@ -700,13 +700,19 @@ export class GitWorktreeProvider {
       const status = await this.gitClient.getStatus(workspacePath);
       return status.isDirty;
     } catch (error) {
-      // A status query can race with workspace deletion: the directory is
-      // removed on disk while the workspace is still in the in-memory list, so
-      // a get-status request resolves and reaches here. A workspace that no
-      // longer exists has no uncommitted changes to report. Only swallow that
-      // specific case — genuine git failures must still surface (e.g. the
-      // delete-preflight dirty check relies on this to avoid discarding work).
-      if (!(await this.directoryExists(workspacePath))) {
+      // A status query can race with workspace deletion: the worktree is torn
+      // down on disk while the workspace is still in the in-memory list, so a
+      // get-status request resolves and reaches here. A workspace that no longer
+      // exists has no uncommitted changes to report. Only swallow that specific
+      // case — genuine git failures must still surface (e.g. the delete-preflight
+      // dirty check relies on this to avoid discarding work).
+      //
+      // The tell is the `.git` marker, not the directory: worktree removal is not
+      // atomic (notably on Windows, where locked files force a retrying recursive
+      // rm), so the directory can linger after `.git` is already unlinked. In that
+      // window git reports "not a git repository" while readdir on the directory
+      // still succeeds, so a directory-exists check would wrongly re-throw.
+      if (!(await this.isGitWorktree(workspacePath))) {
         return false;
       }
       throw error;
@@ -714,20 +720,22 @@ export class GitWorktreeProvider {
   }
 
   /**
-   * Best-effort check for whether a directory still exists. Used only to
-   * classify an already-failed git operation, so it is not subject to the
-   * TOCTOU concerns that motivate omitting a general exists() helper.
+   * Best-effort check for whether `path` is still a git worktree, i.e. carries a
+   * `.git` marker. Used only to classify an already-failed git operation, so it
+   * is not subject to the TOCTOU concerns that motivate omitting a general
+   * exists() helper. Both "directory gone" and "directory present but `.git`
+   * unlinked" (a half-removed worktree) report false.
    */
-  private async directoryExists(path: Path): Promise<boolean> {
+  private async isGitWorktree(path: Path): Promise<boolean> {
     try {
-      await this.fileSystemLayer.readdir(path);
-      return true;
+      const entries = await this.fileSystemLayer.readdir(path);
+      return entries.some((entry) => entry.name === ".git");
     } catch (error) {
       if (error instanceof FileSystemError && error.fsCode === "ENOENT") {
         return false;
       }
-      // Some other filesystem problem (permissions, etc.) — assume the
-      // directory exists so the original error is surfaced rather than masked.
+      // Some other filesystem problem (permissions, etc.) — assume it is still a
+      // worktree so the original git error is surfaced rather than masked.
       return true;
     }
   }
