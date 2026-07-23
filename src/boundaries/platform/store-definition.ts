@@ -406,11 +406,47 @@ export function storeCustom<T>(fns: {
 }
 
 // =============================================================================
+// Redaction
+// =============================================================================
+
+/** Token substituted for a `redact`ed value wherever a value leaves the machine. */
+export const REDACTED = "<redacted>";
+
+/** Token substituted for an `omit: true` value in the same contexts. */
+export const OMITTED = "<omitted>";
+
+/**
+ * The value to carry for a key whose value was *rejected* — a validation issue
+ * or a PersistedValidationError. Any declared `redact`/`omit` policy collapses
+ * to its bare token.
+ *
+ * Deliberately stricter than getRedactedOverrides(): a custom `redact` projection
+ * is NOT invoked here. That projection is written against the key's valid value
+ * shape, and a rejected value is by definition not of that shape — feeding it in
+ * risks passing the raw value straight through. Rejected values reach log files
+ * and therefore bug reports, so this path fails closed.
+ */
+export function redactRejectedValue(
+  def: PersistedKeyDefinition<unknown> | undefined,
+  value: unknown
+): unknown {
+  if (!def) return value;
+  if (def.omit) return OMITTED;
+  if (def.redact !== undefined) return REDACTED;
+  return value;
+}
+
+// =============================================================================
 // Validation Error
 // =============================================================================
 
 export interface ValidationErrorDetail {
   readonly key: string;
+  /**
+   * The rejected value. Throw sites that know the key's definition must pass it
+   * through redactRejectedValue() first — this ends up in the error message,
+   * which callers log.
+   */
   readonly value: unknown;
   readonly reason: "unknown" | "invalid" | "deprecated";
   readonly source: string;
@@ -473,7 +509,7 @@ function invalidIssue(
   return {
     kind: "invalid",
     key,
-    value,
+    value: redactRejectedValue(def, value),
     ...(def.description !== undefined && { description: def.description }),
     ...(def.validValues !== undefined && { validValues: def.validValues }),
   };
@@ -638,7 +674,13 @@ export class PersistedDefinitions {
         }
         const translated = legacy.translator(value);
         if (translated === undefined) {
-          issues.push({ kind: "legacy-untranslatable", legacy: key, newKey: legacy.newKey, value });
+          issues.push({
+            kind: "legacy-untranslatable",
+            legacy: key,
+            newKey: legacy.newKey,
+            // The legacy name is an alias for newKey, so newKey's policy governs.
+            value: redactRejectedValue(this.map.get(legacy.newKey), value),
+          });
           continue;
         }
         values[legacy.newKey] = translated;

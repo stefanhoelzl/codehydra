@@ -26,7 +26,13 @@ import type {
   DeprecatedPersistedAccessor,
   PersistedIssue,
 } from "./store-definition";
-import { PersistedValidationError, PersistedDefinitions } from "./store-definition";
+import {
+  PersistedValidationError,
+  PersistedDefinitions,
+  redactRejectedValue,
+  REDACTED,
+  OMITTED,
+} from "./store-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
@@ -42,16 +48,6 @@ export interface PersistedStoreDeps {
   readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
 }
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/** Token substituted for redacted values in getRedactedOverrides(). */
-const REDACTED = "<redacted>";
-
-/** Token substituted for `omit: true` values in getRedactedOverrides(). */
-const OMITTED = "<omitted>";
 
 // =============================================================================
 // Defaults / Equality Helpers
@@ -285,7 +281,7 @@ export class PersistedStore {
     if (validated === undefined) {
       throw new PersistedValidationError({
         key,
-        value,
+        value: redactRejectedValue(def, value),
         reason: "invalid",
         source: "set",
         ...(def.description !== undefined && { description: def.description }),
@@ -418,11 +414,14 @@ export class PersistedStore {
   }
 
   /**
-   * Apply a definition's redaction policy to an effective value. `redact: true`
-   * fully redacts; a redactor function gets the value plus the token and returns
-   * a projection — if it throws, we fail closed to the token rather than leak
-   * the raw value (this output feeds user-submitted bug reports). No `redact`
-   * declared → the value passes through unchanged.
+   * Apply a definition's redaction policy to an effective (validated) value.
+   * `redact: true` fully redacts; a redactor function gets the value plus the
+   * token and returns a projection — if it throws, we fail closed to the token
+   * rather than leak the raw value (this output feeds user-submitted bug
+   * reports). No `redact` declared → the value passes through unchanged.
+   *
+   * For a *rejected* value use redactRejectedValue() instead, which never runs
+   * the projection.
    */
   private redactValue(def: PersistedKeyDefinition<unknown>, value: unknown): unknown {
     if (def.redact === undefined) return value;
