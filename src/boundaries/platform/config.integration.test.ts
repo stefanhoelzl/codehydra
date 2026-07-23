@@ -306,6 +306,61 @@ describe("Config", () => {
       expect(() => svc.load()).toThrow(PersistedValidationError);
     });
 
+    it("keeps a redact key's rejected value out of the thrown message", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.secret": 42 })),
+        },
+      });
+      svc.register("test.secret", { ...stringDef("test.secret"), redact: true });
+
+      // The message reaches log files (and therefore bug reports) via callers.
+      expect(() => svc.load()).toThrow(/<redacted>/);
+      expect(() => svc.load()).not.toThrow(/42/);
+    });
+
+    it("keeps an omit key's rejected value out of the thrown message", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.tpl": 42 })),
+        },
+      });
+      svc.register("test.tpl", { ...stringDef("test.tpl"), omit: true });
+
+      expect(() => svc.load()).toThrow(/<omitted>/);
+      expect(() => svc.load()).not.toThrow(/42/);
+    });
+
+    it("does not invoke a custom redactor on a rejected value", () => {
+      const redact = vi.fn(() => "projection");
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.secret": 42 })),
+        },
+      });
+      svc.register("test.secret", { ...stringDef("test.secret"), redact });
+
+      // A projection is written against the valid value shape; a rejected value
+      // is not of that shape, so the bare token is used instead.
+      expect(() => svc.load()).toThrow(/<redacted>/);
+      expect(redact).not.toHaveBeenCalled();
+    });
+
+    it("still reports a plain key's rejected value in the thrown message", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.plain": 42 })),
+        },
+      });
+      svc.register("test.plain", stringDef("test.plain"));
+
+      expect(() => svc.load()).toThrow(/42/);
+    });
+
     it("throws on invalid env var value", () => {
       const svc = createService({ env: { CH_TEST__FLAG: "invalid" } });
       svc.register("test.flag", boolDef("test.flag"));
@@ -383,6 +438,20 @@ describe("Config", () => {
 
       await key.set("updated");
       expect(key.get()).toBe("updated");
+    });
+
+    it("keeps a redact/omit key's rejected value out of the set() error", async () => {
+      const svc = createService();
+      const secret = svc.register("test.secret", { ...stringDef("test.secret"), redact: true });
+      const tpl = svc.register("test.tpl", { ...stringDef("test.tpl"), omit: true });
+      svc.load();
+
+      // A failed set() on a secret-bearing key must not echo the value: callers
+      // (e.g. one-shot config migrations) log the message on failure.
+      await expect(secret.set(42)).rejects.toThrow(/<redacted>/);
+      await expect(secret.set(42)).rejects.not.toThrow(/42/);
+      await expect(tpl.set(42)).rejects.toThrow(/<omitted>/);
+      await expect(tpl.set(42)).rejects.not.toThrow(/42/);
     });
 
     it("persists to config.json by default", async () => {
@@ -750,6 +819,30 @@ describe("Config", () => {
       expect(logger.warn).toHaveBeenCalledWith(
         "Legacy config key could not be translated (using default)",
         { source: "config.json", legacy: "legacy.old-name", newKey: "test.new", value: "42" }
+      );
+    });
+
+    it("applies the new key's redact policy to an untranslatable legacy value", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "legacy.old-name": 42 })),
+        },
+        logger,
+      });
+      svc.register("test.new", { ...defWithLegacy("test.new"), redact: true });
+      svc.load();
+
+      // The legacy name is an alias for test.new, so test.new's policy governs.
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Legacy config key could not be translated (using default)",
+        {
+          source: "config.json",
+          legacy: "legacy.old-name",
+          newKey: "test.new",
+          value: '"<redacted>"',
+        }
       );
     });
 
