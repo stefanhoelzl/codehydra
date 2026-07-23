@@ -16,7 +16,7 @@
  *
  * Usage:
  *   MCP:  registered in .mcp.json — agents get the tools automatically.
- *   Lib:  import { createDriver } from "../scripts/appctrl";
+ *   Lib:  import { createDriver } from "../scripts/appctrl.ts";
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
