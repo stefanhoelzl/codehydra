@@ -19,7 +19,7 @@
  * idempotency backstop.
  *
  * Hooks:
- * - app:start -> "start": migrate legacy config/state into the new keys
+ * - app:start -> "start": import the pre-state.json auto-workspaces.json, once
  * - app:shutdown -> "stop": stop the heartbeat
  *
  * Events:
@@ -44,7 +44,6 @@ import {
   storeText,
   storeCustom,
   type PersistedAccessor,
-  type DeprecatedPersistedAccessor,
 } from "../../boundaries/platform/store-definition";
 import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
@@ -57,7 +56,6 @@ import { Path } from "../../utils/path/path";
 import { parseSources, validateSourcesConfig, type ParsedSource } from "./source-config";
 import { renderDefinition } from "./template-render";
 import { runCmd } from "./cmd-runner";
-import { buildSeededSources, DEFAULT_GITHUB_QUERY } from "./migration";
 import { projectPathSchema } from "../../intents/contract";
 
 // =============================================================================
@@ -161,25 +159,29 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   );
 
-  // Deprecated keys, kept readable so migration can drain them into the new
-  // sources value on first launch after upgrade.
-  const registerDeprecated = (key: string): DeprecatedPersistedAccessor =>
+  // The retired experimental.* keys of the hardcoded GitHub/YouTrack sources.
+  // Nothing reads them — they stay registered only so that an upgrade does not
+  // silently delete them: an unregistered key is "unknown", which Config warns
+  // about and strips from config.json. Keeping them deprecated preserves the old
+  // templates and credentials on disk (read-only, hidden from help) so they can
+  // be ported into `auto-workspace.sources` by hand.
+  for (const key of [
+    "experimental.github.template",
+    "experimental.github.template-path",
+    "experimental.github.query",
+    "experimental.youtrack.template",
+    "experimental.youtrack.template-path",
+    "experimental.youtrack.base-url",
+    "experimental.youtrack.token",
+    "experimental.youtrack.query",
+  ]) {
     deps.configService.register(key, {
       default: null,
       deprecated: true,
-      description: `(deprecated) migrated into auto-workspace.sources`,
+      description: "(deprecated) retired; port into auto-workspace.sources by hand",
       ...storeString({ nullable: true }),
     });
-  const legacy = {
-    githubTemplate: registerDeprecated("experimental.github.template"),
-    githubTemplatePath: registerDeprecated("experimental.github.template-path"),
-    githubQuery: registerDeprecated("experimental.github.query"),
-    youtrackTemplate: registerDeprecated("experimental.youtrack.template"),
-    youtrackTemplatePath: registerDeprecated("experimental.youtrack.template-path"),
-    youtrackBaseUrl: registerDeprecated("experimental.youtrack.base-url"),
-    youtrackToken: registerDeprecated("experimental.youtrack.token"),
-    youtrackQuery: registerDeprecated("experimental.youtrack.query"),
-  };
+  }
 
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
@@ -234,91 +236,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       }
     }
     await deps.fs.rm(deps.legacyStateFilePath, { force: true }).catch(() => {});
-  }
-
-  /** Resolve a source's template: inline value wins, else read a template-path file. */
-  async function resolveLegacyTemplate(
-    template: DeprecatedPersistedAccessor,
-    templatePath: DeprecatedPersistedAccessor
-  ): Promise<string | null> {
-    const inline = template.get();
-    if (typeof inline === "string" && inline.trim() !== "") return inline;
-    const path = templatePath.get();
-    if (typeof path !== "string" || path === "") return null;
-    try {
-      return await deps.fs.readFile(path);
-    } catch (error) {
-      deps.logger.warn("Could not read legacy template-path during migration", {
-        path,
-        error: getErrorMessage(error),
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Seed `auto-workspace.sources` from the deprecated experimental.* keys, once,
-   * only when sources is still unset. Then reset the deprecated keys.
-   */
-  async function migrateSources(): Promise<void> {
-    if (!sourcesAccessor.isDefault()) return;
-
-    const githubTemplate = await resolveLegacyTemplate(
-      legacy.githubTemplate,
-      legacy.githubTemplatePath
-    );
-    const youtrackTemplate = await resolveLegacyTemplate(
-      legacy.youtrackTemplate,
-      legacy.youtrackTemplatePath
-    );
-    const youtrackBaseUrl = legacy.youtrackBaseUrl.get();
-    const youtrackToken = legacy.youtrackToken.get();
-    const youtrackQuery = legacy.youtrackQuery.get();
-
-    const yaml = buildSeededSources(
-      {
-        ...(githubTemplate !== null && {
-          github: {
-            template: githubTemplate,
-            query:
-              typeof legacy.githubQuery.get() === "string"
-                ? (legacy.githubQuery.get() as string)
-                : DEFAULT_GITHUB_QUERY,
-          },
-        }),
-        ...(youtrackTemplate !== null &&
-          typeof youtrackBaseUrl === "string" &&
-          typeof youtrackToken === "string" &&
-          typeof youtrackQuery === "string" && {
-            youtrack: {
-              template: youtrackTemplate,
-              baseUrl: youtrackBaseUrl,
-              token: youtrackToken,
-              query: youtrackQuery,
-            },
-          }),
-      },
-      deps.logger
-    );
-
-    if (yaml !== null) {
-      try {
-        await sourcesAccessor.set(yaml);
-        deps.logger.info(
-          "Migrated experimental.* auto-workspace config into auto-workspace.sources"
-        );
-      } catch (error) {
-        deps.logger.warn("Failed to seed auto-workspace.sources during migration", {
-          error: getErrorMessage(error),
-        });
-        return;
-      }
-    }
-
-    // Strip the deprecated keys regardless (nothing left to migrate from them).
-    for (const accessor of Object.values(legacy)) {
-      await accessor.reset().catch(() => {});
-    }
   }
 
   // ------ Workspace lifecycle ------
@@ -535,7 +452,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
-            await migrateSources();
             await migrateLegacyStateFile();
           },
         },
