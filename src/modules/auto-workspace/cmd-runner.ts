@@ -2,9 +2,13 @@
  * Run a source's `cmd` and parse its stdout as a JSON array of domain objects.
  *
  * The cmd is a shell command line (pipes, quoting, env-var expansion), so it is
- * executed through the platform shell: `sh -c "<cmd>"` on POSIX, `cmd /c "<cmd>"`
- * on Windows. The process inherits the app's ambient environment (no `env` is
- * passed, so PersistedStore's replace-env behavior does not apply).
+ * handed to the ProcessRunner with `shell: true` — Node builds the platform
+ * invocation (`/bin/sh -c` on POSIX, `cmd.exe /d /s /c` with verbatim arguments
+ * on Windows). Note that the shell *syntax* is still the platform's own: the
+ * POSIX quoting in the settings help examples does not carry to cmd.exe.
+ *
+ * The process inherits the app's ambient environment (no `env` is passed, so
+ * PersistedStore's replace-env behavior does not apply).
  */
 
 import type { ProcessRunner } from "../../boundaries/platform/process";
@@ -15,20 +19,13 @@ export interface RunCmdDeps {
   readonly processRunner: ProcessRunner;
 }
 
-function shellInvocation(cmd: string): { command: string; args: string[] } {
-  return process.platform === "win32"
-    ? { command: "cmd", args: ["/c", cmd] }
-    : { command: "sh", args: ["-c", cmd] };
-}
-
 /**
  * Execute `cmd` and return the parsed top-level JSON array. Throws on non-zero
  * exit, timeout, non-JSON output, or output that is not an array — the caller
  * logs and skips the tick.
  */
 export async function runCmd(deps: RunCmdDeps, cmd: string): Promise<unknown[]> {
-  const { command, args } = shellInvocation(cmd);
-  const proc = deps.processRunner.run(command, args);
+  const proc = deps.processRunner.run(cmd, [], { shell: true });
   const result = await proc.wait(CMD_TIMEOUT_MS);
 
   if (result.running) {

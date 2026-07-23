@@ -206,6 +206,65 @@ describe("ExecaProcessRunner", () => {
     );
   });
 
+  describe("shell option", () => {
+    // Double quotes are the one grouping syntax both `sh` and `cmd.exe` accept,
+    // and they are exactly what breaks when a shell command line is spawned as
+    // `cmd /c <line>` instead: the line is escaped as an ordinary argument, and
+    // the resulting `\"` is not something cmd.exe understands. Asserting the
+    // quoted argument arrives as ONE argv entry pins that down on both platforms.
+    it(
+      "runs a command line through the shell, preserving quoted arguments",
+      async () => {
+        const proc = runner.run(
+          `"${process.execPath}" -e "console.log(process.argv[1])" "a b"`,
+          [],
+          { shell: true }
+        );
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        const result = await proc.wait();
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe("a b");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "interprets shell redirection, which a plain spawn would pass through verbatim",
+      async () => {
+        const proc = runner.run(`"${process.execPath}" -e "console.log(1)" > ${os.devNull}`, [], {
+          shell: true,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        const result = await proc.wait();
+
+        // The shell consumed the redirection, so nothing reaches our pipe.
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.trim()).toBe("");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "without the option, a shell command line is not interpreted",
+      async () => {
+        const proc = runner.run(`"${process.execPath}" -e "console.log(1)" > ${os.devNull}`, []);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        const result = await proc.wait();
+
+        // Spawned as a literal executable name, which does not exist.
+        expect(result.exitCode).not.toBe(0);
+      },
+      TEST_TIMEOUT
+    );
+  });
+
   describe("kill() behavior", () => {
     // Windows-specific test: kill always uses forceful termination
     it.skipIf(!isWindows)(

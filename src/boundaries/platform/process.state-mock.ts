@@ -43,6 +43,8 @@ export interface SpawnedProcessMockState extends MockState {
   readonly args: readonly string[];
   readonly cwd: string | undefined;
   readonly env: NodeJS.ProcessEnv | undefined;
+  /** True when the caller asked for shell interpretation of `command`. */
+  readonly shell: boolean;
   readonly killCalls: ReadonlyArray<KillCallRecord>;
 }
 
@@ -89,6 +91,7 @@ interface MockSpawnedProcessOptions {
   args: readonly string[];
   cwd: string | undefined;
   env: NodeJS.ProcessEnv | undefined;
+  shell: boolean;
   pid: number | undefined;
   waitResult: ProcessResult;
   killResult: KillResult;
@@ -102,6 +105,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
   readonly args: readonly string[];
   readonly cwd: string | undefined;
   readonly env: NodeJS.ProcessEnv | undefined;
+  readonly shell: boolean;
   private readonly _killCalls: KillCallRecord[] = [];
 
   constructor(options: {
@@ -109,11 +113,13 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
     args: readonly string[];
     cwd: string | undefined;
     env: NodeJS.ProcessEnv | undefined;
+    shell: boolean;
   }) {
     this.command = options.command;
     this.args = options.args;
     this.cwd = options.cwd;
     this.env = options.env;
+    this.shell = options.shell;
   }
 
   get killCalls(): ReadonlyArray<KillCallRecord> {
@@ -152,6 +158,7 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
       args: options.args,
       cwd: options.cwd,
       env: options.env,
+      shell: options.shell,
     });
   }
 
@@ -258,7 +265,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   run(
     command: string,
     args: readonly string[],
-    options?: { cwd?: string; env?: NodeJS.ProcessEnv }
+    options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }
   ): SpawnedProcess {
     // Get per-spawn configuration
     const config = this.onSpawn?.(command, args, options?.cwd, options?.env);
@@ -284,6 +291,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       args,
       cwd: options?.cwd,
       env: options?.env,
+      shell: options?.shell ?? false,
       pid,
       waitResult,
       killResult,

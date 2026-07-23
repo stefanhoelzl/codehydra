@@ -12,9 +12,13 @@ const FORMAT = `Format — a multi-document YAML stream, one document per source
 
   name       source name (also the state-key prefix); must be unique
   type       cron (default; the only supported type)
-  cmd        shell command line, run via sh -c / cmd /c. Must print a
-             top-level JSON array of objects to stdout. Inherits the
-             app environment; inline any secrets (kept out of bug reports).
+  cmd        shell command line, run by the platform shell (sh on POSIX,
+             cmd.exe on Windows). Must print a top-level JSON array of
+             objects to stdout. Inherits the app environment; inline any
+             secrets (kept out of bug reports).
+             The syntax is the platform shell's own — the examples below
+             are POSIX. On Windows use cmd.exe syntax: "..." rather than
+             '...' for quoting, and ^ rather than \\ to continue a line.
   template   mapping rendered once per emitted object — every string leaf
              is a Liquid template over that object's JSON:
     name                 workspace name (required)
