@@ -34,6 +34,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
+import { wsPath, projPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Fixtures
@@ -42,14 +43,14 @@ import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
 const PROJECT_A: Project = {
   id: "project-a-12345678" as ProjectId,
   name: "project-a",
-  path: "/projects/a",
+  path: projPath("/projects/a"),
   workspaces: [
     {
       projectId: "project-a-12345678" as ProjectId,
       name: "existing" as WorkspaceName,
       branch: "existing",
       metadata: {},
-      path: "/projects/a/.worktrees/existing",
+      path: wsPath("/projects/a/.worktrees/existing"),
     },
   ],
 };
@@ -57,7 +58,7 @@ const PROJECT_A: Project = {
 const PROJECT_B: Project = {
   id: "project-b-12345678" as ProjectId,
   name: "project-b",
-  path: "/projects/b",
+  path: projPath("/projects/b"),
   workspaces: [],
 };
 

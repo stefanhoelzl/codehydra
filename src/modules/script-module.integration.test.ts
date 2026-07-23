@@ -64,10 +64,10 @@ describe("ScriptModule Integration", () => {
     });
     dispatcher.registerModule(module);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     // Should clean and recreate bin dir
     expect(fileSystem.rm).toHaveBeenCalledWith(
@@ -124,10 +124,10 @@ describe("ScriptModule Integration", () => {
     });
     dispatcher.registerModule(module);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppStartIntent>({
       type: INTENT_APP_START,
       payload: {},
-    } as AppStartIntent);
+    });
 
     // Should still clean and recreate bin dir
     expect(fileSystem.rm).toHaveBeenCalled();

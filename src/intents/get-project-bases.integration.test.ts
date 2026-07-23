@@ -37,13 +37,14 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
+import { projPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
-const PROJECT_ROOT = "/project";
+const PROJECT_ROOT = projPath("/project");
 const CACHED_BASES = [
   { name: "main", isRemote: false },
   { name: "origin/main", isRemote: true },
@@ -304,9 +305,9 @@ describe("GetProjectBases Operation", () => {
     it("throws for unrecognized project path", async () => {
       const setup = createTestSetup();
 
-      await expect(setup.dispatcher.dispatch(createIntent("/nonexistent/project"))).rejects.toThrow(
-        "Project not found for path: /nonexistent/project"
-      );
+      await expect(
+        setup.dispatcher.dispatch(createIntent(projPath("/nonexistent/project")))
+      ).rejects.toThrow("Project not found for path: /nonexistent/project");
     });
   });
 });

@@ -145,10 +145,10 @@ export function createAgentModule(
     if (initialized) return;
     provider.initialize(capturedMcpPort !== null ? { port: capturedMcpPort } : null);
     statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
-      void deps.dispatcher.dispatch({
+      void deps.dispatcher.dispatch<UpdateAgentStatusIntent>({
         type: INTENT_UPDATE_AGENT_STATUS,
         payload: { workspacePath, status },
-      } as UpdateAgentStatusIntent);
+      });
     });
     initialized = true;
   }

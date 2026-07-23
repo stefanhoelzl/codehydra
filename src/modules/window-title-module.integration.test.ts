@@ -20,6 +20,7 @@ import type { MetadataChangedEvent } from "../intents/set-metadata";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { Intent } from "../intents/lib/types";
+import { projPath } from "../shared/test-fixtures";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -27,6 +28,8 @@ import {
 } from "../intents/app-start";
 import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "../intents/contract";
 
 // =============================================================================
 // Minimal switch operation that emits workspace:switched
@@ -64,9 +67,9 @@ const minimalSwitchOperation: Operation<typeof minimalSwitchSchemas> = {
         ? {
             projectId: payload.projectId,
             projectName: payload.projectName,
-            projectPath: "/projects/test",
+            projectPath: projPath("/projects/test"),
             workspaceName: payload.workspaceName,
-            path: payload.path,
+            path: wsPath(payload.path),
             metadata: payload.metadata ?? {},
           }
         : null,
@@ -84,7 +87,7 @@ const INTENT_MINIMAL_SET_METADATA = "workspace:set-metadata" as const;
 interface MinimalSetMetadataPayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
-  readonly workspacePath: string;
+  readonly workspacePath: WorkspacePath;
   readonly key: string;
   readonly value: string | null;
 }
@@ -110,7 +113,7 @@ const minimalSetMetadataOperation: Operation<typeof minimalSetMetadataSchemas> =
       payload: {
         projectId: payload.projectId,
         workspaceName: payload.workspaceName,
-        workspacePath: payload.workspacePath,
+        workspacePath: wsPath(payload.workspacePath),
         key: payload.key,
         value: payload.value,
       },
@@ -286,7 +289,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: ACTIVE.projectId,
           workspaceName: ACTIVE.workspaceName,
-          workspacePath: ACTIVE.path,
+          workspacePath: wsPath(ACTIVE.path),
           key: "title",
           value: "Fix login bug",
         })
@@ -305,7 +308,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: ACTIVE.projectId,
           workspaceName: ACTIVE.workspaceName,
-          workspacePath: ACTIVE.path,
+          workspacePath: wsPath(ACTIVE.path),
           key: "title",
           value: null,
         })
@@ -323,7 +326,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: ACTIVE.projectId,
           workspaceName: "other-branch" as WorkspaceName,
-          workspacePath: "/workspaces/other-branch",
+          workspacePath: wsPath("/workspaces/other-branch"),
           key: "title",
           value: "Someone else",
         })
@@ -341,7 +344,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: "other-project" as ProjectId,
           workspaceName: ACTIVE.workspaceName,
-          workspacePath: "/other/feature-branch",
+          workspacePath: wsPath("/other/feature-branch"),
           key: "title",
           value: "Someone else",
         })
@@ -359,7 +362,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: ACTIVE.projectId,
           workspaceName: ACTIVE.workspaceName,
-          workspacePath: ACTIVE.path,
+          workspacePath: wsPath(ACTIVE.path),
           key: "tags.wip",
           value: "{}",
         })
@@ -377,7 +380,7 @@ describe("WindowTitleModule Integration", () => {
         setMetadataIntent({
           projectId: ACTIVE.projectId,
           workspaceName: ACTIVE.workspaceName,
-          workspacePath: ACTIVE.path,
+          workspacePath: wsPath(ACTIVE.path),
           key: "title",
           value: "Fix login bug",
         })

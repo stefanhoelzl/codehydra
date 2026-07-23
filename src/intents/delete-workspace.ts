@@ -36,14 +36,16 @@ import type {
   DeletionOperationStatus,
   BlockingProcess,
 } from "../shared/api/types";
-import type { WorkspacePath } from "../shared/ipc";
 import {
-  projectIdSchema,
-  workspaceNameSchema,
   blockingProcessSchema,
   deletionProgressSchema,
   hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
 } from "./contract";
+import type { ProjectPath, WorkspacePath } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
@@ -63,7 +65,7 @@ export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" a
 
 export const deleteWorkspacePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     keepBranch: z.boolean(),
     force: z.boolean(),
     /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
@@ -158,8 +160,8 @@ export const flushResultSchema = z.object({ error: z.string().optional() }).read
 
 /** Operation-added enrichment shared by shutdown/release/delete/detect/confirm/preflight hooks. */
 const deletePipelineEnrichmentSchema = z.object({
-  projectPath: z.string(),
-  workspacePath: z.string(),
+  projectPath: projectPathSchema,
+  workspacePath: workspacePathSchema,
   workspaceName: workspaceNameSchema,
   active: z.boolean(),
 });
@@ -182,8 +184,8 @@ const workspaceDeletedSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: z.string(),
-    projectPath: z.string(),
+    workspacePath: workspacePathSchema,
+    projectPath: projectPathSchema,
     /**
      * True when the dispatch removed (or force-abandoned) the git worktree;
      * false for runtime-only teardown (removeWorktree: false — e.g. the
@@ -194,9 +196,13 @@ const workspaceDeletedSchema = z
   })
   .readonly();
 
-const workspaceDeleteFailedSchema = z.object({ workspacePath: z.string() }).readonly();
+const workspaceDeleteFailedSchema = z.object({ workspacePath: workspacePathSchema }).readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_DELETE_WORKSPACE,
   payload: deleteWorkspacePayloadSchema,
   result: deleteWorkspaceResultSchema,
@@ -329,7 +335,8 @@ function mergeDetect(
 // Emit function type (for threading ctx.emit through private methods)
 // =============================================================================
 
-type EmitFn = (event: DomainEvent) => Promise<void>;
+/** The operation's own emit, narrowed to the events it declares. */
+type EmitFn = OperationContext<DeleteWorkspaceIntent, typeof schemas>["emit"];
 
 // =============================================================================
 // Pipeline State (for progress emission)
@@ -351,7 +358,7 @@ interface PipelineState {
 interface ResolvedIdentity {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
-  readonly projectPath: string;
+  readonly projectPath: ProjectPath;
 }
 
 /** Return value of runPipeline, carrying resolved identity for emitEvent. */
@@ -366,7 +373,9 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: boolean }> {
+  async execute(
+    ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>
+  ): Promise<{ started: boolean }> {
     const { payload } = ctx.intent;
 
     const emitEvent = (identity: ResolvedIdentity): void => {
@@ -437,7 +446,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   }
 
   private async runPipeline(
-    ctx: OperationContext<DeleteWorkspaceIntent>,
+    ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
     emit: EmitFn
   ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
@@ -465,8 +474,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         workspaceName,
         active,
       };
-      const { results: confirmResults, errors: confirmErrors } =
-        await ctx.hooks.collect<ConfirmHookResult>("confirm", confirmCtx);
+      const { results: confirmResults, errors: confirmErrors } = await ctx.hooks.collect(
+        "confirm",
+        confirmCtx
+      );
       throwHookErrors(confirmErrors, "workspace:delete confirm hooks failed");
       if (confirmResults.some((r) => r.canceled)) {
         return { hasErrors: false, identity, canceled: true };
@@ -505,7 +516,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   }
 
   private async runPipelineBody(
-    ctx: OperationContext<DeleteWorkspaceIntent>,
+    ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
     emit: EmitFn,
     identity: ResolvedIdentity,
     pipelineCtx: DeletePipelineHookInput,
@@ -520,16 +531,18 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       // unmerged. Best-effort — a fetch failure falls through to the stale-ref read
       // rather than blocking the delete.
       try {
-        await ctx.dispatch({
+        await ctx.dispatch<GetProjectBasesIntent>({
           type: INTENT_GET_PROJECT_BASES,
           payload: { projectPath: identity.projectPath, refresh: true, wait: true },
-        } as GetProjectBasesIntent);
+        });
       } catch {
         // Fall through to the preflight read with possibly-stale refs.
       }
 
-      const { results: preflightResults, errors: preflightCollectErrors } =
-        await ctx.hooks.collect<PreflightHookResult>("preflight", pipelineCtx);
+      const { results: preflightResults, errors: preflightCollectErrors } = await ctx.hooks.collect(
+        "preflight",
+        pipelineCtx
+      );
 
       let isDirty = false;
       let unmergedCommits = 0;
@@ -554,8 +567,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
 
     // --- Shutdown ---
     this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
-    const { results: shutdownResults, errors: shutdownCollectErrors } =
-      await ctx.hooks.collect<ShutdownHookResult>("shutdown", pipelineCtx);
+    const { results: shutdownResults, errors: shutdownCollectErrors } = await ctx.hooks.collect(
+      "shutdown",
+      pipelineCtx
+    );
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
     this.emitPipelineProgress(
       emit,
@@ -594,8 +609,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     // --- Release (CWD scan + kill) ---
-    const { results: releaseResults, errors: releaseCollectErrors } =
-      await ctx.hooks.collect<ReleaseHookResult>("release", pipelineCtx);
+    const { results: releaseResults, errors: releaseCollectErrors } = await ctx.hooks.collect(
+      "release",
+      pipelineCtx
+    );
     const release = mergeErrors(releaseResults, releaseCollectErrors);
     this.emitPipelineProgress(
       emit,
@@ -623,14 +640,18 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         ...pipelineCtx,
         blockingPids: payload.blockingPids,
       };
-      const { results: flushResults, errors: flushCollectErrors } =
-        await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
+      const { results: flushResults, errors: flushCollectErrors } = await ctx.hooks.collect(
+        "flush",
+        flushCtx
+      );
       flush = mergeErrors(flushResults, flushCollectErrors);
     }
 
     // --- Delete ---
-    const { results: deleteResults, errors: deleteCollectErrors } =
-      await ctx.hooks.collect<DeleteHookResult>("delete", pipelineCtx);
+    const { results: deleteResults, errors: deleteCollectErrors } = await ctx.hooks.collect(
+      "delete",
+      pipelineCtx
+    );
     const del = mergeErrors(deleteResults, deleteCollectErrors);
 
     const deleteFailed = del.errors.length > 0;
@@ -671,8 +692,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       false,
       "detecting-blockers"
     );
-    const { results: detectResults, errors: detectCollectErrors } =
-      await ctx.hooks.collect<DetectHookResult>("detect", pipelineCtx);
+    const { results: detectResults, errors: detectCollectErrors } = await ctx.hooks.collect(
+      "detect",
+      pipelineCtx
+    );
     const detect = mergeDetect(detectResults, detectCollectErrors);
 
     // Emit progress with blockers and return failure
@@ -692,19 +715,19 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
    * we must switch again before emitting workspace:deleted.
    */
   private async autoSwitchIfBecameActive(
-    ctx: OperationContext<DeleteWorkspaceIntent>,
-    workspacePath: string
+    ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
+    workspacePath: WorkspacePath
   ): Promise<void> {
     try {
-      const activeRef = await ctx.dispatch({
+      const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {},
-      } as GetActiveWorkspaceIntent);
+      });
       if (activeRef?.path === workspacePath) {
-        await ctx.dispatch({
+        await ctx.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
           payload: { auto: true, currentPath: workspacePath, focus: true },
-        } as SwitchWorkspaceIntent);
+        });
       }
     } catch {
       // Best-effort

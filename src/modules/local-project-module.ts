@@ -18,6 +18,8 @@ import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
+import { projectPathSchema } from "../intents/contract";
+import type { ProjectPath } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
@@ -119,10 +121,10 @@ type ProjectFs = LocalProjectModuleDeps["fs"];
 async function saveProject(
   fs: ProjectFs,
   projectsDir: string,
-  projectPath: string,
+  projectPath: ProjectPath,
   remoteUrl?: string
 ): Promise<void> {
-  const normalizedPath = new Path(projectPath).toString();
+  const normalizedPath = projectPathSchema.parse(new Path(projectPath).toString());
   const projectDir = nodePath.join(projectsDir, projectDirName(normalizedPath));
   const configPath = nodePath.join(projectDir, "config.json");
 
@@ -167,7 +169,7 @@ async function loadAllProjectConfigs(
         ) {
           const rawPath = (parsed as { path: string }).path;
           try {
-            const normalizedPath = new Path(rawPath).toString();
+            const normalizedPath = projectPathSchema.parse(new Path(rawPath).toString());
             const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
 
             const config: ProjectConfig = {
@@ -219,7 +221,7 @@ async function getProjectConfig(
       const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
 
       const config: ProjectConfig = {
-        path: new Path(rawPath).toString(),
+        path: projectPathSchema.parse(new Path(rawPath).toString()),
         ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
       };
       return config;
@@ -286,7 +288,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
   const { projectsDir, fs, gitWorktreeProvider, ui, gitClient } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
-  const projects = new Map<string, LocalProject>();
+  // Keyed by the branded project path, so a key can be handed straight back to the
+  // contract (e.g. the list-projects hook result) without re-minting the brand.
+  const projects = new Map<ProjectPath, LocalProject>();
 
   return {
     name: "local-project",
@@ -296,7 +300,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
-            const normalizedKey = new Path(projectPath).toString();
+            const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
             const project = projects.get(normalizedKey);
             if (!project) return { result: {} };
             return { result: { projectId: project.id, projectName: project.name } };
@@ -315,12 +319,15 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             if (git || !path) return { result: {} };
 
             // Already open — skip
-            if (projects.has(path.toString())) return { result: {} };
+            if (projects.has(path)) return { result: {} };
+
+            // The contract carries the path as plain data; git operations take a `Path`.
+            const pathObj = new Path(path);
 
             // Check if it's already a git repo
             let isRepo: boolean;
             try {
-              isRepo = await gitClient.isRepositoryRoot(path);
+              isRepo = await gitClient.isRepositoryRoot(pathObj);
             } catch {
               // Path doesn't exist or inaccessible — let resolve handle the error
               return { result: {} };
@@ -356,7 +363,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               return { result: { canceled: true } };
             }
 
-            await gitClient.init(path, { initialCommit: "Initial commit" });
+            await gitClient.init(pathObj, { initialCommit: "Initial commit" });
             return { result: {} };
           },
         },
@@ -373,25 +380,25 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             }
 
             // Check persisted config for remoteUrl (restores icon on startup)
-            const config = await getProjectConfig(fs, projectsDir, path.toString());
+            const config = await getProjectConfig(fs, projectsDir, path);
             const remoteUrl = config?.remoteUrl;
 
             // Already open — skip validation, signal short-circuit
-            if (projects.has(path.toString())) {
+            if (projects.has(path)) {
               return {
                 result: {
-                  projectPath: path.toString(),
+                  projectPath: path,
                   alreadyOpen: true,
                   ...(remoteUrl !== undefined && { remoteUrl }),
                 },
               };
             }
 
-            await gitWorktreeProvider.validateRepository(path);
+            await gitWorktreeProvider.validateRepository(new Path(path));
 
             return {
               result: {
-                projectPath: path.toString(),
+                projectPath: path,
                 ...(remoteUrl !== undefined && { remoteUrl }),
               },
             };
@@ -404,7 +411,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
-            const normalizedKey = projectPath.toString();
+            const normalizedKey = projectPathSchema.parse(projectPath.toString());
             const projectId = generateProjectId(projectPathStr);
 
             // Already in state — return alreadyOpen without re-persisting
@@ -454,7 +461,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             // Remove from internal state
-            const normalizedKey = new Path(projectPath).toString();
+            const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
             projects.delete(normalizedKey);
 
             if (removeLocalRepo && remoteUrl) {

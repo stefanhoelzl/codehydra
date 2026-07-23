@@ -19,7 +19,7 @@ import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
 import type { UpdateAgentStatusIntent } from "./update-agent-status";
 import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "./resolve-workspace";
@@ -40,13 +40,14 @@ import type {
   SwitchWorkspaceHookResult,
   ActivateHookInput,
 } from "./switch-workspace";
+import type { WorkspacePath, ProjectPath } from "./contract";
 
 // =============================================================================
 // Configuration Types
 // =============================================================================
 
 export interface MockWorkspaceEntry {
-  readonly projectPath: string;
+  readonly projectPath: ProjectPath;
   readonly workspaceName: WorkspaceName;
   readonly branch?: string | null;
   /** Explicit active flag; when omitted, derived from the viewManager (if any). */
@@ -68,12 +69,12 @@ export interface MockViewManager {
 /** Static map or dynamic lookup function for workspace resolution. */
 export type MockWorkspaceLookup =
   | Readonly<Record<string, MockWorkspaceEntry>>
-  | ((workspacePath: string) => MockWorkspaceEntry | undefined);
+  | ((workspacePath: WorkspacePath) => MockWorkspaceEntry | undefined);
 
 /** Static map or dynamic lookup function for project resolution. */
 export type MockProjectLookup =
   | Readonly<Record<string, MockProjectEntry>>
-  | ((projectPath: string) => MockProjectEntry | undefined);
+  | ((projectPath: ProjectPath) => MockProjectEntry | undefined);
 
 export interface TestMockConfig {
   /** Maps workspacePath → resolution data (or dynamic lookup). */
@@ -88,9 +89,9 @@ export interface TestMockConfig {
 
 /** Minimal project shape for {@link workspacesFromProjects}. */
 export interface ProjectWithWorkspaces {
-  readonly path: string;
+  readonly path: ProjectPath;
   readonly workspaces?: ReadonlyArray<{
-    readonly path: string;
+    readonly path: WorkspacePath;
     readonly metadata?: Readonly<Record<string, string>>;
   }>;
 }
@@ -102,7 +103,7 @@ export interface ProjectWithWorkspaces {
  */
 export function workspacesFromProjects(
   getProjects: () => readonly ProjectWithWorkspaces[]
-): (workspacePath: string) => MockWorkspaceEntry | undefined {
+): (workspacePath: WorkspacePath) => MockWorkspaceEntry | undefined {
   return (workspacePath) => {
     for (const project of getProjects()) {
       const workspace = project.workspaces?.find((w) => w.path === workspacePath);
@@ -124,7 +125,7 @@ export function workspacesFromProjects(
 
 /** Build an agent:update-status intent. */
 export function updateStatusIntent(
-  workspacePath: string,
+  workspacePath: WorkspacePath,
   status: AggregatedAgentStatus
 ): UpdateAgentStatusIntent {
   return {
@@ -143,7 +144,7 @@ export function updateStatusIntent(
 /** ViewManager surface used by operation tests, with capture-friendly extras. */
 export interface TestViewManager extends MockViewManager {
   destroyWorkspaceView(path: string): Promise<void>;
-  createWorkspaceView(path: string, url: string, projectPath: string, visible: boolean): void;
+  createWorkspaceView(path: string, url: string, projectPath: ProjectPath, visible: boolean): void;
   preloadWorkspaceUrl(path: string): void;
 }
 
@@ -221,7 +222,7 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
-          const intent = ctx.intent as { payload: { workspacePath: string } };
+          const intent = ctx.intent as { payload: { workspacePath: WorkspacePath } };
           const entry = lookupWorkspace(intent.payload.workspacePath);
           if (!entry) return { result: {} };
           return {

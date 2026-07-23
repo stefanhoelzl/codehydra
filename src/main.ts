@@ -845,10 +845,10 @@ dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
   const path = payload.path;
   if (firstFocused.has(path)) return;
   void dispatcher
-    .dispatch({
+    .dispatch<GetWorkspaceStatusIntent>({
       type: INTENT_GET_WORKSPACE_STATUS,
       payload: { workspacePath: path },
-    } as GetWorkspaceStatusIntent)
+    })
     .then((status) => {
       if (status.agent.type === "idle") focusTerminal(path);
     })
@@ -930,10 +930,10 @@ if (helpConfig.get()) {
 
 // Dispatch app:start — orchestrates the entire startup flow via hook points
 void dispatcher
-  .dispatch({
+  .dispatch<AppStartIntent>({
     type: INTENT_APP_START,
     payload: {},
-  } as AppStartIntent)
+  })
   .catch((error: unknown) => {
     appLogger.error(
       "Startup failed",
@@ -957,16 +957,16 @@ void dispatcher
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
-    void dispatcher.dispatch({
+    void dispatcher.dispatch<AppShutdownIntent>({
       type: INTENT_APP_SHUTDOWN,
       payload: {},
-    } as AppShutdownIntent);
+    });
   }
 });
 
 app.on("before-quit", () => {
-  void dispatcher.dispatch({
+  void dispatcher.dispatch<AppShutdownIntent>({
     type: INTENT_APP_SHUTDOWN,
     payload: {},
-  } as AppShutdownIntent);
+  });
 });

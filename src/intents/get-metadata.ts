@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema } from "./contract";
+import { hookCtxSchema, workspacePathSchema } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
@@ -28,7 +28,7 @@ export const GET_METADATA_OPERATION_ID = "get-metadata";
 
 export const getMetadataPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
   })
   .readonly();
 
@@ -45,7 +45,7 @@ export const getMetadataHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getMetadataEnrichmentSchema = z.object({ workspacePath: z.string() });
+const getMetadataEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "get". */
 export const getMetadataHookInputSchema = hookCtxSchema(
@@ -53,7 +53,11 @@ export const getMetadataHookInputSchema = hookCtxSchema(
   getMetadataEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_METADATA,
   payload: getMetadataPayloadSchema,
   result: getMetadataResultSchema,
@@ -78,15 +82,13 @@ export type GetHookInput = HookContext & z.infer<typeof getMetadataEnrichmentSch
 // Operation
 // =============================================================================
 
-export class GetMetadataOperation extends WorkspaceHookOperation<
-  typeof schemas,
-  GetMetadataHookResult
-> {
+export class GetMetadataOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(GET_METADATA_OPERATION_ID, {
       hookPoint: "get",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       errorLabel: "get-metadata get hooks failed",
       extract: (results) =>
         requireResult(

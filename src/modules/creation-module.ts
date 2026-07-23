@@ -70,6 +70,7 @@ import {
   type GetLaunchOptionsIntent,
   type LaunchOptionsResult,
 } from "../intents/agent-launch-options";
+import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
 // Dependencies
@@ -152,7 +153,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let launchOptions: LaunchOptionsResult | null = null;
   /** The backend whose launch options are currently being fetched (if any). */
   let loadingLaunchOptionsFor: LifecycleAgentType | null = null;
-  let selectedProjectPath: string | null = null;
+  let selectedProjectPath: ProjectPath | null = null;
   let branches: readonly BaseInfo[] = [];
   let branchesLoading = false;
   let branchesError: string | null = null;
@@ -164,7 +165,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   /** Form-level error (e.g. folder-open failure), shown above the footer. */
   let formError: string | null = null;
   /** Project to seed the next reset with (most recently opened project). */
-  let pendingSeedProjectPath: string | null = null;
+  let pendingSeedProjectPath: ProjectPath | null = null;
   /**
    * Project path of the workspace the app last made active. Recorded from
    * non-null workspace:switched events so it survives the deselect
@@ -522,7 +523,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * even when it already carried the flag — used by the folder-open and
    * git-clone flows.
    */
-  function selectProject(projectPath: string, options?: { refocusName?: boolean }): void {
+  function selectProject(projectPath: ProjectPath, options?: { refocusName?: boolean }): void {
     selectedProjectPath = projectPath;
     branches = [];
     branchesLoading = true;
@@ -565,7 +566,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   // ---- Session lifecycle ----
 
   /** Seed rule: pending opened project > last active workspace's project > first. */
-  function computeSeedProject(): string | null {
+  function computeSeedProject(): ProjectPath | null {
     if (pendingSeedProjectPath !== null) {
       const seed = pendingSeedProjectPath;
       pendingSeedProjectPath = null;
@@ -638,9 +639,12 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       if (handle !== sessionHandle) return;
       const data = event.data;
       if (event.fieldId === FIELD_PROJECT) {
-        const path = data[FIELD_PROJECT] ?? "";
-        if (path !== "" && path !== selectedProjectPath) {
-          selectProject(path);
+        // The dialog hands back a raw string; resolve it against the module's own
+        // project list rather than minting a brand from unvalidated UI input.
+        const raw = data[FIELD_PROJECT] ?? "";
+        const picked = projects.find((p) => p.path === raw)?.path;
+        if (picked !== undefined && picked !== selectedProjectPath) {
+          selectProject(picked);
         }
       } else if (event.fieldId === FIELD_NAME) {
         nameValue = data[FIELD_NAME] ?? "";

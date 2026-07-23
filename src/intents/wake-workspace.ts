@@ -24,12 +24,19 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, workspaceNameSchema, workspaceSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+  workspaceSchema,
+} from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "./open-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
-import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
+import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
 
 export const INTENT_WAKE_WORKSPACE = "workspace:wake" as const;
 export const WAKE_WORKSPACE_OPERATION_ID = "wake-workspace";
@@ -56,7 +63,7 @@ const workspaceOpenSourceSchema = z.enum([
 
 export const wakeWorkspacePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     /** Forwarded to the internal workspace:open. If true, switch to the woken
      *  workspace; if false, bring it online in the background. Default
      *  (undefined): switch — matching the pre-fold renderer behavior. */
@@ -71,22 +78,22 @@ export const workspaceWokenPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: z.string(),
-    projectPath: z.string(),
+    workspacePath: workspacePathSchema,
+    projectPath: projectPathSchema,
   })
   .readonly();
 
 export const workspaceWakeFailedPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     error: z.string(),
   })
   .readonly();
 
 /** Operation-added enrichment for the "cleanup" hook point. */
 const wakePipelineEnrichmentSchema = z.object({
-  projectPath: z.string(),
-  workspacePath: z.string(),
+  projectPath: projectPathSchema,
+  workspacePath: workspacePathSchema,
   projectId: projectIdSchema,
   workspaceName: workspaceNameSchema,
 });
@@ -97,7 +104,11 @@ export const wakePipelineHookInputSchema = hookCtxSchema(
   wakePipelineEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_WAKE_WORKSPACE,
   payload: wakeWorkspacePayloadSchema,
   result: workspaceSchema,
@@ -145,7 +156,7 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
   readonly schemas = schemas;
 
   async execute(
-    ctx: OperationContext<WakeWorkspaceIntent>
+    ctx: OperationContext<WakeWorkspaceIntent, typeof schemas>
   ): Promise<z.infer<typeof workspaceSchema>> {
     const { payload } = ctx.intent;
 
@@ -157,14 +168,14 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
 
       // Clear the hibernated metadata flag before re-init so any consumers
       // observing the metadata-changed event see the workspace as awake.
-      await ctx.dispatch({
+      await ctx.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: {
           workspacePath: payload.workspacePath,
           key: HIBERNATED_METADATA_KEY,
           value: null,
         },
-      } as SetMetadataIntent);
+      });
 
       const hookCtx: WakePipelineHookInput = {
         intent: ctx.intent,
@@ -175,19 +186,19 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
       };
 
       // Best-effort screenshot file cleanup.
-      await ctx.hooks.collect<CleanupHookResult>("cleanup", hookCtx);
+      await ctx.hooks.collect("cleanup", hookCtx);
 
       // Read back the now-clean metadata (hibernated flag removed above) so the
       // reopen — and the workspace:created event it emits — carry accurate
       // metadata rather than reintroducing the stale flag.
-      const metadata = await ctx.dispatch({
+      const metadata = await ctx.dispatch<GetMetadataIntent>({
         type: INTENT_GET_METADATA,
         payload: { workspacePath: payload.workspacePath },
-      } as GetMetadataIntent);
+      });
 
       // Re-run the canonical open pipeline against the existing worktree to
       // bring the workspace back online (agent server, workspace URL, view).
-      const workspace = await ctx.dispatch({
+      const workspace = await ctx.dispatch<OpenWorkspaceIntent>({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
           projectPath,
@@ -201,7 +212,7 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
           ...(payload.stealFocus !== undefined && { stealFocus: payload.stealFocus }),
           ...(payload.source !== undefined && { source: payload.source }),
         },
-      } as OpenWorkspaceIntent);
+      });
 
       const event: WorkspaceWokenEvent = {
         type: EVENT_WORKSPACE_WOKEN,
@@ -216,7 +227,10 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
 
       return workspace;
     } catch (error) {
-      emitWorkspaceFailure(ctx.emit, EVENT_WORKSPACE_WAKE_FAILED, payload.workspacePath, error);
+      ctx.emit({
+        type: EVENT_WORKSPACE_WAKE_FAILED,
+        payload: workspaceFailurePayload(payload.workspacePath, error),
+      });
       throw error;
     }
   }

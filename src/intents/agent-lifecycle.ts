@@ -20,7 +20,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema } from "./contract";
+import { hookCtxSchema, workspacePathSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_AGENT_LIFECYCLE = "agent:lifecycle" as const;
@@ -40,14 +40,14 @@ const agentLifecycleEventSchema = z.enum(["open", "close"]);
 
 export const agentLifecyclePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     event: agentLifecycleEventSchema,
   })
   .readonly();
 
 /** Operation-added enrichment for the "lifecycle" hook point (beyond the base HookContext). */
 const lifecycleEnrichmentSchema = z.object({
-  workspacePath: z.string(),
+  workspacePath: workspacePathSchema,
   event: agentLifecycleEventSchema,
 });
 
@@ -57,7 +57,11 @@ export const lifecycleHookInputSchema = hookCtxSchema(
   lifecycleEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_AGENT_LIFECYCLE,
   payload: agentLifecyclePayloadSchema,
   hooks: {
@@ -83,7 +87,7 @@ export class AgentLifecycleOperation implements Operation<typeof schemas> {
   readonly id = AGENT_LIFECYCLE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<AgentLifecycleIntent>): Promise<void> {
+  async execute(ctx: OperationContext<AgentLifecycleIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
 
     const lifecycleCtx: AgentLifecycleHookInput = {
@@ -91,7 +95,7 @@ export class AgentLifecycleOperation implements Operation<typeof schemas> {
       workspacePath: payload.workspacePath,
       event: payload.event,
     };
-    const { errors } = await ctx.hooks.collect<void>("lifecycle", lifecycleCtx);
+    const { errors } = await ctx.hooks.collect("lifecycle", lifecycleCtx);
     throwHookErrors(errors, "agent-lifecycle lifecycle hooks failed");
   }
 }

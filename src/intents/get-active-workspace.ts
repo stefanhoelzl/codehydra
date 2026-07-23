@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { workspaceRefSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema } from "./contract";
 import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_GET_ACTIVE_WORKSPACE = "ui:get-active-workspace" as const;
@@ -40,12 +40,19 @@ export const getActiveWorkspaceHookResultSchema = z
   })
   .readonly();
 
-const schemas = {
+/** The get hook point receives the bare intent. */
+const getActiveHookInputSchema = hookCtxSchema(getActiveWorkspacePayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_ACTIVE_WORKSPACE,
   payload: getActiveWorkspacePayloadSchema,
   result: getActiveWorkspaceResultSchema,
   hooks: {
-    get: { result: getActiveWorkspaceHookResultSchema },
+    get: { input: getActiveHookInputSchema, result: getActiveWorkspaceHookResultSchema },
   },
 } satisfies OperationSchemas;
 
@@ -67,17 +74,14 @@ export class GetActiveWorkspaceOperation implements Operation<typeof schemas> {
   readonly schemas = schemas;
 
   async execute(
-    ctx: OperationContext<GetActiveWorkspaceIntent>
+    ctx: OperationContext<GetActiveWorkspaceIntent, typeof schemas>
   ): Promise<GetActiveWorkspaceResult> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
     // Run "get" hook -- handler retrieves active workspace ref
-    const { results, errors } = await ctx.hooks.collect<GetActiveWorkspaceHookResult>(
-      "get",
-      hookCtx
-    );
+    const { results, errors } = await ctx.hooks.collect("get", hookCtx);
     throwHookErrors(errors, "get-active-workspace get hooks failed");
 
     // Merge results — last-write-wins for workspaceRef

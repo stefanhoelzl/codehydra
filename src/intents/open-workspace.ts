@@ -25,13 +25,15 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import type { WorkspaceName } from "./contract";
+import type { ProjectPath, WorkspaceName } from "./contract";
 import {
-  projectIdSchema,
-  workspaceNameSchema,
-  workspaceSchema,
   agentSpecSchema,
   hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+  workspaceSchema,
 } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
@@ -67,7 +69,7 @@ export type WorkspaceOpenSource = z.infer<typeof workspaceOpenSourceSchema>;
 /** Data for activating an existing (discovered) workspace via workspace:open */
 export const existingWorkspaceDataSchema = z
   .object({
-    path: z.string(),
+    path: workspacePathSchema,
     name: z.string(),
     branch: z.string().nullable(),
     metadata: z.record(z.string(), z.string()).readonly(),
@@ -88,7 +90,7 @@ export const openWorkspacePayloadSchema = z
     /** When set, skip worktree creation and populate context from existing workspace data. */
     existingWorkspace: existingWorkspaceDataSchema.optional(),
     /** Authoritative project path. */
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
     source: workspaceOpenSourceSchema.optional(),
     /**
@@ -107,13 +109,13 @@ export const openWorkspaceResultSchema = workspaceSchema;
 // =============================================================================
 
 /** Operation-added enrichment for the "create" hook point (resolved project path). */
-const createEnrichmentSchema = z.object({ projectPath: z.string() });
+const createEnrichmentSchema = z.object({ projectPath: projectPathSchema });
 const createInputSchema = hookCtxSchema(openWorkspacePayloadSchema, createEnrichmentSchema.shape);
 
 /** Result from the "create" hook point. Fields optional — multiple handlers may each contribute a subset. */
 export const createResultSchema = z
   .object({
-    workspacePath: z.string().optional(),
+    workspacePath: workspacePathSchema.optional(),
     branch: z.string().optional(),
     metadata: z.record(z.string(), z.string()).readonly().optional(),
     /** The resolved base branch (explicit or auto-detected). Used in the event payload. */
@@ -123,8 +125,8 @@ export const createResultSchema = z
 
 /** Operation-added enrichment for the "setup" hook point (merged create results). */
 const setupEnrichmentSchema = z.object({
-  workspacePath: z.string(),
-  projectPath: z.string(),
+  workspacePath: workspacePathSchema,
+  projectPath: projectPathSchema,
 });
 const setupInputSchema = hookCtxSchema(openWorkspacePayloadSchema, setupEnrichmentSchema.shape);
 
@@ -143,7 +145,7 @@ export const setupResultSchema = z
 
 /** Operation-added enrichment for the "finalize" hook point (create+setup results). */
 const finalizeEnrichmentSchema = z.object({
-  workspacePath: z.string(),
+  workspacePath: workspacePathSchema,
   envVars: z.record(z.string(), z.string()),
   agentType: agentTypeSchema.nullable(),
 });
@@ -170,8 +172,8 @@ const workspaceCreatedSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: z.string(),
-    projectPath: z.string(),
+    workspacePath: workspacePathSchema,
+    projectPath: projectPathSchema,
     branch: z.string(),
     base: z.string().optional(),
     tracking: z.string().optional(),
@@ -189,7 +191,7 @@ const workspaceCreatedSchema = z
 const workspaceLoadingSchema = z
   .object({
     workspaceName: z.string(),
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     /** The requested base branch (absent when auto-detected later). */
     base: z.string().optional(),
   })
@@ -198,14 +200,18 @@ const workspaceLoadingSchema = z
 const workspaceCreateFailedSchema = z
   .object({
     workspaceName: z.string(),
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     error: z.string(),
     /** Which module dispatched the original intent. */
     source: workspaceOpenSourceSchema.optional(),
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: openWorkspacePayloadSchema,
   result: openWorkspaceResultSchema,
@@ -280,7 +286,9 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
+  async execute(
+    ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>
+  ): Promise<OpenWorkspaceResult> {
     const { projectPath } = ctx.intent.payload;
 
     // Show loading dialog for foreground workspace creations.
@@ -297,7 +305,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
           projectPath,
           ...(ctx.intent.payload.base !== undefined && { base: ctx.intent.payload.base }),
         },
-      } as WorkspaceLoadingEvent);
+      } satisfies WorkspaceLoadingEvent);
     }
 
     try {
@@ -311,26 +319,28 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
           error: error instanceof Error ? error.message : String(error),
           ...(ctx.intent.payload.source !== undefined && { source: ctx.intent.payload.source }),
         },
-      } as WorkspaceCreateFailedEvent);
+      } satisfies WorkspaceCreateFailedEvent);
       throw error;
     }
   }
 
   private async executeWorkspaceOpen(
-    ctx: OperationContext<OpenWorkspaceIntent>,
-    projectPath: string
+    ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>,
+    projectPath: ProjectPath
   ): Promise<OpenWorkspaceResult> {
     // Dispatch project:resolve to get projectId from projectPath
-    const projResolved = await ctx.dispatch({
+    const projResolved = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
       payload: { projectPath },
-    } as ResolveProjectIntent);
+    });
     const resolvedProjectId = projResolved.projectId;
 
     // Hook: "create" — worktree creation (fatal on error)
     const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
-    const { results: createResults, errors: createErrors } =
-      await ctx.hooks.collect<CreateHookResult>("create", createCtx);
+    const { results: createResults, errors: createErrors } = await ctx.hooks.collect(
+      "create",
+      createCtx
+    );
 
     throwHookErrors(createErrors, "workspace:open create hooks failed");
 
@@ -353,7 +363,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       workspacePath,
       projectPath,
     };
-    const setupResult = await ctx.hooks.collect<SetupHookResult>("setup", setupCtx);
+    const setupResult = await ctx.hooks.collect("setup", setupCtx);
 
     throwHookErrors(setupResult.errors, "workspace:open setup hooks failed");
 
@@ -379,8 +389,10 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       envVars,
       agentType,
     };
-    const { errors: finalizeErrors, results: finalizeResults } =
-      await ctx.hooks.collect<FinalizeHookResult>("finalize", finalizeCtx);
+    const { errors: finalizeErrors, results: finalizeResults } = await ctx.hooks.collect(
+      "finalize",
+      finalizeCtx
+    );
 
     throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
@@ -447,18 +459,18 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     if (ctx.intent.payload.stealFocus !== false) {
       shouldSwitch = true;
     } else {
-      const activeWorkspace = await ctx.dispatch({
+      const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {},
-      } as GetActiveWorkspaceIntent);
+      });
       shouldSwitch = activeWorkspace === null;
     }
 
     if (shouldSwitch) {
-      await ctx.dispatch({
+      await ctx.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspacePath, focus: true },
-      } as SwitchWorkspaceIntent);
+      });
     }
 
     return workspace;

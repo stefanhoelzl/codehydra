@@ -25,13 +25,15 @@ import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const PROJECT_ROOT = projPath("/project");
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -85,7 +87,7 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
 // Helpers
 // =============================================================================
 
-function sessionIntent(workspacePath: string): GetAgentSessionIntent {
+function sessionIntent(workspacePath: WorkspacePath): GetAgentSessionIntent {
   return {
     type: INTENT_GET_AGENT_SESSION,
     payload: { workspacePath },
@@ -143,9 +145,9 @@ describe("GetAgentSession Operation", () => {
     it("unknown workspace path throws", async () => {
       const setup = createTestSetup({ session: null });
 
-      await expect(setup.dispatcher.dispatch(sessionIntent("/nonexistent/path"))).rejects.toThrow(
-        "Workspace not found: /nonexistent/path"
-      );
+      await expect(
+        setup.dispatcher.dispatch(sessionIntent(wsPath("/nonexistent/path")))
+      ).rejects.toThrow("Workspace not found: /nonexistent/path");
     });
   });
 

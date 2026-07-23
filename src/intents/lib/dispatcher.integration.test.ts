@@ -46,7 +46,7 @@ function defineOp(
   const schemas = {
     type: intentType,
     payload: z.unknown(),
-    result: z.custom<unknown>(),
+    result: z.unknown(),
   } satisfies OperationSchemas;
   const op: Operation<typeof schemas> = { id: spec.id, schemas, execute: spec.execute };
   return op;

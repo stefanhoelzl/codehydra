@@ -24,12 +24,14 @@ import type { ResolveProjectIntent, ResolveHookResult } from "./resolve-project"
 import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
+import { projPath } from "../shared/test-fixtures";
+import type { ProjectPath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/projects/my-app";
+const PROJECT_PATH = projPath("/projects/my-app");
 const PROJECT_ID = "my-app-12345678" as ProjectId;
 const PROJECT_NAME = "my-app";
 
@@ -61,7 +63,7 @@ function createTestSetup(
   return { dispatcher };
 }
 
-function resolveIntent(projectPath: string): ResolveProjectIntent {
+function resolveIntent(projectPath: ProjectPath): ResolveProjectIntent {
   return {
     type: INTENT_RESOLVE_PROJECT,
     payload: { projectPath },

@@ -31,7 +31,12 @@ import type {
 } from "../../intents/lib/operation";
 import type { IntentModule } from "../../intents/lib/module";
 import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID, INTENT_APP_START } from "../../intents/app-start";
+import {
+  APP_START_OPERATION_ID,
+  INTENT_APP_START,
+  configureResultSchema,
+  checkDepsResultSchema,
+} from "../../intents/app-start";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
@@ -52,12 +57,12 @@ import type {
   ExtensionsHookInput,
   SetupProgressPayload,
 } from "../../intents/setup";
-import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
-import type {
-  FinalizeHookInput,
-  FinalizeHookResult,
-  OpenWorkspaceIntent,
+import {
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
+  finalizeResultSchema,
 } from "../../intents/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -81,7 +86,8 @@ import { createArchiveExtractorMock } from "../../boundaries/platform/archive-ex
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Path } from "../../utils/path/path";
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { WorkspaceName } from "../../shared/api/types";
+import { wsPath, projPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Minimal Test Operations
@@ -91,6 +97,7 @@ const beforeReadySchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<readonly ConfigureResult[]>(),
+  hooks: { "before-ready": { result: configureResultSchema } },
 } satisfies OperationSchemas;
 
 class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
@@ -98,9 +105,9 @@ class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas
   readonly schemas = beforeReadySchemas;
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>>
+    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>, typeof beforeReadySchemas>
   ): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
+    const { results, errors } = await ctx.hooks.collect("before-ready", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -112,6 +119,7 @@ const checkDepsSchemas = {
   type: INTENT_APP_START,
   payload: z.unknown(),
   result: z.custom<CheckDepsResult>(),
+  hooks: { "check-deps": { result: checkDepsResultSchema } },
 } satisfies OperationSchemas;
 
 class MinimalCheckDepsOperation implements Operation<typeof checkDepsSchemas> {
@@ -124,14 +132,14 @@ class MinimalCheckDepsOperation implements Operation<typeof checkDepsSchemas> {
   }
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof checkDepsSchemas>>
+    ctx: OperationContext<IntentOf<typeof checkDepsSchemas>, typeof checkDepsSchemas>
   ): Promise<CheckDepsResult> {
     const hookCtx: CheckDepsHookContext = {
       intent: ctx.intent,
       configuredAgent: "claude",
       extensionRequirements: this.extensionRequirements,
     };
-    const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
+    const { results } = await ctx.hooks.collect("check-deps", hookCtx);
     // Merge all results
     const merged: CheckDepsResult = {};
     for (const r of results) {
@@ -162,8 +170,10 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = startSchemas;
 
-  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | undefined> {
-    const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
+  ): Promise<number | undefined> {
+    const { errors, capabilities } = await ctx.hooks.collect("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -188,7 +198,9 @@ class MinimalBinaryOperation implements Operation<typeof binarySchemas> {
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<IntentOf<typeof binarySchemas>>): Promise<void> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof binarySchemas>, typeof binarySchemas>
+  ): Promise<void> {
     const { errors } = await ctx.hooks.collect(
       "binary",
       { intent: ctx.intent, ...this.hookInput },
@@ -219,7 +231,9 @@ class MinimalExtensionsOperation implements Operation<typeof extensionsSchemas> 
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<IntentOf<typeof extensionsSchemas>>): Promise<void> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof extensionsSchemas>, typeof extensionsSchemas>
+  ): Promise<void> {
     const { errors } = await ctx.hooks.collect(
       "extensions",
       { intent: ctx.intent, ...this.hookInput },
@@ -237,6 +251,7 @@ const finalizeSchemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: z.unknown(),
   result: z.custom<string | undefined>(),
+  hooks: { finalize: { result: finalizeResultSchema } },
 } satisfies OperationSchemas;
 
 class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
@@ -249,9 +264,9 @@ class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
   }
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof finalizeSchemas>>
+    ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
   ): Promise<string | undefined> {
-    const { errors, results } = await ctx.hooks.collect<FinalizeHookResult>("finalize", {
+    const { errors, results } = await ctx.hooks.collect("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
@@ -272,9 +287,9 @@ function createMinimalDeleteOperation() {
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
-        projectPath: "/projects/test",
-        workspacePath: (ctx.intent as DeleteWorkspaceIntent).payload.workspacePath ?? "",
-        workspaceName: "test-workspace" as WorkspaceName,
+        projectPath: projPath("/test/project"),
+        workspaceName: "feature-1" as WorkspaceName,
+        workspacePath: (ctx.intent as DeleteWorkspaceIntent).payload.workspacePath,
         active: false,
       }),
       defaultResult: {},
@@ -1088,19 +1103,19 @@ describe("IdeServerModule", () => {
       // Now register finalize operation and test it
       dispatcher.registerOperation(
         new MinimalFinalizeOperation({
-          workspacePath: "/test/project/.worktrees/feature-1",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { OPENCODE_PORT: "8080" },
         })
       );
 
-      const workspaceUrl = (await dispatcher.dispatch({
+      const workspaceUrl = (await dispatcher.dispatch<OpenWorkspaceIntent>({
         type: "workspace:open",
         payload: {
-          projectPath: "/test/project",
           workspaceName: "feature-1",
+          projectPath: projPath("/test/project"),
           base: "main",
         },
-      } as OpenWorkspaceIntent)) as unknown as string | undefined;
+      })) as unknown as string | undefined;
 
       expect(workspaceUrl).toContain("25448");
       expect(workspaceUrl).toContain("workspace=");
@@ -1146,19 +1161,19 @@ describe("IdeServerModule", () => {
       // Finalize
       dispatcher.registerOperation(
         new MinimalFinalizeOperation({
-          workspacePath: "/test/project/.worktrees/feature-1",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: {},
         })
       );
 
-      const workspaceUrl = (await dispatcher.dispatch({
+      const workspaceUrl = (await dispatcher.dispatch<OpenWorkspaceIntent>({
         type: "workspace:open",
         payload: {
-          projectPath: "/test/project",
           workspaceName: "feature-1",
+          projectPath: projPath("/test/project"),
           base: "main",
         },
-      } as OpenWorkspaceIntent)) as unknown as string | undefined;
+      })) as unknown as string | undefined;
 
       expect(workspaceUrl).toContain("25448");
       expect(workspaceUrl).toContain("folder=");
@@ -1175,18 +1190,15 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: "/test/project/.worktrees/feature-1",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent);
+      });
 
       expect(deps.fileSystemLayer.rm).toHaveBeenCalledWith(
         new Path("/test/project/.worktrees/feature-1.code-workspace"),
@@ -1213,18 +1225,15 @@ describe("IdeServerModule", () => {
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
       // Should not throw
-      const result = (await dispatcher.dispatch({
+      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          projectId: "test-12345678" as ProjectId,
-          workspaceName: "feature-1" as WorkspaceName,
-          workspacePath: "/test/project/.worktrees/feature-1",
-          projectPath: "/test/project",
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           keepBranch: false,
           force: true,
           removeWorktree: true,
         },
-      } as DeleteWorkspaceIntent)) as DeleteHookResult;
+      })) as DeleteHookResult;
 
       expect(result).toEqual({});
     });
@@ -1248,18 +1257,15 @@ describe("IdeServerModule", () => {
       dispatcher.registerOperation(createMinimalDeleteOperation());
 
       await expect(
-        dispatcher.dispatch({
+        dispatcher.dispatch<DeleteWorkspaceIntent>({
           type: "workspace:delete",
           payload: {
-            projectId: "test-12345678" as ProjectId,
-            workspaceName: "feature-1" as WorkspaceName,
-            workspacePath: "/test/project/.worktrees/feature-1",
-            projectPath: "/test/project",
+            workspacePath: wsPath("/test/project/.worktrees/feature-1"),
             keepBranch: false,
             force: false,
             removeWorktree: true,
           },
-        } as DeleteWorkspaceIntent)
+        })
       ).rejects.toThrow("permission denied");
     });
   });

@@ -32,13 +32,15 @@ import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { Path } from "../utils/path/path";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = "/project";
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const PROJECT_ROOT = projPath("/project");
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -125,7 +127,7 @@ function createTestSetup(opts: {
 // Helpers
 // =============================================================================
 
-function statusIntent(workspacePath: string): GetWorkspaceStatusIntent {
+function statusIntent(workspacePath: WorkspacePath): GetWorkspaceStatusIntent {
   return {
     type: INTENT_GET_WORKSPACE_STATUS,
     payload: { workspacePath },
@@ -289,7 +291,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const error = await setup.dispatcher
-        .dispatch(statusIntent("/nonexistent/path"))
+        .dispatch(statusIntent(wsPath("/nonexistent/path")))
         .then(() => expect.unreachable("should have thrown"))
         .catch((e: unknown) => e);
 

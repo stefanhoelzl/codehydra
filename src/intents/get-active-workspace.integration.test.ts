@@ -30,6 +30,7 @@ import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { wsPath } from "../shared/test-fixtures";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 
@@ -37,7 +38,7 @@ const PROJECT_ID = "project-ea0135bc" as ProjectId;
 // Test Constants
 // =============================================================================
 
-const WORKSPACE_PATH = "/workspaces/feature-x";
+const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 
 // =============================================================================
 // Test Setup

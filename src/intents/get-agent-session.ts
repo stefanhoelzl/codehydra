@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { agentSessionSchema, hookCtxSchema } from "./contract";
+import { agentSessionSchema, hookCtxSchema, workspacePathSchema } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
@@ -28,7 +28,7 @@ export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
 
 export const getAgentSessionPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
   })
   .readonly();
 
@@ -46,7 +46,7 @@ export const getAgentSessionHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getAgentSessionEnrichmentSchema = z.object({ workspacePath: z.string() });
+const getAgentSessionEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for "get". */
 export const getAgentSessionHookInputSchema = hookCtxSchema(
@@ -54,7 +54,11 @@ export const getAgentSessionHookInputSchema = hookCtxSchema(
   getAgentSessionEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_GET_AGENT_SESSION,
   payload: getAgentSessionPayloadSchema,
   result: getAgentSessionResultSchema,
@@ -80,15 +84,13 @@ export type GetAgentSessionHookInput = HookContext &
 // Operation
 // =============================================================================
 
-export class GetAgentSessionOperation extends WorkspaceHookOperation<
-  typeof schemas,
-  GetAgentSessionHookResult
-> {
+export class GetAgentSessionOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(GET_AGENT_SESSION_OPERATION_ID, {
       hookPoint: "get",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       errorLabel: "get-agent-session get hooks failed",
       extract: (results) =>
         requireResult(

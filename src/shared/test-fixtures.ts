@@ -6,6 +6,8 @@
  */
 
 import type { Project, Workspace, ProjectId, WorkspaceName } from "./api/types";
+import { workspacePathSchema, projectPathSchema } from "../intents/contract";
+import type { ProjectPath, WorkspacePath } from "../intents/contract";
 
 /**
  * Default project ID used in test fixtures.
@@ -47,9 +49,27 @@ export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspa
     name: name as WorkspaceName,
     branch,
     metadata: { base: branch ?? "main", ...overrides.metadata },
-    path: overrides.path ?? `/test/project/.worktrees/${name}`,
+    path: workspacePathSchema.parse(overrides.path ?? `/test/project/.worktrees/${name}`),
     ...(overrides.url !== undefined ? { url: overrides.url } : {}),
   };
+}
+
+// =============================================================================
+// Branded path helpers (tests)
+// =============================================================================
+
+/**
+ * Mint a branded project/workspace path for a fixture.
+ *
+ * Tests are producers of contract data like any other caller, so they mint brands the same
+ * way production edges do — by parsing — rather than with an `as` cast.
+ */
+export function projPath(p: string): ProjectPath {
+  return projectPathSchema.parse(p);
+}
+
+export function wsPath(p: string): WorkspacePath {
+  return workspacePathSchema.parse(p);
 }
 
 // =============================================================================
@@ -112,7 +132,7 @@ export function createMockProject(
   return {
     id: projectId,
     name: overrides.name ?? "test-project",
-    path: overrides.path ?? "/test/project",
+    path: projectPathSchema.parse(overrides.path ?? "/test/project"),
     workspaces,
     ...(overrides.defaultBaseBranch !== undefined
       ? { defaultBaseBranch: overrides.defaultBaseBranch }

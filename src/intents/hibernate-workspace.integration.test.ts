@@ -54,10 +54,12 @@ import {
   type OpenWorkspacePayload,
 } from "./open-workspace";
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import { workspaceSchema } from "./contract";
 
-const PROJECT_PATH = "/test/project";
+const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
-const WORKSPACE_PATH = "/test/project/workspaces/feature-a";
+const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 const BRANCH = "feature-a-branch";
 const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
@@ -73,13 +75,13 @@ const REOPENED_WORKSPACE: Workspace = {
 const getMetadataStubSchemas = {
   type: INTENT_GET_METADATA,
   payload: z.unknown(),
-  result: z.custom<Readonly<Record<string, string>>>(),
+  result: z.record(z.string(), z.string()).readonly(),
 } satisfies OperationSchemas;
 
 const openWorkspaceStubSchemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: z.unknown(),
-  result: z.custom<Workspace>(),
+  result: workspaceSchema,
 } satisfies OperationSchemas;
 
 interface Recorder {
@@ -361,10 +363,10 @@ describe("workspace:hibernate", () => {
       { active: true }
     );
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
     await waitForBackground();
 
     // Switch happened in foreground, between set-metadata and shutdown.
@@ -387,10 +389,10 @@ describe("workspace:hibernate", () => {
       createHibernateHookModule(r, { shutdownGate }),
     ]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
 
     // Foreground done: metadata flipped, no shutdown yet.
     expect(recorder.callOrder).toEqual(["capture", "set-metadata:true"]);
@@ -425,10 +427,10 @@ describe("workspace:hibernate", () => {
       },
     ]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
     await waitForBackground();
 
     expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
@@ -443,10 +445,10 @@ describe("workspace:hibernate", () => {
       createCaptureBracketModule(r),
     ]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
     await waitForBackground();
 
     // Foreground: the sidebar is collapsed (prepare), the screenshot is taken
@@ -464,10 +466,10 @@ describe("workspace:hibernate", () => {
       createCaptureBracketModule(r, { captureThrows: true }),
     ]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
     await waitForBackground();
 
     // capture threw, but cleanup-capture still ran and hibernation completed —
@@ -487,10 +489,10 @@ describe("workspace:hibernate", () => {
       createHibernateHookModule(r, { releaseThrows: true }),
     ]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as HibernateWorkspaceIntent);
+    });
     await waitForBackground();
 
     expect(recorder.releaseCalled).toBe(true);
@@ -542,10 +544,10 @@ describe("workspace:wake", () => {
   it("forwards stealFocus and source to the internal open", async () => {
     const { dispatcher, recorder } = buildHarness((r) => [createWakeHookModule(r)]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<WakeWorkspaceIntent>({
       type: INTENT_WAKE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH, stealFocus: false, source: "mcp" },
-    } as WakeWorkspaceIntent);
+    });
 
     expect(recorder.openPayload?.stealFocus).toBe(false);
     expect(recorder.openPayload?.source).toBe("mcp");
@@ -554,10 +556,10 @@ describe("workspace:wake", () => {
   it("omits stealFocus/source when the caller does not set them", async () => {
     const { dispatcher, recorder } = buildHarness((r) => [createWakeHookModule(r)]);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<WakeWorkspaceIntent>({
       type: INTENT_WAKE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    } as WakeWorkspaceIntent);
+    });
 
     expect(recorder.openPayload).toBeDefined();
     expect(recorder.openPayload).not.toHaveProperty("stealFocus");

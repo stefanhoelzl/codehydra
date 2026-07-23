@@ -23,6 +23,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
+import { hookCtxSchema } from "./contract";
 
 export const INTENT_APP_SHUTDOWN = "app:shutdown" as const;
 
@@ -43,9 +44,20 @@ export const appShutdownPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/** Both shutdown hook points receive the bare intent. */
+const shutdownHookInputSchema = hookCtxSchema(appShutdownPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_APP_SHUTDOWN,
   payload: appShutdownPayloadSchema,
+  hooks: {
+    stop: { input: shutdownHookInputSchema },
+    quit: { input: shutdownHookInputSchema },
+  },
 } satisfies OperationSchemas;
 
 // =============================================================================
@@ -63,7 +75,7 @@ export class AppShutdownOperation implements Operation<typeof schemas> {
   readonly id = APP_SHUTDOWN_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<AppShutdownIntent>): Promise<void> {
+  async execute(ctx: OperationContext<AppShutdownIntent, typeof schemas>): Promise<void> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
@@ -71,10 +83,10 @@ export class AppShutdownOperation implements Operation<typeof schemas> {
     // Hook: "stop" -- All modules dispose (independent, best-effort)
     // collect() catches errors from each handler and continues to the next.
     // The dispatcher logs hook errors centrally.
-    await ctx.hooks.collect<void>("stop", hookCtx);
+    await ctx.hooks.collect("stop", hookCtx);
 
     // Hook: "quit" -- Terminate the process (runs after all cleanup)
-    await ctx.hooks.collect<void>("quit", hookCtx);
+    await ctx.hooks.collect("quit", hookCtx);
 
     // Intentionally ignore both results and errors -- shutdown is best-effort.
     // Individual module errors are logged by the dispatcher.

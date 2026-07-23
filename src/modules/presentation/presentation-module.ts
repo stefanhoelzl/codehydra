@@ -147,6 +147,7 @@ import {
 } from "./sessions";
 import type { NotificationConfig } from "../../shared/notification-types";
 import { getErrorMessage } from "../../shared/error-utils";
+import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
@@ -231,7 +232,7 @@ interface WorkspaceModel {
    */
   title: string | undefined;
   /** Real worktree path; null while the workspace is still being created. */
-  path: string | null;
+  path: WorkspacePath | null;
   hibernated: boolean;
   tags: WorkspaceTag[];
   url: string | undefined;
@@ -271,7 +272,7 @@ function toUiDeletionProgress(progress: DeletionProgress): UiDeletionProgress {
 interface ProjectModel {
   readonly id: string;
   readonly name: string;
-  readonly path: string;
+  readonly path: ProjectPath;
   readonly remoteUrl: string | undefined;
   /** Keyed by workspace name (unique per project); insertion-ordered. */
   readonly workspaces: Map<string, WorkspaceModel>;
@@ -851,10 +852,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         }
         return;
       case "quit": {
-        const handle = deps.dispatcher.dispatch({
+        const handle = deps.dispatcher.dispatch<AppShutdownIntent>({
           type: INTENT_APP_SHUTDOWN,
           payload: {},
-        } as AppShutdownIntent);
+        });
         void handle.catch((error: unknown) => {
           logger.debug("app:shutdown dispatch rejected", { error: getErrorMessage(error) });
         });
@@ -988,7 +989,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /** The interactive remove flow (shared by the ui:event and shortcut delete). */
-  function dispatchInteractiveDelete(workspacePath: string): void {
+  function dispatchInteractiveDelete(workspacePath: WorkspacePath): void {
     dispatchDetached({
       type: INTENT_DELETE_WORKSPACE,
       payload: {
@@ -1164,7 +1165,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /** Switch to a workspace by its real path (placeholders are skipped upstream). */
-  function navigateSwitch(workspacePath: string): void {
+  function navigateSwitch(workspacePath: WorkspacePath): void {
     dispatchDetached({
       type: INTENT_SWITCH_WORKSPACE,
       payload: { workspacePath, focus: false },

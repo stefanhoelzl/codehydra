@@ -23,8 +23,14 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type { ProjectId, Project } from "../shared/api/types";
-import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
-import { projectSchema, projectIdSchema, hookCtxSchema } from "./contract";
+import {
+  projectSchema,
+  projectIdSchema,
+  projectPathSchema,
+  discoveredWorkspaceSchema,
+  hookCtxSchema,
+} from "./contract";
+import type { ProjectPath, DiscoveredWorkspace } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
@@ -51,7 +57,7 @@ export const EVENT_CLONE_PROGRESS = "clone:progress" as const;
 export const openProjectPayloadSchema = z
   .object({
     /** Absolute local filesystem path. Set by projects.open. */
-    path: z.instanceof(Path).optional(),
+    path: projectPathSchema.optional(),
     /** Git URL or shorthand (e.g. "org/repo"). Set by the creation module's clone sub-dialog. */
     git: z.string().optional(),
   })
@@ -61,28 +67,13 @@ export const openProjectPayloadSchema = z
 export const openProjectResultSchema = projectSchema.nullable();
 
 // -----------------------------------------------------------------------------
-// Internal (git-types) Workspace — local schema (no contract equivalent: the
-// contract's workspaceSchema is the IPC form with a string path; discover
-// results carry the internal form with a `Path` instance).
-// -----------------------------------------------------------------------------
-
-const internalWorkspaceSchema = z
-  .object({
-    name: z.string(),
-    path: z.instanceof(Path),
-    branch: z.string().nullable(),
-    metadata: z.record(z.string(), z.string()).readonly(),
-  })
-  .readonly();
-
-// -----------------------------------------------------------------------------
 // Hook result schemas
 // -----------------------------------------------------------------------------
 
 /** Result returned by handlers on the "select-folder" hook point. */
 export const selectFolderHookResultSchema = z
   .object({
-    folderPath: z.string().nullable(),
+    folderPath: projectPathSchema.nullable(),
   })
   .readonly();
 
@@ -98,7 +89,7 @@ export const prepareHookResultSchema = z
 export const resolveHookResultSchema = z
   .object({
     /** Optional when using collect() — handler may skip via self-selection. */
-    projectPath: z.string().optional(),
+    projectPath: projectPathSchema.optional(),
     remoteUrl: z.string().optional(),
     /** If true, the project is already open — skip workspace:open and event emission. */
     alreadyOpen: z.boolean().optional(),
@@ -108,7 +99,7 @@ export const resolveHookResultSchema = z
 /** Result returned by handlers on the "discover" hook point. */
 export const discoverHookResultSchema = z
   .object({
-    workspaces: z.array(internalWorkspaceSchema).readonly(),
+    workspaces: z.array(discoveredWorkspaceSchema).readonly(),
     defaultBaseBranch: z.string().optional(),
   })
   .readonly();
@@ -129,7 +120,7 @@ export const registerHookResultSchema = z
 // -----------------------------------------------------------------------------
 
 /** Operation-added enrichment for the "discover" hook point. */
-const discoverEnrichmentSchema = z.object({ projectPath: z.string() });
+const discoverEnrichmentSchema = z.object({ projectPath: projectPathSchema });
 
 /** Runtime whole-context validation schema for "discover". */
 export const discoverHookInputSchema = hookCtxSchema(
@@ -139,7 +130,7 @@ export const discoverHookInputSchema = hookCtxSchema(
 
 /** Operation-added enrichment for the "register" hook point. */
 const registerEnrichmentSchema = z.object({
-  projectPath: z.string(),
+  projectPath: projectPathSchema,
   remoteUrl: z.string().optional(),
 });
 
@@ -157,7 +148,7 @@ export const projectOpenedPayloadSchema = z
   .object({
     project: projectSchema,
     /** Original intent path, for idempotency reset. */
-    path: z.instanceof(Path).optional(),
+    path: projectPathSchema.optional(),
     /** Original intent git URL, for idempotency reset. */
     git: z.string().optional(),
   })
@@ -166,7 +157,7 @@ export const projectOpenedPayloadSchema = z
 export const projectOpenFailedPayloadSchema = z
   .object({
     /** Original intent path, for idempotency reset. */
-    path: z.instanceof(Path).optional(),
+    path: projectPathSchema.optional(),
     /** Original intent git URL, for idempotency reset. */
     git: z.string().optional(),
     /** Reason the open failed (error message or "already-open"). */
@@ -183,14 +174,21 @@ export const cloneProgressPayloadSchema = z
   })
   .readonly();
 
-const schemas = {
+/** These hook points receive the bare (possibly folder-resolved) intent. */
+const bareOpenHookInputSchema = hookCtxSchema(openProjectPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_OPEN_PROJECT,
   payload: openProjectPayloadSchema,
   result: openProjectResultSchema,
   hooks: {
-    "select-folder": { result: selectFolderHookResultSchema },
-    prepare: { result: prepareHookResultSchema },
-    resolve: { result: resolveHookResultSchema },
+    "select-folder": { input: bareOpenHookInputSchema, result: selectFolderHookResultSchema },
+    prepare: { input: bareOpenHookInputSchema, result: prepareHookResultSchema },
+    resolve: { input: bareOpenHookInputSchema, result: resolveHookResultSchema },
     register: { input: registerHookInputSchema, result: registerHookResultSchema },
     discover: { input: discoverHookInputSchema, result: discoverHookResultSchema },
   },
@@ -276,7 +274,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project | null> {
+  async execute(ctx: OperationContext<OpenProjectIntent, typeof schemas>): Promise<Project | null> {
     const { intent } = ctx;
 
     // Intent-origin fields for idempotency reset events
@@ -289,10 +287,12 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     let effectiveIntent = intent;
     if (!intent.payload.path && !intent.payload.git) {
       const selectCtx: HookContext = { intent };
-      const { results: selectResults, errors: selectErrors } =
-        await ctx.hooks.collect<SelectFolderHookResult>("select-folder", selectCtx);
+      const { results: selectResults, errors: selectErrors } = await ctx.hooks.collect(
+        "select-folder",
+        selectCtx
+      );
       throwHookErrors(selectErrors, "project:open select-folder hooks failed");
-      let folderPath: string | null = null;
+      let folderPath: ProjectPath | null = null;
       for (const r of selectResults) {
         if (r.folderPath) folderPath = r.folderPath;
       }
@@ -302,7 +302,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       // Construct effective intent with the selected path
       effectiveIntent = {
         ...intent,
-        payload: { ...intent.payload, path: new Path(folderPath) },
+        payload: { ...intent.payload, path: folderPath },
       };
     }
 
@@ -310,8 +310,10 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     // Only runs for local paths, not git URLs
     if (effectiveIntent.payload.path && !effectiveIntent.payload.git) {
       const prepareCtx: HookContext = { intent: effectiveIntent };
-      const { results: prepareResults, errors: prepareErrors } =
-        await ctx.hooks.collect<PrepareHookResult>("prepare", prepareCtx);
+      const { results: prepareResults, errors: prepareErrors } = await ctx.hooks.collect(
+        "prepare",
+        prepareCtx
+      );
       throwHookErrors(prepareErrors, "project:open prepare hooks failed");
       for (const r of prepareResults) {
         if (r.canceled) return null;
@@ -338,12 +340,15 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
 
       // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
       const resolveCtx: HookContext = { intent: effectiveIntent };
-      const { results: resolveResults, errors: resolveErrors } =
-        await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx, {
+      const { results: resolveResults, errors: resolveErrors } = await ctx.hooks.collect(
+        "resolve",
+        resolveCtx,
+        {
           onYield: emitCloneProgress,
-        });
+        }
+      );
       throwHookErrors(resolveErrors, "project:open resolve hooks failed");
-      let projectPath: string | undefined;
+      let projectPath: ProjectPath | undefined;
       let resolvedRemoteUrl: string | undefined;
       let alreadyOpen = false;
       for (const r of resolveResults) {
@@ -361,8 +366,10 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         projectPath,
         ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
       };
-      const { results: registerResults, errors: registerErrors } =
-        await ctx.hooks.collect<RegisterHookResult>("register", registerCtx);
+      const { results: registerResults, errors: registerErrors } = await ctx.hooks.collect(
+        "register",
+        registerCtx
+      );
       throwHookErrors(registerErrors, "project:open register hooks failed");
       let projectId: ProjectId | undefined;
       let name: string | undefined;
@@ -377,10 +384,12 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
 
       // 3. Discover: find existing workspaces
       const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
-      const { results: discoverResults, errors: discoverErrors } =
-        await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
+      const { results: discoverResults, errors: discoverErrors } = await ctx.hooks.collect(
+        "discover",
+        discoverCtx
+      );
       throwHookErrors(discoverErrors, "project:open discover hooks failed");
-      const workspaces: InternalWorkspace[] = [];
+      const workspaces: DiscoveredWorkspace[] = [];
       let defaultBaseBranch: string | undefined;
       for (const r of discoverResults) {
         if (r.workspaces) workspaces.push(...r.workspaces);
@@ -407,7 +416,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
           if (workspace.metadata[HIBERNATED_METADATA_KEY] === "true") continue;
           try {
             const existingWorkspace: ExistingWorkspaceData = {
-              path: workspace.path.toString(),
+              path: workspace.path,
               name: workspace.name,
               branch: workspace.branch,
               metadata: workspace.metadata,
@@ -457,10 +466,10 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         // During startup, multiple projects open sequentially — only the first
         // should activate a workspace to avoid visual jumping.
         if (project.workspaces.length > 0) {
-          const activeWorkspace = await ctx.dispatch({
+          const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
             type: INTENT_GET_ACTIVE_WORKSPACE,
             payload: {},
-          } as GetActiveWorkspaceIntent);
+          });
 
           if (activeWorkspace === null) {
             // Pick the first non-hibernated workspace; if all are hibernated,
@@ -470,10 +479,10 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
             );
             if (firstAwake) {
               try {
-                await ctx.dispatch({
+                await ctx.dispatch<SwitchWorkspaceIntent>({
                   type: INTENT_SWITCH_WORKSPACE,
                   payload: { workspacePath: firstAwake.path },
-                } as SwitchWorkspaceIntent);
+                });
               } catch {
                 // Best-effort: switch failure doesn't fail the project open
               }
@@ -485,7 +494,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         ctx.emit({
           type: EVENT_PROJECT_OPEN_FAILED,
           payload: { ...origin, reason: "already-open" },
-        } as ProjectOpenFailedEvent);
+        } satisfies ProjectOpenFailedEvent);
       }
 
       return project;
@@ -497,7 +506,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
           ...origin,
           reason: e instanceof Error ? e.message : String(e),
         },
-      } as ProjectOpenFailedEvent);
+      } satisfies ProjectOpenFailedEvent);
       throw e;
     }
   }

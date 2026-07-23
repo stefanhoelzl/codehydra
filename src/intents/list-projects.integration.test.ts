@@ -23,22 +23,27 @@ import type {
 import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Project, ProjectId } from "../shared/api/types";
-import type { InternalWorkspace } from "./list-projects";
+import type { DiscoveredWorkspace, ProjectPath, WorkspaceName } from "./contract";
 import { Path } from "../utils/path/path";
+import { projPath, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_A_ID = "project-a-ea0135bc" as ProjectId;
-const PROJECT_A_PATH = "/repos/project-a";
+const PROJECT_A_PATH = projPath("/repos/project-a");
 const PROJECT_B_ID = "project-b-fb1246cd" as ProjectId;
-const PROJECT_B_PATH = "/repos/project-b";
+const PROJECT_B_PATH = projPath("/repos/project-b");
 
-function makeWorkspace(name: string, projectPath: string, branch: string): InternalWorkspace {
+function makeWorkspace(
+  name: string,
+  projectPath: ProjectPath,
+  branch: string
+): DiscoveredWorkspace {
   return {
-    name,
-    path: new Path(`${projectPath}/.codehydra/workspaces/${name}`),
+    name: name as WorkspaceName,
+    path: wsPath(new Path(`${projectPath}/.codehydra/workspaces/${name}`).toString()),
     branch,
     metadata: { base: "main" },
   };
@@ -134,7 +139,7 @@ describe("ListProjects Operation", () => {
           },
         }),
         async () => ({
-          result: { entries: [{ projectPath: PROJECT_A_PATH, workspaces: [ws1, ws2] }] },
+          result: { entries: [{ projectPath: projPath(PROJECT_A_PATH), workspaces: [ws1, ws2] }] },
         })
       );
     });
@@ -227,7 +232,7 @@ describe("ListProjects Operation", () => {
           },
         }),
         async () => ({
-          result: { entries: [{ projectPath: PROJECT_A_PATH, workspaces: [] }] },
+          result: { entries: [{ projectPath: projPath(PROJECT_A_PATH), workspaces: [] }] },
         })
       );
 
@@ -261,7 +266,7 @@ describe("ListProjects Operation", () => {
 
   describe("workspace data for unknown project", () => {
     let setup: TestSetup;
-    const ws = makeWorkspace("orphan", "/repos/unknown", "orphan");
+    const ws = makeWorkspace("orphan", projPath("/repos/unknown"), "orphan");
 
     beforeEach(() => {
       setup = createTestSetup(
@@ -271,7 +276,7 @@ describe("ListProjects Operation", () => {
           },
         }),
         async () => ({
-          result: { entries: [{ projectPath: "/repos/unknown", workspaces: [ws] }] },
+          result: { entries: [{ projectPath: projPath("/repos/unknown"), workspaces: [ws] }] },
         })
       );
     });

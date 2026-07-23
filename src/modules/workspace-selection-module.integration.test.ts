@@ -32,20 +32,22 @@ import type { DomainEvent } from "../intents/lib/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import type { WorkspacePath } from "../intents/contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/projects/app";
+const PROJECT_PATH = projPath("/projects/app");
 const PROJECT_NAME = "app";
 const WS_A = "/projects/app/workspaces/alpha";
 const WS_B = "/projects/app/workspaces/beta";
 const WS_C = "/projects/app/workspaces/gamma";
 
-function candidate(workspacePath: string): WorkspaceCandidate {
+function candidate(workspacePath: WorkspacePath): WorkspaceCandidate {
   return {
     projectPath: PROJECT_PATH,
     projectName: PROJECT_NAME,
@@ -133,12 +135,12 @@ describe("WorkspaceSelectionModule", () => {
   describe("selects nearest candidate (#1)", () => {
     it("picks the next workspace in alphabetical order", async () => {
       const setup = createTestSetup({
-        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
+        candidates: [candidate(wsPath(WS_A)), candidate(wsPath(WS_B)), candidate(wsPath(WS_C))],
       });
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: WS_A },
+        payload: { auto: true, currentPath: wsPath(WS_A) },
       };
       await setup.dispatcher.dispatch(autoIntent);
 
@@ -149,7 +151,7 @@ describe("WorkspaceSelectionModule", () => {
   describe("prefers idle over busy (#2)", () => {
     it("selects idle workspace even when busy workspace is closer", async () => {
       const setup = createTestSetup({
-        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
+        candidates: [candidate(wsPath(WS_A)), candidate(wsPath(WS_B)), candidate(wsPath(WS_C))],
       });
 
       // Populate the module's internal status cache via its event handler
@@ -177,7 +179,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: WS_A },
+        payload: { auto: true, currentPath: wsPath(WS_A) },
       };
       await setup.dispatcher.dispatch(autoIntent);
 
@@ -197,7 +199,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: "/nonexistent" },
+        payload: { auto: true, currentPath: wsPath("/nonexistent") },
       };
       await setup.dispatcher.dispatch(autoIntent);
 

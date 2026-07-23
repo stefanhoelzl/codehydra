@@ -24,6 +24,7 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
+import { hookCtxSchema } from "./contract";
 
 export const INTENT_APP_RESUME = "app:resume" as const;
 
@@ -73,11 +74,18 @@ export const appResumeFailedPayloadSchema = z.object({ error: z.string() }).read
 /** Payload emitted by `ide-server:restarted`. */
 export const ideServerRestartedPayloadSchema = z.object({}).readonly();
 
-const schemas = {
+/** The resume hook point receives the bare intent. */
+const appResumeHookInputSchema = hookCtxSchema(appResumePayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_APP_RESUME,
   payload: appResumePayloadSchema,
   hooks: {
-    [APP_RESUME_HOOK_RESUME]: { result: resumeHookResultSchema },
+    [APP_RESUME_HOOK_RESUME]: { input: appResumeHookInputSchema, result: resumeHookResultSchema },
   },
   events: {
     [EVENT_APP_RESUMED]: appResumedPayloadSchema,
@@ -124,9 +132,9 @@ export class AppResumeOperation implements Operation<typeof schemas> {
   readonly id = APP_RESUME_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<AppResumeIntent>): Promise<void> {
+  async execute(ctx: OperationContext<AppResumeIntent, typeof schemas>): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
-    const { results } = await ctx.hooks.collect<ResumeHookResult>(APP_RESUME_HOOK_RESUME, hookCtx);
+    const { results } = await ctx.hooks.collect(APP_RESUME_HOOK_RESUME, hookCtx);
 
     // Turn handler outcomes into domain events (operation owns emits).
     for (const result of results) {

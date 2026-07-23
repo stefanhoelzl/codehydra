@@ -24,12 +24,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import {
-  configAgentTypeSchema,
-  setupRowIdSchema,
-  setupRowStatusSchema,
-  hookCtxSchema,
-} from "./contract";
+import { agentTypeSchema, setupRowIdSchema, setupRowStatusSchema, hookCtxSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_SETUP = "app:setup" as const;
@@ -68,7 +63,7 @@ export const setupPayloadSchema = z
     /** Extensions to install (from check-deps install plan) */
     extensionInstallPlan: z.array(extensionInstallEntrySchema).readonly().optional(),
     /** The agent in effect. Always known: app:start selects it before dispatching setup. */
-    configuredAgent: configAgentTypeSchema,
+    configuredAgent: agentTypeSchema,
   })
   .readonly();
 
@@ -82,7 +77,7 @@ export const setupPayloadSchema = z
  * frames); the operation emits `setup:progress` for each — no `report` closure in the context.
  */
 const binaryEnrichmentSchema = z.object({
-  configuredAgent: configAgentTypeSchema,
+  configuredAgent: agentTypeSchema,
   missingBinaries: z.array(binaryTypeSchema).readonly().optional(),
 });
 const binaryInputSchema = hookCtxSchema(setupPayloadSchema, binaryEnrichmentSchema.shape);
@@ -117,10 +112,19 @@ const setupErrorSchema = z
   })
   .readonly();
 
-const schemas = {
+/** The UI show/hide hook points receive the bare intent. */
+const bareSetupHookInputSchema = hookCtxSchema(setupPayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SETUP,
   payload: setupPayloadSchema,
   hooks: {
+    "show-ui": { input: bareSetupHookInputSchema },
+    "hide-ui": { input: bareSetupHookInputSchema },
     binary: { input: binaryInputSchema },
     extensions: { input: extensionsInputSchema },
   },
@@ -169,7 +173,7 @@ export class SetupOperation implements Operation<typeof schemas> {
   readonly id = SETUP_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
+  async execute(ctx: OperationContext<SetupIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
     const hookCtx: HookContext = {
       intent: ctx.intent,
@@ -177,14 +181,16 @@ export class SetupOperation implements Operation<typeof schemas> {
 
     try {
       // Hook 1: "show-ui" -- Show setup screen
-      const { errors: showUiErrors } = await ctx.hooks.collect<void>("show-ui", hookCtx);
+      const { errors: showUiErrors } = await ctx.hooks.collect("show-ui", hookCtx);
       throwHookErrors(showUiErrors, "app:setup show-ui hooks failed");
 
-      // Streaming handlers (binary/extensions) yield SetupProgressPayload frames;
-      // the operation emits setup:progress for each. DomainEvent.payload is unknown,
-      // so the frame forwards straight through — the handler owns its typed yields.
+      // Streaming handlers (binary/extensions) yield SetupProgressPayload frames; the
+      // operation emits setup:progress for each. A yielded frame is untyped at the collect
+      // boundary, so it is parsed against the event's own schema before being emitted — the
+      // same schema the dispatcher would apply at emit, applied here so a malformed frame
+      // fails at its source rather than as an opaque emit error.
       const emitProgress = (frame: unknown): void => {
-        void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: frame });
+        void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: setupProgressSchema.parse(frame) });
       };
 
       // Hook 2: "binary" -- Update binary progress (downloads if needed)
@@ -193,7 +199,7 @@ export class SetupOperation implements Operation<typeof schemas> {
         configuredAgent: payload.configuredAgent,
         ...(payload.missingBinaries !== undefined && { missingBinaries: payload.missingBinaries }),
       };
-      const { errors: binaryErrors } = await ctx.hooks.collect<void>("binary", binaryInput, {
+      const { errors: binaryErrors } = await ctx.hooks.collect("binary", binaryInput, {
         onYield: emitProgress,
       });
       throwHookErrors(binaryErrors, "app:setup binary hooks failed");
@@ -205,15 +211,13 @@ export class SetupOperation implements Operation<typeof schemas> {
           extensionInstallPlan: payload.extensionInstallPlan,
         }),
       };
-      const { errors: extensionsErrors } = await ctx.hooks.collect<void>(
-        "extensions",
-        extensionsInput,
-        { onYield: emitProgress }
-      );
+      const { errors: extensionsErrors } = await ctx.hooks.collect("extensions", extensionsInput, {
+        onYield: emitProgress,
+      });
       throwHookErrors(extensionsErrors, "app:setup extensions hooks failed");
 
       // Hook 4: "hide-ui" -- Hide setup screen (return to starting screen)
-      const { errors: hideUiErrors } = await ctx.hooks.collect<void>("hide-ui", hookCtx);
+      const { errors: hideUiErrors } = await ctx.hooks.collect("hide-ui", hookCtx);
       throwHookErrors(hideUiErrors, "app:setup hide-ui hooks failed");
 
       // Control returns to AppStartOperation (no dispatch)

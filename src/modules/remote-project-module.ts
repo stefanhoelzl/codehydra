@@ -19,6 +19,7 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
+import { projectPathSchema } from "../intents/contract";
 import type { ProjectId } from "../shared/api/types";
 import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../utils/url-utils";
 import type {
@@ -100,7 +101,7 @@ export function createRemoteProjectModule(deps: {
               });
               return {
                 result: {
-                  projectPath: gitPath.toString(),
+                  projectPath: projectPathSchema.parse(gitPath.toString()),
                   remoteUrl: expanded,
                 },
               };
@@ -122,7 +123,12 @@ export function createRemoteProjectModule(deps: {
             // No saveProject call — LocalProjectModule.register handles persistence
             // with remoteUrl from context
 
-            return { result: { projectPath: gitPath.toString(), remoteUrl: expanded } };
+            return {
+              result: {
+                projectPath: projectPathSchema.parse(gitPath.toString()),
+                remoteUrl: expanded,
+              },
+            };
           },
         },
       },

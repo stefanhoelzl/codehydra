@@ -106,6 +106,8 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
+import { workspacePathSchema } from "../intents/contract";
+import type { WorkspacePath } from "../intents/contract";
 
 // =============================================================================
 // Types
@@ -249,7 +251,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // ---------------------------------------------------------------------------
 
   async function sendCommand(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     command: string,
     args?: readonly unknown[],
     timeoutMs: number = COMMAND_TIMEOUT_MS
@@ -291,7 +293,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // ---------------------------------------------------------------------------
 
   async function sendUiEvent<TReq, TRes>(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     event: keyof ServerToClientEvents,
     request: TReq,
     timeoutMs: number = COMMAND_TIMEOUT_MS
@@ -332,7 +334,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   }
 
   async function showNotification(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     request: ShowNotificationRequest,
     timeoutMs: number = COMMAND_TIMEOUT_MS
   ): Promise<PluginResult<ShowNotificationResponse>> {
@@ -340,21 +342,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   }
 
   async function updateStatusBar(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     request: StatusBarUpdateRequest
   ): Promise<PluginResult<void>> {
     return sendUiEvent(workspacePath, "ui:statusBarUpdate", request);
   }
 
   async function disposeStatusBar(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     request: StatusBarDisposeRequest
   ): Promise<PluginResult<void>> {
     return sendUiEvent(workspacePath, "ui:statusBarDispose", request);
   }
 
   async function showQuickPick(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     request: ShowQuickPickRequest,
     timeoutMs: number = 0
   ): Promise<PluginResult<ShowQuickPickResponse>> {
@@ -362,7 +364,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   }
 
   async function showInputBox(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     request: ShowInputBoxRequest,
     timeoutMs: number = 0
   ): Promise<PluginResult<ShowInputBoxResponse>> {
@@ -374,7 +376,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // ---------------------------------------------------------------------------
 
   function setWorkspaceConfig(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     env: Record<string, string>,
     agentType: AgentType,
     resetWorkspace: boolean
@@ -383,7 +385,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     workspaceConfigs.set(normalized, { env, agentType, resetWorkspace });
   }
 
-  function removeWorkspaceConfig(workspacePath: string): void {
+  function removeWorkspaceConfig(workspacePath: WorkspacePath): void {
     const normalized = new Path(workspacePath).toString();
     workspaceConfigs.delete(normalized);
   }
@@ -392,7 +394,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // Auth validation
   // ---------------------------------------------------------------------------
 
-  function isValidAuth(auth: unknown): auth is { workspacePath: string } {
+  function isValidAuth(auth: unknown): auth is { workspacePath: WorkspacePath } {
     return (
       typeof auth === "object" &&
       auth !== null &&
@@ -418,9 +420,11 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         return;
       }
 
-      let workspacePath: string;
+      // The extension's handshake carries a raw string over a socket — the external edge
+      // where this module mints the workspace-path brand. Every handler below flows from here.
+      let workspacePath: WorkspacePath;
       try {
-        workspacePath = new Path(auth.workspacePath).toString();
+        workspacePath = workspacePathSchema.parse(new Path(auth.workspacePath).toString());
       } catch {
         logger.warn("Connection rejected: invalid path", {
           socketId: socket.id,
@@ -501,7 +505,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
    * Wrap a dispatcher call with error handling, returning a PluginResult.
    */
   async function handlePluginApiCall<T>(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     operation: string,
     fn: () => Promise<T>,
     logContext?: Record<string, unknown>
@@ -526,7 +530,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
    */
   function createNoArgHandler<R>(
     eventName: string,
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     dispatchFn: () => Promise<R>
   ): (ack: (result: PluginResult<R>) => void) => void {
     return (ack) => {
@@ -545,7 +549,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
    */
   function createValidatedHandler<TReq, TValidated, R>(
     eventName: string,
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     validator: (
       payload: unknown
     ) => { valid: true; request?: TValidated } | { valid: false; error: string },
@@ -583,7 +587,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // API event handlers (dispatch intents directly)
   // ---------------------------------------------------------------------------
 
-  function setupApiHandlers(socket: TypedSocket, workspacePath: string): void {
+  function setupApiHandlers(socket: TypedSocket, workspacePath: WorkspacePath): void {
     // No-arg handlers
     socket.on(
       "api:workspace:getStatus",
@@ -756,10 +760,10 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         validateWorkspaceCreateRequest,
         (req) =>
           handlePluginApiCall(workspacePath, "create", async () => {
-            const resolved = await dispatcher.dispatch({
+            const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
               type: INTENT_RESOLVE_WORKSPACE,
               payload: { workspacePath },
-            } as ResolveWorkspaceIntent);
+            });
 
             const intent: OpenWorkspaceIntent = {
               type: INTENT_OPEN_WORKSPACE,
@@ -825,7 +829,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // ---------------------------------------------------------------------------
 
   async function handleShowMessage(
-    workspacePath: string,
+    workspacePath: WorkspacePath,
     type: string,
     message: string | null,
     hint: string | undefined,
@@ -953,7 +957,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
-            const normalized = new Path(wsPath).toString();
+            const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
 
             deletingWorkspaces.add(normalized);
             removeWorkspaceConfig(normalized);

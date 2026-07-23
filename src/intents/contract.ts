@@ -84,6 +84,46 @@ export const agentSessionSchema = z
 export type AgentSession = z.infer<typeof agentSessionSchema>;
 
 // =============================================================================
+// Errors
+// =============================================================================
+
+/**
+ * A thrown value reduced to plain, serializable data.
+ *
+ * The intent contract never carries a live `Error`: an `Error` is a class instance, so it
+ * cannot cross a backend tunnel. Producers convert with `toSerializedError()`
+ * (`shared/error-utils`); consumers that need a real `Error` (e.g. the telemetry boundary,
+ * which reads `name`/`message`/`stack` to group issues) rebuild one with
+ * `fromSerializedError()`.
+ *
+ * `cause` is recursive so a wrapped failure keeps its chain — `app:start` wraps setup and
+ * agent-selection failures with `{ cause }`, and that context is worth keeping in a crash
+ * report. The recursion uses a getter, zod v4's form for self-referential object schemas.
+ */
+export const serializedErrorSchema: z.ZodType<SerializedError> = z.object({
+  name: z.string(),
+  message: z.string(),
+  stack: z.string().optional(),
+  get cause() {
+    return serializedErrorSchema.optional();
+  },
+});
+
+/**
+ * Plain-data form of a thrown value. See {@link serializedErrorSchema}.
+ *
+ * The optional members spell `| undefined` explicitly: under `exactOptionalPropertyTypes`
+ * a bare `?` means "may be absent" but not "may be undefined", which is narrower than what
+ * `z.optional()` produces and would not satisfy the schema's annotation.
+ */
+export interface SerializedError {
+  readonly name: string;
+  readonly message: string;
+  readonly stack?: string | undefined;
+  readonly cause?: SerializedError | undefined;
+}
+
+// =============================================================================
 // Domain value objects
 // =============================================================================
 
@@ -96,19 +136,39 @@ export const workspaceSchema = z
     branch: z.string().nullable(),
     /** Workspace metadata stored in git config (always contains `base`). */
     metadata: z.record(z.string(), z.string()).readonly(),
-    path: z.string(),
+    path: workspacePathSchema,
     /** IDE server URL for the iframe. Absent for hibernated workspaces until they wake. */
     url: z.string().optional(),
   })
   .readonly();
 export type Workspace = z.infer<typeof workspaceSchema>;
 
+/**
+ * A workspace as found on disk by a `discover` / `list-workspaces` hook — the internal
+ * git-worktree shape (`boundaries/platform/git-types`) reduced to plain data.
+ *
+ * Distinct from {@link workspaceSchema}, which is the IPC form and additionally carries
+ * `projectId` and the optional IDE `url`. Both `project:open` and `project:list` used to
+ * declare this shape privately, one with `z.instanceof(Path)` and one with `z.custom<Path>()`
+ * — the same type spelled two different ways, both of them opt-outs. Converted from the
+ * internal form by `toDiscoveredWorkspace()`.
+ */
+export const discoveredWorkspaceSchema = z
+  .object({
+    name: workspaceNameSchema,
+    path: workspacePathSchema,
+    branch: z.string().nullable(),
+    metadata: z.record(z.string(), z.string()).readonly(),
+  })
+  .readonly();
+export type DiscoveredWorkspace = z.infer<typeof discoveredWorkspaceSchema>;
+
 /** A project in CodeHydra (represents a git repository). */
 export const projectSchema = z
   .object({
     id: projectIdSchema,
     name: z.string(),
-    path: z.string(),
+    path: projectPathSchema,
     workspaces: z.array(workspaceSchema).readonly(),
     defaultBaseBranch: z.string().optional(),
     /** Original git remote URL if the project was cloned from a URL. */
@@ -122,7 +182,7 @@ export const workspaceRefSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    path: z.string(),
+    path: workspacePathSchema,
   })
   .readonly();
 export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
@@ -171,9 +231,31 @@ export const baseInfoSchema = z
   .readonly();
 export type BaseInfo = z.infer<typeof baseInfoSchema>;
 
-/** Agent types that can be selected by the user. */
-export const configAgentTypeSchema = z.enum(["claude", "opencode"]);
-export type ConfigAgentType = z.infer<typeof configAgentTypeSchema>;
+/**
+ * The agent backends CodeHydra can run. Single source of truth: `ConfigAgentType`
+ * (the persisted `agent` config value) and `LifecycleAgentType` (the runtime/IPC name)
+ * are the same set and are both derived from this schema — see the type-only re-exports
+ * in `shared/api/types.ts`, `shared/ipc.ts` and `boundaries/platform/config.ts`.
+ */
+export const agentTypeSchema = z.enum(["claude", "opencode"]);
+export type AgentType = z.infer<typeof agentTypeSchema>;
+
+/**
+ * The binaries CodeHydra resolves and downloads. Source of truth for
+ * `utils/binary-resolution`'s `BinaryType`, which re-exports this type.
+ */
+export const binaryTypeSchema = z.enum(["vscodium", "opencode", "claude"]);
+export type BinaryType = z.infer<typeof binaryTypeSchema>;
+
+/** An agent backend plus its presentation fields, as shown in the first-run picker. */
+export const agentInfoSchema = z
+  .object({
+    agent: agentTypeSchema,
+    label: z.string(),
+    icon: z.string(),
+  })
+  .readonly();
+export type AgentInfo = z.infer<typeof agentInfoSchema>;
 
 // =============================================================================
 // Setup screen progress
@@ -268,12 +350,22 @@ export const capabilitiesSchema = z.record(
  * Build the whole-context schema for a hook input point: the base HookContext
  * (`intent` + scalar `capabilities`) extended with the operation-added enrichment fields.
  *
+ * **Strict.** A non-declared field on the context is an error, not something to strip. A
+ * plain `z.object` would silently drop it — and since the dispatcher parses the input for
+ * its throw only (the un-parsed context is what reaches the handler), stripping would let an
+ * undeclared value travel on regardless. Strict makes the declaration the whole truth about
+ * what a hook point receives, which is what a backend tunnel has to serialize.
+ *
+ * Every hook point declares one of these, including those whose context is just the intent
+ * (`hookCtxSchema(payloadSchema, {})`) — a hook point with no schema is a hook point with no
+ * contract, and `InputOf` has nothing to derive its handler's context type from.
+ *
  * @param payload the operation's intent payload schema (re-affirms `ctx.intent.payload`)
  * @param enrichment the extra fields the operation puts on the context for this hook point
  */
 export function hookCtxSchema<E extends z.ZodRawShape>(payload: z.ZodType, enrichment: E) {
-  return z.object({
-    intent: z.object({ type: z.string(), payload }),
+  return z.strictObject({
+    intent: z.strictObject({ type: z.string(), payload }),
     capabilities: capabilitiesSchema.optional(),
     ...enrichment,
   });

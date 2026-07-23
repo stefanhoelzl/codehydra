@@ -36,6 +36,7 @@ import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
+  finalizeResultSchema,
 } from "../intents/open-workspace";
 import type { FinalizeHookInput } from "../intents/open-workspace";
 import {
@@ -43,15 +44,18 @@ import {
   INTENT_VSCODE_COMMAND,
   type VscodeCommandIntent,
 } from "../intents/vscode-command";
-import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
+import { executeHookResultSchema } from "../intents/vscode-command";
+import type { ExecuteHookInput } from "../intents/vscode-command";
 import {
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
   type VscodeShowMessageType,
+  showHookResultSchema,
 } from "../intents/vscode-show-message";
-import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
+import type { ShowHookInput } from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
+import type { WorkspacePath } from "../intents/contract";
 
 // ============================================================================
 // Mock Socket Types
@@ -71,7 +75,7 @@ export type TestClientSocket = ClientSocket<ServerToClientEvents, ClientToServer
  */
 export interface TestClientOptions {
   /** Workspace path to send in auth */
-  readonly workspacePath: string;
+  readonly workspacePath: WorkspacePath;
   /** Whether to connect immediately. Default: false */
   readonly autoConnect?: boolean;
 }
@@ -209,8 +213,10 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = startSchemas;
 
-  async execute(ctx: OperationContext<IntentOf<typeof startSchemas>>): Promise<number | null> {
-    const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
+  ): Promise<number | null> {
+    const { errors, capabilities } = await ctx.hooks.collect("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -221,6 +227,7 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
 const finalizeSchemas = {
   type: INTENT_OPEN_WORKSPACE,
   payload: z.unknown(),
+  hooks: { finalize: { result: finalizeResultSchema } },
 } satisfies OperationSchemas;
 
 /**
@@ -235,8 +242,10 @@ function createMinimalFinalizeOperation(): Operation<typeof finalizeSchemas> & {
     id: OPEN_WORKSPACE_OPERATION_ID,
     schemas: finalizeSchemas,
     hookInput: {} as Partial<FinalizeHookInput>,
-    async execute(ctx: OperationContext<IntentOf<typeof finalizeSchemas>>): Promise<void> {
-      const { errors } = await ctx.hooks.collect<void>("finalize", {
+    async execute(
+      ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
+    ): Promise<void> {
+      const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
         workspacePath: "/test/workspace",
         envVars: {},
@@ -253,6 +262,7 @@ const commandSchemas = {
   type: INTENT_VSCODE_COMMAND,
   payload: z.unknown(),
   result: z.custom<unknown>(),
+  hooks: { execute: { result: executeHookResultSchema } },
 } satisfies OperationSchemas;
 
 /** Minimal vscode-command operation that skips workspace resolution. */
@@ -260,13 +270,15 @@ class MinimalCommandOperation implements Operation<typeof commandSchemas> {
   readonly id = VSCODE_COMMAND_OPERATION_ID;
   readonly schemas = commandSchemas;
 
-  async execute(ctx: OperationContext<IntentOf<typeof commandSchemas>>): Promise<unknown> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof commandSchemas>, typeof commandSchemas>
+  ): Promise<unknown> {
     const payload = ctx.intent.payload as VscodeCommandIntent["payload"];
     const executeCtx: ExecuteHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
     };
-    const { results, errors } = await ctx.hooks.collect<ExecuteHookResult>("execute", executeCtx);
+    const { results, errors } = await ctx.hooks.collect("execute", executeCtx);
     if (errors.length > 0) throw errors[0]!;
 
     let result: unknown;
@@ -281,6 +293,7 @@ const showMessageSchemas = {
   type: INTENT_VSCODE_SHOW_MESSAGE,
   payload: z.unknown(),
   result: z.custom<string | null>(),
+  hooks: { show: { result: showHookResultSchema } },
 } satisfies OperationSchemas;
 
 /** Minimal vscode-show-message operation that skips workspace resolution. */
@@ -289,14 +302,14 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
   readonly schemas = showMessageSchemas;
 
   async execute(
-    ctx: OperationContext<IntentOf<typeof showMessageSchemas>>
+    ctx: OperationContext<IntentOf<typeof showMessageSchemas>, typeof showMessageSchemas>
   ): Promise<string | null> {
     const payload = ctx.intent.payload as VscodeShowMessageIntent["payload"];
     const showCtx: ShowHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
     };
-    const { results, errors } = await ctx.hooks.collect<ShowHookResult>("show", showCtx);
+    const { results, errors } = await ctx.hooks.collect("show", showCtx);
     if (errors.length > 0) throw errors[0]!;
 
     let result: string | null | undefined;
@@ -370,7 +383,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
     networkLayer,
     testDispatcher,
 
-    createClient(workspacePath: string): TestClientSocket {
+    createClient(workspacePath: WorkspacePath): TestClientSocket {
       const client = createTestClient(this.port, { workspacePath });
       clients.push(client);
       return client;
@@ -380,7 +393,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
      * Set workspace config by dispatching workspace:open finalize hook.
      */
     async setWorkspaceConfig(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       env: Record<string, string>,
       agentType: AgentType,
       resetWorkspace: boolean
@@ -416,25 +429,25 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
      * Send a VS Code command to a workspace via the vscode-command hook.
      */
     async sendCommand(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       command: string,
       args?: readonly unknown[]
     ): Promise<unknown> {
-      return testDispatcher.dispatch({
+      return testDispatcher.dispatch<VscodeCommandIntent>({
         type: INTENT_VSCODE_COMMAND,
         payload: { workspacePath, command, args },
-      } as VscodeCommandIntent);
+      });
     },
 
     /**
      * Show a notification in a workspace via the vscode-show-message hook.
      */
     async showNotification(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       request: { severity: "info" | "warning" | "error"; message: string; actions?: string[] },
       timeoutMs?: number
     ): Promise<string | null> {
-      const result = await testDispatcher.dispatch({
+      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspacePath,
@@ -443,7 +456,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
           options: request.actions,
           timeoutMs,
         },
-      } as VscodeShowMessageIntent);
+      });
       return result as string | null;
     },
 
@@ -451,10 +464,10 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
      * Update a status bar item via the vscode-show-message hook.
      */
     async updateStatusBar(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       request: { text: string; tooltip?: string }
     ): Promise<string | null> {
-      const result = await testDispatcher.dispatch({
+      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspacePath,
@@ -462,22 +475,22 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
           message: request.text,
           hint: request.tooltip,
         },
-      } as VscodeShowMessageIntent);
+      });
       return result as string | null;
     },
 
     /**
      * Dispose a status bar item via the vscode-show-message hook.
      */
-    async disposeStatusBar(workspacePath: string): Promise<string | null> {
-      const result = await testDispatcher.dispatch({
+    async disposeStatusBar(workspacePath: WorkspacePath): Promise<string | null> {
+      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspacePath,
           type: "status" as VscodeShowMessageType,
           message: null,
         },
-      } as VscodeShowMessageIntent);
+      });
       return result as string | null;
     },
 
@@ -485,7 +498,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
      * Show a quick pick via the vscode-show-message hook.
      */
     async showQuickPick(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       request: {
         items: readonly { label: string; description?: string; detail?: string }[];
         title?: string;
@@ -493,7 +506,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
       },
       timeoutMs?: number
     ): Promise<string | null> {
-      const result = await testDispatcher.dispatch({
+      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspacePath,
@@ -503,7 +516,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
           options: request.items.map((i) => i.label),
           timeoutMs,
         },
-      } as VscodeShowMessageIntent);
+      });
       return result as string | null;
     },
 
@@ -511,11 +524,11 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
      * Show an input box via the vscode-show-message hook.
      */
     async showInputBox(
-      workspacePath: string,
+      workspacePath: WorkspacePath,
       request: { title?: string; prompt?: string; placeholder?: string; value?: string },
       timeoutMs?: number
     ): Promise<string | null> {
-      const result = await testDispatcher.dispatch({
+      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspacePath,
@@ -524,7 +537,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
           hint: request.placeholder,
           timeoutMs,
         },
-      } as VscodeShowMessageIntent);
+      });
       return result as string | null;
     },
 

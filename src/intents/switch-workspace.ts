@@ -26,8 +26,14 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import type { WorkspacePath } from "../shared/ipc";
-import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+} from "./contract";
+import type { WorkspacePath } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
@@ -46,7 +52,7 @@ export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
  *  ground state when nothing is selected). `focus` is ignored for null. */
 export const switchWorkspaceTargetPayloadSchema = z
   .object({
-    workspacePath: z.string().nullable(),
+    workspacePath: workspacePathSchema.nullable(),
     focus: z.boolean().optional(),
   })
   .readonly();
@@ -55,7 +61,7 @@ export const switchWorkspaceTargetPayloadSchema = z
 export const switchWorkspaceAutoPayloadSchema = z
   .object({
     auto: z.literal(true),
-    currentPath: z.string(),
+    currentPath: workspacePathSchema,
     focus: z.boolean().optional(),
     /** When true, if no other candidate is selectable, switch to currentPath
      *  instead of emitting workspace:switched(null). Used by hibernate so the
@@ -73,9 +79,9 @@ export const switchWorkspacePayloadSchema = z.union([
 /** A workspace candidate returned by the "find-candidates" hook. */
 export const workspaceCandidateSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     projectName: z.string(),
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     /** Stored workspace name (original case) — used for alphabetical ordering. */
     workspaceName: z.string(),
     /** True when the candidate is hibernated. Hibernated candidates are excluded
@@ -88,9 +94,9 @@ export const workspaceSwitchedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     projectName: z.string(),
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
     workspaceName: workspaceNameSchema,
-    path: z.string(),
+    path: workspacePathSchema,
     /** The workspace's raw domain metadata, as resolved at switch time. It is
      *  the baseline consumers can't reconstruct from workspace:metadata-changed
      *  alone: metadata persists in git config across restarts, so a title set in
@@ -107,7 +113,7 @@ export const workspaceSwitchedPayloadSchema = z
  */
 export const switchWorkspaceHookResultSchema = z
   .object({
-    resolvedPath: z.string().optional(),
+    resolvedPath: workspacePathSchema.optional(),
   })
   .readonly();
 
@@ -128,7 +134,7 @@ export const selectNextHookResultSchema = z
 /** Operation-added enrichment for the "activate" hook point. `workspacePath: null`
  *  = deselect (clear the active workspace). */
 const activateEnrichmentSchema = z.object({
-  workspacePath: z.string().nullable(),
+  workspacePath: workspacePathSchema.nullable(),
   active: z.boolean(),
 });
 
@@ -140,7 +146,7 @@ export const activateHookInputSchema = hookCtxSchema(
 
 /** Operation-added enrichment for the "select-next" hook point. */
 const selectNextEnrichmentSchema = z.object({
-  currentPath: z.string(),
+  currentPath: workspacePathSchema,
   candidates: z.array(workspaceCandidateSchema).readonly(),
 });
 
@@ -150,12 +156,19 @@ export const selectNextHookInputSchema = hookCtxSchema(
   selectNextEnrichmentSchema.shape
 );
 
-const schemas = {
+/** The find-candidates hook point receives the bare intent. */
+const bareSwitchHookInputSchema = hookCtxSchema(switchWorkspacePayloadSchema, {});
+
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SWITCH_WORKSPACE,
   payload: switchWorkspacePayloadSchema,
   hooks: {
     activate: { input: activateHookInputSchema, result: switchWorkspaceHookResultSchema },
-    "find-candidates": { result: findCandidatesHookResultSchema },
+    "find-candidates": { input: bareSwitchHookInputSchema, result: findCandidatesHookResultSchema },
     "select-next": { input: selectNextHookInputSchema, result: selectNextHookResultSchema },
   },
   events: {
@@ -286,7 +299,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
+  async execute(ctx: OperationContext<SwitchWorkspaceIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
 
     if (isAutoSwitch(payload)) {
@@ -297,7 +310,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
   }
 
   private async executeSpecificTarget(
-    ctx: OperationContext<SwitchWorkspaceIntent>,
+    ctx: OperationContext<SwitchWorkspaceIntent, typeof schemas>,
     payload: SwitchWorkspaceTargetPayload
   ): Promise<void> {
     // Deselect: no workspace to resolve. Run the activate hooks with a null
@@ -311,10 +324,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
         workspacePath: null,
         active: false,
       };
-      const { errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
-        "activate",
-        deselectCtx
-      );
+      const { errors } = await ctx.hooks.collect("activate", deselectCtx);
       throwHookErrors(errors, "workspace:switch activate hooks failed");
 
       const nullEvent: WorkspaceSwitchedEvent = {
@@ -326,16 +336,17 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName, active, metadata } = await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
+    const { projectPath, workspaceName, active, metadata } =
+      await ctx.dispatch<ResolveWorkspaceIntent>({
+        type: INTENT_RESOLVE_WORKSPACE,
+        payload: { workspacePath: payload.workspacePath },
+      });
 
     // 2. Dispatch shared project resolution
-    const { projectId, projectName } = await ctx.dispatch({
+    const { projectId, projectName } = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
       payload: { projectPath },
-    } as ResolveProjectIntent);
+    });
 
     // 3. Activate: call setActiveWorkspace
     const activateCtx: ActivateHookInput = {
@@ -343,8 +354,10 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       workspacePath: payload.workspacePath,
       active,
     };
-    const { results: activateResults, errors: activateErrors } =
-      await ctx.hooks.collect<SwitchWorkspaceHookResult>("activate", activateCtx);
+    const { results: activateResults, errors: activateErrors } = await ctx.hooks.collect(
+      "activate",
+      activateCtx
+    );
     throwHookErrors(activateErrors, "workspace:switch activate hooks failed");
 
     // Merge results — last-write-wins for resolvedPath
@@ -372,15 +385,12 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
   }
 
   private async executeAutoSelect(
-    ctx: OperationContext<SwitchWorkspaceIntent>,
+    ctx: OperationContext<SwitchWorkspaceIntent, typeof schemas>,
     payload: SwitchWorkspaceAutoPayload
   ): Promise<void> {
     // 1. Find candidates via hook
     const hookCtx: HookContext = { intent: ctx.intent };
-    const { results } = await ctx.hooks.collect<FindCandidatesHookResult>(
-      "find-candidates",
-      hookCtx
-    );
+    const { results } = await ctx.hooks.collect("find-candidates", hookCtx);
     const allCandidates: WorkspaceCandidate[] = [];
     for (const r of results) {
       if (r.candidates) allCandidates.push(...r.candidates);
@@ -392,10 +402,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       currentPath: payload.currentPath,
       candidates: allCandidates,
     };
-    const { results: selectResults } = await ctx.hooks.collect<SelectNextHookResult>(
-      "select-next",
-      selectCtx
-    );
+    const { results: selectResults } = await ctx.hooks.collect("select-next", selectCtx);
     let best: WorkspaceCandidate | undefined;
     for (const r of selectResults) {
       if (r.selected !== undefined) best = r.selected;

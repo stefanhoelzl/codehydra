@@ -42,10 +42,17 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+} from "./contract";
+import type { ProjectPath } from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
+import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
 
 export const INTENT_HIBERNATE_WORKSPACE = "workspace:hibernate" as const;
 export const HIBERNATE_WORKSPACE_OPERATION_ID = "hibernate-workspace";
@@ -61,7 +68,7 @@ export const HIBERNATED_METADATA_KEY = "hibernated";
 
 export const hibernateWorkspacePayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
   })
   .readonly();
 
@@ -73,22 +80,22 @@ export const workspaceHibernatedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: z.string(),
-    projectPath: z.string(),
+    workspacePath: workspacePathSchema,
+    projectPath: projectPathSchema,
   })
   .readonly();
 
 export const workspaceHibernateFailedPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     error: z.string(),
   })
   .readonly();
 
 /** Operation-added enrichment shared by every hibernate pipeline hook point. */
 const hibernatePipelineEnrichmentSchema = z.object({
-  projectPath: z.string(),
-  workspacePath: z.string(),
+  projectPath: projectPathSchema,
+  workspacePath: workspacePathSchema,
   projectId: projectIdSchema,
   workspaceName: workspaceNameSchema,
   active: z.boolean(),
@@ -110,7 +117,11 @@ export const hibernateReleaseHookResultSchema = z
   })
   .readonly();
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_HIBERNATE_WORKSPACE,
   payload: hibernateWorkspacePayloadSchema,
   result: hibernateWorkspaceResultSchema,
@@ -184,13 +195,13 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
   readonly schemas = schemas;
 
   async execute(
-    ctx: OperationContext<HibernateWorkspaceIntent>
+    ctx: OperationContext<HibernateWorkspaceIntent, typeof schemas>
   ): Promise<HibernateWorkspaceResult> {
     const { payload } = ctx.intent;
 
     let hookCtx: HibernatePipelineHookInput;
     let projectId: ProjectId;
-    let projectPath: string;
+    let projectPath: ProjectPath;
     let workspaceName: WorkspaceName;
 
     try {
@@ -216,25 +227,25 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
       // owns the sidebar UI state); "cleanup-capture" restores it. Cleanup runs
       // in `finally` so a stuck capturing flag can never leave the sidebar
       // permanently collapsed, even if the capture hook throws.
-      await ctx.hooks.collect<PrepareCaptureHookResult>("prepare-capture", hookCtx);
+      await ctx.hooks.collect("prepare-capture", hookCtx);
       try {
-        await ctx.hooks.collect<CaptureHookResult>("capture", hookCtx);
+        await ctx.hooks.collect("capture", hookCtx);
       } finally {
-        await ctx.hooks.collect<CleanupCaptureHookResult>("cleanup-capture", hookCtx);
+        await ctx.hooks.collect("cleanup-capture", hookCtx);
       }
 
       // Persist hibernated flag via existing set-metadata pipeline. This is
       // what makes the renderer swap in HibernatedOverlay via the
       // workspace:metadata-changed → WORKSPACE_METADATA_CHANGED IPC, and
       // makes switch-workspace's `c.hibernated` filter exclude us.
-      await ctx.dispatch({
+      await ctx.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: {
           workspacePath: payload.workspacePath,
           key: HIBERNATED_METADATA_KEY,
           value: "true",
         },
-      } as SetMetadataIntent);
+      });
 
       // If the hibernated workspace was active, switch to an awake sibling
       // immediately so the user is moved away while the teardown runs in the
@@ -243,7 +254,7 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
       // pending hibernation overlay over it.
       if (active) {
         try {
-          await ctx.dispatch({
+          await ctx.dispatch<SwitchWorkspaceIntent>({
             type: INTENT_SWITCH_WORKSPACE,
             payload: {
               auto: true,
@@ -251,18 +262,16 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
               focus: true,
               fallbackToCurrent: true,
             },
-          } as SwitchWorkspaceIntent);
+          });
         } catch {
           // Best-effort: switch failure doesn't fail hibernation.
         }
       }
     } catch (error) {
-      emitWorkspaceFailure(
-        ctx.emit,
-        EVENT_WORKSPACE_HIBERNATE_FAILED,
-        payload.workspacePath,
-        error
-      );
+      ctx.emit({
+        type: EVENT_WORKSPACE_HIBERNATE_FAILED,
+        payload: workspaceFailurePayload(payload.workspacePath, error),
+      });
       throw error;
     }
 
@@ -272,8 +281,8 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
     // so no wake intent can race the teardown.
     void (async () => {
       try {
-        await ctx.hooks.collect<HibernateShutdownHookResult>("shutdown", hookCtx);
-        await ctx.hooks.collect<HibernateReleaseHookResult>("release", hookCtx);
+        await ctx.hooks.collect("shutdown", hookCtx);
+        await ctx.hooks.collect("release", hookCtx);
       } finally {
         // Always emit so the dispatcher's idempotency interceptor releases
         // the per-workspace lock and the renderer clears its pending entry.

@@ -33,6 +33,7 @@ import { SETUP_OPERATION_ID, type SetupProgressPayload } from "../intents/setup"
 import type { NotificationHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
+import type { ProjectPath } from "../intents/contract";
 
 interface DebugModuleDeps {
   readonly configService: Config;
@@ -77,7 +78,10 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
   }
 
   // Workspaces kept alive by debug.blocking-pids after deletion
-  const debugWorkspaces = new Map<string, { projectPath: string; workspaceName: WorkspaceName }>();
+  const debugWorkspaces = new Map<
+    string,
+    { projectPath: ProjectPath; workspaceName: WorkspaceName }
+  >();
 
   return {
     name: "debug",

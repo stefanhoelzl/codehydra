@@ -53,6 +53,7 @@ import {
 } from "../intents/resolve-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
+import { projectPathSchema } from "../intents/contract";
 
 // =============================================================================
 // Types
@@ -272,7 +273,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             if (result.canceled || result.filePaths.length === 0) {
               return { result: { folderPath: null } };
             }
-            return { result: { folderPath: result.filePaths[0]!.toString() } };
+            // The OS dialog hands back a raw string — one of the few genuine external
+            // edges, so the project-path brand is minted here by parsing.
+            return {
+              result: { folderPath: projectPathSchema.parse(result.filePaths[0]!.toString()) },
+            };
           },
         },
       },

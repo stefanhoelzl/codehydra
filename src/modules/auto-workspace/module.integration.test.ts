@@ -48,6 +48,7 @@ import { createMockProcessRunner } from "../../boundaries/platform/process.state
 import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
+import { projPath } from "../../shared/test-fixtures";
 
 const HEARTBEAT_MS = 60 * 1000;
 
@@ -62,9 +63,11 @@ const activateSchemas = { type: INTENT_APP_START, payload: z.unknown() } satisfi
 class MinimalActivateOperation implements Operation<typeof activateSchemas> {
   readonly id = APP_START_OPERATION_ID;
   readonly schemas = activateSchemas;
-  async execute(ctx: OperationContext<IntentOf<typeof activateSchemas>>): Promise<void> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof activateSchemas>, typeof activateSchemas>
+  ): Promise<void> {
     const hookCtx: HookContext = { intent: ctx.intent };
-    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
+    const { errors } = await ctx.hooks.collect("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     await ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
   }
@@ -79,10 +82,12 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
   readonly id = "open-project";
   readonly schemas = openProjectSchemas;
   readonly dispatched: IntentOf<typeof openProjectSchemas>[] = [];
-  async execute(ctx: OperationContext<IntentOf<typeof openProjectSchemas>>): Promise<Project> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof openProjectSchemas>, typeof openProjectSchemas>
+  ): Promise<Project> {
     this.dispatched.push(ctx.intent);
     const pathStr = ctx.intent.payload.path?.toString() ?? "/home/user/projects/repo";
-    return { id: "project-1" as ProjectId, name: "repo", path: pathStr, workspaces: [] };
+    return { id: "project-1" as ProjectId, name: "repo", path: projPath(pathStr), workspaces: [] };
   }
 }
 
@@ -103,7 +108,9 @@ class OpenWorkspaceOp implements Operation<typeof openWorkspaceSchemas> {
   readonly schemas = openWorkspaceSchemas;
   readonly dispatched: IntentOf<typeof openWorkspaceSchemas>[] = [];
   readonly failFor = new Set<string>();
-  async execute(ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>>): Promise<WsResult> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof openWorkspaceSchemas>, typeof openWorkspaceSchemas>
+  ): Promise<WsResult> {
     this.dispatched.push(ctx.intent);
     const name = ctx.intent.payload.workspaceName ?? "ws";
     if (this.failFor.has(name)) throw new Error(`open failed for ${name}`);
@@ -126,7 +133,7 @@ class GetBasesOp implements Operation<typeof getBasesSchemas> {
   readonly id = "get-project-bases";
   readonly schemas = getBasesSchemas;
   async execute(
-    ctx: OperationContext<IntentOf<typeof getBasesSchemas>>
+    ctx: OperationContext<IntentOf<typeof getBasesSchemas>, typeof getBasesSchemas>
   ): Promise<GetProjectBasesResult> {
     return {
       bases: [],
@@ -144,7 +151,9 @@ class SetMetaOp implements Operation<typeof setMetaSchemas> {
   readonly id = "set-metadata";
   readonly schemas = setMetaSchemas;
   readonly dispatched: IntentOf<typeof setMetaSchemas>[] = [];
-  async execute(ctx: OperationContext<IntentOf<typeof setMetaSchemas>>): Promise<void> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof setMetaSchemas>, typeof setMetaSchemas>
+  ): Promise<void> {
     this.dispatched.push(ctx.intent);
   }
 }

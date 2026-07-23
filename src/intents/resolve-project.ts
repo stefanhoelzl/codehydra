@@ -18,7 +18,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, hookCtxSchema } from "./contract";
+import { hookCtxSchema, projectIdSchema, projectPathSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_RESOLVE_PROJECT = "project:resolve" as const;
@@ -30,7 +30,7 @@ export const RESOLVE_PROJECT_OPERATION_ID = "resolve-project";
 
 export const resolveProjectPayloadSchema = z
   .object({
-    projectPath: z.string(),
+    projectPath: projectPathSchema,
   })
   .readonly();
 
@@ -50,7 +50,7 @@ export const resolveHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "resolve" hook point (beyond the base HookContext). */
-const resolveEnrichmentSchema = z.object({ projectPath: z.string() });
+const resolveEnrichmentSchema = z.object({ projectPath: projectPathSchema });
 
 /** Runtime whole-context validation schema for "resolve" (its inferred type isn't the ctx type). */
 export const resolveHookInputSchema = hookCtxSchema(
@@ -58,7 +58,11 @@ export const resolveHookInputSchema = hookCtxSchema(
   resolveEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_RESOLVE_PROJECT,
   payload: resolveProjectPayloadSchema,
   result: resolveProjectResultSchema,
@@ -87,14 +91,16 @@ export class ResolveProjectOperation implements Operation<typeof schemas> {
   readonly id = RESOLVE_PROJECT_OPERATION_ID;
   readonly schemas = schemas;
 
-  async execute(ctx: OperationContext<ResolveProjectIntent>): Promise<ResolveProjectResult> {
+  async execute(
+    ctx: OperationContext<ResolveProjectIntent, typeof schemas>
+  ): Promise<ResolveProjectResult> {
     const { payload } = ctx.intent;
 
     const resolveCtx: ResolveHookInput = {
       intent: ctx.intent,
       projectPath: payload.projectPath,
     };
-    const { results, errors } = await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+    const { results, errors } = await ctx.hooks.collect("resolve", resolveCtx);
     throwHookErrors(errors, "project:resolve hooks failed");
 
     let projectId: ResolveProjectResult["projectId"] | undefined;

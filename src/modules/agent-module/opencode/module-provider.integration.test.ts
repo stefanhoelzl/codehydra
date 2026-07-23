@@ -131,7 +131,7 @@ function createMockServerManager(): OpenCodeServerManager & {
 async function initializeAndStart(
   moduleProvider: AgentModuleProvider,
   serverManager: ReturnType<typeof createMockServerManager>,
-  workspacePath: WorkspacePath = WS_PATH,
+  workspacePath: string = WS_PATH,
   port = 8080,
   pendingPrompt?: unknown
 ): Promise<InstanceType<typeof MockOpenCodeProvider>> {

@@ -189,7 +189,7 @@ async function createHarness(
 
   dispatcher.registerModule(module);
 
-  await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
+  await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
 
   const emitSwitched = (): Promise<void> =>
     module.events![EVENT_WORKSPACE_SWITCHED]!.handler({
@@ -580,10 +580,10 @@ describe("ShortcutModule integration", () => {
 
     it("dispose unregisters all views and window blur handler on shutdown", async () => {
       const { callbacks, dispatcher } = await createHarness();
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppShutdownIntent>({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
-      } as AppShutdownIntent);
+      });
       expect(callbacks.inputUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.destroyedUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.blurUnsubscribe).toHaveBeenCalled();

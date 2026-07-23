@@ -38,6 +38,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
+import { wsPath, projPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -128,16 +129,18 @@ class FlushOperation implements Operation<typeof flushOpSchemas> {
 
   constructor(private readonly blockingPids: readonly number[]) {}
 
-  async execute(ctx: OperationContext<IntentOf<typeof flushOpSchemas>>): Promise<FlushHookResult> {
+  async execute(
+    ctx: OperationContext<IntentOf<typeof flushOpSchemas>, typeof flushOpSchemas>
+  ): Promise<FlushHookResult> {
     const flushCtx: FlushHookInput = {
       intent: ctx.intent,
-      projectPath: "/projects/my-app",
-      workspacePath: "/workspaces/feature-1",
+      projectPath: projPath("/projects/my-app"),
+      workspacePath: wsPath("/workspaces/feature-1"),
       workspaceName: "feature-1" as WorkspaceName,
       active: false,
       blockingPids: this.blockingPids,
     };
-    const { results, errors } = await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
+    const { results, errors } = await ctx.hooks.collect("flush", flushCtx);
     if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
   }

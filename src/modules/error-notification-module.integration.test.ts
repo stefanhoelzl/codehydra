@@ -16,6 +16,7 @@ import {
   createMockNotificationManager,
   type MockNotificationManager,
 } from "./presentation/notification-manager.state-mock";
+import { projPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Tests
@@ -41,7 +42,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "my-workspace",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Worktree already exists",
       },
     };
@@ -62,7 +63,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "test-ws",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Some error",
       },
     };
@@ -82,7 +83,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "mcp-workspace",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Some MCP error",
         source: "mcp",
       },
@@ -98,7 +99,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "plugin-workspace",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Some plugin error",
         source: "plugin-server",
       },
@@ -114,7 +115,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "unknown-workspace",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Some error",
       },
     };
@@ -159,7 +160,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "ws-1",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Error 1",
       },
     };
@@ -167,7 +168,7 @@ describe("ErrorNotificationModule", () => {
       type: EVENT_WORKSPACE_CREATE_FAILED,
       payload: {
         workspaceName: "ws-2",
-        projectPath: "/projects/test",
+        projectPath: projPath("/projects/test"),
         error: "Error 2",
       },
     };

@@ -43,6 +43,8 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath, ProjectPath } from "./contract";
 
 // =============================================================================
 // Behavioral Mocks
@@ -53,13 +55,13 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 // =============================================================================
 
 interface WorkspaceEntry {
-  path: string;
+  path: WorkspacePath;
   branch?: string | null;
   metadata: Readonly<Record<string, string>>;
 }
 
 interface ProjectEntry {
-  path: string;
+  path: ProjectPath;
   name: string;
   workspaces: WorkspaceEntry[];
 }
@@ -68,7 +70,7 @@ interface MockAppState {
   projects: ProjectEntry[];
   getAllProjects(): Promise<ReadonlyArray<{ path: string }>>;
   getProject(
-    projectPath: string
+    projectPath: ProjectPath
   ): { path: string; name: string; workspaces: ReadonlyArray<WorkspaceEntry> } | undefined;
 }
 
@@ -79,7 +81,7 @@ function createMockAppState(projects: ProjectEntry[]): MockAppState {
       return this.projects;
     },
     getProject(
-      projectPath: string
+      projectPath: ProjectPath
     ): { path: string; name: string; workspaces: ReadonlyArray<WorkspaceEntry> } | undefined {
       return this.projects.find((p) => p.path === projectPath);
     },
@@ -90,11 +92,11 @@ function createMockAppState(projects: ProjectEntry[]): MockAppState {
 // Test Constants
 // =============================================================================
 
-const TEST_PROJECT_PATH = "/projects/my-app";
+const TEST_PROJECT_PATH = projPath("/projects/my-app");
 const TEST_PROJECT_NAME = "my-app";
-const TEST_WORKSPACE_PATH = "/projects/my-app/workspaces/feature-login";
+const TEST_WORKSPACE_PATH = wsPath("/projects/my-app/workspaces/feature-login");
 const TEST_WORKSPACE_NAME = "feature-login" as WorkspaceName;
-const TEST_WORKSPACE_PATH_B = "/projects/my-app/workspaces/feature-signup";
+const TEST_WORKSPACE_PATH_B = wsPath("/projects/my-app/workspaces/feature-signup");
 function createTestProject(): ProjectEntry {
   return {
     path: TEST_PROJECT_PATH,
@@ -183,17 +185,17 @@ function createTestSetup(opts?: {
           "find-candidates": {
             handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
               const candidates: Array<{
-                projectPath: string;
+                projectPath: ProjectPath;
                 projectName: string;
-                workspacePath: string;
+                workspacePath: WorkspacePath;
                 workspaceName: string;
               }> = [];
               for (const project of appState.projects) {
                 for (const ws of project.workspaces) {
                   candidates.push({
-                    projectPath: project.path,
+                    projectPath: projPath(project.path),
                     projectName: project.name,
-                    workspacePath: ws.path,
+                    workspacePath: wsPath(ws.path),
                     workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
                   });
                 }
@@ -241,7 +243,7 @@ function generateProjectId(path: string): ProjectId {
   return Buffer.from(path).toString("base64url") as ProjectId;
 }
 
-function switchIntent(workspacePath?: string, focus?: boolean): SwitchWorkspaceIntent {
+function switchIntent(workspacePath?: WorkspacePath, focus?: boolean): SwitchWorkspaceIntent {
   return {
     type: INTENT_SWITCH_WORKSPACE,
     payload: {
@@ -340,7 +342,7 @@ describe("SwitchWorkspace Operation", () => {
       const { dispatcher, getActivePath } = setup;
 
       await expect(
-        dispatcher.dispatch(switchIntent("/projects/my-app/workspaces/nonexistent"))
+        dispatcher.dispatch(switchIntent(wsPath("/projects/my-app/workspaces/nonexistent")))
       ).rejects.toThrow("Workspace not found: /projects/my-app/workspaces/nonexistent");
 
       expect(getActivePath()).toBeNull();
@@ -351,7 +353,7 @@ describe("SwitchWorkspace Operation", () => {
       const { dispatcher, getActivePath } = setup;
 
       await expect(
-        dispatcher.dispatch(switchIntent("/nonexistent/workspaces/feature-login"))
+        dispatcher.dispatch(switchIntent(wsPath("/nonexistent/workspaces/feature-login")))
       ).rejects.toThrow("Workspace not found: /nonexistent/workspaces/feature-login");
 
       expect(getActivePath()).toBeNull();
@@ -385,10 +387,10 @@ describe("SwitchWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspacePath: null },
-      } as SwitchWorkspaceIntent);
+      });
 
       expect(getActivePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
@@ -404,10 +406,10 @@ describe("SwitchWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspacePath: null },
-      } as SwitchWorkspaceIntent);
+      });
 
       expect(getActivePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
@@ -517,7 +519,7 @@ describe("SwitchWorkspace Operation", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: "/nonexistent", focus: true },
+        payload: { auto: true, currentPath: wsPath("/nonexistent"), focus: true },
       };
       await dispatcher.dispatch(autoIntent);
 
@@ -538,7 +540,7 @@ describe("SwitchWorkspace Operation", () => {
       // currentPath doesn't match any candidate (workspace already de-registered)
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: "/nonexistent", focus: true },
+        payload: { auto: true, currentPath: wsPath("/nonexistent"), focus: true },
       };
       await dispatcher.dispatch(autoIntent);
 

@@ -13,7 +13,12 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, workspaceNameSchema, hookCtxSchema } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  workspaceNameSchema,
+  workspacePathSchema,
+} from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 
 export const INTENT_SET_METADATA = "workspace:set-metadata" as const;
@@ -26,7 +31,7 @@ export const SET_METADATA_OPERATION_ID = "set-metadata";
 
 export const setMetadataPayloadSchema = z
   .object({
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     key: z.string(),
     value: z.string().nullable(),
   })
@@ -36,14 +41,14 @@ export const metadataChangedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: z.string(),
+    workspacePath: workspacePathSchema,
     key: z.string(),
     value: z.string().nullable(),
   })
   .readonly();
 
 /** Operation-added enrichment for the "set" hook point (beyond the base HookContext). */
-const setEnrichmentSchema = z.object({ workspacePath: z.string() });
+const setEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
 
 /** Runtime whole-context validation schema for the "set" hook point. */
 export const setHookInputSchema = hookCtxSchema(
@@ -51,7 +56,11 @@ export const setHookInputSchema = hookCtxSchema(
   setEnrichmentSchema.shape
 );
 
-const schemas = {
+/**
+ * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
+ * of its hook points and events via `ResolvedHooks<typeof schemas>` / `EventOf<typeof schemas>`.
+ */
+export const schemas = {
   type: INTENT_SET_METADATA,
   payload: setMetadataPayloadSchema,
   hooks: {
@@ -82,12 +91,13 @@ export type SetHookInput = HookContext & z.infer<typeof setEnrichmentSchema>;
 // Operation
 // =============================================================================
 
-export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas, void> {
+export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas> {
   readonly schemas = schemas;
 
   constructor() {
     super(SET_METADATA_OPERATION_ID, {
       hookPoint: "set",
+      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
       resolveProject: true,
       errorLabel: "set-metadata set hooks failed",
       extract: () => undefined,

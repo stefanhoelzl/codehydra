@@ -39,6 +39,8 @@ import type { DialogMessageBoxOptions } from "../boundaries/shell/dialog";
 import type { HookContext } from "../intents/lib/operation";
 import { createMockDialogHandle } from "./presentation/dialog-manager.state-mock";
 import type { DialogConfig } from "../shared/dialog-types";
+import type { SerializedError } from "../intents/contract";
+import { toSerializedError } from "../shared/error-utils";
 
 // =============================================================================
 // Helpers
@@ -149,7 +151,7 @@ async function registerCrashHandlers(
 /** Run the app:start "error" hook with a fatal error + phase (as the operation does). */
 async function runStartupErrorHook(
   module: ReturnType<typeof setup>["module"],
-  error: Error,
+  error: SerializedError,
   phase: AppStartPhase
 ): Promise<void> {
   const ctx: AppStartErrorHookContext = {
@@ -526,7 +528,11 @@ describe("ErrorReportModule — startup failure report", () => {
       configOverrides: { "log.level": "debug" },
     });
 
-    await runStartupErrorHook(module, new Error("Failed to start IDE server"), "start");
+    await runStartupErrorHook(
+      module,
+      toSerializedError(new Error("Failed to start IDE server")),
+      "start"
+    );
 
     const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
     expect(captured).toBeDefined();
@@ -544,7 +550,7 @@ describe("ErrorReportModule — startup failure report", () => {
   it("does NOT report when telemetry is off", async () => {
     const { module, boundary } = setup({ telemetryEnabled: false });
 
-    await runStartupErrorHook(module, new Error("boom"), "start");
+    await runStartupErrorHook(module, toSerializedError(new Error("boom")), "start");
 
     expect(boundary.$.capturedEvents).toHaveLength(0);
     expect(boundary.$.shutdownCalled).toBe(false);

@@ -64,13 +64,14 @@ import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
 import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import { createPresentationModule, type UiPresenter } from "./presentation-module";
+import { projPath, wsPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test setup helpers
 // =============================================================================
 
 const PROJECT_ID = "alpha-12345678" as ProjectId;
-const PROJECT_PATH = "/projects/alpha";
+const PROJECT_PATH = projPath("/projects/alpha");
 // Local copies of the sidebar-width default/floor (the source constants are no
 // longer exported; the tests only need values that match main.ts's inlined
 // 250, which is stable).
@@ -203,7 +204,7 @@ function makeWorkspace(
     name: name as WorkspaceName,
     branch: name,
     metadata: options?.metadata ?? {},
-    path: `${PROJECT_PATH}/.worktrees/${name}`,
+    path: wsPath(`${PROJECT_PATH}/.worktrees/${name}`),
     ...(options?.url !== undefined && { url: options.url }),
   };
 }
@@ -914,7 +915,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       name: "b" as WorkspaceName,
       branch: "b",
       metadata: {},
-      path: "/projects/beta/.worktrees/b",
+      path: wsPath("/projects/beta/.worktrees/b"),
       url: "http://127.0.0.1:1/b",
     };
     await emit(module, EVENT_PROJECT_OPENED, {
@@ -1057,10 +1058,10 @@ describe("PresentationModule - shutdown", () => {
     const pushesBefore = snapshots(deps).length;
     expect(pushesBefore).toBeGreaterThan(0);
 
-    await dispatcher.dispatch({
+    await dispatcher.dispatch<AppShutdownIntent>({
       type: INTENT_APP_SHUTDOWN,
       payload: {},
-    } as AppShutdownIntent);
+    });
 
     // After shutdown the ui:event listener is removed: further events do nothing.
     emitUiEvent(deps, { kind: "hover", region: null });

@@ -193,10 +193,10 @@ describe("McpModule Integration", () => {
 
       dispatcher.registerModule(mcpModule);
 
-      await dispatcher.dispatch({
+      await dispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       expect(portManager.$.allocatedPorts).toHaveLength(1);
       expect(portManager.$.allocatedPorts[0]).toBeGreaterThan(0);
@@ -237,16 +237,16 @@ describe("McpModule Integration", () => {
       shutdownDispatcher.registerModule(quitModule);
 
       // Start to wire callbacks
-      await shutdownDispatcher.dispatch({
+      await shutdownDispatcher.dispatch<AppStartIntent>({
         type: INTENT_APP_START,
         payload: {},
-      } as AppStartIntent);
+      });
 
       // Shutdown
-      await shutdownDispatcher.dispatch({
+      await shutdownDispatcher.dispatch<AppShutdownIntent>({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
-      } as AppShutdownIntent);
+      });
 
       // After dispose, starting again should allocate the next port
       // (This verifies the manager was properly stopped/disposed)

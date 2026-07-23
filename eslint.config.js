@@ -20,6 +20,46 @@ const NO_DYNAMIC_IMPORT = {
   message: "Use a top-level `import` declaration instead of an inline dynamic import().",
 };
 
+// ---------------------------------------------------------------------------
+// Intent contract: keep every carrier plain serializable data.
+//
+// The dispatcher validates six carriers with zod (intent payload, hook input context, hook
+// result, provides, event, operation result). Those parse calls ARE the serializability gate
+// for a backend that runs out of process — but only if no schema opts out of validating:
+//
+//   z.instanceof(Path)  does not merely permit a class instance, it *requires* one.
+//   z.custom<T>()       with no validator function performs no validation at all
+//                       (`z.custom().parse({ fn: () => {} })` passes) — an `as T` in a costume.
+//
+// A branded string (`z.string().brand<"WorkspacePath">()`) rejects a class instance, so with
+// the escapes closed the existing parses do the work and no new runtime machinery is needed.
+// ---------------------------------------------------------------------------
+
+const NO_ZOD_INSTANCEOF = {
+  selector: "CallExpression[callee.object.name='z'][callee.property.name='instanceof']",
+  message:
+    "z.instanceof() requires a class instance, which cannot cross a backend tunnel. Model the value as plain data (e.g. a branded path string, or `serializedErrorSchema` for an Error) and construct the class inside the handler.",
+};
+
+const NO_BARE_ZOD_CUSTOM = {
+  selector:
+    "CallExpression[callee.object.name='z'][callee.property.name='custom'][arguments.length=0]",
+  message:
+    "z.custom<T>() without a validator performs no validation — it is an `as T` assertion wearing a zod costume. Declare the shape structurally (z.object/z.enum/…) so the dispatcher's parse actually checks it.",
+};
+
+const NO_INTENT_ASSERTION_IN_DISPATCH = {
+  selector: "CallExpression[callee.property.name='dispatch'] > TSAsExpression",
+  message:
+    "`dispatch({…} as XIntent)` asserts the payload instead of checking it, so a contract change is invisible here. Use the explicit type argument — `dispatch<XIntent>({…})` — which types the result identically and checks the argument.",
+};
+
+const NO_EVENT_ASSERTION_IN_EMIT = {
+  selector: "CallExpression[callee.property.name='emit'] > TSAsExpression",
+  message:
+    "`emit({…} as XEvent)` asserts the payload instead of checking it. Drop the assertion (emit is typed to the events this operation declares) or use `satisfies XEvent`.",
+};
+
 // Files where a dynamic import() is load-bearing and cannot be hoisted:
 // - vite.config.ts: `await import("vite")` inside a plugin hook (importing vite
 //   at module scope would be circular).
@@ -130,6 +170,38 @@ export default tseslint.config(
             },
           ],
         },
+      ],
+    },
+  },
+  // Intent contract hygiene. Scoped to the intent system, which is what a backend tunnel has
+  // to serialize. `linterOptions.noInlineConfig` is on, so there is no per-line escape — an
+  // exemption would have to be a visible `files:` block here, which is the point.
+  {
+    files: ["src/intents/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_DYNAMIC_IMPORT,
+        NO_INLINE_TYPE_IMPORT,
+        NO_ZOD_INSTANCEOF,
+        NO_BARE_ZOD_CUSTOM,
+        NO_INTENT_ASSERTION_IN_DISPATCH,
+        NO_EVENT_ASSERTION_IN_EMIT,
+      ],
+    },
+  },
+  // The dispatch/emit assertion bans apply everywhere intents are dispatched, not just inside
+  // the intent system — modules are where most dispatch sites live.
+  {
+    files: ["src/modules/**/*.ts", "src/main.ts"],
+    ignores: ["**/*.test.ts", "**/*.test-utils.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_DYNAMIC_IMPORT,
+        NO_INLINE_TYPE_IMPORT,
+        NO_INTENT_ASSERTION_IN_DISPATCH,
+        NO_EVENT_ASSERTION_IN_EMIT,
       ],
     },
   },

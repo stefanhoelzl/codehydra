@@ -60,6 +60,7 @@ import type { TestViewManager } from "./operations.test-utils";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
+import { projPath, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -73,11 +74,11 @@ function testProjectId(path: string): ProjectId {
 // Test Constants
 // =============================================================================
 
-const PROJECT_PATH = "/test/project";
+const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = testProjectId(PROJECT_PATH);
-const WORKSPACE_A_PATH = "/test/project/workspaces/feature-a";
+const WORKSPACE_A_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_A_NAME = "feature-a" as WorkspaceName;
-const WORKSPACE_B_PATH = "/test/project/workspaces/feature-b";
+const WORKSPACE_B_PATH = wsPath("/test/project/workspaces/feature-b");
 const WORKSPACE_B_NAME = "feature-b" as WorkspaceName;
 
 // =============================================================================
@@ -487,7 +488,7 @@ describe("CloseProjectOperation", () => {
   it("test 13: close with unknown projectPath throws", async () => {
     const harness = createTestHarness({ projectNotFound: true });
     const intent = buildCloseIntent({
-      projectPath: "/nonexistent/project",
+      projectPath: projPath("/nonexistent/project"),
     });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Project not found");
@@ -500,10 +501,17 @@ describe("CloseProjectOperation", () => {
     await harness.dispatcher.dispatch(intent);
 
     // The deleteViewModule checks skipSwitch -- no setActiveWorkspace calls from
-    // individual workspace deletes (only from the project close operation itself)
-    // The operation sets active to null since no other projects exist
+    // individual workspace deletes (only from the project close operation itself).
+    //
+    // Deselection happens twice, and both are the same idempotent write. The "close" hook
+    // nulls the active workspace, and the operation then dispatches workspace:switch(null),
+    // whose `activate` hook nulls it again. That mirrors production exactly: view-module
+    // clears `activeWorkspacePath` in both its `activate` handler and its workspace:switched
+    // event handler. The invariant under test is that the workspace is deselected and that no
+    // *intermediate workspace* switch occurred — not how many code paths wrote the null.
     const nullCalls = harness.state.setActiveWorkspaceCalls.filter((c) => c.path === null);
-    expect(nullCalls.length).toBe(1);
+    expect(nullCalls.length).toBeGreaterThanOrEqual(1);
+    expect(harness.viewManager.getActiveWorkspacePath()).toBeNull();
 
     // No intermediate workspace switches (no calls with workspace paths)
     const workspaceSwitchCalls = harness.state.setActiveWorkspaceCalls.filter(
@@ -663,7 +671,9 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     harness.dispatcher.subscribe(EVENT_PROJECT_CLOSE_FAILED, (e) => closeFailed.push(e));
 
     await expect(
-      harness.dispatcher.dispatch(buildCloseIntent({ projectPath: "/nonexistent/project" }))
+      harness.dispatcher.dispatch(
+        buildCloseIntent({ projectPath: projPath("/nonexistent/project") })
+      )
     ).rejects.toThrow("Project not found");
 
     expect(closeFailed).toHaveLength(1);

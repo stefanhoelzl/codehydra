@@ -40,6 +40,7 @@ import { createMockState, type MockStateService } from "../boundaries/platform/s
 import { createStateMigrationRegistry } from "./state-module";
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
+import { wsPath, projPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Helpers
@@ -66,8 +67,8 @@ function createMinimalOpenWorkspaceOperation(
 const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
   projectId: "project-1" as WorkspaceCreatedPayload["projectId"],
   workspaceName: "ws-1" as WorkspaceCreatedPayload["workspaceName"],
-  workspacePath: "/ws",
-  projectPath: "/proj",
+  workspacePath: wsPath("/ws"),
+  projectPath: projPath("/proj"),
   branch: "ws-1",
   metadata: {},
   workspaceUrl: "http://127.0.0.1:8080",
