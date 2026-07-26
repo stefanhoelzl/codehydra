@@ -14,6 +14,7 @@
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
   import { createLogger } from "$lib/logging";
+  import { arrivalFlash } from "$lib/utils/arrival-flash.js";
   import { clampSidebarWidthMin } from "@shared/ui-state";
 
   const logger = createLogger("ui");
@@ -401,12 +402,17 @@
               {@const showSecondLine = hasTitle || hasTags}
               {@const rowHovered = hoveredRowKey === workspace.key}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+              <!-- in:arrivalFlash — pulse a row that just entered the list, so
+                   a workspace an agent created in the background announces
+                   itself instead of stealing the view. Keyed each ⇒ fires once
+                   per introduction; see arrival-flash.ts. -->
               <li
                 class="workspace-item"
                 class:active={isActive}
                 class:has-second-line={showSecondLine}
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
+                in:arrivalFlash
                 onclick={() => {
                   if (status !== "creating") onSwitchWorkspace(workspace.key);
                 }}

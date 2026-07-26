@@ -43,6 +43,53 @@ import { PropertySymbol } from "happy-dom";
   }
 }
 
+// Mock Element.animate for Svelte 5 transitions in happy-dom. Svelte 5 drives
+// css-based transitions (e.g. the sidebar's in:arrivalFlash) through the Web
+// Animations API, which happy-dom does not implement — an unmocked call throws
+// "element.animate is not a function" and the transitioning element never
+// renders. This returns an inert Animation stub: the element mounts, the
+// (visual-only) animation is a no-op, and nothing under test reads it back.
+if (typeof Element.prototype.animate !== "function") {
+  Element.prototype.animate = function (): Animation {
+    let onfinish: ((this: Animation, ev: AnimationPlaybackEvent) => unknown) | null = null;
+    let oncancel: ((this: Animation, ev: AnimationPlaybackEvent) => unknown) | null = null;
+    const animation = {
+      currentTime: 0,
+      startTime: 0,
+      playbackRate: 1,
+      playState: "finished" as AnimationPlayState,
+      pending: false,
+      effect: null,
+      finished: Promise.resolve(),
+      ready: Promise.resolve(),
+      get onfinish() {
+        return onfinish;
+      },
+      set onfinish(fn) {
+        onfinish = fn;
+      },
+      get oncancel() {
+        return oncancel;
+      },
+      set oncancel(fn) {
+        oncancel = fn;
+      },
+      cancel: () => {},
+      finish: () => {},
+      play: () => {},
+      pause: () => {},
+      reverse: () => {},
+      persist: () => {},
+      commitStyles: () => {},
+      updatePlaybackRate: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    };
+    return animation as unknown as Animation;
+  };
+}
+
 // Mock attachInternals for vscode-elements in happy-dom
 if (typeof HTMLElement.prototype.attachInternals === "undefined") {
   HTMLElement.prototype.attachInternals = function () {
