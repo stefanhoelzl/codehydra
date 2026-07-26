@@ -49,7 +49,11 @@ import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
   EVENT_WORKSPACE_CREATE_FAILED,
+  INTENT_OPEN_WORKSPACE,
+  type OpenWorkspacePayload,
+  type WorkspaceOpenSource,
 } from "../../intents/open-workspace";
+import type { Intent } from "../../intents/lib/types";
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
@@ -2171,5 +2175,118 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "z");
 
     expect(dispatched).toEqual([]);
+  });
+});
+
+// =============================================================================
+// Background-focus suppression (the suppress-background-focus interceptor)
+//
+// A workspace an agent opens in the background asks to steal the view with
+// stealFocus. While the sidebar is expanded (mode !== "workspace") that yank is
+// jarring, so the interceptor downgrades the request to stealFocus: false. The
+// open still happens; the arriving row flashes and picks up the "new" tag.
+// =============================================================================
+
+describe("PresentationModule - background-focus suppression", () => {
+  /** The module's sole interceptor. */
+  function interceptor(module: UiPresenter) {
+    const list = module.interceptors ?? [];
+    expect(list).toHaveLength(1);
+    return list[0]!;
+  }
+
+  /** A workspace:open intent from `source`, requesting focus (or as given). */
+  function openIntent(source: WorkspaceOpenSource, stealFocus?: boolean): Intent {
+    const payload: OpenWorkspacePayload = {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+      source,
+      ...(stealFocus !== undefined && { stealFocus }),
+    };
+    return { type: INTENT_OPEN_WORKSPACE, payload };
+  }
+
+  function stealFocusOf(intent: Intent | null): boolean | undefined {
+    return (intent?.payload as OpenWorkspacePayload | undefined)?.stealFocus;
+  }
+
+  /** Drive the presenter to workspace mode (an active, non-hibernated workspace). */
+  async function toWorkspaceMode(deps: Deps): Promise<UiPresenter> {
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    expect(lastSnapshot(deps).mode).toBe("workspace");
+    return module;
+  }
+
+  it("never modifies non-open intents", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const other: Intent = { type: "workspace:switch", payload: { workspacePath: null } };
+    expect(await interceptor(module).before(other)).toBe(other);
+  });
+
+  for (const source of ["mcp", "plugin-server", "auto-workspace"] as const) {
+    it(`downgrades stealFocus for a background ${source} open while the sidebar is expanded`, async () => {
+      const deps = createDeps();
+      // Steady state with no workspace ⇒ creation panel ⇒ hover (expanded).
+      const module = await startModule(deps);
+      expect(lastSnapshot(deps).mode).toBe("hover");
+
+      const result = await interceptor(module).before(openIntent(source, true));
+      expect(stealFocusOf(result)).toBe(false);
+    });
+  }
+
+  it("downgrades an undefined (default-switch) stealFocus too", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const result = await interceptor(module).before(openIntent("mcp"));
+    expect(stealFocusOf(result)).toBe(false);
+  });
+
+  it("leaves the open untouched when the sidebar is not expanded (workspace mode)", async () => {
+    const deps = createDeps();
+    const module = await toWorkspaceMode(deps);
+    const intent = openIntent("mcp", true);
+    const result = await interceptor(module).before(intent);
+    expect(result).toBe(intent);
+    expect(stealFocusOf(result)).toBe(true);
+  });
+
+  it("never touches interactive sources, even while expanded", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    expect(lastSnapshot(deps).mode).toBe("hover");
+
+    for (const source of ["ui-ipc", "creation", "open-project"] as const) {
+      const intent = openIntent(source, true);
+      const result = await interceptor(module).before(intent);
+      expect(result).toBe(intent);
+      expect(stealFocusOf(result)).toBe(true);
+    }
+  });
+
+  it("leaves an already-background open (stealFocus:false) unchanged", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const intent = openIntent("mcp", false);
+    const result = await interceptor(module).before(intent);
+    expect(result).toBe(intent);
+    expect(stealFocusOf(result)).toBe(false);
+  });
+
+  it("suppresses in shortcut mode as well as hover", async () => {
+    const deps = createDeps();
+    const module = await toWorkspaceMode(deps);
+    // Enter shortcut mode.
+    await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: true });
+    await flush();
+    expect(lastSnapshot(deps).mode).toBe("shortcut");
+
+    const result = await interceptor(module).before(openIntent("mcp", true));
+    expect(stealFocusOf(result)).toBe(false);
   });
 });

@@ -28,7 +28,8 @@
  */
 
 import type { IntentModule, EventDeclarations } from "../../intents/lib/module";
-import type { DomainEvent } from "../../intents/lib/types";
+import type { IntentInterceptor } from "../../intents/lib/dispatcher";
+import type { DomainEvent, Intent } from "../../intents/lib/types";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { IDispatcher } from "../../intents/lib/dispatcher";
@@ -75,6 +76,9 @@ import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
   EVENT_WORKSPACE_CREATE_FAILED,
+  INTENT_OPEN_WORKSPACE,
+  type OpenWorkspacePayload,
+  type WorkspaceOpenSource,
   type WorkspaceCreatedEvent,
   type WorkspaceLoadingEvent,
   type WorkspaceCreateFailedEvent,
@@ -708,8 +712,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * Compute the single UI mode. Priority shortcut > dialog > hover > workspace.
    * The creation panel (no active workspace) maps to hover-level: UI on top but
    * Alt+X still works.
+   *
+   * Takes the creation-panel flag rather than the whole main view so the
+   * focus-suppression interceptor can ask for the current mode without building
+   * a main view (buildMain resolves screenshots, which kicks off a file read).
    */
-  function buildMode(main: UiMainView): UIMode {
+  function buildMode(creationMain: boolean): UIMode {
     // The startup surfaces are modal system dialogs, so isModalOpen() already
     // yields "dialog" for them — no startup special-case needed. The mid-session
     // loading surface is a "panel" (not modal), so it falls through to the
@@ -717,9 +725,59 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // deletion panel.
     if (shortcutActive) return "shortcut";
     if (dialogs.isModalOpen()) return "dialog";
-    if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
+    if (creationMain || hoverRegion === "sidebar") return "hover";
     return "workspace";
   }
+
+  /** Whether main is showing the creation panel — buildMain's `creation` condition. */
+  function isCreationMain(): boolean {
+    return startupPhase === "done" && (activeKey === null || findByKey(activeKey) === undefined);
+  }
+
+  /** The mode the next snapshot would carry. */
+  function currentMode(): UIMode {
+    return buildMode(isCreationMain());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Background-focus suppression
+  //
+  // A workspace an agent opens in the background (MCP, the plugin server, an
+  // auto-workspace source with focus: true) asks to steal the view by passing
+  // stealFocus: true. That is jarring while the user is reading the expanded
+  // sidebar — the view yanks out from under the cursor. This interceptor
+  // downgrades such a request to stealFocus: false whenever the sidebar is
+  // expanded (mode !== "workspace"), so the open still happens but the view
+  // stays put; the arriving row flashes (Sidebar's in:arrivalFlash) and picks
+  // up the blue "new" tag (auto-tagging keys off stealFocus === false) instead.
+  //
+  // Interactive sources (ui-ipc, creation, open-project) are never touched, so
+  // clicking a hibernated row or creating from the New workspace panel still
+  // switches even though those happen in hover mode. Wakes count: a background
+  // wake (existingWorkspace set) yanks the view just as much as a fresh open.
+  //
+  // Evaluated when the open STARTS, not when the switch would land — creation
+  // takes seconds, so leaving the sidebar mid-creation still suppresses. That is
+  // the intended bias: err toward not stealing focus.
+  const BACKGROUND_OPEN_SOURCES: ReadonlySet<WorkspaceOpenSource> = new Set([
+    "mcp",
+    "plugin-server",
+    "auto-workspace",
+  ]);
+
+  const suppressBackgroundFocus: IntentInterceptor = {
+    id: "suppress-background-focus",
+    before: async (intent: Intent): Promise<Intent | null> => {
+      if (intent.type !== INTENT_OPEN_WORKSPACE) return intent;
+      const payload = intent.payload as OpenWorkspacePayload;
+      if (payload.stealFocus === false) return intent;
+      if (payload.source === undefined || !BACKGROUND_OPEN_SOURCES.has(payload.source)) {
+        return intent;
+      }
+      if (currentMode() === "workspace") return intent;
+      return { ...intent, payload: { ...payload, stealFocus: false } };
+    },
+  };
 
   // ---------------------------------------------------------------------------
   // System dialog (startup surfaces + mid-session loading)
@@ -936,7 +994,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       theme,
       labelScroll: labelScrollConfig.get(),
       silent: silentConfig.get(),
-      mode: buildMode(main),
+      mode: buildMode(main.kind === "creation"),
       capturing,
       dialogs: dialogs.getSnapshot(),
       notifications: notifications.getSnapshot(),
@@ -1749,6 +1807,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
       deletions.get(workspacePath),
     events,
+    interceptors: [suppressBackgroundFocus],
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {
