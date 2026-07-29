@@ -371,6 +371,20 @@
               <Icon name={project.remote ? "source-control" : "folder-opened"} size={14} />
             </span>
             <span class="project-name" title={project.title}>{project.name}</span>
+            <!-- How many of this project's rows the hide-hibernated toggle is
+                 swallowing. Present only while something is actually hidden, so
+                 an empty project stays visibly empty. Indicator only — the
+                 bottom toggle / Alt+X+T is how you get the rows back. -->
+            {#if project.hiddenHibernatedCount > 0}
+              {@const hiddenLabel = `${project.hiddenHibernatedCount} hibernated ${
+                project.hiddenHibernatedCount === 1 ? "workspace" : "workspaces"
+              } hidden`}
+              <span class="hibernated-count" title={hiddenLabel}>
+                <Icon name="eye-closed" size={12} />
+                <span aria-hidden="true">{project.hiddenHibernatedCount}</span>
+                <span class="ch-visually-hidden">{hiddenLabel}</span>
+              </span>
+            {/if}
             <div class="project-actions">
               <button
                 type="button"
@@ -853,6 +867,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Hidden-row count in the project header. Dimmed and tabular so a column of
+     projects reads as one list rather than competing with the project names. */
+  .hibernated-count {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.55;
   }
 
   .project-actions {

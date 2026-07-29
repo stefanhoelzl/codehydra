@@ -122,6 +122,44 @@ describe("Sidebar component", () => {
     });
   });
 
+  describe("hidden hibernated count", () => {
+    // Regression: with hide-hibernated on, a project whose workspaces are all
+    // asleep rendered as a bare header, indistinguishable from an empty one.
+
+    it("shows the count in the project header when rows are hidden", () => {
+      const project = makeUiProjectRow([], { hiddenHibernatedCount: 3 });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], hideHibernated: true },
+      });
+
+      expect(screen.getByText("3")).toBeInTheDocument();
+      expect(screen.getByText("3 hibernated workspaces hidden")).toBeInTheDocument();
+    });
+
+    it("uses the singular wording for one hidden workspace", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("awake")], {
+        hiddenHibernatedCount: 1,
+      });
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], hideHibernated: true },
+      });
+
+      expect(screen.getByText("1 hibernated workspace hidden")).toBeInTheDocument();
+    });
+
+    it("shows nothing when no rows are hidden", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
+
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      expect(screen.queryByText(/hibernated workspaces? hidden/i)).not.toBeInTheDocument();
+    });
+  });
+
   describe("active row scroll-into-view", () => {
     // Regression: Alt+X arrow/jump navigation switches the active workspace to
     // a row that may be scrolled out of the sidebar's viewport. The sidebar

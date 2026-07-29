@@ -117,6 +117,14 @@ export interface UiProjectRow {
   /** True for projects cloned from a git URL (drives the project icon). */
   readonly remote: boolean;
   readonly workspaces: readonly UiWorkspaceRow[];
+  /**
+   * How many of this project's workspaces the presenter withheld from
+   * `workspaces` because `UiState.sidebar.hideHibernated` is on; always 0 when
+   * it is off. The renderer cannot derive this — the hidden rows never reach it
+   * — and without it a project whose workspaces are all asleep renders exactly
+   * like one that has none.
+   */
+  readonly hiddenHibernatedCount: number;
 }
 
 /**
