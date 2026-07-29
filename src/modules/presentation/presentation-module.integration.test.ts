@@ -466,6 +466,7 @@ describe("PresentationModule - ui:state snapshots", () => {
                 active: true,
               },
             ],
+            hiddenHibernatedCount: 0,
           },
         ],
         width: SIDEBAR_DEFAULT_WIDTH,
@@ -1004,19 +1005,22 @@ describe("PresentationModule - sidebar resize", () => {
     const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
 
-    // Default: both rows visible, flag off.
+    // Default: both rows visible, flag off, nothing withheld.
     expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(false);
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual([
       "a",
       "b",
     ]);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(0);
 
     emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
     await flush();
 
-    // Hidden: the hibernated row is dropped and the flag is on.
+    // Hidden: the hibernated row is dropped, the flag is on, and the project
+    // reports the row it swallowed.
     expect(lastSnapshot(deps).sidebar.hideHibernated).toBe(true);
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces.map((w) => w.name)).toEqual(["a"]);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(1);
 
     emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
     await flush();
@@ -1027,6 +1031,27 @@ describe("PresentationModule - sidebar resize", () => {
       "a",
       "b",
     ]);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.hiddenHibernatedCount).toBe(0);
+  });
+
+  it("an all-hibernated project reports its count instead of looking empty", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([
+        makeWorkspace("a", { metadata: { hibernated: "true" } }),
+        makeWorkspace("b", { metadata: { hibernated: "true" } }),
+      ]),
+    });
+
+    emitUiEvent(deps, { kind: "toggle-hide-hibernated" });
+    await flush();
+
+    // Every row is gone, so `workspaces` alone cannot distinguish this from a
+    // project with no workspaces at all — the count is what carries it.
+    const project = lastSnapshot(deps).sidebar.projects[0]!;
+    expect(project.workspaces).toEqual([]);
+    expect(project.hiddenHibernatedCount).toBe(2);
   });
 });
 

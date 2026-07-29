@@ -23,7 +23,9 @@ function row(key: string, agent: AgentStatus): UiWorkspaceRow {
 function makeState(workspaces: UiWorkspaceRow[]): UiState {
   return {
     sidebar: {
-      projects: [{ id: "p", name: "p", title: "/p", remote: false, workspaces }],
+      projects: [
+        { id: "p", name: "p", title: "/p", remote: false, workspaces, hiddenHibernatedCount: 0 },
+      ],
       width: 250,
       hideHibernated: false,
     },

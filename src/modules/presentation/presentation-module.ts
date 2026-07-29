@@ -956,19 +956,25 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const hideHibernated = hideHibernatedState.get();
     const projectRows: UiProjectRow[] = [...projects.values()]
       .sort((a, b) => compareDisplayNames(a.name, b.name))
-      .map((project) => ({
-        id: project.id,
-        name: project.name,
-        title: project.remoteUrl ?? project.path,
-        remote: project.remoteUrl !== undefined,
-        workspaces: [...project.workspaces.values()]
+      .map((project) => {
+        const rows = [...project.workspaces.values()]
           .sort((a, b) => compareDisplayNames(a.name, b.name))
-          .map((workspace): UiWorkspaceRow => buildRow(project, workspace))
-          // Omit hibernated rows when the visibility toggle is on. An active
-          // hibernated workspace is hidden too (main still shows its hibernated
-          // screen); recover via the bottom toggle, Alt+X+T, or Alt+X+H.
-          .filter((row) => !hideHibernated || !row.hibernated),
-      }));
+          .map((workspace): UiWorkspaceRow => buildRow(project, workspace));
+        // Omit hibernated rows when the visibility toggle is on, but report how
+        // many went missing so the sidebar can say so — an all-asleep project
+        // would otherwise look empty. An active hibernated workspace is hidden
+        // too (main still shows its hibernated screen); recover via the bottom
+        // toggle, Alt+X+T, or Alt+X+H.
+        const visible = hideHibernated ? rows.filter((row) => !row.hibernated) : rows;
+        return {
+          id: project.id,
+          name: project.name,
+          title: project.remoteUrl ?? project.path,
+          remote: project.remoteUrl !== undefined,
+          workspaces: visible,
+          hiddenHibernatedCount: rows.length - visible.length,
+        };
+      });
 
     const frames: Record<string, string> = {};
     for (const project of projects.values()) {

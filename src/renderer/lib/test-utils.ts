@@ -36,6 +36,7 @@ export function makeUiProjectRow(
     id: "test-project-12345678",
     name: "test-project",
     remote: false,
+    hiddenHibernatedCount: 0,
     ...overrides,
     title:
       overrides?.title ?? (overrides?.remote ? "https://example.com/repo.git" : "/test/project"),
