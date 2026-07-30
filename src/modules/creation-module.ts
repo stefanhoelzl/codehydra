@@ -713,12 +713,18 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     // (the field isn't rendered); "" means the default (omit the flag).
     const permissionMode = data[FIELD_PERMISSION_MODE] ?? "";
     const agentName = (data[FIELD_AGENT_NAME] ?? "").trim();
-    const agentSelection = data[FIELD_AGENT] ?? "";
+    // The agent dropdown is only rendered when more than one backend is
+    // available, so its field is absent from the snapshot on a single-backend
+    // install — fall back to the module's own resolved selection rather than
+    // treating that as "no backend" (which would drop permissionMode/agentName
+    // into the option-less "default" arm).
+    const agentSelection = data[FIELD_AGENT] ?? selectedAgentType ?? "";
 
     // The form knows the selected backend, so it always emits a typed arm
     // (carrying prompt + options); the resolver only persists it as the
-    // workspace's agent when it differs from the global default. With no
-    // backend selected, fall back to the prompt-only "default" arm.
+    // workspace's agent when it differs from the global default. Only with no
+    // backend at all (no agent installed) do we fall back to the prompt-only
+    // "default" arm.
     let agent: AgentSpec | undefined;
     if (isAvailableAgent(agentSelection)) {
       if (agentSelection === "claude") {

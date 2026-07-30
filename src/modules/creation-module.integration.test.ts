@@ -567,12 +567,14 @@ describe("CreationModule", () => {
       const s = setup({ defaultBaseBranch: "main" });
       const panel = await readyPanel(s);
 
+      // Single available agent: the agent dropdown isn't rendered, so the
+      // renderer's snapshot carries no "agent" key (see the single-backend
+      // regression test below).
       panel.emitAction("create", {
         project: PROJECT_A.path,
         name: "new-feature",
         base: "main",
         prompt: "",
-        agent: "claude",
       });
       await flush();
 
@@ -602,7 +604,6 @@ describe("CreationModule", () => {
         name: "origin/feature-x",
         base: "origin/feature-x",
         prompt: "",
-        agent: "claude",
       });
       await flush();
 
@@ -678,7 +679,6 @@ describe("CreationModule", () => {
         prompt: "   ",
         "permission-mode": "",
         "agent-name": "",
-        agent: "claude",
       });
       await flush();
 
@@ -691,6 +691,56 @@ describe("CreationModule", () => {
       expect(payload["agent"]).toEqual({ type: "claude" });
     });
 
+    // Regression: with a single available backend the agent dropdown is not
+    // rendered, so the snapshot has no "agent" key. Keying the arm off that
+    // field degraded the spec to the option-less "default" arm and silently
+    // dropped permissionMode/agentName — the prompt then ran under Claude's
+    // own default mode instead of the selected one.
+    it("keeps permissionMode and agentName when the agent field is absent (single backend)", async () => {
+      const s = setup({ defaultBaseBranch: "main", defaultAgent: "claude" });
+      const panel = await readyPanel(s);
+
+      // The dropdown is genuinely absent from the rendered form.
+      expect(sectionById(currentPanel(s).config, "agent")).toBeUndefined();
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "planned",
+        base: "main",
+        prompt: "do things",
+        "permission-mode": "plan",
+        "agent-name": "reviewer",
+      });
+      await flush();
+
+      expect(s.dispatcher.byType(INTENT_OPEN_WORKSPACE)[0]!.payload).toMatchObject({
+        agent: {
+          type: "claude",
+          prompt: "do things",
+          permissionMode: "plan",
+          agentName: "reviewer",
+        },
+      });
+    });
+
+    it("emits a typed arm for a mode-only create (no prompt, agent field absent)", async () => {
+      const s = setup({ defaultBaseBranch: "main", defaultAgent: "claude" });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "mode-only",
+        base: "main",
+        prompt: "",
+        "permission-mode": "plan",
+      });
+      await flush();
+
+      expect(s.dispatcher.byType(INTENT_OPEN_WORKSPACE)[0]!.payload).toMatchObject({
+        agent: { type: "claude", permissionMode: "plan" },
+      });
+    });
+
     it("re-validates the snapshot: an invalid submit pushes errors instead of dispatching", async () => {
       const s = setup({ defaultBaseBranch: "main" });
       const panel = await readyPanel(s);
@@ -700,7 +750,6 @@ describe("CreationModule", () => {
         name: "existing",
         base: "main",
         prompt: "",
-        agent: "claude",
       });
       await flush();
 
