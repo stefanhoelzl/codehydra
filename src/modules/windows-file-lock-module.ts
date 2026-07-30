@@ -1,9 +1,29 @@
 /**
- * WindowsFileLockModule — Handles Windows file lock detection/removal during workspace deletion or hibernation.
+ * WindowsFileLockModule — last-resort process cleanup before a workspace
+ * directory is removed on Windows.
+ *
+ * ## This is a backstop, not the teardown
+ *
+ * Scanning for processes and `taskkill /f`-ing them is inherently racy in both
+ * directions: the scan takes seconds and its results are stale by the time they
+ * are used (a real user log shows all four detected PIDs already gone by the
+ * time taskkill ran), and `TerminateProcess` returns before the OS has torn the
+ * process down and released its handles (another log shows the delete hook
+ * starting 3ms after taskkill exited, and failing).
+ *
+ * So it cannot be how we stop our OWN processes, and it no longer is:
+ * - workspace-lifecycle-module claims the workspace, and the git and sidekick
+ *   paths refuse to start new work in it,
+ * - the plugin server asks the agent to exit and waits for it,
+ * - the presenter unmounts the IDE frame so the IDE server lets go.
+ *
+ * What is left for this module is what none of that can reach: processes we do
+ * not own — a user's own shell sitting in the workspace, an external editor,
+ * antivirus, the search indexer. Keep it best-effort and keep it cheap.
  *
  * Hooks:
  * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort)
- * - delete-workspace → detect: full handle detection
+ * - delete-workspace → detect: full handle detection, after a failed removal
  * - delete-workspace → flush: kill PIDs collected by detect
  * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  *
@@ -56,8 +76,16 @@ interface DetectOutput {
 /** Max files per process in detect output */
 const MAX_FILES_PER_PROCESS = 20;
 
-/** Timeout for detect operations */
-const DETECT_TIMEOUT_MS = 30_000;
+/**
+ * Timeout for detect operations.
+ *
+ * This runs only after a removal already failed, and the user is sitting in
+ * front of a dialog that cannot tell them anything until it returns — 30s of
+ * that produced a 63-second failed deletion in one user's logs, and then
+ * reported no blockers anyway. The scan is dominated by PowerShell startup and
+ * Add-Type compilation, so a shorter budget mostly cuts dead waiting.
+ */
+const DETECT_TIMEOUT_MS = 8_000;
 
 /** Timeout for taskkill */
 const KILL_TIMEOUT_MS = 5_000;

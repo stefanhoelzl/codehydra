@@ -634,6 +634,10 @@ export class GitWorktreeProvider {
       } catch (error) {
         // git worktree remove can fail for various reasons (stale .git,
         // Windows long paths, locked files, etc.) — fall back to rm + prune
+        this.logger.warn("Worktree removal failed; trying recursive rm", {
+          path: workspacePath.toString(),
+          error: getErrorMessage(error),
+        });
         try {
           await this.fileSystemLayer.rm(workspacePath, {
             recursive: true,
@@ -644,7 +648,17 @@ export class GitWorktreeProvider {
           });
           await this.gitClient.pruneWorktrees(projectRoot);
           this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
-        } catch {
+        } catch (fallbackError) {
+          // Log BOTH failures. Reports of this only ever carried the git error,
+          // which names the directory but never says what was holding it; the
+          // post-mortem scan runs later, by which point the transient holder is
+          // usually gone. The rm error carries the errno (EPERM/EBUSY/ENOTEMPTY
+          // /ETIMEDOUT), which at least distinguishes "still locked" from "took
+          // too long".
+          this.logger.warn("Recursive rm fallback failed too", {
+            path: workspacePath.toString(),
+            error: getErrorMessage(fallbackError),
+          });
           worktreeError = error as Error;
         }
       }

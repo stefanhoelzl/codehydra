@@ -984,7 +984,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const frames: Record<string, string> = {};
     for (const project of projects.values()) {
       for (const workspace of project.workspaces.values()) {
-        if (workspace.url !== undefined && !workspace.hibernated) {
+        // A mounted frame is a live IDE client: the workspace stays open in the
+        // IDE server, which keeps its pty host, extension host and file watchers
+        // holding the directory. Unmount as soon as a teardown starts, rather
+        // than on workspace:deleted — that only fires AFTER the worktree removal
+        // has already had to fight those handles (and never at all when the
+        // removal fails).
+        //
+        // Nothing is hidden by this. The pipeline switches away from the
+        // workspace at the start, and if the user navigates back the deletion
+        // module puts its progress panel over the workspace area — the panel is
+        // documented as rendering "over the already-torn-down frame". Dismissing
+        // that panel dispatches a force delete, so an entry here can never
+        // outlive the workspace.
+        const deleting = workspace.path !== null && deletions.has(workspace.path);
+        if (workspace.url !== undefined && !workspace.hibernated && !deleting) {
           frames[workspaceKey(project.id, workspace.name)] = workspace.url;
         }
       }
