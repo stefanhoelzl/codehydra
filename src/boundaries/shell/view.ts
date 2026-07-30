@@ -447,11 +447,13 @@ export class DefaultViewBoundary implements ViewBoundary {
     try {
       await state.webContents.loadURL(url);
     } catch (error) {
-      // Navigation failures are transient (network changes, sleep/resume, etc.)
-      // and already handled by the did-fail-load event which triggers retry with backoff.
-      // Swallow the rejection to prevent unhandled promise rejections in fire-and-forget callers.
+      // Swallow the rejection so fire-and-forget callers don't raise an
+      // unhandled rejection. Nothing retries: the sole caller loads the UI
+      // page itself (UiViewManager.loadUI), and a UI that fails to come up
+      // surfaces through the renderer crash guard, not here. Workspace
+      // iframes never route through this — they navigate in the renderer.
       const message = error instanceof Error ? error.message : String(error);
-      this.logger.debug("Navigation failed (handled via did-fail-load)", {
+      this.logger.warn("Navigation failed", {
         id: handle.id,
         url,
         error: message,
