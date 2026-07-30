@@ -468,7 +468,7 @@ All operations use the intent dispatcher. Intents are dispatched through operati
 | `resolve-workspace`    | `workspace:resolve`       | `resolve`                                                                                                    | --                                                                            |
 | `resolve-project`      | `project:resolve`         | `resolve`                                                                                                    | --                                                                            |
 | `open-workspace`       | `workspace:open`          | `create`, `setup`, `finalize`                                                                                | `workspace:loading`, `workspace:created`, `workspace:create-failed`           |
-| `delete-workspace`     | `workspace:delete`        | `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                              | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
+| `delete-workspace`     | `workspace:delete`        | `confirm`, `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                   | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
 | `hibernate-workspace`  | `workspace:hibernate`     | `capture`, `shutdown`, `release`                                                                             | `workspace:hibernated`, `workspace:hibernate-failed`                          |
 | `wake-workspace`       | `workspace:wake`          | `cleanup`                                                                                                    | `workspace:woken`, `workspace:wake-failed`                                    |
 | `switch-workspace`     | `workspace:switch`        | `activate`, `find-candidates`, `select-next`                                                                 | `workspace:switched`                                                          |
@@ -494,11 +494,13 @@ The `open-workspace` operation uses these hook modules:
 
 The `delete-workspace` operation uses these hook modules:
 
+- **confirm**: DeletionDialogModule (interactive dispatches only) -- parks on the confirmation dialog and contributes the user's `keepBranch` answer, or cancels the dispatch
+- **preflight**: WorktreeModule -- vetoes on workspace state (`{ blocked, reason }`). The handler owns both halves of the policy: whether the check applies (only a `removeWorktree` delete can lose work; `force` is an explicit teardown and `ignoreWarnings` the caller's opt-out) and what its findings mean. A handler that cannot read the state throws, failing the gate closed. The operation only sequences the gate and joins the reasons into the caller's error
 - **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
-The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), the presenter (drops the row from the next `UiState` snapshot), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
+Both gates run before any teardown or progress emission, so a refusal leaves the workspace untouched and the UI never sees a deletion panel. The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), the presenter (drops the row from the next `UiState` snapshot), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
 
 The `open-project` operation runs `select-folder` (when no path/URL given), `prepare` (e.g. git init), then `resolve` (clone if URL, validate git), `register` (generate ID, store state, persist), and `discover` (find existing workspaces).
 

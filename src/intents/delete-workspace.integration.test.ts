@@ -44,20 +44,7 @@ import type {
   FlushHookInput,
   DeletePipelineHookInput,
 } from "./delete-workspace";
-import type {
-  HookContext,
-  HookOutput,
-  OperationContext,
-  Operation,
-  OperationSchemas,
-} from "./lib/operation";
-import {
-  INTENT_GET_PROJECT_BASES,
-  GET_PROJECT_BASES_OPERATION_ID,
-  getProjectBasesPayloadSchema,
-  getProjectBasesResultSchema,
-  type GetProjectBasesIntent,
-} from "./get-project-bases";
+import type { HookContext, HookOutput, OperationContext } from "./lib/operation";
 import type {
   BlockingProcess,
   DeletionProgress,
@@ -289,8 +276,6 @@ interface TestHarness {
   gitWorktreeProviderMock: {
     gitWorktreeProvider: { removeWorkspace: ReturnType<typeof vi.fn> };
   };
-  /** Payloads of every project:get-bases dispatched during the run. */
-  basesRefreshes: GetProjectBasesIntent["payload"][];
 }
 
 function createTestHarness(options?: {
@@ -305,9 +290,6 @@ function createTestHarness(options?: {
   serverStopError?: string;
   worktreeRemoveError?: string;
   initialProjects?: TestAppState["projects"];
-  isDirty?: boolean;
-  unmergedCommits?: number;
-  basesRefreshError?: string;
 }): TestHarness {
   const dispatcher = createMockDispatcher();
 
@@ -351,23 +333,6 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
   dispatcher.registerOperation(new SwitchWorkspaceOperation());
   dispatcher.registerOperation(new GetActiveWorkspaceOperation());
-
-  // Stub project:get-bases so the preflight's remote refresh is observable. The
-  // real operation fetches; here we only record that it was asked to.
-  const basesRefreshes: GetProjectBasesIntent["payload"][] = [];
-  dispatcher.registerOperation({
-    id: GET_PROJECT_BASES_OPERATION_ID,
-    schemas: {
-      type: INTENT_GET_PROJECT_BASES,
-      payload: getProjectBasesPayloadSchema,
-      result: getProjectBasesResultSchema,
-    },
-    execute: async (ctx: OperationContext<GetProjectBasesIntent>) => {
-      basesRefreshes.push(ctx.intent.payload);
-      if (options?.basesRefreshError) throw new Error(options.basesRefreshError);
-      return { bases: [], projectPath: PROJECT_PATH, projectId: PROJECT_ID };
-    },
-  } as unknown as Operation<OperationSchemas>);
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -788,31 +753,12 @@ function createTestHarness(options?: {
     },
   };
 
-  const deletePreflightModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        preflight: {
-          handler: async (): Promise<HookOutput<PreflightHookResult>> => {
-            return {
-              result: {
-                isDirty: options?.isDirty ?? false,
-                unmergedCommits: options?.unmergedCommits ?? 0,
-              },
-            };
-          },
-        },
-      },
-    },
-  };
-
   for (const m of [
     idempotencyModule,
     progressCaptureModule,
     resolveWorkspaceModule,
     resolveProjectModule,
     getActiveWorkspaceModule,
-    deletePreflightModule,
     deleteViewModule,
     deleteAgentModule,
     deleteWindowsLockModule,
@@ -838,7 +784,6 @@ function createTestHarness(options?: {
     gitWorktreeProviderState: gitWorktreeProviderMock,
     gitWorktreeProviderMock:
       gitWorktreeProviderMock as unknown as TestHarness["gitWorktreeProviderMock"],
-    basesRefreshes,
   };
 }
 
@@ -1761,11 +1706,40 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
 });
 
 describe("DeleteWorkspaceOperation.preflight", () => {
-  it("throws when workspace is dirty", async () => {
-    const harness = createTestHarness({ isDirty: true });
-    const intent = buildDeleteIntent();
+  /**
+   * Register a preflight-hook module on the harness dispatcher. Whether the
+   * check applies and what its findings mean belong to the handler (in
+   * production, the worktree module) — the operation only sequences the gate,
+   * so these tests drive the verdict directly.
+   */
+  function registerPreflight(
+    harness: TestHarness,
+    impl: (ctx: DeletePipelineHookInput) => PreflightHookResult
+  ): void {
+    harness.dispatcher.registerModule({
+      name: `test-preflight-${preflightModuleCounter++}`,
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          preflight: {
+            handler: async (ctx: HookContext): Promise<HookOutput<PreflightHookResult>> => ({
+              result: impl(ctx as DeletePipelineHookInput),
+            }),
+          },
+        },
+      },
+    });
+  }
 
-    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+  let preflightModuleCounter = 0;
+
+  it("aborts with the handler's reason, leaving the workspace untouched", async () => {
+    const harness = createTestHarness();
+    registerPreflight(harness, () => ({
+      blocked: true,
+      reason: "Workspace has uncommitted changes",
+    }));
+
+    await expect(harness.dispatcher.dispatch(buildDeleteIntent())).rejects.toThrow(
       "Preflight check failed: Workspace has uncommitted changes"
     );
 
@@ -1781,62 +1755,56 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     // delete-failed emitted (resets idempotency)
     expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
-    // No progress events emitted (preflight throws before any progress)
+    // No progress events emitted (the gate runs before any progress)
     expect(harness.progressCaptures).toHaveLength(0);
   });
 
-  it("throws when workspace has unmerged commits", async () => {
-    const harness = createTestHarness({ unmergedCommits: 3 });
-    const intent = buildDeleteIntent();
+  it("joins the reasons of every blocking handler", async () => {
+    const harness = createTestHarness();
+    registerPreflight(harness, () => ({
+      blocked: true,
+      reason: "Workspace has uncommitted changes",
+    }));
+    registerPreflight(harness, () => ({
+      blocked: true,
+      reason: "Workspace has 2 unmerged commits",
+    }));
 
-    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      "Preflight check failed: Workspace has 3 unmerged commits"
+    await expect(harness.dispatcher.dispatch(buildDeleteIntent())).rejects.toThrow(
+      "Preflight check failed: Workspace has uncommitted changes; Workspace has 2 unmerged commits"
     );
 
-    expect(harness.testState.serverStopped).toBe(false);
-    expect(harness.testState.worktreeRemoved).toBe(false);
-    expect(harness.testState.removedWorkspaces).toHaveLength(0);
     expect(harness.progressCaptures).toHaveLength(0);
   });
 
-  it("refreshes remotes before counting unmerged commits", async () => {
-    // Without this, a delete dispatched right after a server-side merge (/ship)
-    // measures against a stale origin/main and rejects the just-merged commits.
-    const harness = createTestHarness({ isDirty: false, unmergedCommits: 0 });
-
-    await harness.dispatcher.dispatch(buildDeleteIntent());
-
-    expect(harness.basesRefreshes).toContainEqual(
-      expect.objectContaining({ projectPath: PROJECT_PATH, refresh: true })
-    );
-  });
-
-  it("proceeds with the preflight when the refresh fails", async () => {
-    const harness = createTestHarness({
-      isDirty: false,
-      unmergedCommits: 0,
-      basesRefreshError: "network down",
+  it("aborts without faking a deletion failure when a handler throws", async () => {
+    const harness = createTestHarness();
+    harness.dispatcher.registerModule({
+      name: "test-preflight-throws",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          preflight: {
+            handler: async (): Promise<HookOutput<PreflightHookResult>> => {
+              throw new Error("git failed");
+            },
+          },
+        },
+      },
     });
 
+    // A gate that could not run is not a teardown that failed: the dispatch
+    // aborts with the raw error and the UI never sees a progress panel.
+    await expect(harness.dispatcher.dispatch(buildDeleteIntent())).rejects.toThrow("git failed");
+    expect(harness.progressCaptures).toHaveLength(0);
+    expect(harness.testState.serverStopped).toBe(false);
+    expect(harness.testState.worktreeRemoved).toBe(false);
+  });
+
+  it("proceeds when no handler blocks", async () => {
+    const harness = createTestHarness();
+    registerPreflight(harness, () => ({}));
+
     await harness.dispatcher.dispatch(buildDeleteIntent());
-
-    // A fetch failure must not block deletion — fall through to stale refs.
-    expect(harness.testState.worktreeRemoved).toBe(true);
-  });
-
-  it("skips the refresh when preflight is skipped", async () => {
-    const harness = createTestHarness({ isDirty: true, unmergedCommits: 5 });
-
-    await harness.dispatcher.dispatch(buildDeleteIntent({ ignoreWarnings: true }));
-
-    expect(harness.basesRefreshes).toHaveLength(0);
-  });
-
-  it("proceeds when workspace is clean", async () => {
-    const harness = createTestHarness({ isDirty: false, unmergedCommits: 0 });
-    const intent = buildDeleteIntent();
-
-    await harness.dispatcher.dispatch(intent);
 
     // Deletion should have completed normally
     expect(harness.testState.worktreeRemoved).toBe(true);
@@ -1850,52 +1818,15 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     expect(finalProgress.hasErrors).toBe(false);
   });
 
-  it("skips preflight when ignoreWarnings is true", async () => {
-    const harness = createTestHarness({ isDirty: true, unmergedCommits: 5 });
-    const intent = buildDeleteIntent({ ignoreWarnings: true });
+  it("proceeds when no preflight handler is registered", async () => {
+    const harness = createTestHarness();
 
-    await harness.dispatcher.dispatch(intent);
+    await harness.dispatcher.dispatch(buildDeleteIntent());
 
-    // Deletion should proceed despite dirty state
     expect(harness.testState.worktreeRemoved).toBe(true);
-    expect(harness.testState.removedWorkspaces).toContainEqual({
-      projectPath: PROJECT_PATH,
-      workspacePath: WORKSPACE_PATH,
-    });
-
-    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
-    expect(finalProgress.completed).toBe(true);
-    expect(finalProgress.hasErrors).toBe(false);
   });
 
-  it("skips preflight when force is true", async () => {
-    const harness = createTestHarness({ isDirty: true });
-    const intent = buildDeleteIntent({ force: true });
-
-    await harness.dispatcher.dispatch(intent);
-
-    // Force deletion proceeds
-    expect(harness.testState.removedWorkspaces).toContainEqual({
-      projectPath: PROJECT_PATH,
-      workspacePath: WORKSPACE_PATH,
-    });
-  });
-
-  it("skips preflight when removeWorktree is false", async () => {
-    const harness = createTestHarness({ isDirty: true });
-    const intent = buildDeleteIntent({ removeWorktree: false });
-
-    await harness.dispatcher.dispatch(intent);
-
-    // Runtime teardown only — no preflight, no worktree removal
-    expect(harness.testState.serverStopped).toBe(true);
-
-    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
-    expect(finalProgress.completed).toBe(true);
-    expect(finalProgress.hasErrors).toBe(false);
-  });
-
-  it("retry with ignoreWarnings and blockingPids skips preflight and proceeds to flush → delete", async () => {
+  it("retry with ignoreWarnings and blockingPids clears the gate and proceeds to flush → delete", async () => {
     const blockingProcesses: BlockingProcess[] = [
       { pid: 7777, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
     ];
@@ -1907,12 +1838,18 @@ describe("DeleteWorkspaceOperation.preflight", () => {
       closeHandles: vi.fn().mockResolvedValue(undefined),
     };
 
-    // Dirty workspace — preflight would throw without ignoreWarnings
-    const harness = createTestHarness({ isDirty: true, workspaceLockHandler });
+    const harness = createTestHarness({ workspaceLockHandler });
+    // Stands in for the worktree module: dirty workspace, ignoreWarnings honored.
+    registerPreflight(harness, (ctx) =>
+      (ctx.intent as DeleteWorkspaceIntent).payload.ignoreWarnings
+        ? {}
+        : { blocked: true, reason: "Workspace has uncommitted changes" }
+    );
 
-    // First attempt (without ignoreWarnings): fails at preflight
-    const intent1 = buildDeleteIntent();
-    await expect(harness.dispatcher.dispatch(intent1)).rejects.toThrow("Preflight check failed");
+    // First attempt (without ignoreWarnings): blocked at the gate
+    await expect(harness.dispatcher.dispatch(buildDeleteIntent())).rejects.toThrow(
+      "Preflight check failed"
+    );
     expect(harness.progressCaptures).toHaveLength(0);
 
     // Retry with ignoreWarnings + blockingPids (simulates Kill & Retry)
@@ -1929,17 +1866,6 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
     expect(finalProgress.completed).toBe(true);
     expect(finalProgress.hasErrors).toBe(false);
-  });
-
-  it("throws with both dirty and unmerged messages when both are true", async () => {
-    const harness = createTestHarness({ isDirty: true, unmergedCommits: 2 });
-    const intent = buildDeleteIntent();
-
-    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      "Preflight check failed: Workspace has uncommitted changes; Workspace has 2 unmerged commits"
-    );
-
-    expect(harness.progressCaptures).toHaveLength(0);
   });
 });
 
@@ -2027,14 +1953,35 @@ describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
     expect(harness.testState.worktreeRemoved).toBe(true);
   });
 
-  it("a confirmed interactive dispatch skips preflight (the user saw the warnings)", async () => {
-    // Dirty workspace would fail preflight on a plain dispatch.
-    const harness = createTestHarness({ isDirty: true, unmergedCommits: 2 });
+  it("a confirmed interactive dispatch reaches preflight handlers with ignoreWarnings set", async () => {
+    const harness = createTestHarness();
+    // Stands in for the worktree module: a dirty workspace that honors the flag.
+    const seen: Array<boolean | undefined> = [];
+    harness.dispatcher.registerModule({
+      name: "test-preflight-confirm",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          preflight: {
+            handler: async (ctx: HookContext): Promise<HookOutput<PreflightHookResult>> => {
+              const { payload } = ctx.intent as DeleteWorkspaceIntent;
+              seen.push(payload.ignoreWarnings);
+              return {
+                result: payload.ignoreWarnings
+                  ? {}
+                  : { blocked: true, reason: "Workspace has uncommitted changes" },
+              };
+            },
+          },
+        },
+      },
+    });
     registerConfirm(harness, () => ({}));
-    const intent = buildDeleteIntent({ interactive: true });
 
-    const result = await harness.dispatcher.dispatch(intent);
+    const result = await harness.dispatcher.dispatch(buildDeleteIntent({ interactive: true }));
 
+    // The confirm hook's payload rewrite must reach the gate: the user answered
+    // with whatever the dialog had shown, so the check does not second-guess it.
+    expect(seen).toEqual([true]);
     expect(result).toEqual({ started: true });
     expect(harness.testState.worktreeRemoved).toBe(true);
   });
