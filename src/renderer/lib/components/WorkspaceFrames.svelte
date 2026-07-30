@@ -23,6 +23,12 @@
   are only focused while in "workspace" mode; entering shortcut mode blurs
   the frame so navigation keys don't reach VS Code.
 
+  Liveness: showing a frame pings it, and it answers via the probe responder
+  the UiViewManager injects alongside the focus tracker. All workspace iframes
+  are same-origin, so Chromium hosts them in one shared renderer process; when
+  it dies every workbench blanks at once and no main-process event reports it.
+  A frame that does not answer is logged — nothing reloads on its own.
+
   Exposes two window hooks for the main process (UiViewManager):
   - __chFocusActiveFrame(): focus the active frame (window-focus handler,
     post-terminal-focus refresh)
@@ -31,8 +37,19 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { SvelteMap } from "svelte/reactivity";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import type { UIMode } from "@shared/ipc";
+  import { createLogger } from "$lib/logging";
+
+  const logger = createLogger("ui");
+
+  /**
+   * How long a frame gets to answer the probe sent when it is shown. Generous:
+   * a workbench whose main thread is briefly blocked, or one still loading its
+   * document, must not be mistaken for a dead one. Detection only logs, so
+   * erring long costs nothing.
+   */
+  const PROBE_TIMEOUT_MS = 5_000;
 
   interface FrameHooks {
     __chFocusActiveFrame?: () => void;
@@ -69,6 +86,71 @@
         frameEls.delete(key);
       },
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Liveness
+  //
+  // A dead frame is indistinguishable from a live one out here, so the frame
+  // has to answer for itself: showing one sends it a ping, and a frame that
+  // stays silent is logged. The frames are the only witnesses to their own
+  // renderer process dying — Electron surfaces no event for a subframe process
+  // (PostHog issue 019fb265). Detection only reports; nothing reloads.
+  // ---------------------------------------------------------------------------
+
+  /** Keys that have answered at least once — separates dead from never-loaded. */
+  const everAnswered = new SvelteSet<string>();
+
+  /** The frame currently being probed, and its pending verdict. */
+  let probeKey: string | null = null;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+
+  function cancelProbe(): void {
+    if (probeTimer !== undefined) clearTimeout(probeTimer);
+    probeTimer = undefined;
+    probeKey = null;
+  }
+
+  function probeFrame(key: string, el: HTMLIFrameElement): void {
+    cancelProbe();
+    probeKey = key;
+    try {
+      el.contentWindow?.postMessage({ __chPing: true }, "*");
+    } catch {
+      // Cross-origin frame may reject; the timeout reports it anyway
+    }
+    probeTimer = setTimeout(() => {
+      probeTimer = undefined;
+      probeKey = null;
+      logger.warn(
+        everAnswered.has(key)
+          ? "Workspace frame stopped responding (renderer may have died)"
+          : "Workspace frame never responded (may never have finished loading)",
+        { key }
+      );
+    }, PROBE_TIMEOUT_MS);
+  }
+
+  /** The mounted frame that sent a message, by window identity. */
+  function keyForSource(source: MessageEvent["source"]): string | undefined {
+    if (source === null) return undefined;
+    for (const [key, el] of frameEls) {
+      if (el.contentWindow === source) return key;
+    }
+    return undefined;
+  }
+
+  function handleFrameMessage(event: MessageEvent): void {
+    const data: unknown = event.data;
+    const alive =
+      typeof data === "object" &&
+      data !== null &&
+      (data as { __chAlive?: unknown }).__chAlive === true;
+    if (!alive) return;
+    const key = keyForSource(event.source);
+    if (key === undefined) return;
+    everAnswered.add(key);
+    if (key === probeKey) cancelProbe();
   }
 
   function activeFrame(): HTMLIFrameElement | undefined {
@@ -111,6 +193,9 @@
   // server instead of showing the IDE server's own "Reload" dialog. frameEls
   // holds exactly the mounted (non-hibernated) frames.
   function reloadFrames(): void {
+    // A reloading frame is legitimately silent until its script is re-injected;
+    // drop any probe in flight rather than read the navigation as a death.
+    cancelProbe();
     for (const el of frameEls.values()) {
       // Re-assigning src (via a local, to dodge no-self-assign) forces a fresh
       // navigation even though the resolved URL is identical.
@@ -141,6 +226,31 @@
     if (mode === "workspace") {
       focusFrame(el);
     }
+  });
+
+  // Probe the frame being shown, exactly once per switch.
+  //
+  // Separate from the show flow above, which also tracks `mode` — that flips on
+  // every sidebar hover and shortcut toggle. This effect still reruns whenever
+  // the mounted set changes (frameEls is reactive), so `probedKey` is what
+  // pins it to one check per switch: a workspace being created or hibernated
+  // elsewhere must not re-open a verdict on the frame already on screen.
+  // Leaving it unset while the element is missing is deliberate — the frame of
+  // a just-created workspace registers after the switch lands, and the rerun
+  // that brings it is the run that gets to probe it.
+  let probedKey: string | null = null;
+  $effect(() => {
+    const key = activeKey;
+    if (key === null) {
+      cancelProbe();
+      probedKey = null;
+      return;
+    }
+    if (key === probedKey) return;
+    const el = frameEls.get(key);
+    if (!el) return;
+    probedKey = key;
+    probeFrame(key, el);
   });
 
   // Mode routing: returning to workspace mode focuses the active frame
@@ -177,10 +287,15 @@
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     };
     hooks.__chReloadFrames = reloadFrames;
+
+    window.addEventListener("message", handleFrameMessage);
+
     return () => {
       delete hooks.__chFocusActiveFrame;
       delete hooks.__chActiveFrameRect;
       delete hooks.__chReloadFrames;
+      window.removeEventListener("message", handleFrameMessage);
+      cancelProbe();
     };
   });
 </script>

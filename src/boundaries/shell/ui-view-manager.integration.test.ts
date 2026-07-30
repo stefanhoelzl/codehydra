@@ -270,4 +270,134 @@ describe("UiViewManager", () => {
       expect(() => manager.destroy()).not.toThrow();
     });
   });
+
+  // ===========================================================================
+  // Child frame script
+  //
+  // The script is injected into every workspace iframe. Its probe responder is
+  // the only witness to that shared renderer process dying — Electron reports
+  // no event for a subframe process — so these run the real injected source
+  // against a fake frame window rather than asserting on its text.
+  // ===========================================================================
+
+  describe("child frame script", () => {
+    interface FakeWindow {
+      parent: FakeWindow;
+      top: FakeWindow;
+      posted: unknown[];
+      listeners: ((event: { source: unknown; data: unknown }) => void)[];
+      __chProbe?: boolean;
+      __chFocusTracker?: boolean;
+      postMessage(message: unknown): void;
+      addEventListener(
+        type: string,
+        listener: (event: { source: unknown; data: unknown }) => void
+      ): void;
+    }
+
+    /** A frame window whose parent is the UI page (`parent === top`). */
+    function createFrameWindow(): { win: FakeWindow; uiPage: FakeWindow } {
+      const uiPage = { posted: [] as unknown[] } as unknown as FakeWindow;
+      uiPage.postMessage = (message: unknown): void => {
+        uiPage.posted.push(message);
+      };
+      const win: FakeWindow = {
+        parent: uiPage,
+        top: uiPage,
+        posted: [],
+        listeners: [],
+        postMessage: () => {},
+        addEventListener: (type, listener) => {
+          if (type === "message") win.listeners.push(listener);
+        },
+      };
+      return { win, uiPage };
+    }
+
+    /** The script the manager actually installs into workspace iframes. */
+    function installedScript(): string {
+      const ctx = createDeps();
+      const install = vi.spyOn(ctx.viewLayer, "installChildFrameScript");
+      new UiViewManager(ctx.deps).create();
+      const call = install.mock.calls[0];
+      if (!call) throw new Error("no child frame script was installed");
+      return call[1];
+    }
+
+    /** Run the injected source against a fake frame window. */
+    function run(script: string, win: FakeWindow): void {
+      const document = { addEventListener: (): void => {}, contains: (): boolean => false };
+      new Function("window", "document", script)(win, document);
+    }
+
+    /** Deliver a message to the frame, as the UI page by default. */
+    function send(win: FakeWindow, data: unknown, source: unknown = win.parent): void {
+      for (const listener of win.listeners) listener({ source, data });
+    }
+
+    it("answers a ping from the UI page", () => {
+      const { win, uiPage } = createFrameWindow();
+      run(installedScript(), win);
+
+      send(win, { __chPing: true });
+
+      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
+    });
+
+    it("ignores messages that are not pings", () => {
+      const { win, uiPage } = createFrameWindow();
+      run(installedScript(), win);
+
+      send(win, { __chPing: false });
+      send(win, "hello");
+      send(win, null);
+
+      expect(uiPage.posted).toEqual([]);
+    });
+
+    it("ignores a ping that did not come from the UI page", () => {
+      const { win, uiPage } = createFrameWindow();
+      run(installedScript(), win);
+
+      send(win, { __chPing: true }, { spoofed: true });
+
+      expect(uiPage.posted).toEqual([]);
+    });
+
+    it("stays silent in VSCodium's nested webview frames", () => {
+      // A webview nested inside a workspace frame: its parent is that frame,
+      // not the UI page, so the UI could not attribute its answer.
+      const { win, uiPage } = createFrameWindow();
+      const workspaceFrame = { ...win };
+      win.parent = workspaceFrame as FakeWindow;
+      run(installedScript(), win);
+
+      send(win, { __chPing: true });
+
+      expect(win.listeners).toHaveLength(0);
+      expect(uiPage.posted).toEqual([]);
+    });
+
+    it("does not register a second responder when injected again", () => {
+      const { win, uiPage } = createFrameWindow();
+      const script = installedScript();
+
+      run(script, win);
+      run(script, win);
+      send(win, { __chPing: true });
+
+      expect(win.listeners).toHaveLength(1);
+      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
+    });
+
+    it("survives a parent that rejects postMessage", () => {
+      const { win } = createFrameWindow();
+      run(installedScript(), win);
+      win.parent.postMessage = (): never => {
+        throw new Error("cross-origin");
+      };
+
+      expect(() => send(win, { __chPing: true })).not.toThrow();
+    });
+  });
 });

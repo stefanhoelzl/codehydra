@@ -60,6 +60,43 @@ const CHILD_FRAME_FOCUS_TRACKER = `
 `;
 
 /**
+ * Script injected into every workspace iframe so it can prove its renderer
+ * process is still running. Answers a `__chPing` from the UI page with
+ * `__chAlive`; WorkspaceFrames probes a frame when it shows it and logs one
+ * that stays silent.
+ *
+ * Why the frames have to answer for themselves: all workspace iframes are
+ * same-origin (the one IDE server port), so Chromium hosts them in a single
+ * shared renderer process — separate from the UI page's. When that process
+ * dies every workbench blanks at once, and nothing in the main process sees
+ * it: `app.on('child-process-gone')` excludes renderers by contract, and
+ * `render-process-gone` only fires for a webContents' *primary* frame, never a
+ * subframe. The frames are the only witnesses (PostHog issue 019fb265: five
+ * workbenches went blank simultaneously, the IDE server logged five client
+ * disconnects, and CodeHydra's own log had nothing at all).
+ *
+ * Only direct children of the UI page answer. VSCodium's own nested webview
+ * iframes receive this script too — their `parent` is the workspace frame
+ * rather than the UI page, so they would answer a probe the UI cannot
+ * attribute to any frame it mounted.
+ */
+const CHILD_FRAME_PROBE = `
+  (function(){
+    if (window.__chProbe) return;
+    if (window.parent === window || window.parent !== window.top) return;
+    window.__chProbe = true;
+    window.addEventListener('message', function(e){
+      if (e.source !== window.parent) return;
+      if (!e.data || e.data.__chPing !== true) return;
+      try { window.parent.postMessage({ __chAlive: true }, '*'); } catch(err) {}
+    });
+  })();
+`;
+
+/** Everything injected into a workspace iframe once it finishes loading. */
+const CHILD_FRAME_SCRIPT = `${CHILD_FRAME_FOCUS_TRACKER}${CHILD_FRAME_PROBE}`;
+
+/**
  * Renderer hooks installed by the WorkspaceFrames component on `window`.
  * Used for main-initiated focus routing and screenshot rect lookup.
  */
@@ -181,7 +218,7 @@ export class UiViewManager implements IViewManager {
       return { action: "deny" };
     });
 
-    this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_FOCUS_TRACKER);
+    this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_SCRIPT);
 
     this.uiViewHandle = uiViewHandle;
     // (Re)wire any onFromUI subscriptions onto the new view's webContents.
