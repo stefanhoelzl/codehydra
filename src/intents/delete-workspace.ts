@@ -4,14 +4,18 @@
  * Steps:
  * 1. Dispatch workspace:resolve — resolves workspacePath to projectPath + workspaceName
  * 2. Dispatch project:resolve — resolves projectPath to projectId
- * 3. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
- * 4. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
- * 5. If blockingPids provided (retry): "flush" hook — kill provided PIDs
- * 6. "delete" hook — WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file)
+ * 3. Gates, both before any teardown or progress emission: "confirm" (interactive
+ *    dispatches — DeletionDialogModule parks on a dialog) and "preflight"
+ *    (WorktreeModule vetoes on workspace state). Either one refusing aborts with
+ *    the workspace untouched.
+ * 4. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
+ * 5. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
+ * 6. If blockingPids provided (retry): "flush" hook — kill provided PIDs
+ * 7. "delete" hook — WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file)
  *
  * If delete fails (and not force):
- * 7. "detect" — Full blocking process detection (RM + CWD + handles)
- * 8. Emit progress with blockers, emit workspace:delete-failed, return
+ * 8. "detect" — Full blocking process detection (RM + CWD + handles)
+ * 9. Emit progress with blockers, emit workspace:delete-failed, return
  *
  * On retry, the UI dispatches a new intent with blockingPids from the previous failure.
  * The flush hook kills those PIDs before re-attempting delete.
@@ -49,7 +53,6 @@ import type { ProjectPath, WorkspacePath } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
-import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
 import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
 
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
@@ -110,13 +113,20 @@ export const confirmResultSchema = z
 
 /**
  * Per-handler result for the "preflight" hook point.
- * Checks workspace for uncommitted changes and unmerged commits before deletion.
+ *
+ * A handler inspects the workspace and decides whether this delete may proceed:
+ * `blocked` with a `reason` vetoes the dispatch before any teardown runs. The
+ * decision is the handler's — the operation only sequences the gate and turns a
+ * veto into the caller's outcome — so a handler with nothing to object to (or
+ * nothing to check: force, runtime-only teardown, an explicit ignoreWarnings)
+ * returns an empty result. A handler that cannot determine the state throws,
+ * failing the gate closed rather than guessing.
  */
 export const preflightResultSchema = z
   .object({
-    isDirty: z.boolean().optional(),
-    unmergedCommits: z.number().optional(),
-    error: z.string().optional(),
+    blocked: z.boolean().optional(),
+    /** Why the delete was refused. Joined into the caller's error. */
+    reason: z.string().optional(),
   })
   .readonly();
 
@@ -500,16 +510,28 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       active,
     };
 
+    // --- Preflight (modules veto on workspace state) ---
+    // Sits beside confirm and outside the safety net below: a gate that refuses
+    // must leave the workspace untouched, with no progress event ever emitted.
+    // Whether the check applies, and what its findings mean, belong to the
+    // handlers — this only sequences the gate and shapes the caller's error.
+    const { results: preflightResults, errors: preflightCollectErrors } = await ctx.hooks.collect(
+      "preflight",
+      pipelineCtx
+    );
+    throwHookErrors(preflightCollectErrors, "workspace:delete preflight hooks failed");
+    const reasons = preflightResults.filter((r) => r.blocked).map((r) => r.reason ?? "blocked");
+    if (reasons.length > 0) {
+      throw new Error(`Preflight check failed: ${reasons.join("; ")}`);
+    }
+
     // Safety net: catch unexpected errors after identity resolution to ensure
     // the UI always receives a terminal progress event (completed: true).
     // Without this, an unexpected throw after the first progress emission
     // leaves the UI permanently stuck on "Removing workspace".
     try {
       return await this.runPipelineBody(ctx, emit, identity, pipelineCtx, effectivePayload);
-    } catch (error) {
-      // Preflight errors must propagate (no progress events emitted yet)
-      if (error instanceof Error && error.message.startsWith("Preflight check failed:"))
-        throw error;
+    } catch {
       this.emitPipelineProgress(emit, identity, effectivePayload, {}, true, true);
       return { hasErrors: true, identity };
     }
@@ -522,49 +544,6 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     pipelineCtx: DeletePipelineHookInput,
     payload: DeleteWorkspacePayload
   ): Promise<PipelineResult> {
-    // --- Preflight (dirty/unmerged check) ---
-    if (payload.removeWorktree && !payload.force && !payload.ignoreWarnings) {
-      // Fetch first so the unmerged count is measured against current refs. The
-      // interactive path gets this via get-workspace-status {refresh: true}; without
-      // it here, a programmatic delete right after a server-side merge (e.g. /ship)
-      // compares against a stale origin/main and rejects the just-merged commits as
-      // unmerged. Best-effort — a fetch failure falls through to the stale-ref read
-      // rather than blocking the delete.
-      try {
-        await ctx.dispatch<GetProjectBasesIntent>({
-          type: INTENT_GET_PROJECT_BASES,
-          payload: { projectPath: identity.projectPath, refresh: true, wait: true },
-        });
-      } catch {
-        // Fall through to the preflight read with possibly-stale refs.
-      }
-
-      const { results: preflightResults, errors: preflightCollectErrors } = await ctx.hooks.collect(
-        "preflight",
-        pipelineCtx
-      );
-
-      let isDirty = false;
-      let unmergedCommits = 0;
-      throwHookErrors(preflightCollectErrors, "workspace:delete preflight hooks failed");
-      for (const r of preflightResults) {
-        if (r.isDirty) isDirty = true;
-        if (r.unmergedCommits !== undefined && r.unmergedCommits > unmergedCommits)
-          unmergedCommits = r.unmergedCommits;
-        if (r.error) throw new Error(r.error);
-      }
-
-      if (isDirty || unmergedCommits > 0) {
-        const messages: string[] = [];
-        if (isDirty) messages.push("Workspace has uncommitted changes");
-        if (unmergedCommits > 0)
-          messages.push(
-            `Workspace has ${unmergedCommits} unmerged commit${unmergedCommits === 1 ? "" : "s"}`
-          );
-        throw new Error(`Preflight check failed: ${messages.join("; ")}`);
-      }
-    }
-
     // --- Shutdown ---
     this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } = await ctx.hooks.collect(

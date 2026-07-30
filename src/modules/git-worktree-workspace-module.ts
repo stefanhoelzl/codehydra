@@ -434,16 +434,39 @@ export function createGitWorktreeWorkspaceModule(
       [DELETE_WORKSPACE_OPERATION_ID]: {
         preflight: {
           handler: async (ctx: HookContext): Promise<HookOutput<PreflightHookResult>> => {
-            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
-            try {
-              const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
-              const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
-                new Path(wsPath)
-              );
-              return { result: { isDirty, unmergedCommits } };
-            } catch (error) {
-              return { result: { error: getErrorMessage(error) } };
+            const { projectPath, workspacePath: wsPath } = ctx as DeletePipelineHookInput;
+            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+
+            // Only a worktree removal can lose work; force is an explicit
+            // teardown and ignoreWarnings the caller's opt-out. A failing read
+            // throws: the gate fails closed rather than reporting "nothing to
+            // object to" for a workspace it could not inspect.
+            if (!payload.removeWorktree || payload.force || payload.ignoreWarnings) {
+              return { result: {} };
             }
+
+            // Fetch first so the unmerged count is measured against current
+            // refs; without it a delete right after a server-side merge (e.g.
+            // /ship) compares against a stale origin/main and rejects the
+            // just-merged commits as unmerged. Best-effort — a fetch failure
+            // falls through to the stale-ref read rather than blocking.
+            try {
+              await gitWorktreeProvider.updateBases(new Path(projectPath));
+            } catch {
+              // Stale refs beat no answer.
+            }
+
+            const reasons: string[] = [];
+            if (await gitWorktreeProvider.isDirty(new Path(wsPath))) {
+              reasons.push("Workspace has uncommitted changes");
+            }
+            const unmerged = await gitWorktreeProvider.countUnmergedCommits(new Path(wsPath));
+            if (unmerged > 0) {
+              reasons.push(`Workspace has ${unmerged} unmerged commit${unmerged === 1 ? "" : "s"}`);
+            }
+
+            if (reasons.length === 0) return { result: {} };
+            return { result: { blocked: true, reason: reasons.join("; ") } };
           },
         },
         delete: {

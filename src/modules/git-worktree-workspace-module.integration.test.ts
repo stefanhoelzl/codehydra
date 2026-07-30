@@ -139,9 +139,8 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
 
 /** Preflight result from the delete-workspace preflight hook. */
 interface PreflightResult {
-  readonly isDirty?: boolean | undefined;
-  readonly unmergedCommits?: number | undefined;
-  readonly error?: string | undefined;
+  readonly blocked?: boolean | undefined;
+  readonly reason?: string | undefined;
 }
 
 /**
@@ -179,7 +178,9 @@ const minimalPreflightOperation: Operation<typeof preflightSchemas> = {
       active: false,
     };
     const { results, errors } = await ctx.hooks.collect("preflight", preflightInput);
-    if (errors.length > 0) return { error: errors[0]!.message };
+    // Mirrors the real operation's throwHookErrors: a handler that cannot
+    // determine the state fails the gate closed instead of reporting "clean".
+    if (errors.length > 0) throw errors[0]!;
     return results[0] ?? {};
   },
 };
@@ -567,11 +568,18 @@ async function dispatchListWorkspaces(dispatcher: Dispatcher): Promise<ListWorks
 
 async function dispatchPreflight(
   dispatcher: Dispatcher,
-  workspacePath: WorkspacePath
+  workspacePath: WorkspacePath,
+  payloadOverrides?: Partial<DeleteWorkspaceIntent["payload"]>
 ): Promise<PreflightResult> {
   const intent: DeleteWorkspaceIntent = {
     type: "workspace:delete",
-    payload: { workspacePath, keepBranch: false, force: false, removeWorktree: true },
+    payload: {
+      workspacePath,
+      keepBranch: false,
+      force: false,
+      removeWorktree: true,
+      ...payloadOverrides,
+    },
   };
   return (await dispatcher.dispatch(intent as unknown as Intent)) as PreflightResult;
 }
@@ -1166,36 +1174,117 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("delete-workspace -> preflight", () => {
-    it("returns isDirty and unmergedCommits from provider", async () => {
-      const preflightSetup = createPreflightTestSetup();
+    /** Open a project with one workspace and return its path. */
+    async function setupWorkspace(
+      preflightSetup: Omit<TestSetup, "module">
+    ): Promise<WorkspacePath> {
       const projectPath = projPath("/projects/my-app");
-
       const ws = makeWorkspace("feature-1", projPath(projectPath));
       preflightSetup.provider.discover.mockResolvedValue([ws]);
       await dispatchOpenProject(preflightSetup.dispatcher, projPath(projectPath));
+      return wsPath(ws.path.toString());
+    }
+
+    it("blocks with a reason when the workspace is dirty", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
 
       preflightSetup.provider.isDirty.mockResolvedValue(true);
-      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
 
-      const result = await dispatchPreflight(preflightSetup.dispatcher, wsPath(ws.path.toString()));
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
 
-      expect(result.isDirty).toBe(true);
-      expect(result.unmergedCommits).toBe(3);
+      expect(result).toEqual({ blocked: true, reason: "Workspace has uncommitted changes" });
     });
 
-    it("returns error when provider throws", async () => {
+    it("blocks with a reason when the branch has unmerged commits", async () => {
       const preflightSetup = createPreflightTestSetup();
-      const projectPath = projPath("/projects/my-app");
+      const workspacePath = await setupWorkspace(preflightSetup);
 
-      const ws = makeWorkspace("feature-1", projPath(projectPath));
-      preflightSetup.provider.discover.mockResolvedValue([ws]);
-      await dispatchOpenProject(preflightSetup.dispatcher, projPath(projectPath));
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
+
+      expect(result).toEqual({ blocked: true, reason: "Workspace has 3 unmerged commits" });
+    });
+
+    it("joins both reasons when the workspace is dirty and unmerged", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      preflightSetup.provider.isDirty.mockResolvedValue(true);
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(1);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
+
+      expect(result.reason).toBe(
+        "Workspace has uncommitted changes; Workspace has 1 unmerged commit"
+      );
+    });
+
+    it("does not block a clean workspace", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
+
+      expect(result).toEqual({});
+    });
+
+    it("fails closed when the provider throws", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
 
       preflightSetup.provider.isDirty.mockRejectedValue(new Error("git failed"));
 
-      const result = await dispatchPreflight(preflightSetup.dispatcher, wsPath(ws.path.toString()));
+      // A state it could not read must not report as "nothing to object to".
+      await expect(dispatchPreflight(preflightSetup.dispatcher, workspacePath)).rejects.toThrow(
+        "git failed"
+      );
+    });
 
-      expect(result.error).toBe("git failed");
+    it("refreshes remotes before counting unmerged commits", async () => {
+      // Without this, a delete right after a server-side merge (/ship) measures
+      // against a stale origin/main and rejects the just-merged commits.
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
+
+      expect(preflightSetup.provider.updateBases).toHaveBeenCalledWith(
+        new Path("/projects/my-app")
+      );
+    });
+
+    it("checks against stale refs when the refresh fails", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      preflightSetup.provider.updateBases.mockRejectedValue(new Error("network down"));
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(2);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
+
+      // A fetch failure must not block the delete on its own, nor hide the count.
+      expect(result).toEqual({ blocked: true, reason: "Workspace has 2 unmerged commits" });
+    });
+
+    it.each([
+      ["force", { force: true }],
+      ["ignoreWarnings", { ignoreWarnings: true }],
+      ["a runtime-only teardown", { removeWorktree: false }],
+    ])("checks nothing for %s", async (_label, overrides) => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      preflightSetup.provider.isDirty.mockResolvedValue(true);
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(5);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath, overrides);
+
+      expect(result).toEqual({});
+      // Not applicable means no work at all — notably no fetch.
+      expect(preflightSetup.provider.updateBases).not.toHaveBeenCalled();
+      expect(preflightSetup.provider.isDirty).not.toHaveBeenCalled();
     });
   });
 
