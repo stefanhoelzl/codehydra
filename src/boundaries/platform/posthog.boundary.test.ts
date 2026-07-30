@@ -32,17 +32,19 @@ interface IdentifyCall {
   properties: Record<string, unknown>;
 }
 
-function createFakeSdk(): {
+function createFakeSdk(opts?: { failDelivery?: boolean }): {
   client: PostHogSdkClient;
   captures: CaptureCall[];
   exceptions: ExceptionCall[];
   identifies: IdentifyCall[];
   flushes: number;
   shutdowns: number;
+  shutdownTimeouts: (number | undefined)[];
 } {
   const captures: CaptureCall[] = [];
   const exceptions: ExceptionCall[] = [];
   const identifies: IdentifyCall[] = [];
+  const shutdownTimeouts: (number | undefined)[] = [];
   const counters = { flushes: 0, shutdowns: 0 };
 
   const client: PostHogSdkClient = {
@@ -52,9 +54,12 @@ function createFakeSdk(): {
     identify: (params) => identifies.push(params),
     flush: async () => {
       counters.flushes += 1;
+      if (opts?.failDelivery) throw new Error("Network error while fetching PostHog");
     },
-    shutdown: async () => {
+    shutdown: async (shutdownTimeoutMs) => {
       counters.shutdowns += 1;
+      shutdownTimeouts.push(shutdownTimeoutMs);
+      if (opts?.failDelivery) throw new Error("Timeout while shutting down PostHog");
     },
   };
 
@@ -63,6 +68,7 @@ function createFakeSdk(): {
     captures,
     exceptions,
     identifies,
+    shutdownTimeouts,
     get flushes() {
       return counters.flushes;
     },
@@ -72,11 +78,11 @@ function createFakeSdk(): {
   };
 }
 
-function setup(opts?: { apiKey?: string | undefined }) {
-  const fake = createFakeSdk();
-  let factoryCalls = 0;
-  const sdkFactory: PostHogSdkFactory = () => {
-    factoryCalls += 1;
+function setup(opts?: { apiKey?: string | undefined; failDelivery?: boolean }) {
+  const fake = createFakeSdk({ failDelivery: opts?.failDelivery ?? false });
+  const sdkOptions: Parameters<PostHogSdkFactory>[1][] = [];
+  const sdkFactory: PostHogSdkFactory = (_apiKey, options) => {
+    sdkOptions.push(options);
     return fake.client;
   };
   const boundary = createPostHogBoundary({
@@ -85,7 +91,7 @@ function setup(opts?: { apiKey?: string | undefined }) {
     host: "https://test.posthog.com",
     sdkFactory,
   });
-  return { boundary, fake, getFactoryCalls: () => factoryCalls };
+  return { boundary, fake, sdkOptions, getFactoryCalls: () => sdkOptions.length };
 }
 
 // ============================================================================
@@ -200,5 +206,55 @@ describe("PostHogBoundary", () => {
 
     env.boundary.capture("evt2");
     expect(env.getFactoryCalls()).toBe(2); // recreated after shutdown
+  });
+
+  // --------------------------------------------------------------------------
+  // Unreachable host (offline, blocked egress). Telemetry must degrade quietly.
+  // --------------------------------------------------------------------------
+
+  it("bounds the SDK's request timeout and retries", () => {
+    env.boundary.configure({ distinctId: "id-1" });
+    env.boundary.capture("evt");
+
+    const options = env.sdkOptions[0]!;
+    expect(options.host).toBe("https://test.posthog.com");
+    // Well under the SDK defaults (10s / 3 retries / 3s apart), which let a
+    // single flush on a dead network run for ~40s.
+    expect(options.requestTimeout).toBeLessThanOrEqual(5_000);
+    expect(options.fetchRetryCount).toBeLessThanOrEqual(2);
+    expect(options.fetchRetryDelay).toBeLessThanOrEqual(3_000);
+  });
+
+  it("flush() swallows a delivery failure instead of rejecting its caller", async () => {
+    const offline = setup({ failDelivery: true });
+    offline.boundary.configure({ distinctId: "id-1" });
+    offline.boundary.capture("evt");
+
+    await expect(offline.boundary.flush()).resolves.toBeUndefined();
+    expect(offline.fake.flushes).toBe(1);
+  });
+
+  it("shutdown() swallows a delivery failure and still closes the client", async () => {
+    const offline = setup({ failDelivery: true });
+    offline.boundary.configure({ distinctId: "id-1" });
+    offline.boundary.capture("evt");
+
+    await expect(offline.boundary.shutdown()).resolves.toBeUndefined();
+
+    // Client dropped despite the failure, so a later send starts a fresh one.
+    offline.boundary.capture("evt2");
+    expect(offline.getFactoryCalls()).toBe(2);
+  });
+
+  it("shutdown() caps how long the SDK may spend flushing at exit", async () => {
+    env.boundary.configure({ distinctId: "id-1" });
+    env.boundary.capture("evt");
+    await env.boundary.shutdown();
+
+    const timeout = env.fake.shutdownTimeouts[0];
+    expect(timeout).toBeDefined();
+    // The SDK default is 30s, which would hold the app:shutdown "stop" hook
+    // (and therefore the quit) open on an unreachable network.
+    expect(timeout!).toBeLessThanOrEqual(5_000);
   });
 });
