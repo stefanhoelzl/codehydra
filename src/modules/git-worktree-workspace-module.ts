@@ -75,7 +75,6 @@ import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/se
 import { projectPathSchema, workspacePathSchema } from "../intents/contract";
 import type { ProjectPath, WorkspacePath } from "../intents/contract";
 import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
-import type { WorkspaceClosingQuery } from "./workspace-lifecycle-module";
 
 // =============================================================================
 // Module Factory
@@ -87,16 +86,12 @@ import type { WorkspaceClosingQuery } from "./workspace-lifecycle-module";
  * @param gitWorktreeProvider - Global GitWorktreeProvider for all git operations
  * @param pathProvider - PathProvider for resolving workspace directories
  * @param logger - Logger for warnings and errors
- * @param closing - Read side of the `closing` claim (workspace-lifecycle-module).
- *   Consulted immediately before spawning git in a workspace directory, so a
- *   teardown in progress is never raced by one of our own git subprocesses.
  * @returns IntentModule with hook contributions
  */
 export function createGitWorktreeWorkspaceModule(
   gitWorktreeProvider: GitWorktreeProvider,
   pathProvider: PathProvider,
-  logger: Logger,
-  closing: WorkspaceClosingQuery
+  logger: Logger
 ): IntentModule {
   // Internal state
   // Keyed by branded paths: these maps feed hook results directly, so keeping the brand on
@@ -553,20 +548,14 @@ export function createGitWorktreeWorkspaceModule(
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
-            const { workspacePath: wsPath } = ctx as GetStatusHookInput;
+            const { workspacePath: wsPath, closing: closingReason } = ctx as GetStatusHookInput;
 
             // Both reads below spawn a git subprocess with the workspace as its
             // CWD. On Windows that alone is enough to make `git worktree remove`
             // fail with "Permission denied" on the directory, so never run them
-            // against a workspace a teardown pipeline owns.
-            //
-            // The check is deliberately made HERE and not from a `closing` value
-            // carried on the hook context: this operation resolves once and can
-            // then sit for a long time (its refresh path runs `git fetch`, which
-            // has been measured at 20+ seconds), so a value captured at resolve
-            // time is routinely stale by the time we would act on it. Re-reading
-            // at the point of use is the whole point.
-            const closingReason = closing.get(wsPath);
+            // against a workspace a teardown pipeline owns. The operation
+            // re-reads `closing` immediately before this hook point, so it is
+            // fresh even when a slow refresh preceded us.
             if (closingReason !== null) {
               // Same answer isDirty already gives for a torn-down worktree
               // (see GitWorktreeProvider.isDirty) — a workspace on its way out

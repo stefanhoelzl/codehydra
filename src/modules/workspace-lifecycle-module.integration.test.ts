@@ -52,7 +52,6 @@ import { registerTestInfrastructure } from "../intents/operations.test-utils";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { SET_METADATA_OPERATION_ID, INTENT_SET_METADATA } from "../intents/set-metadata";
 import { createWorkspaceLifecycleModule } from "./workspace-lifecycle-module";
-import type { WorkspaceClosingQuery } from "./workspace-lifecycle-module";
 import type { WorkspaceClosing } from "../intents/contract";
 
 // =============================================================================
@@ -97,8 +96,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     },
   });
 
-  const lifecycle = createWorkspaceLifecycleModule();
-  dispatcher.registerModule(lifecycle.module);
+  dispatcher.registerModule(createWorkspaceLifecycleModule());
 
   /** What `closing` reported at each hook point, in execution order. */
   const observed: Array<{ hook: string; closing: WorkspaceClosing | null }> = [];
@@ -106,7 +104,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     (hook: string) =>
     async (ctx: HookContext): Promise<HookOutput<Record<string, never>>> => {
       const { workspacePath } = ctx as HookContext & { workspacePath: string };
-      observed.push({ hook, closing: lifecycle.closing.get(workspacePath) });
+      observed.push({ hook, closing: await closingOf(dispatcher, workspacePath) });
       return { result: {} };
     };
 
@@ -138,7 +136,19 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
   };
   dispatcher.registerModule(probe);
 
-  return { dispatcher, closing: lifecycle.closing as WorkspaceClosingQuery, observed };
+  return { dispatcher, observed };
+}
+
+/** Read `closing` the way any consumer does: off a workspace:resolve result. */
+async function closingOf(
+  dispatcher: Dispatcher,
+  workspacePath: string
+): Promise<WorkspaceClosing | null> {
+  const result = (await dispatcher.dispatch({
+    type: INTENT_RESOLVE_WORKSPACE,
+    payload: { workspacePath },
+  } as ResolveWorkspaceIntent)) as ResolveWorkspaceResult;
+  return result.closing;
 }
 
 /** Resolve once `eventType` is emitted. */
@@ -173,9 +183,9 @@ function deleteIntent(
 describe("WorkspaceLifecycleModule", () => {
   describe("delete", () => {
     it("claims the workspace for the whole teardown and releases it on success", async () => {
-      const { dispatcher, closing, observed } = setup();
+      const { dispatcher, observed } = setup();
 
-      expect(closing.get(WORKSPACE_PATH)).toBeNull();
+      expect(await closingOf(dispatcher, WORKSPACE_PATH)).toBeNull();
 
       await dispatcher.dispatch(deleteIntent());
 
@@ -186,11 +196,11 @@ describe("WorkspaceLifecycleModule", () => {
         { hook: "delete:release", closing: "delete" },
         { hook: "delete:delete", closing: "delete" },
       ]);
-      expect(closing.get(WORKSPACE_PATH)).toBeNull();
+      expect(await closingOf(dispatcher, WORKSPACE_PATH)).toBeNull();
     });
 
     it("releases the claim when the delete fails, so the surviving workspace works again", async () => {
-      const { dispatcher, closing, observed } = setup({ deleteError: "Permission denied" });
+      const { dispatcher, observed } = setup({ deleteError: "Permission denied" });
 
       await dispatcher.dispatch(deleteIntent());
 
@@ -198,7 +208,7 @@ describe("WorkspaceLifecycleModule", () => {
       expect(observed.at(-1)).toEqual({ hook: "delete:detect", closing: "delete" });
       // Leaving it set would gate this workspace's status reads and its
       // sidekick until the app restarts.
-      expect(closing.get(WORKSPACE_PATH)).toBeNull();
+      expect(await closingOf(dispatcher, WORKSPACE_PATH)).toBeNull();
     });
 
     it('claims as "close" for a runtime-only teardown (project:close)', async () => {
@@ -248,7 +258,7 @@ describe("WorkspaceLifecycleModule", () => {
   // terminal event rather than for the dispatch.
   describe("hibernate", () => {
     it('claims as "hibernate" for the background teardown and releases when it ends', async () => {
-      const { dispatcher, closing, observed } = setup();
+      const { dispatcher, observed } = setup();
       const hibernated = waitForEvent(dispatcher, EVENT_WORKSPACE_HIBERNATED);
 
       await dispatcher.dispatch({
@@ -261,11 +271,11 @@ describe("WorkspaceLifecycleModule", () => {
         { hook: "hibernate:shutdown", closing: "hibernate" },
         { hook: "hibernate:release", closing: "hibernate" },
       ]);
-      expect(closing.get(WORKSPACE_PATH)).toBeNull();
+      expect(await closingOf(dispatcher, WORKSPACE_PATH)).toBeNull();
     });
 
     it("releases the claim even when the background teardown fails", async () => {
-      const { dispatcher, closing } = setup({ hibernateShutdownError: "pty host hung" });
+      const { dispatcher } = setup({ hibernateShutdownError: "pty host hung" });
       const hibernated = waitForEvent(dispatcher, EVENT_WORKSPACE_HIBERNATED);
 
       await dispatcher.dispatch({
@@ -276,17 +286,17 @@ describe("WorkspaceLifecycleModule", () => {
 
       // workspace:hibernated is emitted from a `finally`, so a stuck teardown
       // can never strand the claim and permanently gate the workspace.
-      expect(closing.get(WORKSPACE_PATH)).toBeNull();
+      expect(await closingOf(dispatcher, WORKSPACE_PATH)).toBeNull();
     });
   });
 
   it("tracks workspaces independently", async () => {
-    const { dispatcher, closing } = setup();
+    const { dispatcher } = setup();
     const other = wsPath("/test/project/.worktrees/feature-2");
 
     await dispatcher.dispatch(deleteIntent());
 
-    expect(closing.get(other)).toBeNull();
+    expect(await closingOf(dispatcher, other)).toBeNull();
   });
 
   // ===========================================================================

@@ -15,7 +15,12 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspacePathSchema, workspaceStatusSchema } from "./contract";
+import {
+  hookCtxSchema,
+  workspaceClosingSchema,
+  workspacePathSchema,
+  workspaceStatusSchema,
+} from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
@@ -65,8 +70,17 @@ export const getStatusHookResultSchema = z
   })
   .readonly();
 
-/** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getStatusEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+/**
+ * Operation-added enrichment for the "get" hook point (beyond the base HookContext).
+ *
+ * `closing` is re-read immediately before the hook point runs, not at the start
+ * of the operation — see the note in `execute`. Handlers that are about to touch
+ * the workspace directory must honour it.
+ */
+const getStatusEnrichmentSchema = z.object({
+  workspacePath: workspacePathSchema,
+  closing: workspaceClosingSchema.nullable(),
+});
 
 /** Runtime whole-context validation schema for "get". */
 export const getStatusHookInputSchema = hookCtxSchema(
@@ -130,10 +144,24 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
       }
     }
 
-    // 3. get — each handler contributes its piece
+    // 3. get — each handler contributes its piece.
+    //
+    // Re-resolve first, and deliberately here rather than reusing step 1: a
+    // refresh runs `git fetch`, which has been measured at 20+ seconds against
+    // a large remote. A workspace can enter teardown during that window, and a
+    // handler that then spawns git inside the worktree makes `git worktree
+    // remove` fail on Windows with "Permission denied" on the directory. The
+    // freshness has to sit here, where the operation knows how long it just
+    // spent, rather than being each handler's problem to remember.
+    const { closing } = await ctx.dispatch<ResolveWorkspaceIntent>({
+      type: INTENT_RESOLVE_WORKSPACE,
+      payload: { workspacePath: payload.workspacePath },
+    });
+
     const getCtx: GetStatusHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
+      closing,
     };
     const { results, errors } = await ctx.hooks.collect("get", getCtx);
     throwHookErrors(errors, "get-workspace-status get hooks failed");

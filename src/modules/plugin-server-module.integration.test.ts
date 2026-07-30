@@ -34,7 +34,6 @@ import type {
   DeleteHookResult,
 } from "../intents/delete-workspace";
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
-import { createWorkspaceClosingMock } from "./workspace-lifecycle-module.state-mock";
 import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
@@ -128,7 +127,6 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
     dispatcher: { dispatch: vi.fn() } as unknown as PluginServerModuleDeps["dispatcher"],
     appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
     logger: SILENT_LOGGER,
-    closing: createWorkspaceClosingMock(),
     ...overrides,
   };
 }
