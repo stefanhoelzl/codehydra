@@ -163,6 +163,7 @@ import { createStateModule, createStateMigrationRegistry } from "./modules/state
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createPowerModule } from "./modules/power-module";
 import { createMcpModule } from "./modules/mcp-module";
@@ -475,6 +476,12 @@ openSettings = settingsModule.openSettings;
 const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
 const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
 
+// Owns `closing` — which teardown pipeline currently holds a workspace. Built
+// early because its read side (`closing`) is injected into every module that
+// must not touch a workspace mid-teardown. Registration order matters too; see
+// the note at dispatcher.registerModule below.
+const workspaceLifecycle = createWorkspaceLifecycleModule();
+
 const viewModule = createViewModule({
   viewManager,
   logger: apiLogger,
@@ -512,6 +519,7 @@ const pluginServerModule = createPluginServerModule({
   dispatcher,
   appLayer,
   logger: apiLogger,
+  closing: workspaceLifecycle.closing,
   options: {
     isDevelopment: buildInfo.isDevelopment,
     extensionLogger: loggingService.createLogger("extension"),
@@ -868,6 +876,15 @@ const hibernationScreenshotModule = createHibernationScreenshotModule({
 // 9. Register all modules
 
 dispatcher.registerModule(idempotencyModule);
+// MUST precede every module with a delete/hibernate "shutdown" handler.
+// Handlers in a hook point run sequentially in registration order, and this one
+// claims the workspace (sets `closing`) for the rest of the teardown to observe
+// — notably plugin-server, which hangs up on the sidekick and relies on the
+// claim to keep it from immediately reconnecting. Deliberately ordered by
+// registration rather than a `requires` capability: an unsatisfied requirement
+// SKIPS a handler silently, which would make those teardown steps stop running
+// altogether if this module ever failed. See workspace-lifecycle-module.ts.
+dispatcher.registerModule(workspaceLifecycle.module);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule);
 dispatcher.registerModule(extensionModule);
