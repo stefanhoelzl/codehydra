@@ -50,9 +50,27 @@ export const contextBridge: { exposeInMainWorld: Mock } = {
   exposeInMainWorld: vi.fn(),
 };
 
+/**
+ * Mutable `webFrameMain` state. Tests swap `lookup` to control what
+ * `webFrameMain.fromId()` returns (or make it throw); `resetElectronFake()`
+ * restores the default "no such frame".
+ */
+export const webFrameMainState: {
+  lookup: (processId: number, routingId: number) => unknown;
+} = {
+  lookup: () => undefined,
+};
+
+export const webFrameMain: { fromId: Mock } = {
+  fromId: vi.fn((processId: number, routingId: number) =>
+    webFrameMainState.lookup(processId, routingId)
+  ),
+};
+
 /** Restore `appState` to its defaults. Shared across files, so tests must reset it. */
 export function resetElectronFake(): void {
   appState.isPackaged = false;
   appState.appPath = "/mock/app/path";
   appState.version = "1.0.0-test";
+  webFrameMainState.lookup = () => undefined;
 }

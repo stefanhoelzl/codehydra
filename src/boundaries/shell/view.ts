@@ -331,7 +331,7 @@ export interface ViewBoundary {
 // Default Implementation
 // ============================================================================
 
-import type { WebContents } from "electron";
+import { webFrameMain, type WebContents } from "electron";
 
 interface ViewState {
   webContents: WebContents;
@@ -668,13 +668,29 @@ export class DefaultViewBoundary implements ViewBoundary {
     const wc = state.webContents;
     wc.on("did-frame-finish-load", (_event, isMainFrame, frameProcessId, frameRoutingId) => {
       if (isMainFrame) return;
-      const frame = wc.mainFrame.framesInSubtree.find(
-        (f) => f.processId === frameProcessId && f.routingId === frameRoutingId
-      );
-      if (!frame) return;
-      frame.executeJavaScript(script).catch(() => {
-        // Frame may be gone before the script runs ("Script not run")
-      });
+      // Look the frame up by id rather than scanning mainFrame.framesInSubtree:
+      // that getter yields `undefined` outright (no throw) when *any* frame in
+      // the subtree is mid-deletion, because Electron's vector->JS conversion
+      // bails on the whole array. With many workspace iframes coming and going
+      // under one webContents, a sibling teardown would take down an unrelated
+      // frame's injection — and the app with it (see the catch below).
+      try {
+        const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+        if (!frame) return;
+        frame.executeJavaScript(script).catch(() => {
+          // Frame may be gone before the script runs ("Script not run")
+        });
+      } catch (error) {
+        // Frame teardown races also surface as throws ("Render frame was
+        // disposed before WebFrameMain could be accessed"). This handler runs
+        // on a native emit with no caller to catch it, so anything escaping
+        // here becomes an uncaughtException — which error-report-module turns
+        // into exit(1). Injection is best-effort; a lost tracker is not fatal.
+        this.logger.debug("Child frame script injection skipped", {
+          id: handle.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
   }
 
