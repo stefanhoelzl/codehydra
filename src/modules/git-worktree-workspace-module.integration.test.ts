@@ -1221,6 +1221,36 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       );
     });
 
+    it("ignores unmerged commits when the branch is kept", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath, {
+        keepBranch: true,
+      });
+
+      // The branch ref survives the worktree removal, so the commits stay
+      // reachable — nothing is lost, and no fetch is needed to know that.
+      expect(result).toEqual({});
+      expect(preflightSetup.provider.updateBases).not.toHaveBeenCalled();
+    });
+
+    it("still blocks a dirty workspace when the branch is kept", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const workspacePath = await setupWorkspace(preflightSetup);
+
+      preflightSetup.provider.isDirty.mockResolvedValue(true);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, workspacePath, {
+        keepBranch: true,
+      });
+
+      // Uncommitted changes live in the worktree, which goes either way.
+      expect(result).toEqual({ blocked: true, reason: "Workspace has uncommitted changes" });
+    });
+
     it("does not block a clean workspace", async () => {
       const preflightSetup = createPreflightTestSetup();
       const workspacePath = await setupWorkspace(preflightSetup);

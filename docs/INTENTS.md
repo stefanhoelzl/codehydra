@@ -495,7 +495,7 @@ The `open-workspace` operation uses these hook modules:
 The `delete-workspace` operation uses these hook modules:
 
 - **confirm**: DeletionDialogModule (interactive dispatches only) -- parks on the confirmation dialog and contributes the user's `keepBranch` answer, or cancels the dispatch
-- **preflight**: WorktreeModule -- vetoes on workspace state (`{ blocked, reason }`). The handler owns both halves of the policy: whether the check applies (only a `removeWorktree` delete can lose work; `force` is an explicit teardown and `ignoreWarnings` the caller's opt-out) and what its findings mean. A handler that cannot read the state throws, failing the gate closed. The operation only sequences the gate and joins the reasons into the caller's error
+- **preflight**: WorktreeModule -- vetoes on workspace state (`{ blocked, reason }`). The handler owns both halves of the policy: whether the check applies (only a `removeWorktree` delete can lose work; `force` is an explicit teardown and `ignoreWarnings` the caller's opt-out) and what its findings mean -- uncommitted changes always block, unmerged commits only when `keepBranch` is false, since a kept branch keeps them reachable. A handler that cannot read the state throws, failing the gate closed. The operation only sequences the gate and joins the reasons into the caller's error
 - **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
