@@ -21,6 +21,7 @@ import {
   type PluginServerModuleDeps,
   type PluginServerOptions,
 } from "./plugin-server-module";
+import { createWorkspaceLifecycleModule } from "./workspace-lifecycle-module";
 import { DefaultNetworkLayer } from "../boundaries/platform/network";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
@@ -340,11 +341,18 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
   const mockDispatch = createMockDispatch();
   const mockDispatcher = { dispatch: mockDispatch } as unknown as Dispatcher;
 
+  // The REAL lifecycle module, not a stub: the connection gate's whole job is
+  // to observe a claim taken by another module's shutdown handler, so stubbing
+  // the claim would test the two halves separately and prove nothing about the
+  // composition. Registered below, before the plugin-server module.
+  const workspaceLifecycle = createWorkspaceLifecycleModule();
+
   const moduleDeps: PluginServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
     appLayer: { openPath: async () => {} },
     logger: SILENT_LOGGER,
+    closing: workspaceLifecycle.closing,
     options: {
       transports: ["polling"],
       ...options,
@@ -353,8 +361,11 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
 
   const module = createPluginServerModule(moduleDeps);
 
-  // Wire up a real dispatcher to drive the module through hooks
+  // Wire up a real dispatcher to drive the module through hooks.
+  // Lifecycle first, mirroring main.ts: its shutdown handler claims the
+  // workspace that plugin-server's shutdown handler and connection gate rely on.
   const testDispatcher = new Dispatcher({ logger: createMockLogger() });
+  testDispatcher.registerModule(workspaceLifecycle.module);
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(new MinimalStartOperation());
   testDispatcher.registerOperation(

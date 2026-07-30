@@ -67,14 +67,8 @@ import type {
   DeleteHookResult,
   DeletePipelineHookInput,
   ShutdownHookResult,
-  WorkspaceDeletedEvent,
-  WorkspaceDeleteFailedEvent,
 } from "../intents/delete-workspace";
-import {
-  EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETE_FAILED,
-} from "../intents/delete-workspace";
-import type { DomainEvent } from "../intents/lib/types";
+import type { WorkspaceClosingQuery } from "./workspace-lifecycle-module";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import type { RestartAgentIntent } from "../intents/restart-agent";
@@ -135,6 +129,8 @@ export interface PluginServerModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
+  /** Read side of the `closing` claim, owned by workspace-lifecycle-module. */
+  readonly closing: WorkspaceClosingQuery;
   readonly options?: PluginServerOptions;
 }
 
@@ -172,20 +168,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     { env: Record<string, string>; agentType: AgentType; resetWorkspace: boolean }
   >();
   /**
-   * Workspaces whose deletion is in flight (normalized paths).
+   * Whether a teardown pipeline currently owns a workspace.
    *
    * A workspace's sidekick extension connects whenever its VS Code window finishes
    * starting, which can be seconds after the window was created — and receiving the
-   * config is what makes it open the agent terminal. Delete a freshly-opened
-   * workspace and that connection can land *after* the shutdown hook has killed the
-   * agent: the extension then spawns a brand-new agent rooted in the worktree we are
-   * about to remove, and `git worktree remove` fails on Windows because the process
-   * holds a handle on the directory.
+   * config is what makes it open the agent terminal. Tear a freshly-opened
+   * workspace down and that connection can land *after* the shutdown hook has killed
+   * the agent: the extension then spawns a brand-new agent rooted in the worktree we
+   * are about to remove, and `git worktree remove` fails on Windows because the
+   * process holds a handle on the directory.
    *
-   * Entered by the delete shutdown hook, cleared on `workspace:deleted` (gone) or
-   * `workspace:delete-failed` (the workspace survives, so it must be usable again).
+   * Owned by workspace-lifecycle-module (claimed in the teardown's shutdown hook,
+   * released on its terminal event) and read here at connection time — the moment
+   * that actually matters, since a snapshot taken any earlier can be stale.
    */
-  const deletingWorkspaces = new Set<string>();
+  const closing = deps.closing;
 
   // ---------------------------------------------------------------------------
   // Server lifecycle functions
@@ -434,11 +431,14 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         return;
       }
 
-      // Its worktree is being torn down. Sending the config would make the extension
-      // open an agent terminal in a directory that is about to disappear.
-      if (deletingWorkspaces.has(workspacePath)) {
-        logger.info("Connection rejected: workspace is being deleted", {
+      // A teardown pipeline owns this workspace. Sending the config would make the
+      // extension open an agent terminal in a directory that is being removed (or,
+      // for hibernation, one whose processes we are in the middle of stopping).
+      const closingReason = closing.get(workspacePath);
+      if (closingReason !== null) {
+        logger.info("Connection rejected: workspace is closing", {
           workspace: workspacePath,
+          reason: closingReason,
           socketId: socket.id,
         });
         socket.disconnect(true);
@@ -951,15 +951,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
       },
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        // Runs before the agent is killed and long before the worktree is removed:
-        // from here on, no sidekick may (re)connect for this workspace and open a
-        // terminal in it. Drop the stored config and hang up on any live client.
+        // Runs long before the worktree is removed: drop the stored config and hang
+        // up on any live client, so no sidekick can open a terminal in a directory
+        // that is about to disappear.
+        //
+        // "No sidekick may RECONNECT from here on" is enforced by the `closing`
+        // claim, not by this disconnect — workspace-lifecycle-module took it earlier
+        // in this same hook point, and the connection gate reads it. That is what
+        // lets the disconnect run AFTER the agent module's graceful terminal
+        // shutdown, which needs the socket alive to ask the extension to close the
+        // agent. Registration order in main.ts guarantees both orderings.
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
 
-            deletingWorkspaces.add(normalized);
             removeWorkspaceConfig(normalized);
             connections.get(normalized)?.disconnect(true);
 
@@ -1032,23 +1038,6 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
             return { result: { result: commandResult.data } };
           },
-        },
-      },
-    },
-    events: {
-      // The worktree is gone; nothing can connect for it again.
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-          deletingWorkspaces.delete(new Path(workspacePath).toString());
-        },
-      },
-      // The workspace survived (blocked, or the user cancelled). Let it work again,
-      // otherwise its sidekick could never reconnect until the app restarts.
-      [EVENT_WORKSPACE_DELETE_FAILED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
-          deletingWorkspaces.delete(new Path(workspacePath).toString());
         },
       },
     },

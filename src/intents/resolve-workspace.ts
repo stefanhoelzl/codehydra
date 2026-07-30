@@ -21,10 +21,11 @@ import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
   projectPathSchema,
+  workspaceClosingSchema,
   workspaceNameSchema,
   workspacePathSchema,
 } from "./contract";
-import type { ProjectPath } from "./contract";
+import type { ProjectPath, WorkspaceClosing } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_RESOLVE_WORKSPACE = "workspace:resolve" as const;
@@ -50,6 +51,17 @@ export const resolveWorkspaceResultSchema = z
     /** The workspace's raw domain metadata. Consumers interpret it (never store
      *  it raw) — see `readTitle`/`extractTags` in shared/api/types. */
     metadata: z.record(z.string(), z.string()).readonly(),
+    /**
+     * Why a teardown pipeline currently owns this workspace, or null when none
+     * does. See `workspaceClosingSchema` in ./contract.
+     *
+     * This is a SNAPSHOT taken at resolve time, not a lock: a caller that
+     * resolved before the teardown started still holds `null`. It is how the
+     * state reaches consumers that act immediately; anything that acts later
+     * (notably spawning a git subprocess in the workspace) must re-check at the
+     * point of use instead.
+     */
+    closing: workspaceClosingSchema.nullable(),
   })
   .readonly();
 
@@ -61,6 +73,7 @@ export const resolveHookResultSchema = z
     active: z.boolean().optional(),
     branch: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.string()).readonly().optional(),
+    closing: workspaceClosingSchema.optional(),
   })
   .readonly();
 
@@ -125,18 +138,20 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
     // separately from the null value.
     let branch: string | null = null;
     let metadata: Readonly<Record<string, string>> = {};
+    let closing: WorkspaceClosing | null = null;
     for (const r of results) {
       if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
       if (r.active === true) active = true;
       if (r.branch !== undefined) branch = r.branch;
       if (r.metadata !== undefined) metadata = r.metadata;
+      if (r.closing !== undefined) closing = r.closing;
     }
 
     if (!projectPath || !workspaceName) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    return { projectPath, workspaceName, active, branch, metadata };
+    return { projectPath, workspaceName, active, branch, metadata, closing };
   }
 }

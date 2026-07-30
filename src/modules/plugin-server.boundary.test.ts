@@ -164,6 +164,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(rejected || !client.connected).toBe(true);
       client.disconnect();
     });
+
   });
 
   describe("command round-trip", () => {

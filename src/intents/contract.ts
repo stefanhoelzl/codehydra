@@ -187,6 +187,28 @@ export const workspaceRefSchema = z
   .readonly();
 export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
 
+/**
+ * Why a workspace is being torn down, while a teardown pipeline owns it.
+ *
+ * Set by the workspace-lifecycle module at the start of the teardown's
+ * "shutdown" hook point and cleared when the pipeline emits its terminal event.
+ * Consumers treat a closing workspace as off-limits: no new git subprocess in
+ * its directory, no sidekick reconnect, no mounted IDE frame. Without that,
+ * teardown races the rest of the app — on Windows a `git status` still holding
+ * the directory as its CWD makes `git worktree remove` fail with
+ * "Permission denied".
+ *
+ * The reason distinguishes "the directory is about to disappear" (`delete`,
+ * `close`) from "the directory survives, only its processes go away"
+ * (`hibernate`).
+ *
+ * - `delete`    — workspace:delete removing the git worktree
+ * - `close`     — workspace:delete with removeWorktree: false (project:close teardown)
+ * - `hibernate` — workspace:hibernate
+ */
+export const workspaceClosingSchema = z.enum(["delete", "close", "hibernate"]);
+export type WorkspaceClosing = z.infer<typeof workspaceClosingSchema>;
+
 /** Agent status counts for a workspace. */
 export const agentStatusCountsSchema = z
   .object({

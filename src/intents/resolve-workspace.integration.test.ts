@@ -96,6 +96,8 @@ describe("ResolveWorkspaceOperation Integration", () => {
         branch: null,
         // Defaults to empty when no handler provides metadata.
         metadata: {},
+        // Defaults to null when no teardown pipeline owns the workspace.
+        closing: null,
       });
     });
 
