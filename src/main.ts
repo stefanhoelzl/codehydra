@@ -719,6 +719,7 @@ const loggingModule = createLoggingModule({
 const scriptModule = createScriptModule({
   fileSystem: fileSystemLayer,
   pathProvider,
+  logger: appLogger,
 });
 
 const tempDirModule = createTempDirModule({
