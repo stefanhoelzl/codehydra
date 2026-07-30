@@ -106,42 +106,11 @@ import {
 } from "../intents/hibernate-workspace";
 
 // =============================================================================
-// Query interface
-// =============================================================================
-
-/**
- * Read side of the `closing` state, injected into the modules that must check
- * it at the point of use.
- *
- * The `closing` field on a `workspace:resolve` result is a snapshot: a caller
- * that resolved before the teardown started still holds `null`, however long it
- * then takes to act. That is exactly the shape of the bug this fixes — a status
- * refresh resolved 25 seconds before it got around to spawning git. Anything
- * that opens a handle or spawns a process under the workspace must therefore
- * re-read through this query immediately before doing so, not trust an
- * enrichment it was handed earlier.
- */
-export interface WorkspaceClosingQuery {
-  /** The teardown that currently owns `workspacePath`, or null when none does. */
-  get(workspacePath: string): WorkspaceClosing | null;
-}
-
-// =============================================================================
 // Module Factory
 // =============================================================================
 
-export interface WorkspaceLifecycleModule {
-  readonly module: IntentModule;
-  readonly closing: WorkspaceClosingQuery;
-}
-
-/**
- * Create the workspace lifecycle module plus the query its consumers use.
- *
- * Returns both halves so the composition root can hand the read side to the
- * modules that gate on it without those modules depending on this one.
- */
-export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
+/** Create the workspace lifecycle module. */
+export function createWorkspaceLifecycleModule(): IntentModule {
   /** workspacePath (normalized) → the teardown that owns it. */
   const closingWorkspaces = new Map<string, WorkspaceClosing>();
 
@@ -175,13 +144,11 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
     closingWorkspaces.delete(key(workspacePath));
   }
 
-  const closing: WorkspaceClosingQuery = {
-    get(workspacePath: string): WorkspaceClosing | null {
-      return closingWorkspaces.get(key(workspacePath)) ?? null;
-    },
-  };
+  function closingReasonFor(workspacePath: string): WorkspaceClosing | null {
+    return closingWorkspaces.get(key(workspacePath)) ?? null;
+  }
 
-  const module: IntentModule = {
+  return {
     name: "workspace-lifecycle",
     hooks: {
       // -----------------------------------------------------------------
@@ -195,7 +162,7 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { workspacePath } = ctx as ResolveHookInput;
-            const reason = closing.get(workspacePath);
+            const reason = closingReasonFor(workspacePath);
             return {
               result: {
                 // Sourced from `activeWorkspacePath` (the actual active
@@ -331,6 +298,4 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
       },
     },
   };
-
-  return { module, closing };
 }

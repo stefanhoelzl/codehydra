@@ -68,7 +68,6 @@ import type {
   DeletePipelineHookInput,
   ShutdownHookResult,
 } from "../intents/delete-workspace";
-import type { WorkspaceClosingQuery } from "./workspace-lifecycle-module";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import type { RestartAgentIntent } from "../intents/restart-agent";
@@ -142,8 +141,6 @@ export interface PluginServerModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
-  /** Read side of the `closing` claim, owned by workspace-lifecycle-module. */
-  readonly closing: WorkspaceClosingQuery;
   readonly options?: PluginServerOptions;
 }
 
@@ -181,21 +178,26 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     { env: Record<string, string>; agentType: AgentType; resetWorkspace: boolean }
   >();
   /**
-   * Whether a teardown pipeline currently owns a workspace.
+   * Workspaces whose delete "shutdown" handler is currently running.
    *
-   * A workspace's sidekick extension connects whenever its VS Code window finishes
-   * starting, which can be seconds after the window was created — and receiving the
-   * config is what makes it open the agent terminal. Tear a freshly-opened
-   * workspace down and that connection can land *after* the shutdown hook has killed
-   * the agent: the extension then spawns a brand-new agent rooted in the worktree we
-   * are about to remove, and `git worktree remove` fails on Windows because the
-   * process holds a handle on the directory.
+   * Narrowly scoped on purpose. What makes a sidekick open an agent terminal is
+   * receiving a complete config, and that is already prevented for the whole
+   * teardown by `removeWorkspaceConfig` — the first thing the handler does. A
+   * client connecting afterwards gets `env: null, agentType: null` and arms
+   * nothing.
    *
-   * Owned by workspace-lifecycle-module (claimed in the teardown's shutdown hook,
-   * released on its terminal event) and read here at connection time — the moment
-   * that actually matters, since a snapshot taken any earlier can be stale.
+   * What this set adds is protection for the window *inside* the handler, where
+   * it asks the sidekick to close its agent terminal and waits for the report on
+   * that socket. A reconnect in that window would be treated as a duplicate and
+   * would hang up on the very socket being waited on — the report would never
+   * arrive, the wait would burn its full timeout, and the agent process tree
+   * would survive into the worktree removal.
+   *
+   * Held only for the handler's own execution and cleared in a `finally`, so
+   * unlike a teardown-wide flag it cannot strand a workspace as permanently
+   * unconnectable if a terminal event is ever missed.
    */
-  const closing = deps.closing;
+  const closingWorkspaces = new Set<string>();
 
   // ---------------------------------------------------------------------------
   // Server lifecycle functions
@@ -540,14 +542,13 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         return;
       }
 
-      // A teardown pipeline owns this workspace. Sending the config would make the
-      // extension open an agent terminal in a directory that is being removed (or,
-      // for hibernation, one whose processes we are in the middle of stopping).
-      const closingReason = closing.get(workspacePath);
-      if (closingReason !== null) {
-        logger.info("Connection rejected: workspace is closing", {
+      // This workspace's teardown is mid-flight and is waiting on its current
+      // socket for the agent to report that it closed. Accepting would displace
+      // that socket (see the duplicate-connection handling below) and strand the
+      // wait.
+      if (closingWorkspaces.has(workspacePath)) {
+        logger.info("Connection rejected: workspace teardown in progress", {
           workspace: workspacePath,
-          reason: closingReason,
           socketId: socket.id,
         });
         socket.disconnect(true);
@@ -1064,37 +1065,36 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
       },
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        // Runs long before the worktree is removed: drop the stored config and hang
-        // up on any live client, so no sidekick can open a terminal in a directory
-        // that is about to disappear.
-        //
-        // "No sidekick may RECONNECT from here on" is enforced by the `closing`
-        // claim, not by this disconnect — workspace-lifecycle-module took it earlier
-        // in this same hook point, and the connection gate reads it. That is what
-        // lets the disconnect run AFTER the agent module's graceful terminal
-        // shutdown, which needs the socket alive to ask the extension to close the
-        // agent. Registration order in main.ts guarantees both orderings.
+        // Runs long before the worktree is removed: close the workspace for
+        // business so no sidekick can open a terminal in a directory that is
+        // about to disappear, and stop the agent that is already running in it.
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
 
-            // Drop the config first: whatever happens below, the sidekick must
-            // not be handed the config again and reopen a terminal.
-            removeWorkspaceConfig(normalized);
+            closingWorkspaces.add(normalized);
+            try {
+              // Drop the config first. From here on a connecting sidekick gets
+              // `env: null, agentType: null` and arms nothing — this, not the
+              // connection gate, is what closes the workspace for business.
+              removeWorkspaceConfig(normalized);
 
-            // Ask the agent to exit and wait for it, THEN hang up. The order
-            // matters — the close command and the "terminal closed" report both
-            // travel over this socket, so disconnecting first would leave the
-            // agent process tree running inside the worktree we are removing.
-            //
-            // This lives here rather than in the agent module because the agent
-            // module's shutdown handler `requires` the agent capability, which
-            // defers it to a later wave than this handler; it cannot run before
-            // the socket would otherwise be closed.
-            await closeAgentTerminal(normalized);
+              // Ask the agent to exit and wait for it, THEN hang up. The order
+              // matters: the close command and the "terminal closed" report both
+              // travel over this socket, so disconnecting first would leave the
+              // agent process tree running inside the worktree being removed.
+              //
+              // This lives here rather than in the agent module because that
+              // module's shutdown handler `requires` the agent capability, which
+              // defers it to a later wave than this one — it cannot run while
+              // the socket is still open.
+              await closeAgentTerminal(normalized);
 
-            connections.get(normalized)?.disconnect(true);
+              connections.get(normalized)?.disconnect(true);
+            } finally {
+              closingWorkspaces.delete(normalized);
+            }
 
             return { result: {} };
           },

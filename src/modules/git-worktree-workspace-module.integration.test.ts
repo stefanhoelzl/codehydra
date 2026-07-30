@@ -25,10 +25,6 @@ import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PathProvider } from "../boundaries/platform/path-provider";
-import {
-  createWorkspaceClosingMock,
-  type WorkspaceClosingMock,
-} from "./workspace-lifecycle-module.state-mock";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import type { Workspace } from "../boundaries/platform/git-types";
 import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
@@ -76,7 +72,7 @@ import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-modul
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { wsPath, projPath } from "../shared/test-fixtures";
-import type { WorkspacePath, ProjectPath } from "../intents/contract";
+import type { WorkspacePath, ProjectPath, WorkspaceClosing } from "../intents/contract";
 
 // =============================================================================
 // Mock Dependencies
@@ -247,6 +243,7 @@ const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> 
 interface ResolveResult {
   readonly projectPath?: ProjectPath | undefined;
   readonly workspaceName?: string | undefined;
+  readonly closing?: WorkspaceClosing | null | undefined;
 }
 
 /**
@@ -273,9 +270,10 @@ const minimalResolveWorkspaceOperation: Operation<typeof resolveWorkspaceSchemas
       workspacePath: payload.workspacePath,
     };
     const { results: resolveResults } = await ctx.hooks.collect("resolve", resolveInput);
-    const projectPath = resolveResults[0]?.projectPath;
-    const workspaceName = resolveResults[0]?.workspaceName;
-    return projectPath ? { projectPath, workspaceName } : {};
+    const projectPath = resolveResults.find((r) => r.projectPath !== undefined)?.projectPath;
+    const workspaceName = resolveResults.find((r) => r.workspaceName !== undefined)?.workspaceName;
+    const closing = resolveResults.find((r) => r.closing !== undefined)?.closing ?? null;
+    return projectPath ? { projectPath, workspaceName, closing } : {};
   },
 };
 
@@ -351,10 +349,12 @@ const minimalGetStatusOperation: Operation<typeof getStatusSchemas> = {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    // get
+    // get — the real operation re-resolves here and passes `closing` through,
+    // so a slow refresh cannot leave handlers acting on a stale value.
     const getInput: GetStatusHookInput = {
       intent: ctx.intent,
       workspacePath: wsPath(payload.workspacePath),
+      closing: resolved.closing ?? null,
     };
     const { results, errors } = await ctx.hooks.collect("get", getInput);
     if (errors.length > 0) throw errors[0]!;
@@ -410,8 +410,8 @@ interface TestSetup {
   provider: ReturnType<typeof createMockGitWorktreeProvider>;
   pathProvider: PathProvider;
   module: IntentModule;
-  /** Drive the `closing` claim the status hook checks before spawning git. */
-  closing: WorkspaceClosingMock;
+  /** Drives the `closing` enrichment the status hook reads. */
+  closing: Map<string, WorkspaceClosing>;
 }
 
 function createTestSetup(): TestSetup {
@@ -435,14 +435,31 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test
-  const closing = createWorkspaceClosingMock();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER,
-    closing
+    SILENT_LOGGER
   );
   dispatcher.registerModule(module);
+
+  // Stands in for workspace-lifecycle-module's resolve contribution: the module
+  // under test only ever sees `closing` as hook-context enrichment, so the test
+  // supplies it the same way production does — through a resolve handler.
+  const closing = new Map<string, WorkspaceClosing>();
+  dispatcher.registerModule({
+    name: "closing-stub",
+    hooks: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext) => {
+            const { workspacePath } = ctx as HookContext & { workspacePath: WorkspacePath };
+            const reason = closing.get(new Path(workspacePath).toString());
+            return { result: reason === undefined ? {} : { closing: reason } };
+          },
+        },
+      },
+    },
+  });
 
   return { dispatcher, provider, pathProvider, module, closing };
 }
@@ -459,16 +476,14 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   dispatcher.registerOperation(minimalPreflightOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
-  const closing = createWorkspaceClosingMock();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER,
-    closing
+    SILENT_LOGGER
   );
   dispatcher.registerModule(module);
 
-  return { dispatcher, provider, pathProvider, closing };
+  return { dispatcher, provider, pathProvider, closing: new Map<string, WorkspaceClosing>() };
 }
 
 // =============================================================================
@@ -1188,7 +1203,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       provider.isDirty.mockResolvedValue(true);
       provider.countUnmergedCommits.mockResolvedValue(3);
-      closing.claim(ws.path.toString(), "delete");
+      closing.set(ws.path.toString(), "delete");
 
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
@@ -1211,12 +1226,12 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       await dispatchOpenProject(dispatcher, projPath(projectPath));
 
       provider.isDirty.mockResolvedValue(true);
-      closing.claim(ws.path.toString(), "delete");
+      closing.set(ws.path.toString(), "delete");
       await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       // A failed delete leaves the workspace alive — its status must work again
       // rather than reporting a permanent, misleading "clean".
-      closing.release(ws.path.toString());
+      closing.delete(ws.path.toString());
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(provider.isDirty).toHaveBeenCalledWith(ws.path);

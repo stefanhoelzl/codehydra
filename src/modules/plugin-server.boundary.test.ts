@@ -1207,19 +1207,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       } as Intent);
     }
 
-    it("rejects a client that connects after deletion has begun", async () => {
-      await startDeleting();
-
-      // The server hangs up rather than refusing the handshake, so connect() may
-      // briefly succeed. `disconnect(true)` stops the client from reconnecting.
-      const client = createClient(wsPath(WS));
-      client.connect();
-      await delay(500);
-
-      expect(client.connected).toBe(false);
-    });
-
-    it("sends no config to a client that connects after deletion has begun", async () => {
+    it("cannot arm an agent for a client that connects after deletion has begun", async () => {
       await startDeleting();
 
       const client = createClient(wsPath(WS));
@@ -1228,9 +1216,41 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       client.connect();
       await delay(500);
 
-      // Receiving the config is what makes the sidekick open an agent terminal.
-      expect(config).not.toHaveBeenCalled();
+      // This is the guarantee, and it holds for the whole teardown rather than
+      // for one window: the sidekick only opens an agent terminal when the
+      // config carries BOTH env and agentType (see extensions/sidekick). The
+      // shutdown hook drops the stored config before anything else, so a late
+      // connection is answered with a config that arms nothing.
+      expect(config).toHaveBeenCalledTimes(1);
+      expect(config.mock.calls[0]![0]).toMatchObject({ env: null, agentType: null });
     });
+
+    it("rejects a reconnect while the teardown is waiting on the current socket", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // Hold the teardown inside its close-and-wait window: ack the close
+      // command but never report that the terminal closed.
+      client.on("command", (_request, ack) => {
+        ack({ success: true, data: { closed: true } });
+      });
+
+      const deleting = startDeleting();
+      await delay(200);
+
+      // A reconnect here would be treated as a duplicate and would hang up on
+      // the very socket the teardown is waiting on — the close report would
+      // never arrive and the agent tree would survive into worktree removal.
+      const reconnect = createClient(wsPath(WS));
+      reconnect.connect();
+      await delay(500);
+
+      expect(reconnect.connected).toBe(false);
+      expect(client.connected).toBe(true);
+
+      await deleting;
+      reconnect.disconnect();
+    }, 20_000);
 
     it("asks the sidekick to close its agent terminal before hanging up", async () => {
       const client = createClient(wsPath(WS));
