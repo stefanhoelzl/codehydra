@@ -445,24 +445,32 @@ export function createGitWorktreeWorkspaceModule(
               return { result: {} };
             }
 
-            // Fetch first so the unmerged count is measured against current
-            // refs; without it a delete right after a server-side merge (e.g.
-            // /ship) compares against a stale origin/main and rejects the
-            // just-merged commits as unmerged. Best-effort — a fetch failure
-            // falls through to the stale-ref read rather than blocking.
-            try {
-              await gitWorktreeProvider.updateBases(new Path(projectPath));
-            } catch {
-              // Stale refs beat no answer.
-            }
-
             const reasons: string[] = [];
             if (await gitWorktreeProvider.isDirty(new Path(wsPath))) {
               reasons.push("Workspace has uncommitted changes");
             }
-            const unmerged = await gitWorktreeProvider.countUnmergedCommits(new Path(wsPath));
-            if (unmerged > 0) {
-              reasons.push(`Workspace has ${unmerged} unmerged commit${unmerged === 1 ? "" : "s"}`);
+
+            // Unmerged commits only go missing when the branch goes with the
+            // worktree — a kept branch keeps them reachable. Skipping the check
+            // also skips the fetch, which is the expensive part of this gate.
+            if (!payload.keepBranch) {
+              // Fetch first so the count is measured against current refs;
+              // without it a delete right after a server-side merge (e.g.
+              // /ship) compares against a stale origin/main and rejects the
+              // just-merged commits as unmerged. Best-effort — a fetch failure
+              // falls through to the stale-ref read rather than blocking.
+              try {
+                await gitWorktreeProvider.updateBases(new Path(projectPath));
+              } catch {
+                // Stale refs beat no answer.
+              }
+
+              const unmerged = await gitWorktreeProvider.countUnmergedCommits(new Path(wsPath));
+              if (unmerged > 0) {
+                reasons.push(
+                  `Workspace has ${unmerged} unmerged commit${unmerged === 1 ? "" : "s"}`
+                );
+              }
             }
 
             if (reasons.length === 0) return { result: {} };

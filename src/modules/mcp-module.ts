@@ -778,8 +778,8 @@ export class McpServer {
           "Omit workspacePath to delete the current workspace, or pass a path to delete " +
           "another workspace (use project_list to discover paths). Blocks until deletion " +
           "finishes and returns { started: true } on success. Fails with an error if the " +
-          "target has uncommitted changes or unmerged commits (pass ignoreWarnings to " +
-          "override) or if processes block worktree removal.",
+          "target has uncommitted changes, or unmerged commits on a branch that is not " +
+          "kept (pass ignoreWarnings to override), or if processes block worktree removal.",
         inputSchema: z.object({
           workspacePath: targetWorkspacePathSchema,
           keepBranch: z
