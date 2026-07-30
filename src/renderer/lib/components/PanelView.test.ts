@@ -3,7 +3,7 @@
  * Section/action rendering and the keyboard contract (Escape, Cmd/Ctrl+Enter,
  * Tab trap) live in Form.test.ts — these cover only the panel shell:
  * accessible name, the dialogId-keyed Form remount (the reset gesture), and
- * refocusing the form when the last modal stacked above the panel closes.
+ * the focus-ownership gate (a panel only places focus while it owns it).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -39,10 +39,10 @@ function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
 function renderPanel(
   config: DialogConfig,
   dialogId = "panel-1",
-  modalAbove = false,
+  focusOwned = true,
   kind: "modeless" | "panel" = "modeless"
 ) {
-  return render(PanelView, { props: { dialogId, config, kind, modalAbove } });
+  return render(PanelView, { props: { dialogId, config, kind, focusOwned } });
 }
 
 describe("PanelView component (panel surface)", () => {
@@ -75,7 +75,7 @@ describe("PanelView component (panel surface)", () => {
     });
   });
 
-  describe("refocus on modal close", () => {
+  describe("focus ownership", () => {
     // A multiline autofocus input renders as a native <textarea> with
     // data-autofocus — focusable in happy-dom, unlike vscode-elements.
     const autofocusConfig = createConfig({
@@ -85,30 +85,55 @@ describe("PanelView component (panel surface)", () => {
       ],
     });
 
-    it("re-places focus on the autofocus control when the last modal above closes", async () => {
-      const { rerender } = renderPanel(autofocusConfig, "panel-1", false);
-      const textarea = document.querySelector("textarea")!;
-      await waitFor(() => expect(document.activeElement).toBe(textarea));
+    /**
+     * Stand-in for the caret the user is typing in elsewhere (e.g. the modal
+     * above). An <input> so it never collides with the panel's own <textarea>
+     * in the queries below.
+     */
+    function focusElsewhere(): HTMLInputElement {
+      const outside = document.createElement("input");
+      document.body.appendChild(outside);
+      outside.focus();
+      return outside;
+    }
 
-      // A modal opens above the panel and takes focus elsewhere.
-      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: true });
-      textarea.blur();
-      await waitFor(() => expect(document.activeElement).not.toBe(textarea));
+    // The reported bug (PostHog 019fb2cb): a panel arriving BEHIND an open
+    // modal — deletion progress, the mid-session loading spinner, the creation
+    // ground state — ran its mount autofocus and yanked the caret out of the
+    // dialog the user was typing in.
+    it("does not take focus when it mounts without owning focus", async () => {
+      const outside = focusElsewhere();
 
-      // Modal closes — the panel is the active surface again.
-      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: false });
+      renderPanel(autofocusConfig, "panel-1", false);
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      await waitFor(() => expect(document.activeElement).toBe(textarea));
+      expect(document.activeElement).toBe(outside);
     });
 
-    it("a modal opening above does not disturb existing panel focus", async () => {
+    it("takes focus on mount when it owns focus", async () => {
+      renderPanel(autofocusConfig, "panel-1", true);
+
+      await waitFor(() => expect(document.activeElement).toBe(document.querySelector("textarea")));
+    });
+
+    it("places focus when ownership transfers to it (the modal above closed)", async () => {
+      const outside = focusElsewhere();
       const { rerender } = renderPanel(autofocusConfig, "panel-1", false);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(document.activeElement).toBe(outside);
+
+      // Modal closes — the panel is the entitled surface again.
+      await rerender({ dialogId: "panel-1", config: autofocusConfig, focusOwned: true });
+
+      await waitFor(() => expect(document.activeElement).toBe(document.querySelector("textarea")));
+    });
+
+    it("losing ownership does not blur the panel (the new owner places focus)", async () => {
+      const { rerender } = renderPanel(autofocusConfig, "panel-1", true);
       const textarea = document.querySelector("textarea")!;
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      // A modal opens above (modalAbove false→true). The refocus gate fires
-      // only on the true→false close, so focus is left exactly where it is.
-      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: true });
+      await rerender({ dialogId: "panel-1", config: autofocusConfig, focusOwned: false });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(document.activeElement).toBe(textarea);
@@ -159,7 +184,7 @@ describe("PanelView component (panel surface)", () => {
     it("renders only the shell, no Form, when config/dialogId are undefined", () => {
       expect(() =>
         render(PanelView, {
-          props: { dialogId: undefined, config: undefined, kind: "modeless", modalAbove: false },
+          props: { dialogId: undefined, config: undefined, kind: "modeless", focusOwned: false },
         })
       ).not.toThrow();
 
@@ -178,7 +203,7 @@ describe("PanelView component (panel surface)", () => {
         dialogId: undefined,
         config: undefined,
         kind: "modeless",
-        modalAbove: false,
+        focusOwned: false,
       });
 
       expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();

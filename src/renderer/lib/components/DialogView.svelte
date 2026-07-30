@@ -16,9 +16,15 @@
   interface Props {
     dialogId: string;
     config: DialogConfig;
+    /**
+     * Whether this modal is the topmost one, and so entitled to place focus.
+     * A modal opened underneath another stops autofocusing until it is on top
+     * again — see $lib/utils/focus-owner.
+     */
+    focusOwned?: boolean;
   }
 
-  const { dialogId, config }: Props = $props();
+  const { dialogId, config, focusOwned = true }: Props = $props();
 
   /** Derive heading text from sections for aria-label. */
   const heading = $derived.by(() => {
@@ -43,7 +49,7 @@
     <Logo />
   </div>
   <div class="card" class:scroll-layout={scrollLayout}>
-    <Form {dialogId} {config} />
+    <Form {dialogId} {config} {focusOwned} />
   </div>
 </div>
 

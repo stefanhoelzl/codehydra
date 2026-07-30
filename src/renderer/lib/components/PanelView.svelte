@@ -18,8 +18,9 @@
     just keeps the empty/reconnecting frame from flickering through.
   - Blocking modals (z 1000) stack above both.
   - Keyboard (Escape, Cmd/Ctrl+Enter -> primary, Tab trap) is owned by Form.
-  - When the last blocking modal stacked above closes, the panel re-places focus
-    on the form's autofocus control (focus would otherwise be lost to <body>).
+  - Focus placement is owned by Form too, gated on `focusOwned`: a panel that
+    appears while a modal is stacked above it never takes the caret, and gets
+    it when that modal closes. See $lib/utils/focus-owner.
   - Form is keyed by dialogId: a backend close + reopen remounts it with fresh
     field values (the reset gesture).
 -->
@@ -38,26 +39,16 @@
     config: DialogConfig | undefined;
     /** "modeless" (creation, above sidebar) or "panel" (deletion, below sidebar). */
     kind: Extract<DialogKind, "modeless" | "panel">;
-    /** Whether a blocking modal is open above (drives refocus on close). */
-    modalAbove: boolean;
+    /** Whether this panel is the surface entitled to place focus. */
+    focusOwned?: boolean;
   }
 
-  const { dialogId, config, kind, modalAbove }: Props = $props();
-
-  let formRef: Form | undefined = $state();
+  const { dialogId, config, kind, focusOwned = true }: Props = $props();
 
   /** Derive heading text from sections for the accessible name. */
   const heading = $derived.by(() => {
     const headingSection = config?.sections.find((s) => s.type === "text" && s.style === "heading");
     return headingSection?.type === "text" ? headingSection.content : "Panel";
-  });
-
-  // Refocus the form when the last modal above the panel closes (modals steal
-  // focus while open; on close the panel is the active surface again).
-  let hadModalAbove = false;
-  $effect(() => {
-    if (hadModalAbove && !modalAbove) formRef?.refocus();
-    hadModalAbove = modalAbove;
   });
 </script>
 
@@ -73,7 +64,7 @@
            fallback instead of escaping to the crash guard. -->
       <ErrorBoundary label="panel:{kind}">
         {#key dialogId}
-          <Form bind:this={formRef} {dialogId} {config} {kind} />
+          <Form {dialogId} {config} {kind} {focusOwned} />
         {/key}
       </ErrorBoundary>
     {/if}
