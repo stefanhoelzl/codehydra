@@ -19,7 +19,6 @@ import type {
   OperationContext,
   OperationSchemas,
   IntentOf,
-  HookOutput,
 } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
@@ -31,20 +30,6 @@ import {
   APP_SHUTDOWN_OPERATION_ID,
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
-import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
-import { GetActiveWorkspaceOperation } from "../intents/get-active-workspace";
-import {
-  INTENT_SWITCH_WORKSPACE,
-  SWITCH_WORKSPACE_OPERATION_ID,
-  EVENT_WORKSPACE_SWITCHED,
-  switchWorkspaceHookResultSchema,
-} from "../intents/switch-workspace";
-import type {
-  SwitchWorkspaceIntent,
-  ActivateHookInput,
-  WorkspaceSwitchedEvent,
-} from "../intents/switch-workspace";
 import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
 import type { IdeServerRestartedEvent } from "../intents/app-resume";
 import {
@@ -63,17 +48,11 @@ import {
   selectFolderHookResultSchema,
 } from "../intents/open-project";
 import type { SelectFolderHookResult } from "../intents/open-project";
-import {
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  type ResolveHookInput,
-  type ResolveHookResult,
-} from "../intents/resolve-workspace";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import type { WorkspaceName } from "../shared/api/types";
 import { wsPath, projPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "../intents/contract";
 import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
@@ -94,51 +73,6 @@ function createMockShellLayers() {
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-const switchOpSchemas = {
-  type: INTENT_SWITCH_WORKSPACE,
-  payload: z.unknown(),
-  hooks: { activate: { result: switchWorkspaceHookResultSchema } },
-} satisfies OperationSchemas;
-
-/** Runs "activate" hook point + emits workspace:switched event. */
-class MinimalSwitchOperation implements Operation<typeof switchOpSchemas> {
-  readonly id = SWITCH_WORKSPACE_OPERATION_ID;
-  readonly schemas = switchOpSchemas;
-  constructor(private readonly active: boolean = false) {}
-  async execute(
-    ctx: OperationContext<IntentOf<typeof switchOpSchemas>, typeof switchOpSchemas>
-  ): Promise<void> {
-    const workspacePath = (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath;
-    const activateCtx: ActivateHookInput = {
-      intent: ctx.intent,
-      workspacePath,
-      active: this.active,
-    };
-    const { results, errors } = await ctx.hooks.collect("activate", activateCtx);
-    if (errors.length > 0) throw errors[0]!;
-    let resolvedPath: string | undefined;
-    for (const r of results) {
-      if (r.resolvedPath !== undefined) resolvedPath = r.resolvedPath;
-    }
-    if (resolvedPath) {
-      // Extract workspace name from path for test event (real operation uses resolve hooks)
-      const workspaceName = resolvedPath.split("/").pop() ?? "";
-      const event: WorkspaceSwitchedEvent = {
-        type: EVENT_WORKSPACE_SWITCHED,
-        payload: {
-          projectId: "test-project" as ProjectId,
-          projectName: "test",
-          projectPath: projPath("/projects/test"),
-          workspaceName: workspaceName as WorkspaceName,
-          path: wsPath(resolvedPath),
-          metadata: {},
-        },
-      };
-      ctx.emit(event);
-    }
-  }
-}
 
 const deleteOpSchemas = {
   type: INTENT_DELETE_WORKSPACE,
@@ -249,20 +183,6 @@ function createTestSetup<S extends OperationSchemas = OperationSchemas>(
   return { dispatcher, viewManager, layers, module };
 }
 
-/** Run the module's resolve-workspace hook and return the `active` flag. */
-async function resolveActive(module: IntentModule, workspacePath: WorkspacePath): Promise<boolean> {
-  const hookCtx = {
-    intent: { type: "workspace:resolve", payload: { workspacePath } },
-    workspacePath,
-  } as unknown as ResolveHookInput;
-  const result = (
-    (await module.hooks![RESOLVE_WORKSPACE_OPERATION_ID]!.resolve!.handler(
-      hookCtx
-    )) as HookOutput<ResolveHookResult>
-  ).result!;
-  return result.active === true;
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
@@ -306,169 +226,6 @@ describe("ViewModule Integration", () => {
       });
 
       expect(result).toEqual(expect.objectContaining({ wasActive: true }));
-    });
-
-    it("clears the active surface so resolve reports inactive", async () => {
-      const { dispatcher, module } = createTestSetup({
-        intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(),
-      });
-      dispatcher.registerOperation(new MinimalDeleteOperation(true));
-
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: wsPath("/workspaces/ws1") },
-      });
-      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(true);
-
-      await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      });
-
-      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 8: switch-workspace/activate → setActiveWorkspace called
-  // -------------------------------------------------------------------------
-  describe("switch-workspace/activate", () => {
-    it("records the new active surface (resolve reports active)", async () => {
-      const { dispatcher, module } = createTestSetup({
-        intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(),
-      });
-
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-        },
-      });
-
-      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(true);
-      expect(await resolveActive(module, wsPath("/workspaces/ws2"))).toBe(false);
-    });
-
-    it("does not record anything when already active (short-circuit)", async () => {
-      const { dispatcher, module } = createTestSetup({
-        intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(true),
-      });
-
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-        },
-      });
-
-      // The hook short-circuited: module state was not updated by activate
-      // (the switched event also isn't emitted in this minimal operation).
-      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 10: workspace:switched null → cachedActiveRef cleared + setActiveWorkspace(null)
-  // -------------------------------------------------------------------------
-  describe("workspace:switched event (null)", () => {
-    it("clears cached ref and sets active workspace to null", async () => {
-      // First set up a cached active ref by doing a switch
-      const { dispatcher, module } = createTestSetup({
-        intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(),
-      });
-
-      // Register get-active-workspace so we can verify the cache
-      dispatcher.registerOperation(new GetActiveWorkspaceOperation());
-
-      // Switch to ws1 first to populate cache
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-        },
-      });
-
-      // Verify cache is populated
-      const refBefore = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {} as Record<string, never>,
-      });
-      expect(refBefore).toEqual(expect.objectContaining({ path: "/workspaces/ws1" }));
-
-      // Now emit workspace:switched with null payload by dispatching delete
-      // that triggers auto-switch. Instead, manually fire the event through dispatcher.
-      // We use a custom operation to emit the null event.
-      const nullSwitchSchemas = {
-        type: "test:emit-null-switch",
-        payload: z.unknown(),
-      } satisfies OperationSchemas;
-      const nullSwitchOp: Operation<typeof nullSwitchSchemas> = {
-        id: "emit-null-switch",
-        schemas: nullSwitchSchemas,
-        async execute(ctx): Promise<void> {
-          const event: WorkspaceSwitchedEvent = {
-            type: EVENT_WORKSPACE_SWITCHED,
-            payload: null,
-          };
-          ctx.emit(event);
-        },
-      };
-      dispatcher.registerOperation(nullSwitchOp);
-      await dispatcher.dispatch({
-        type: "test:emit-null-switch",
-        payload: {},
-      });
-
-      // Verify cache is cleared
-      const refAfter = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {} as Record<string, never>,
-      });
-      expect(refAfter).toBeNull();
-
-      // Verify the active surface was cleared too
-      expect(await resolveActive(module, wsPath("/workspaces/ws1"))).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 11: workspace:switched → cache ref; get-active-workspace returns it
-  // -------------------------------------------------------------------------
-  describe("workspace:switched event (non-null)", () => {
-    it("caches workspace ref that get-active-workspace returns", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(),
-      });
-
-      dispatcher.registerOperation(new GetActiveWorkspaceOperation());
-
-      await dispatcher.dispatch<SwitchWorkspaceIntent>({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-        },
-      });
-
-      const ref = await dispatcher.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {} as Record<string, never>,
-      });
-
-      expect(ref).toEqual({
-        projectId: "test-project",
-        workspaceName: "ws1",
-        path: "/workspaces/ws1",
-      });
     });
   });
 

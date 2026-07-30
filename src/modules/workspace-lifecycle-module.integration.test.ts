@@ -13,6 +13,8 @@
  *   hibernate-failed), so a workspace that survives a failed delete works again
  * - reason distinguishes delete / close (removeWorktree: false) / hibernate
  * - surfaced on workspace:resolve
+ * - active-workspace tracking (moved here from view-module): switch records it,
+ *   resolve and get-active-workspace report it, delete and hibernate clear it
  */
 
 import { describe, it, expect } from "vitest";
@@ -41,6 +43,11 @@ import {
   type ResolveWorkspaceIntent,
   type ResolveWorkspaceResult,
 } from "../intents/resolve-workspace";
+import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "../intents/switch-workspace";
+import {
+  INTENT_GET_ACTIVE_WORKSPACE,
+  type GetActiveWorkspaceIntent,
+} from "../intents/get-active-workspace";
 import { registerTestInfrastructure } from "../intents/operations.test-utils";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { SET_METADATA_OPERATION_ID, INTENT_SET_METADATA } from "../intents/set-metadata";
@@ -54,15 +61,16 @@ import type { WorkspaceClosing } from "../intents/contract";
 
 const PROJECT_PATH = projPath("/test/project");
 const WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-1");
+const OTHER_WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-2");
 
 /**
  * Register the lifecycle module plus enough infrastructure for the real
  * teardown operations to run, and a probe that records what `closing` says at
  * each hook point.
  *
- * `probeFirst: false` mirrors production registration order — the lifecycle
- * module is registered before everything with a shutdown handler, so the probe
- * observes the claim exactly as a real consumer would.
+ * The lifecycle module is registered before the probe, mirroring production:
+ * handlers in a hook point run in registration order, so the probe observes the
+ * claim exactly as a real consumer would.
  */
 function setup(options?: { deleteError?: string; hibernateShutdownError?: string }) {
   const dispatcher = new Dispatcher({ logger: SILENT_LOGGER });
@@ -78,6 +86,10 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
       [WORKSPACE_PATH]: {
         projectPath: PROJECT_PATH,
         workspaceName: "feature-1" as WorkspaceName,
+      },
+      [OTHER_WORKSPACE_PATH]: {
+        projectPath: PROJECT_PATH,
+        workspaceName: "feature-2" as WorkspaceName,
       },
     },
     projects: {
@@ -189,7 +201,7 @@ describe("WorkspaceLifecycleModule", () => {
       expect(closing.get(WORKSPACE_PATH)).toBeNull();
     });
 
-    it("claims as \"close\" for a runtime-only teardown (project:close)", async () => {
+    it('claims as "close" for a runtime-only teardown (project:close)', async () => {
       const { dispatcher, observed } = setup();
 
       await dispatcher.dispatch(deleteIntent({ removeWorktree: false }));
@@ -275,5 +287,90 @@ describe("WorkspaceLifecycleModule", () => {
     await dispatcher.dispatch(deleteIntent());
 
     expect(closing.get(other)).toBeNull();
+  });
+
+  // ===========================================================================
+  // Active-workspace tracking (moved here from view-module, which used to keep
+  // its own copy alongside two others).
+  // ===========================================================================
+
+  describe("active workspace", () => {
+    /** Ask workspace:resolve whether a workspace is the active one. */
+    async function isActive(dispatcher: Dispatcher, workspacePath: string): Promise<boolean> {
+      const result = (await dispatcher.dispatch({
+        type: INTENT_RESOLVE_WORKSPACE,
+        payload: { workspacePath },
+      } as ResolveWorkspaceIntent)) as ResolveWorkspaceResult;
+      return result.active;
+    }
+
+    async function activeRef(dispatcher: Dispatcher): Promise<unknown> {
+      return await dispatcher.dispatch({
+        type: INTENT_GET_ACTIVE_WORKSPACE,
+        payload: {},
+      } as GetActiveWorkspaceIntent);
+    }
+
+    it("records the workspace a switch activated", async () => {
+      const { dispatcher } = setup();
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+      } as SwitchWorkspaceIntent);
+
+      expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(true);
+      expect(await isActive(dispatcher, OTHER_WORKSPACE_PATH)).toBe(false);
+    });
+
+    it("answers get-active-workspace with the switched-to ref", async () => {
+      const { dispatcher } = setup();
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+      } as SwitchWorkspaceIntent);
+
+      expect(await activeRef(dispatcher)).toEqual({
+        projectId: "test-project-12345678",
+        workspaceName: "feature-1",
+        path: WORKSPACE_PATH,
+      });
+    });
+
+    it("clears the active surface when the workspace is deleted", async () => {
+      const { dispatcher } = setup();
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+      } as SwitchWorkspaceIntent);
+      expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(true);
+
+      await dispatcher.dispatch(deleteIntent());
+
+      expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(false);
+    });
+
+    it("clears the active surface when the workspace hibernates, so wake is not short-circuited", async () => {
+      const { dispatcher } = setup();
+      const hibernated = waitForEvent(dispatcher, EVENT_WORKSPACE_HIBERNATED);
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+      } as SwitchWorkspaceIntent);
+
+      await dispatcher.dispatch({
+        type: INTENT_HIBERNATE_WORKSPACE,
+        payload: { workspacePath: WORKSPACE_PATH },
+      } as HibernateWorkspaceIntent);
+      await hibernated;
+
+      // fallbackToCurrent can leave a hibernating workspace "active" for the
+      // overlay; if that stuck, switching back on wake would short-circuit as
+      // already-active and the workspace would never reopen.
+      expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(false);
+    });
   });
 });

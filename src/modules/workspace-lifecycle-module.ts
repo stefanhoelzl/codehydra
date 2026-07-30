@@ -7,8 +7,11 @@
  * it. Persistent domain facts (hibernated, metadata, branch) and module-internal
  * plumbing stay with their owners.
  *
- * Today that is one fact: `closing` — which teardown pipeline currently owns a
- * workspace (see `workspaceClosingSchema` in intents/contract).
+ * Two facts live here:
+ * - `closing` — which teardown pipeline currently owns a workspace (see
+ *   `workspaceClosingSchema` in intents/contract)
+ * - which workspace is active — the `active` flag on resolve, and the ref
+ *   `workspace:get-active` returns
  *
  * ## Why this exists
  *
@@ -25,15 +28,20 @@
  * so every holder of a handle under the workspace can see the same fact.
  *
  * Hooks:
- * - resolve-workspace → resolve: contribute `closing`
+ * - resolve-workspace → resolve: contribute `closing` and `active`
+ * - get-active-workspace → get: return the active ref
+ * - switch-workspace → activate: record the new active surface
  * - delete-workspace → shutdown: claim the workspace ("delete", or "close" for
- *     the runtime-only teardown that project:close dispatches)
- * - hibernate-workspace → shutdown: claim the workspace ("hibernate")
+ *     the runtime-only teardown that project:close dispatches); clear active
+ * - hibernate-workspace → shutdown: claim the workspace ("hibernate"); clear
+ *     active
  *
- * Events (release the claim — all four are terminal and always emitted, which
- * includes the confirm-cancel and hibernate-failure paths):
- * - workspace:deleted, workspace:delete-failed
- * - workspace:hibernated, workspace:hibernate-failed
+ * Events:
+ * - workspace:switched → track the active workspace
+ * - workspace:deleted, workspace:delete-failed,
+ *   workspace:hibernated, workspace:hibernate-failed → release the claim. All
+ *   four are terminal and always emitted, which includes the confirm-cancel and
+ *   hibernate-failure paths.
  *
  * ## Ordering
  *
@@ -59,8 +67,19 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
-import type { WorkspaceClosing } from "../intents/contract";
+import type { WorkspaceClosing, WorkspaceRef } from "../intents/contract";
 import { Path } from "../utils/path/path";
+import {
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  type GetActiveWorkspaceHookResult,
+} from "../intents/get-active-workspace";
+import {
+  SWITCH_WORKSPACE_OPERATION_ID,
+  EVENT_WORKSPACE_SWITCHED,
+  type ActivateHookInput,
+  type SwitchWorkspaceHookResult,
+  type WorkspaceSwitchedEvent,
+} from "../intents/switch-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   type ResolveHookInput,
@@ -126,7 +145,27 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
   /** workspacePath (normalized) → the teardown that owns it. */
   const closingWorkspaces = new Map<string, WorkspaceClosing>();
 
+  /**
+   * The actual active surface, fed by the switch pipeline. Intentionally
+   * distinct from `cachedActiveRef`, which is a UI-level cache that sticks to
+   * the hibernating workspace during the fallbackToCurrent overlay window (see
+   * hibernate-workspace.ts). The resolve hook reports this value;
+   * delete/hibernate shutdown clears it so a later wake's switch is not
+   * short-circuited as "already active".
+   */
+  let activeWorkspacePath: string | null = null;
+
+  /** UI-level cache returned by get-active-workspace. See above for why it differs. */
+  let cachedActiveRef: WorkspaceRef | null = null;
+
   const key = (workspacePath: string): string => new Path(workspacePath).toString();
+
+  /** Forget the active surface if it is `workspacePath`. */
+  function clearActiveIfMatches(workspacePath: string): void {
+    if (activeWorkspacePath === workspacePath) {
+      activeWorkspacePath = null;
+    }
+  }
 
   function claim(workspacePath: string, reason: WorkspaceClosing): void {
     closingWorkspaces.set(key(workspacePath), reason);
@@ -157,7 +196,55 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { workspacePath } = ctx as ResolveHookInput;
             const reason = closing.get(workspacePath);
-            return { result: reason === null ? {} : { closing: reason } };
+            return {
+              result: {
+                // Sourced from `activeWorkspacePath` (the actual active
+                // surface), not `cachedActiveRef` — the switch operation uses
+                // this flag to decide whether to short-circuit, and the cache
+                // deliberately lags during the hibernation overlay window.
+                active: activeWorkspacePath === workspacePath,
+                ...(reason !== null && { closing: reason }),
+              },
+            };
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // get-active-workspace → get: return the cached active ref.
+      // -----------------------------------------------------------------
+      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
+            return { result: { workspaceRef: cachedActiveRef } };
+          },
+        },
+      },
+
+      // -----------------------------------------------------------------
+      // switch-workspace → activate: record the new active surface (no-op if
+      // it is already active). The renderer swaps the visible iframe when the
+      // workspace:switched event lands and routes focus itself, so nothing
+      // visual happens here.
+      // -----------------------------------------------------------------
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
+            const { workspacePath, active } = ctx as ActivateHookInput;
+
+            // Deselect: clear the bookkeeping so a later switch back to this
+            // workspace isn't short-circuited as already-active.
+            if (workspacePath === null) {
+              activeWorkspacePath = null;
+              return { result: {} };
+            }
+
+            if (active) {
+              return { result: {} };
+            }
+
+            activeWorkspacePath = workspacePath;
+            return { result: { resolvedPath: workspacePath } };
           },
         },
       },
@@ -175,6 +262,7 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             claim(workspacePath, payload.removeWorktree ? "delete" : "close");
+            clearActiveIfMatches(workspacePath);
             return { result: {} };
           },
         },
@@ -182,18 +270,41 @@ export function createWorkspaceLifecycleModule(): WorkspaceLifecycleModule {
 
       // -----------------------------------------------------------------
       // hibernate-workspace → shutdown: claim the workspace.
+      //
+      // Clearing the active surface here covers the fallbackToCurrent case
+      // (hibernating the only workspace keeps it "active" for the overlay): a
+      // later wake must not be short-circuited as already-active.
       // -----------------------------------------------------------------
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             claim(workspacePath, "hibernate");
+            clearActiveIfMatches(workspacePath);
             return { result: {} };
           },
         },
       },
     },
     events: {
+      // Track the active workspace. `cachedActiveRef` is a UI-level cache; both
+      // are cleared together on a null switch (nothing active).
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
+          if (payload === null) {
+            cachedActiveRef = null;
+            activeWorkspacePath = null;
+            return;
+          }
+          cachedActiveRef = {
+            projectId: payload.projectId,
+            workspaceName: payload.workspaceName,
+            path: payload.path,
+          };
+          activeWorkspacePath = payload.path;
+        },
+      },
       // The worktree is gone (or the runtime teardown finished).
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
