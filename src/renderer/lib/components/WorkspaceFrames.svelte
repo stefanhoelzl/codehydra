@@ -27,7 +27,8 @@
   the UiViewManager injects alongside the focus tracker. All workspace iframes
   are same-origin, so Chromium hosts them in one shared renderer process; when
   it dies every workbench blanks at once and no main-process event reports it.
-  A frame that does not answer is logged — nothing reloads on its own.
+  A frame that does not answer is logged, and reloaded if it had answered
+  before (the workbench session lives on the IDE server, so a reload is cheap).
 
   Exposes two window hooks for the main process (UiViewManager):
   - __chFocusActiveFrame(): focus the active frame (window-focus handler,
@@ -44,12 +45,13 @@
   const logger = createLogger("ui");
 
   /**
-   * How long a frame gets to answer the probe sent when it is shown. Generous:
-   * a workbench whose main thread is briefly blocked, or one still loading its
-   * document, must not be mistaken for a dead one. Detection only logs, so
-   * erring long costs nothing.
+   * How long a frame gets to answer the probe sent when it is shown. Generous
+   * on purpose: a wrong verdict reloads a workbench the user is looking at, so
+   * a main thread that is merely blocked must not be read as a dead renderer.
+   * The user is staring at a blank frame either way — waiting costs them
+   * nothing, guessing early costs them their editor state.
    */
-  const PROBE_TIMEOUT_MS = 5_000;
+  const PROBE_TIMEOUT_MS = 10_000;
 
   interface FrameHooks {
     __chFocusActiveFrame?: () => void;
@@ -93,9 +95,9 @@
   //
   // A dead frame is indistinguishable from a live one out here, so the frame
   // has to answer for itself: showing one sends it a ping, and a frame that
-  // stays silent is logged. The frames are the only witnesses to their own
-  // renderer process dying — Electron surfaces no event for a subframe process
-  // (PostHog issue 019fb265). Detection only reports; nothing reloads.
+  // stays silent is logged and reloaded. The frames are the only witnesses to
+  // their own renderer process dying — Electron surfaces no event for a
+  // subframe process (PostHog issue 019fb265).
   // ---------------------------------------------------------------------------
 
   /** Keys that have answered at least once — separates dead from never-loaded. */
@@ -122,11 +124,27 @@
     probeTimer = setTimeout(() => {
       probeTimer = undefined;
       probeKey = null;
+
+      // Recover only a frame that had answered before. Reloading is safe —
+      // the workbench session lives on the IDE server, which is why a server
+      // restart already reloads every frame — but it is only useful for a
+      // frame that was alive and stopped. One that has never answered is
+      // either still loading (a reload would restart that from scratch) or
+      // pointed at a server that is not serving (a reload changes nothing).
+      const recover = everAnswered.has(key);
+      const target = recover ? frameEls.get(key) : undefined;
+      if (target) {
+        // Re-assigning src (via a local, to dodge no-self-assign) forces a
+        // fresh navigation even though the resolved URL is identical.
+        const url = target.src;
+        target.src = url;
+      }
+
       logger.warn(
-        everAnswered.has(key)
+        recover
           ? "Workspace frame stopped responding (renderer may have died)"
           : "Workspace frame never responded (may never have finished loading)",
-        { key }
+        { key, reloaded: target !== undefined }
       );
     }, PROBE_TIMEOUT_MS);
   }

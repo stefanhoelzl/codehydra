@@ -132,10 +132,10 @@ describe("WorkspaceFrames", () => {
   // ===========================================================================
   // Liveness
   //
-  // Showing a frame pings it; a frame that does not answer is logged. The
-  // frames are the only witnesses to their shared renderer process dying —
-  // Electron reports no event for a subframe process. Detection logs; it never
-  // reloads.
+  // Showing a frame pings it; a frame that does not answer is logged, and
+  // reloaded if it had answered before. The frames are the only witnesses to
+  // their shared renderer process dying — Electron reports no event for a
+  // subframe process.
   // ===========================================================================
 
   describe("liveness", () => {
@@ -151,6 +151,22 @@ describe("WorkspaceFrames", () => {
         windows.set(el.dataset.key!, win);
       }
       return windows;
+    }
+
+    /** Spy on each frame's src setter while keeping its URL readable. */
+    function trackSrc(container: HTMLElement): Map<string, ReturnType<typeof vi.fn>> {
+      const setters = new Map<string, ReturnType<typeof vi.fn>>();
+      for (const el of frames(container)) {
+        const original = el.src;
+        const setter = vi.fn();
+        Object.defineProperty(el, "src", {
+          configurable: true,
+          get: () => original,
+          set: setter,
+        });
+        setters.set(el.dataset.key!, setter);
+      }
+      return setters;
     }
 
     /** Answer a probe as the given frame. */
@@ -231,13 +247,13 @@ describe("WorkspaceFrames", () => {
       giveWindows(container);
 
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([
         {
           level: "warn",
           message: "Workspace frame never responded (may never have finished loading)",
-          context: { key: "test-12345678/ws1" },
+          context: { key: "test-12345678/ws1", reloaded: false },
         },
       ]);
     });
@@ -250,7 +266,7 @@ describe("WorkspaceFrames", () => {
 
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
       answer(windows.get("test-12345678/ws1")!);
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([]);
       expect(windows.get("test-12345678/ws1")!.pings).toEqual([{ __chPing: true }]);
@@ -269,13 +285,57 @@ describe("WorkspaceFrames", () => {
       await rerender({ frames: FRAMES, activeKey: FRAMES[1]!.key });
       answer(windows.get("test-12345678/ws2")!);
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([
         {
           level: "warn",
           message: "Workspace frame stopped responding (renderer may have died)",
-          context: { key: "test-12345678/ws1" },
+          context: { key: "test-12345678/ws1", reloaded: true },
+        },
+      ]);
+    });
+
+    it("reloads a frame that answered before and then stopped", async () => {
+      const { container, rerender } = render(WorkspaceFrames, {
+        props: { frames: FRAMES, activeKey: null },
+      });
+      const windows = giveWindows(container);
+      const setters = trackSrc(container);
+
+      // ws1 proves itself alive, so it is a frame worth recovering...
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      answer(windows.get("test-12345678/ws1")!);
+      await rerender({ frames: FRAMES, activeKey: FRAMES[1]!.key });
+      answer(windows.get("test-12345678/ws2")!);
+      // ...and goes silent when shown again.
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      await vi.advanceTimersByTimeAsync(11_000);
+
+      expect(setters.get("test-12345678/ws1")!).toHaveBeenCalledWith(
+        "http://127.0.0.1:9000/?folder=/workspaces/ws1"
+      );
+      expect(setters.get("test-12345678/ws2")!).not.toHaveBeenCalled();
+    });
+
+    it("does not reload a frame that has never answered", async () => {
+      const { container, rerender } = render(WorkspaceFrames, {
+        props: { frames: FRAMES, activeKey: null },
+      });
+      giveWindows(container);
+      const setters = trackSrc(container);
+
+      // Still loading, or pointed at a server that is not serving: a reload
+      // restarts the first case and changes nothing in the second.
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      await vi.advanceTimersByTimeAsync(11_000);
+
+      expect(setters.get("test-12345678/ws1")!).not.toHaveBeenCalled();
+      expect(logs()).toEqual([
+        {
+          level: "warn",
+          message: "Workspace frame never responded (may never have finished loading)",
+          context: { key: "test-12345678/ws1", reloaded: false },
         },
       ]);
     });
@@ -287,11 +347,11 @@ describe("WorkspaceFrames", () => {
       const windows = giveWindows(container);
 
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(4_000);
       // Switched away before ws1's probe timed out: only ws2 is judged.
       await rerender({ frames: FRAMES, activeKey: FRAMES[1]!.key });
       answer(windows.get("test-12345678/ws2")!);
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([]);
     });
@@ -303,7 +363,7 @@ describe("WorkspaceFrames", () => {
       giveWindows(container);
 
       await rerender({ frames: FRAMES, activeKey: null });
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([]);
     });
@@ -316,7 +376,7 @@ describe("WorkspaceFrames", () => {
 
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
       (window as FrameHooks).__chReloadFrames!();
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs()).toEqual([]);
     });
@@ -330,7 +390,7 @@ describe("WorkspaceFrames", () => {
       await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
       // A stray postMessage from an unrelated window must not clear the probe.
       answer({});
-      await vi.advanceTimersByTimeAsync(6_000);
+      await vi.advanceTimersByTimeAsync(11_000);
 
       expect(logs().map((entry) => entry.context?.["key"])).toEqual(["test-12345678/ws1"]);
     });
