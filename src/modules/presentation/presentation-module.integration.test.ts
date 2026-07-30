@@ -788,6 +788,47 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces).toEqual([]);
   });
 
+  it("unmounts the IDE frame as soon as a deletion starts", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+
+    expect(lastSnapshot(deps).frames).toEqual({
+      [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat",
+    });
+
+    const progressBase = {
+      workspacePath: workspace.path as WorkspacePath,
+      workspaceName: workspace.name,
+      projectId: PROJECT_ID,
+      keepBranch: false,
+      operations: [],
+    };
+
+    await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
+      ...progressBase,
+      completed: false,
+      hasErrors: false,
+    });
+    await flush();
+
+    // A mounted frame keeps the IDE server holding the worktree — pty host,
+    // extension host, watchers — while we are trying to remove it.
+    expect(lastSnapshot(deps).frames).toEqual({});
+
+    // And it stays unmounted after a failure, where workspace:deleted never
+    // arrives. The deletion panel covers the workspace area in its place.
+    await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
+      ...progressBase,
+      completed: true,
+      hasErrors: true,
+    });
+    await flush();
+    expect(lastSnapshot(deps).frames).toEqual({});
+  });
+
   it("is the single source of deletion progress: full via accessor, render-ready on the row", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
