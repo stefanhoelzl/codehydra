@@ -25,6 +25,10 @@ import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PathProvider } from "../boundaries/platform/path-provider";
+import {
+  createWorkspaceClosingMock,
+  type WorkspaceClosingMock,
+} from "./workspace-lifecycle-module.state-mock";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import type { Workspace } from "../boundaries/platform/git-types";
 import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
@@ -406,6 +410,8 @@ interface TestSetup {
   provider: ReturnType<typeof createMockGitWorktreeProvider>;
   pathProvider: PathProvider;
   module: IntentModule;
+  /** Drive the `closing` claim the status hook checks before spawning git. */
+  closing: WorkspaceClosingMock;
 }
 
 function createTestSetup(): TestSetup {
@@ -429,14 +435,16 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test
+  const closing = createWorkspaceClosingMock();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER
+    SILENT_LOGGER,
+    closing
   );
   dispatcher.registerModule(module);
 
-  return { dispatcher, provider, pathProvider, module };
+  return { dispatcher, provider, pathProvider, module, closing };
 }
 
 function createPreflightTestSetup(): Omit<TestSetup, "module"> {
@@ -451,14 +459,16 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   dispatcher.registerOperation(minimalPreflightOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
+  const closing = createWorkspaceClosingMock();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER
+    SILENT_LOGGER,
+    closing
   );
   dispatcher.registerModule(module);
 
-  return { dispatcher, provider, pathProvider };
+  return { dispatcher, provider, pathProvider, closing };
 }
 
 // =============================================================================
@@ -1166,6 +1176,51 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
 
       expect(result.isDirty).toBe(false);
+    });
+
+    it("spawns no git for a workspace a teardown owns", async () => {
+      const { dispatcher, provider, closing } = setup;
+      const projectPath = projPath("/projects/my-app");
+
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+      provider.isDirty.mockResolvedValue(true);
+      provider.countUnmergedCommits.mockResolvedValue(3);
+      closing.claim(ws.path.toString(), "delete");
+
+      const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
+
+      // Both of these spawn git with the workspace as CWD. On Windows that is
+      // enough to make `git worktree remove` fail with "Permission denied" on
+      // the directory, which is the bug this gate exists to prevent.
+      expect(provider.isDirty).not.toHaveBeenCalled();
+      expect(provider.countUnmergedCommits).not.toHaveBeenCalled();
+      // Same answer isDirty already gives for a torn-down worktree.
+      expect(result.isDirty).toBe(false);
+      expect(result.unmergedCommits).toBe(0);
+    });
+
+    it("reads git again once the teardown released the workspace", async () => {
+      const { dispatcher, provider, closing } = setup;
+      const projectPath = projPath("/projects/my-app");
+
+      const ws = makeWorkspace("feature-1", projPath(projectPath));
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+      provider.isDirty.mockResolvedValue(true);
+      closing.claim(ws.path.toString(), "delete");
+      await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
+
+      // A failed delete leaves the workspace alive — its status must work again
+      // rather than reporting a permanent, misleading "clean".
+      closing.release(ws.path.toString());
+      const result = await dispatchGetStatus(dispatcher, wsPath(ws.path.toString()));
+
+      expect(provider.isDirty).toHaveBeenCalledWith(ws.path);
+      expect(result.isDirty).toBe(true);
     });
   });
 
