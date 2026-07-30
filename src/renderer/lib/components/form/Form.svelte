@@ -55,9 +55,22 @@
      * "panel" swallow it (no-op).
      */
     kind?: DialogKind;
+    /**
+     * Whether this form is the surface entitled to place DOM focus — the
+     * topmost open surface, see `$lib/utils/focus-owner`. A form that does not
+     * own focus never MOVES it: no mount autofocus, no autofocus-follow, no
+     * orphan-restore. That is what keeps a panel appearing behind an open
+     * modal (deletion progress, the mid-session loading spinner, the creation
+     * ground state) from yanking the caret out of it. Ownership arriving later
+     * — the surface above closed — places focus then (see the transfer effect).
+     *
+     * Defaults to true: a surface that never loses ownership (a lone modal)
+     * need not pass it.
+     */
+    focusOwned?: boolean;
   }
 
-  const { dialogId, config, kind = "modal" }: Props = $props();
+  const { dialogId, config, kind = "modal", focusOwned = true }: Props = $props();
 
   /**
    * All field sections of the config in declaration order — top-level
@@ -361,21 +374,43 @@
     }, 0);
   }
 
-  /** Focus the control marked data-autofocus (after a tick for mounting). */
+  /**
+   * Focus the control marked data-autofocus (after a tick for mounting).
+   * No-op while this form does not own focus — re-checked when the deferred
+   * callback fires, since ownership can change within the tick.
+   */
   function focusAutofocusTarget(): void {
+    if (!focusOwned) return;
     scheduleFocus(() => {
+      if (!focusOwned) return;
       const target = formRef?.querySelector<HTMLElement>("[data-autofocus]");
       target?.focus();
     });
   }
 
   /**
-   * Re-place focus on the autofocus control. Exposed for hosting surfaces
-   * that regain focus ownership (e.g. the panel when the last modal stacked
-   * above it closes and focus would otherwise be lost to <body>).
+   * Place focus on this form's entry control: an explicit autofocus control
+   * wins, else the computed default target (first enabled field, else the
+   * primary button). In the form layout (settings) the default target is
+   * skipped — focusing the first field would open its dropdown list — so an
+   * unflagged form-layout config leaves focus unset.
+   *
+   * Used for both mount and ownership transfer, so a form with no explicit
+   * autofocus flag (e.g. the bug report dialog) still regains its caret when
+   * the surface above it closes. Ownership-gated like focusAutofocusTarget.
    */
-  export function refocus(): void {
-    focusAutofocusTarget();
+  function placeFocus(): void {
+    if (!focusOwned) return;
+    scheduleFocus(() => {
+      if (!focusOwned) return;
+      const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
+      if (explicit) {
+        explicit.focus();
+        return;
+      }
+      if (layout === "form") return;
+      defaultFocusTarget()?.focus();
+    });
   }
 
   /** The id of the control carrying the autofocus flag, or null. */
@@ -416,21 +451,31 @@
     return formRef.querySelector<HTMLElement>("vscode-button[data-primary]:not([disabled])");
   }
 
-  // Auto-focus on mount: an explicit autofocus control wins, else the
-  // computed default target (first enabled field, else the primary button).
-  // In the form layout (settings) we skip the default target: focusing the
-  // first field would open its dropdown list, so we leave focus unset unless a
-  // control opts in with an explicit autofocus flag.
+  // Auto-focus on mount — but only when this form owns focus. A panel mounting
+  // underneath an open modal must leave the modal's caret alone.
   onMount(() => {
-    scheduleFocus(() => {
-      const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
-      if (explicit) {
-        explicit.focus();
-        return;
-      }
-      if (layout === "form") return;
-      defaultFocusTarget()?.focus();
-    });
+    placeFocus();
+  });
+
+  // Ownership transfer: when this form BECOMES the focus owner (the modal or
+  // panel stacked above it closed), place focus — it would otherwise sit on
+  // <body>, where the form-global keyboard contract (Escape, Tab trap) can no
+  // longer see it. Losing ownership never blurs; the surface taking over
+  // places its own focus.
+  //
+  // Gated on an actual CHANGE, not just an effect run: a config re-send
+  // re-reads every prop, and re-placing focus on each of those would undo the
+  // user's own focus moves (the "re-sends never steal focus" contract above).
+  // The first run only records the initial ownership — mount focus is
+  // onMount's job.
+  let hadFocusOwnership: boolean | undefined = undefined;
+  $effect(() => {
+    const owned = focusOwned;
+    if (owned === hadFocusOwnership) return;
+    const isFirstRun = hadFocusOwnership === undefined;
+    hadFocusOwnership = owned;
+    if (isFirstRun || !owned) return;
+    placeFocus();
   });
 
   // Focus follows when a config update MOVES the autofocus flag to a

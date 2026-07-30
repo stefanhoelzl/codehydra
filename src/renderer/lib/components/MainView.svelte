@@ -31,6 +31,7 @@
 
   // Setup functions
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
+  import { focusOwnerId } from "$lib/utils/focus-owner";
 
   // Components
   import Sidebar from "./Sidebar.svelte";
@@ -74,8 +75,13 @@
    * most one panel dialog exists at a time.
    */
   const panelDialog = $derived(ui.dialogs.find((d) => d.kind === "panel"));
-  /** Whether a blocking modal is open above the panels (drives panel refocus). */
-  const modalAbove = $derived(ui.dialogs.some((d) => d.kind === "modal"));
+  /**
+   * The single surface entitled to place DOM focus right now. A panel only
+   * autofocuses while it owns focus, so one appearing behind an open modal
+   * (deletion progress, the mid-session loading spinner, the creation ground
+   * state) cannot yank the caret out of it. See $lib/utils/focus-owner.
+   */
+  const focusOwner = $derived(focusOwnerId(ui));
   /** The creation panel is the ground state: shown whenever main says so. */
   const creationShown = $derived(main?.kind === "creation");
 
@@ -234,7 +240,7 @@
       dialogId={creationDialog?.id}
       config={creationDialog?.config}
       kind="modeless"
-      {modalAbove}
+      focusOwned={focusOwner === creationDialog?.id}
     />
   {/if}
 
@@ -245,7 +251,12 @@
        workspace and are mutually exclusive, so they never coexist with the
        creation ground state or each other. -->
   {#if main?.kind === "workspace" && panelDialog}
-    <PanelView dialogId={panelDialog?.id} config={panelDialog?.config} kind="panel" {modalAbove} />
+    <PanelView
+      dialogId={panelDialog?.id}
+      config={panelDialog?.config}
+      kind="panel"
+      focusOwned={focusOwner === panelDialog?.id}
+    />
   {/if}
 
   {#if main?.kind === "hibernated"}

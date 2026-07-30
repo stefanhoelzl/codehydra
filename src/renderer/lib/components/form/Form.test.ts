@@ -1520,6 +1520,120 @@ describe("Form component", () => {
     });
   });
 
+  // ---- Focus ownership ----
+  //
+  // A form only ever MOVES focus while it is the surface entitled to it (the
+  // topmost one — see $lib/utils/focus-owner). Without this, a panel or a
+  // lower modal placed its own focus while the user was typing in the dialog
+  // above it: PostHog 019fb2cb, "bug report dialog looses focus".
+
+  describe("focus ownership", () => {
+    const flaggedAndDefault: DialogConfig = {
+      sections: [
+        {
+          type: "dropdown",
+          id: "a",
+          suggestions: [{ items: [{ value: "x", label: "x" }] }],
+          autofocus: true,
+        },
+        {
+          type: "dropdown",
+          id: "b",
+          suggestions: [{ items: [{ value: "y", label: "y" }] }],
+        },
+      ],
+    };
+
+    /**
+     * Stand-in for the caret the user is typing in on the surface above. An
+     * <input> so it never collides with a form's own <textarea> in queries.
+     */
+    function focusElsewhere(): HTMLInputElement {
+      const outside = document.createElement("input");
+      document.body.appendChild(outside);
+      outside.focus();
+      return outside;
+    }
+
+    it("does not autofocus on mount while another surface owns focus", async () => {
+      const outside = focusElsewhere();
+
+      render(Form, {
+        props: { dialogId: "test-dialog", config: flaggedAndDefault, focusOwned: false },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(document.activeElement).toBe(outside);
+    });
+
+    it("does not follow a moved autofocus flag while another surface owns focus", async () => {
+      const outside = focusElsewhere();
+      const { rerender } = render(Form, {
+        props: { dialogId: "test-dialog", config: flaggedAndDefault, focusOwned: false },
+      });
+
+      // The backend moves the autofocus flag from "a" to "b" — normally a
+      // focus move, but this form is not entitled to place focus.
+      await rerender({
+        dialogId: "test-dialog",
+        config: {
+          sections: [
+            { type: "dropdown", id: "a", suggestions: [{ items: [{ value: "x", label: "x" }] }] },
+            {
+              type: "dropdown",
+              id: "b",
+              suggestions: [{ items: [{ value: "y", label: "y" }] }],
+              autofocus: true,
+            },
+          ],
+        } satisfies DialogConfig,
+        focusOwned: false,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(document.activeElement).toBe(outside);
+    });
+
+    it("places focus when ownership transfers to it", async () => {
+      const { rerender } = render(Form, {
+        props: { dialogId: "test-dialog", config: flaggedAndDefault, focusOwned: false },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(document.activeElement?.id).not.toBe("a-input");
+
+      await rerender({ dialogId: "test-dialog", config: flaggedAndDefault, focusOwned: true });
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("a-input");
+      });
+    });
+
+    // A config with no explicit autofocus flag (the bug report dialog) must
+    // still get its caret back when the surface above it closes — the transfer
+    // resolves the same target mount does, not just [data-autofocus].
+    it("falls back to the default target on transfer when no flag is set", async () => {
+      const unflagged: DialogConfig = {
+        sections: [
+          { type: "input", id: "description", multiline: true },
+          {
+            type: "group",
+            items: [{ type: "button", id: "send", label: "Send", variant: "primary" }],
+          },
+        ],
+      };
+      const { rerender } = render(Form, {
+        props: { dialogId: "test-dialog", config: unflagged, focusOwned: false },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      await rerender({ dialogId: "test-dialog", config: unflagged, focusOwned: true });
+
+      await waitFor(() => {
+        expect(document.activeElement).toBe(document.querySelector("textarea"));
+      });
+    });
+  });
+
   // ---- Field-change channel ----
 
   describe("field-change channel", () => {
