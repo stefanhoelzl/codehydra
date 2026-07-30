@@ -1,24 +1,23 @@
 /**
- * ViewModule - Manages the UI shell lifecycle, active-workspace bookkeeping,
- * and shell layer disposal.
+ * ViewModule - Manages the UI shell lifecycle and shell layer disposal.
  *
  * Workspace surfaces are iframes inside the UI renderer's DOM, derived from
  * the UiState snapshot — this module no longer creates or destroys views per
  * workspace. The four startup surfaces (boot splash, setup progress,
  * agent-selection, workspace loading) are owned by the presenter now (pushed
- * as UiState `main` kinds), not DialogManager dialogs. What remains here:
+ * as UiState `main` kinds), not DialogManager dialogs. Active-workspace
+ * bookkeeping moved to workspace-lifecycle-module, which owns the transient
+ * per-workspace facts contributed to workspace:resolve. What remains here:
  * - app-start `init` hook (window + UI view creation, HTML load, focus)
- * - active-workspace bookkeeping (resolve/get-active/switch/delete/hibernate)
+ * - delete-workspace `shutdown` (reports wasActive, driving the auto-switch)
  * - open-project `select-folder` (native folder picker)
  * - app-shutdown/stop (UI view + layer disposal)
  *
- * Internal state: cachedActiveRef, activeWorkspacePath.
  */
 
 import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
-import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
@@ -26,32 +25,12 @@ import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
 import type { WebPreferences } from "../boundaries/shell/types";
 import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
-import type { WorkspaceRef } from "../shared/api/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
-import type {
-  SwitchWorkspaceHookResult,
-  ActivateHookInput,
-  WorkspaceSwitchedEvent,
-} from "../intents/switch-workspace";
 import type { ShutdownHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
-import type {
-  HibernatePipelineHookInput,
-  HibernateShutdownHookResult,
-} from "../intents/hibernate-workspace";
-import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import {
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  type ResolveHookInput,
-  type ResolveHookResult,
-} from "../intents/resolve-workspace";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
 import { projectPathSchema } from "../intents/contract";
 
@@ -96,18 +75,6 @@ export interface ViewModuleDeps {
  */
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager } = deps;
-
-  // Internal state
-  let cachedActiveRef: WorkspaceRef | null = null;
-  /**
-   * The actual active surface, fed by the switch pipeline. Intentionally
-   * distinct from `cachedActiveRef`, which is a UI-level cache that sticks
-   * to the hibernating workspace during the fallbackToCurrent overlay window
-   * (see hibernate-workspace.ts). The resolve hook reports this value;
-   * delete/hibernate shutdown clears it so a later wake's switch is not
-   * short-circuited as "already active".
-   */
-  let activeWorkspacePath: string | null = null;
 
   const module: IntentModule = {
     name: "view",
@@ -165,95 +132,16 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // resolve-workspace → resolve: contribute `active` snapshot
-      //
-      // Sourced from `activeWorkspacePath` (the actual active surface), not
-      // from `cachedActiveRef` (a UI-level cache that intentionally sticks
-      // to the hibernating workspace during the fallbackToCurrent overlay
-      // window — see hibernate-workspace.ts). The switch operation uses this
-      // flag to decide whether to short-circuit; hibernate's shutdown hook
-      // clears it, otherwise wake would never re-activate the workspace.
-      // -------------------------------------------------------------------
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
-            const { workspacePath } = ctx as ResolveHookInput;
-            return { result: { active: activeWorkspacePath === workspacePath } };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // get-active-workspace → get: return cached active ref
-      // -------------------------------------------------------------------
-      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
-        get: {
-          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
-            return { result: { workspaceRef: cachedActiveRef } };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // switch-workspace → activate: record the new active surface
-      // (no-op if same). The renderer swaps the visible iframe when the
-      // workspace:switched event lands, and routes focus itself (gated on
-      // mode), so no view operation happens here.
-      // -------------------------------------------------------------------
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        activate: {
-          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-            const { workspacePath, active } = ctx as ActivateHookInput;
-
-            // Deselect: clear the active-workspace bookkeeping so a later
-            // switch back to it isn't short-circuited as already-active.
-            if (workspacePath === null) {
-              activeWorkspacePath = null;
-              return { result: {} };
-            }
-
-            if (active) {
-              return { result: {} };
-            }
-
-            activeWorkspacePath = workspacePath;
-            return { result: { resolvedPath: workspacePath } };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // delete-workspace → shutdown: clear main-side workspace state.
-      // The iframe itself unmounts in the renderer when workspace:removed
-      // lands; main only reports wasActive (drives the post-delete
-      // auto-switch) and clears its bookkeeping.
+      // delete-workspace → shutdown: report whether the deleted workspace was
+      // the active one, which drives the post-delete auto-switch. The active
+      // bookkeeping itself belongs to workspace-lifecycle-module; the iframe
+      // unmounts in the renderer off the presenter snapshot.
       // -------------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspacePath, active } = ctx as DeletePipelineHookInput;
-            if (activeWorkspacePath === workspacePath) {
-              activeWorkspacePath = null;
-            }
+            const { active } = ctx as DeletePipelineHookInput;
             return { result: { ...(active && { wasActive: true }) } };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // hibernate-workspace → shutdown: clear main-side workspace state.
-      // Clearing activeWorkspacePath here covers the fallbackToCurrent case
-      // (hibernating the only workspace keeps it "active" for the overlay):
-      // a later wake must not be short-circuited as already-active.
-      // -------------------------------------------------------------------
-      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
-        shutdown: {
-          handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
-            const { workspacePath } = ctx as HibernatePipelineHookInput;
-            if (activeWorkspacePath === workspacePath) {
-              activeWorkspacePath = null;
-            }
-            return { result: {} };
           },
         },
       },
@@ -307,29 +195,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
     },
 
     events: {
-      // -------------------------------------------------------------------
-      // workspace:switched → update cachedActiveRef + handle null (clear).
-      // The startup/loading surfaces are presenter-owned now; this handler
-      // keeps only the active-surface bookkeeping the switch pipeline reads.
-      // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_SWITCHED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceSwitchedEvent).payload;
-
-          if (payload === null) {
-            cachedActiveRef = null;
-            activeWorkspacePath = null;
-          } else {
-            cachedActiveRef = {
-              projectId: payload.projectId,
-              workspaceName: payload.workspaceName,
-              path: payload.path,
-            };
-            activeWorkspacePath = payload.path;
-          }
-        },
-      },
-
       // -------------------------------------------------------------------
       // ide-server:restarted → reload every workspace iframe. A resume
       // restart replaced the IDE server process, so each frame's connection
