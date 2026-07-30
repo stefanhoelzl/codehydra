@@ -1233,6 +1233,69 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(config).not.toHaveBeenCalled();
     });
 
+    it("asks the sidekick to close its agent terminal before hanging up", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // Ordering is the point: the close command and the "terminal closed"
+      // report both travel over this socket, so hanging up first would strand
+      // the agent process tree inside the worktree being removed.
+      let connectedWhenAsked = false;
+      client.on("command", (request, ack) => {
+        if (request.command === "codehydra.closeAgent") {
+          connectedWhenAsked = client.connected;
+          ack({ success: true, data: { closed: true } });
+          // Report the close as the real extension does, from onDidCloseTerminal.
+          client.emit("api:workspace:agentLifecycle", { event: "close" });
+          return;
+        }
+        ack({ success: true, data: undefined });
+      });
+
+      await startDeleting();
+      await waitForDisconnect(client);
+
+      expect(connectedWhenAsked).toBe(true);
+      expect(client.connected).toBe(false);
+    });
+
+    it("does not wait when there is no agent terminal to close", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // `closed: false` means nothing was open; waiting for a close event that
+      // will never arrive would stall the teardown for the full timeout.
+      client.on("command", (request, ack) => {
+        ack({
+          success: true,
+          data: request.command === "codehydra.closeAgent" ? { closed: false } : undefined,
+        });
+      });
+
+      const started = Date.now();
+      await startDeleting();
+      await waitForDisconnect(client);
+
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(client.connected).toBe(false);
+    });
+
+    it("gives up on a sidekick that never reports the close", async () => {
+      const client = createClient(wsPath(WS));
+      await waitForConnect(client);
+
+      // A wedged extension host must not block deletion forever — the Windows
+      // CWD scan is still there as the backstop.
+      client.on("command", (_request, ack) => {
+        ack({ success: true, data: { closed: true } });
+      });
+
+      await startDeleting();
+      await waitForDisconnect(client);
+
+      expect(client.connected).toBe(false);
+    }, 20_000);
+
     it("disconnects a client that was already connected", async () => {
       const client = createClient(wsPath(WS));
       await waitForConnect(client);
