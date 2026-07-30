@@ -120,6 +120,19 @@ type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents, object, So
 /** Fixed status bar item ID -- single entry per workspace. */
 const STATUS_BAR_ID = "mcp";
 
+/** Sidekick command that Ctrl+Cs the agent terminal and disposes it. */
+const CLOSE_AGENT_COMMAND = "codehydra.closeAgent";
+
+/**
+ * How long to wait for the agent terminal to actually close during teardown.
+ *
+ * Must exceed the extension's own force-dispose deadline (3s, see
+ * AGENT_CLOSE_TIMEOUT_MS in extensions/sidekick) so the graceful path gets to
+ * finish before we give up on it — after that the terminal is disposed either
+ * way and waiting longer only delays the teardown.
+ */
+const AGENT_CLOSE_TIMEOUT_MS = 5_000;
+
 // =============================================================================
 // Dependency Interfaces
 // =============================================================================
@@ -283,6 +296,102 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         resolve(result);
       });
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Graceful agent shutdown
+  // ---------------------------------------------------------------------------
+
+  /** Waiters for `api:workspace:agentLifecycle {event: "close"}`, by workspace. */
+  const agentClosedWaiters = new Map<string, Set<() => void>>();
+
+  /** Wake anything waiting for this workspace's agent terminal to close. */
+  function resolveAgentClosed(workspacePath: WorkspacePath): void {
+    const normalized = new Path(workspacePath).toString();
+    const waiters = agentClosedWaiters.get(normalized);
+    if (!waiters) return;
+    agentClosedWaiters.delete(normalized);
+    for (const waiter of waiters) waiter();
+  }
+
+  /**
+   * Ask the sidekick to close its agent terminal, and wait for it to actually
+   * go away.
+   *
+   * Teardown used to skip this entirely: nothing ever asked the agent to stop,
+   * so the terminal — and the whole tree below it, the shell, the agent CLI, and
+   * every MCP server the agent spawned — was still running with the workspace as
+   * its CWD when the worktree removal began. The Windows fallback then had to
+   * discover those processes with a ~10s scan and `taskkill /f` a list that had
+   * already gone stale, which is one of the two ways deletion lost this race.
+   *
+   * Ctrl+C is strictly better than killing the tree: the agent exits cleanly and
+   * takes its own MCP servers down with it, instead of us hunting their PIDs.
+   *
+   * Best-effort by construction — a workspace with no sidekick, no terminal, or
+   * a wedged extension host must not block the teardown. The Windows CWD scan
+   * remains as the backstop for whatever this does not reach.
+   */
+  async function closeAgentTerminal(workspacePath: WorkspacePath): Promise<void> {
+    const normalized = new Path(workspacePath).toString();
+    const socket = connections.get(normalized);
+    if (!socket?.connected) return;
+
+    // Register the waiter BEFORE sending: the extension can report the close
+    // between the command returning and us starting to wait.
+    let resolveWaiter!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      resolveWaiter = resolve;
+    });
+    const waiters = agentClosedWaiters.get(normalized) ?? new Set<() => void>();
+    waiters.add(resolveWaiter);
+    agentClosedWaiters.set(normalized, waiters);
+
+    try {
+      const result = await sendCommand(
+        workspacePath,
+        CLOSE_AGENT_COMMAND,
+        undefined,
+        AGENT_CLOSE_TIMEOUT_MS
+      );
+
+      // The command resolves as soon as it is invoked, not when the terminal is
+      // gone, so its payload only tells us whether there was anything to close.
+      // `closed: false` means no terminal existed — waiting would just burn the
+      // full timeout for nothing.
+      const data = result.success ? (result.data as { closed?: boolean } | undefined) : undefined;
+      if (!result.success || data?.closed !== true) {
+        logger.debug("No agent terminal to close", {
+          workspace: normalized,
+          ...(result.success ? {} : { error: result.error }),
+        });
+        return;
+      }
+
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timedOut = new Promise<"timeout">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timeout"), AGENT_CLOSE_TIMEOUT_MS);
+      });
+      try {
+        const outcome = await Promise.race([closed.then(() => "closed" as const), timedOut]);
+        if (outcome === "timeout") {
+          logger.warn("Agent terminal did not close in time; falling back to process cleanup", {
+            workspace: normalized,
+            timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+          });
+        } else {
+          logger.debug("Agent terminal closed", { workspace: normalized });
+        }
+      } finally {
+        clearTimeout(timeoutId!);
+      }
+    } finally {
+      const remaining = agentClosedWaiters.get(normalized);
+      if (remaining) {
+        remaining.delete(resolveWaiter);
+        if (remaining.size === 0) agentClosedWaiters.delete(normalized);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -816,6 +925,10 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         return;
       }
 
+      if (request.event === "close") {
+        resolveAgentClosed(workspacePath);
+      }
+
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
         payload: { workspacePath, event: request.event },
@@ -966,7 +1079,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
 
+            // Drop the config first: whatever happens below, the sidekick must
+            // not be handed the config again and reopen a terminal.
             removeWorkspaceConfig(normalized);
+
+            // Ask the agent to exit and wait for it, THEN hang up. The order
+            // matters — the close command and the "terminal closed" report both
+            // travel over this socket, so disconnecting first would leave the
+            // agent process tree running inside the worktree we are removing.
+            //
+            // This lives here rather than in the agent module because the agent
+            // module's shutdown handler `requires` the agent capability, which
+            // defers it to a later wave than this handler; it cannot run before
+            // the socket would otherwise be closed.
+            await closeAgentTerminal(normalized);
+
             connections.get(normalized)?.disconnect(true);
 
             return { result: {} };

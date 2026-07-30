@@ -223,10 +223,14 @@ const AGENT_CLOSE_SIGNAL_INTERVAL_MS = 500;
  * Sends repeated Ctrl+C signals to exit Claude Code, waits up to 3 seconds
  * for the terminal to close naturally (triggering WrapperEnd hook → gray status),
  * then force-disposes if still open.
+ *
+ * Returns whether there was a terminal to close. Closing itself is
+ * asynchronous — completion is reported to the main process by the
+ * onDidCloseTerminal listener, as the "close" agent lifecycle event.
  */
-function closeAgentTerminal(): void {
+function closeAgentTerminal(): boolean {
   if (!agentTerminal) {
-    return;
+    return false;
   }
 
   const terminal = agentTerminal;
@@ -251,6 +255,8 @@ function closeAgentTerminal(): void {
       disposable.dispose();
     }
   });
+
+  return true;
 }
 
 // ============================================================================
@@ -880,7 +886,12 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.closeAgent", () => {
-      closeAgentTerminal();
+      // Reports whether there was a terminal at all — not whether it has closed.
+      // Closing is asynchronous and is reported separately via the "close" agent
+      // lifecycle event; `closed: false` lets a caller waiting for that event
+      // skip the wait instead of burning its whole timeout on a workspace that
+      // never had a terminal open.
+      return { closed: closeAgentTerminal() };
     })
   );
 
