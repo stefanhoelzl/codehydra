@@ -1,14 +1,17 @@
 /**
- * AutoTaggingModule — stamps a "new" tag on workspaces created in the background
- * and clears it the first time the user switches to one.
+ * AutoTaggingModule — stamps a "new" tag on freshly created workspaces and clears
+ * it the first time the user switches to one.
  *
- * A background creation (agent-driven: MCP, plugin-server, auto-workspace) is one
- * the user never asked for interactively, so it can appear in the sidebar unnoticed.
- * The tag marks it as unseen; switching to it is what "seeing" means.
+ * The tag marks a workspace as unseen; switching to it is what "seeing" means.
+ * Every fresh creation gets it, not just agent-driven ones: a creation the user
+ * confirmed and then navigated away from is just as unvisited, and since a
+ * completing creation no longer steals the view back (open-workspace.ts), the tag
+ * is the only signal that it finished. One the user does land on has its tag
+ * cleared by that same landing switch, so it is never seen there.
  *
- * Background = `stealFocus === false` and no `existingWorkspace`. The second guard
- * matters: waking a hibernated workspace and re-discovering worktrees on startup both
- * re-run workspace:open with stealFocus false, and neither is a new workspace.
+ * Fresh creation = no `existingWorkspace`. That guard matters: waking a hibernated
+ * workspace and re-discovering worktrees on startup both re-run workspace:open,
+ * and neither is a new workspace.
  *
  * The tag is written from the "setup" hook rather than a workspace:created subscriber
  * so it rides along in the metadata the created event carries (see mergeMetadata in
@@ -57,7 +60,7 @@ export interface AutoTaggingModuleDeps {
 export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModule {
   const newTagConfig = deps.configService.register("auto-tag.new", {
     default: true,
-    description: 'Tag workspaces created in the background with "new" until first switched to',
+    description: 'Tag newly created workspaces with "new" until first switched to',
     applies: "live",
     ...storeBoolean(),
   });
@@ -74,9 +77,8 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
         setup: {
           handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             const { payload } = ctx.intent as OpenWorkspaceIntent;
-            const isBackgroundCreate =
-              payload.stealFocus === false && payload.existingWorkspace === undefined;
-            if (!isBackgroundCreate || !newTagConfig.get()) return {};
+            const isFreshCreate = payload.existingWorkspace === undefined;
+            if (!isFreshCreate || !newTagConfig.get()) return {};
 
             const { workspacePath } = ctx as SetupHookInput;
             try {

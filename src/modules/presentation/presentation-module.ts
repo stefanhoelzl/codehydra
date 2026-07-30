@@ -574,16 +574,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
-   * Set the active workspace, removing a creating placeholder when switching
-   * away from it (mirrors the renderer's applyActiveWorkspace).
+   * Set the active workspace.
+   *
+   * Deliberately does NOT evict a creating placeholder when the active
+   * workspace moves away from it. The legacy renderer did (applyActiveWorkspace)
+   * because its placeholders were keyed by a synthetic path and
+   * workspace:created inserted a *different* row under the real path, so the
+   * synthetic one had to be swept. Rows are keyed by workspace name here and
+   * workspace:created swaps the placeholder in place, so evicting only made an
+   * in-flight creation vanish from the sidebar until it finished — then pop
+   * back. A placeholder's lifetime is owned solely by workspace:created (swap)
+   * and workspace:create-failed (remove).
    */
   function applyActiveKey(next: string | null): void {
-    if (activeKey !== null && activeKey !== next) {
-      const current = findByKey(activeKey);
-      if (current?.workspace.creating) {
-        current.project.workspaces.delete(current.workspace.name);
-      }
-    }
     activeKey = next;
   }
 
@@ -748,8 +751,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // sidebar — the view yanks out from under the cursor. This interceptor
   // downgrades such a request to stealFocus: false whenever the sidebar is
   // expanded (mode !== "workspace"), so the open still happens but the view
-  // stays put; the arriving row flashes (Sidebar's in:arrivalFlash) and picks
-  // up the blue "new" tag (auto-tagging keys off stealFocus === false) instead.
+  // stays put. The row itself is unaffected: workspace:loading now fires for
+  // every fresh creation, so it arrives (flashing via Sidebar's in:arrivalFlash)
+  // the moment the open starts either way — only whether it takes the view
+  // depends on this. Its blue "new" tag clears on the first switch to it.
   //
   // Interactive sources (ui-ipc, creation, open-project) are never touched, so
   // clicking a hibernated row or creating from the New workspace panel still
@@ -1239,22 +1244,30 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /**
    * Up/down navigation. Wraps at boundaries; when nothing is active (creation
    * panel) Up → last and Down → first. Targets the workspace's real path; a
-   * still-creating placeholder (null path) is not a valid target.
+   * still-creating placeholder (null path) is not a valid target, so it is
+   * stepped over rather than stopped on — placeholders stay in the list for the
+   * whole creation now, so one can sit anywhere between two navigable rows.
    */
   function handleNavigation(direction: -1 | 1): void {
     const entries = currentRows();
     if (entries.length === 0) return;
     const currentIndex = entries.findIndex((e) => e.row.active);
-    const nextIndex =
+    const startIndex =
       currentIndex === -1
         ? direction === 1
           ? 0
           : entries.length - 1
         : wrapIndex(currentIndex + direction, entries.length);
-    if (nextIndex === currentIndex) return;
-    const target = entries[nextIndex];
-    if (!target || target.workspace.path === null) return;
-    navigateSwitch(target.workspace.path);
+    for (let i = 0; i < entries.length; i++) {
+      const index = wrapIndex(startIndex + i * direction, entries.length);
+      // Wrapped back to where we started: nothing else is navigable.
+      if (index === currentIndex) return;
+      const target = entries[index];
+      if (target && target.workspace.path !== null) {
+        navigateSwitch(target.workspace.path);
+        return;
+      }
+    }
   }
 
   /**
@@ -1308,7 +1321,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     navigateSwitch(target.workspace.path);
   }
 
-  /** Jump to the Nth awake workspace (hibernated workspaces are unnumbered). */
+  /**
+   * Jump to the Nth awake workspace (hibernated workspaces are unnumbered).
+   *
+   * A still-creating placeholder keeps its number and the jump is a no-op:
+   * skipping it would renumber every row below it the instant the creation
+   * completes, and numbering that shifts under the user's fingers is worse than
+   * one temporarily dead key.
+   */
   function handleJump(key: JumpKey): void {
     const index = jumpKeyToIndex(key);
     const target = currentRows().filter((e) => !e.row.hibernated)[index];
@@ -1475,7 +1495,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           // A wake delivers a fresh URL; any cached screenshot is stale.
           screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
         }
-        if (p.stealFocus !== false) {
+        // Adopt the finished workspace only when nothing is active. Staying on
+        // the creation already leaves activeKey on this very key (the
+        // placeholder), so that case is a no-op; having navigated away
+        // mid-creation, the user must NOT be yanked back when it completes —
+        // the operation declines its switch for the same reason, and the row
+        // (plus its "new" tag) is the signal that it finished.
+        if (p.stealFocus !== false && activeKey === null) {
           applyActiveKey(workspaceKey(p.projectId, p.workspaceName));
         }
         scheduleUpdate();
@@ -1503,8 +1529,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         });
         // Landing in the creating placeholder is the visual confirmation the
         // workspace is being made (activating it also leaves the creation
-        // panel, which only shows while nothing is active).
-        activeKey = workspaceKey(project.id, p.workspaceName);
+        // panel, which only shows while nothing is active). A background
+        // creation shows the row from the same moment but must not take the
+        // view — visibility and focus are separate concerns.
+        if (p.stealFocus !== false) {
+          activeKey = workspaceKey(project.id, p.workspaceName);
+        }
         scheduleUpdate();
       },
     },

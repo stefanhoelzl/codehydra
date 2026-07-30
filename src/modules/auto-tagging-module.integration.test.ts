@@ -219,7 +219,7 @@ function openIntent(payload: Partial<OpenWorkspacePayload> = {}): OpenWorkspaceI
 }
 
 describe("AutoTaggingModule", () => {
-  describe("tagging background creations", () => {
+  describe("tagging fresh creations", () => {
     it("tags a background create and carries the tag in the workspace:created event", async () => {
       // An active workspace means the operation won't switch — the realistic
       // background case (an agent creating a workspace while you work elsewhere).
@@ -236,19 +236,36 @@ describe("AutoTaggingModule", () => {
       expect(workspace.metadata[NEW_TAG_KEY]).toBe(NEW_TAG_VALUE);
     });
 
-    it("does not tag a foreground create (stealFocus omitted)", async () => {
+    it("tags a foreground create too — the user may not be there when it lands", async () => {
+      // A completing creation no longer steals the view back, so a foreground
+      // create the user walked away from is just as unvisited as an
+      // agent-driven one. Staying on it clears the tag via the landing switch
+      // (covered below), so nothing is left stranded.
       const setup = createTestSetup({ activeWorkspace: OTHER_WORKSPACE_PATH });
 
       await setup.dispatcher.dispatch(openIntent());
 
-      expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBeUndefined();
-      expect(setup.writes).toHaveLength(0);
+      expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBe(NEW_TAG_VALUE);
     });
 
-    it("does not tag when stealFocus is true", async () => {
+    it("tags when stealFocus is true", async () => {
       const setup = createTestSetup({ activeWorkspace: OTHER_WORKSPACE_PATH });
 
       await setup.dispatcher.dispatch(openIntent({ stealFocus: true }));
+
+      expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBe(NEW_TAG_VALUE);
+    });
+
+    it("clears the tag again when the user lands on the new workspace", async () => {
+      // The whole reason tagging every creation is safe: switching to it is
+      // what "seeing" means, and a foreground create the user waits for is
+      // switched to the moment it completes.
+      const setup = createTestSetup({ activeWorkspace: OTHER_WORKSPACE_PATH });
+
+      await setup.dispatcher.dispatch(openIntent());
+      expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBe(NEW_TAG_VALUE);
+
+      await switchTo(setup, WORKSPACE_PATH);
 
       expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBeUndefined();
     });
