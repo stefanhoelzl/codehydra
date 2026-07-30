@@ -611,6 +611,108 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
   });
 
+  it("a background workspace:loading shows the placeholder without taking the view", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
+
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "agent-made",
+      projectPath: PROJECT_PATH,
+      stealFocus: false,
+    });
+    await flush();
+
+    const snapshot = lastSnapshot(deps);
+    // The row appears the moment the creation starts — visibility and focus are
+    // separate decisions — but the user stays where they were.
+    expect(
+      snapshot.sidebar.projects[0]!.workspaces.map((w) => [w.name, w.status, w.active])
+    ).toEqual([
+      ["agent-made", "creating", false],
+      ["feat", "ready", true],
+    ]);
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+  });
+
+  it("a creating placeholder survives switching away from it", async () => {
+    // The disappear/reappear regression: walking away from an in-flight
+    // creation used to evict its row, which then popped back on
+    // workspace:created.
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "deps",
+      projectPath: PROJECT_PATH,
+    });
+
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
+    await flush();
+
+    const snapshot = lastSnapshot(deps);
+    expect(
+      snapshot.sidebar.projects[0]!.workspaces.map((w) => [w.name, w.status, w.active])
+    ).toEqual([
+      ["deps", "creating", false],
+      ["feat", "ready", true],
+    ]);
+  });
+
+  it("workspace:created does not pull the view back after the user moved on", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "deps",
+      projectPath: PROJECT_PATH,
+    });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
+
+    await emit(module, EVENT_WORKSPACE_CREATED, {
+      projectId: PROJECT_ID,
+      workspaceName: "deps" as WorkspaceName,
+      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
+      projectPath: PROJECT_PATH,
+      branch: "deps",
+      metadata: {},
+      workspaceUrl: "http://127.0.0.1:1/deps",
+    });
+    await flush();
+
+    const snapshot = lastSnapshot(deps);
+    expect(
+      snapshot.sidebar.projects[0]!.workspaces.map((w) => [w.name, w.status, w.active])
+    ).toEqual([
+      ["deps", "ready", false],
+      ["feat", "ready", true],
+    ]);
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+  });
+
+  it("workspace:created adopts the new workspace when nothing is active", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    await emit(module, EVENT_WORKSPACE_CREATED, {
+      projectId: PROJECT_ID,
+      workspaceName: "deps" as WorkspaceName,
+      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
+      projectPath: PROJECT_PATH,
+      branch: "deps",
+      metadata: {},
+      workspaceUrl: "http://127.0.0.1:1/deps",
+    });
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/deps` });
+  });
+
   it("workspace:loading is name-guarded against existing workspaces", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
@@ -2017,6 +2119,24 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(dispatched).toEqual([
       { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
       { type: "workspace:switch", payload: { workspacePath: pathOf("a"), focus: false } },
+    ]);
+  });
+
+  it("navigation steps over a still-creating row instead of stopping on it", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "c"], "a");
+    // "b" sorts between them and has no path yet — nothing to switch to.
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "b",
+      projectPath: PROJECT_PATH,
+      stealFocus: false,
+    });
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "down");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
     ]);
   });
 

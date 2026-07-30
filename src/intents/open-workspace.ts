@@ -194,6 +194,9 @@ const workspaceLoadingSchema = z
     projectPath: projectPathSchema,
     /** The requested base branch (absent when auto-detected later). */
     base: z.string().optional(),
+    /** Mirrors the intent's stealFocus. The placeholder row is shown either
+     *  way; `false` means it must not become the active workspace. */
+    stealFocus: z.boolean().optional(),
   })
   .readonly();
 
@@ -291,11 +294,14 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   ): Promise<OpenWorkspaceResult> {
     const { projectPath } = ctx.intent.payload;
 
-    // Show loading dialog for foreground workspace creations.
-    // project:open passes stealFocus=false to suppress this during silent
-    // re-discovery on startup; the wake/reopen path leaves stealFocus
-    // unset so users see a spinner while the agent restarts.
-    const showLoading = ctx.intent.payload.stealFocus !== false;
+    // Announce every fresh worktree creation, foreground or background: the
+    // placeholder row is how the user learns a creation started, and gating it
+    // on stealFocus left an agent-driven creation invisible until it finished —
+    // or visible, depending only on whether the sidebar happened to be expanded
+    // (suppress-background-focus). Focus is a separate decision, carried in the
+    // payload. Reopens (wake, startup re-discovery) pass existingWorkspace and
+    // are not creations: their row already exists.
+    const showLoading = ctx.intent.payload.existingWorkspace === undefined;
 
     if (showLoading) {
       ctx.emit({
@@ -304,6 +310,9 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
           workspaceName: ctx.intent.payload.workspaceName,
           projectPath,
           ...(ctx.intent.payload.base !== undefined && { base: ctx.intent.payload.base }),
+          ...(ctx.intent.payload.stealFocus !== undefined && {
+            stealFocus: ctx.intent.payload.stealFocus,
+          }),
         },
       } satisfies WorkspaceLoadingEvent);
     }
@@ -334,6 +343,19 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       payload: { projectPath },
     });
     const resolvedProjectId = projResolved.projectId;
+
+    // Baseline for the focus decision at the end. The presenter's creating
+    // placeholder is view-model-only — nothing activates it main-side — so the
+    // active ref still points at wherever the user was when this started. If it
+    // has moved by the time we finish, they deliberately went elsewhere and
+    // completing must not yank them back. Only the focus-stealing path needs it.
+    const trackFocus = ctx.intent.payload.stealFocus !== false;
+    const activeAtStart = trackFocus
+      ? await ctx.dispatch<GetActiveWorkspaceIntent>({
+          type: INTENT_GET_ACTIVE_WORKSPACE,
+          payload: {},
+        })
+      : null;
 
     // Hook: "create" — worktree creation (fatal on error)
     const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
@@ -452,19 +474,20 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     };
     ctx.emit(event);
 
-    // Switch to new workspace unless stealFocus is false with an existing active workspace.
-    // When stealFocus is false but no workspace is active, still switch so the user
-    // sees the new workspace rather than an empty view.
-    let shouldSwitch: boolean;
-    if (ctx.intent.payload.stealFocus !== false) {
-      shouldSwitch = true;
-    } else {
-      const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {},
-      });
-      shouldSwitch = activeWorkspace === null;
-    }
+    // Focus decision. stealFocus false: switch only when nothing is active, so
+    // the user sees the new workspace rather than an empty view. Otherwise:
+    // switch only if the active workspace is still the one this creation
+    // started from — unchanged means the user waited for it (or was on the
+    // creation panel, null → null) and lands on it; changed means they moved on
+    // mid-creation, and a completion that steals the view back is exactly the
+    // yank this avoids.
+    const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
+      type: INTENT_GET_ACTIVE_WORKSPACE,
+      payload: {},
+    });
+    const shouldSwitch = trackFocus
+      ? activeWorkspace?.path === activeAtStart?.path
+      : activeWorkspace === null;
 
     if (shouldSwitch) {
       await ctx.dispatch<SwitchWorkspaceIntent>({
