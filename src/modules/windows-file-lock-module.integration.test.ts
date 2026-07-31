@@ -237,7 +237,8 @@ describe("WindowsFileLockModule Integration", () => {
               exitCode: 0,
             };
           }
-          // taskkill: success
+          // any later spawn (there should be none — the kill no longer shells
+          // out to taskkill from this module)
           return { exitCode: 0 };
         },
       });
@@ -252,10 +253,9 @@ describe("WindowsFileLockModule Integration", () => {
         expect.arrayContaining(["-Action", "DetectCwd", "-File", SCRIPT_PATH])
       );
 
-      // Verify kill was called
-      const killProc = runner.$.spawned(1);
-      expect(killProc.$.command).toBe("taskkill");
-      expect(killProc.$.args).toEqual(["/pid", "1234", "/t", "/f"]);
+      // The kill goes through the boundary now, which waits for the process to
+      // actually be gone rather than assuming a returning taskkill means dead.
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("skips when force=true", async () => {
@@ -266,16 +266,44 @@ describe("WindowsFileLockModule Integration", () => {
       expect(() => runner.$.spawned(0)).toThrow();
     });
 
-    it("swallows errors from detection", async () => {
+    it("reports a timed-out scan instead of silently passing", async () => {
       runner = createMockProcessRunner({
         onSpawn: () => ({ exitCode: null, running: true }),
       });
 
       const dispatcher = createReleaseSetup(runner);
-      const result = await dispatcher.dispatch(makeDeleteIntent());
+      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
 
-      // No error propagated
-      expect(result).toEqual({});
+      // Non-fatal — the removal is still attempted — but a scan that never
+      // finished must not look like a scan that found nothing. This used to be
+      // discarded by a bare catch, leaving the user with a failed deletion and
+      // a dialog claiming nothing was blocking.
+      expect(result.error).toContain("scan timed out");
+    });
+
+    it("reports processes it could not terminate", async () => {
+      let callIndex = 0;
+      runner = createMockProcessRunner({
+        onSpawn: () => {
+          callIndex++;
+          if (callIndex === 1) {
+            return {
+              stdout: createDetectJson([
+                { pid: 1234, name: "node.exe", commandLine: "node server.js", cwd: "." },
+              ]),
+              exitCode: 0,
+            };
+          }
+          return { exitCode: 0 };
+        },
+        onKill: () => ({ success: false }),
+      });
+
+      const dispatcher = createReleaseSetup(runner);
+      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
+
+      expect(result.error).toContain("node.exe");
+      expect(result.error).toContain("1234");
     });
 
     it("skips kill when no processes detected", async () => {
@@ -286,9 +314,9 @@ describe("WindowsFileLockModule Integration", () => {
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // Only detection was spawned, no taskkill
+      // Only detection was spawned, and nothing was killed
       expect(runner.$.spawned(0).$.command).toBe("powershell");
-      expect(() => runner.$.spawned(1)).toThrow();
+      expect(runner.$.killedPids).toEqual([]);
     });
   });
 
@@ -330,7 +358,7 @@ describe("WindowsFileLockModule Integration", () => {
       expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["-Action", "Detect"]));
     });
 
-    it("returns empty array on timeout", async () => {
+    it("reports 'could not determine' on timeout rather than a clean empty scan", async () => {
       runner = createMockProcessRunner({
         onSpawn: () => ({ exitCode: null, running: true }),
       });
@@ -340,7 +368,11 @@ describe("WindowsFileLockModule Integration", () => {
 
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as DetectHookResult;
 
+      // Empty AND an error. Without the error the progress row renders as
+      // "Detecting blocking processes... done", telling the user nothing is
+      // blocking the removal that just refused to proceed.
       expect(result.blockingProcesses).toEqual([]);
+      expect(result.error).toContain("scan timed out");
       const warnings = logger.getMessagesByLevel("warn");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]!.message).toBe("Blocking process detection timed out");
@@ -360,26 +392,28 @@ describe("WindowsFileLockModule Integration", () => {
       const dispatcher = createFlushSetup(runner, [1234, 5678]);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      expect(runner.$.spawned(0).$.command).toBe("taskkill");
-      expect(runner.$.spawned(0).$.args).toEqual(["/pid", "1234", "/pid", "5678", "/t", "/f"]);
+      expect(runner.$.killedPids).toEqual([1234, 5678]);
     });
 
-    it("returns error on failure", async () => {
+    it("names the PIDs that survived termination", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => ({ exitCode: 1, stderr: "access denied" }),
+        onKill: (pid) => (pid === 1234 ? { success: false } : undefined),
       });
 
-      const dispatcher = createFlushSetup(runner, [1234]);
+      const dispatcher = createFlushSetup(runner, [1234, 5678]);
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as FlushHookResult;
 
-      expect(result.error).toContain("Failed to kill processes");
+      // The point of waiting: a process that ignored the kill is reportable,
+      // instead of the removal failing later with an unexplained EBUSY.
+      expect(result.error).toContain("1234");
+      expect(result.error).not.toContain("5678");
     });
 
     it("skips kill when blockingPids is empty", async () => {
       const dispatcher = createFlushSetup(runner, []);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      // No processes spawned
+      expect(runner.$.killedPids).toEqual([]);
       expect(() => runner.$.spawned(0)).toThrow();
     });
   });
@@ -445,7 +479,7 @@ describe("WindowsFileLockModule Integration", () => {
       await dispatcher.dispatch(makeHibernateIntent());
 
       expect(runner.$.spawned(0).$.command).toBe("powershell");
-      expect(runner.$.spawned(1).$.command).toBe("taskkill");
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("swallows errors from detection during hibernation", async () => {

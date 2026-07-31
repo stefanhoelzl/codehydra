@@ -1074,6 +1074,18 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
             const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
 
             closingWorkspaces.add(normalized);
+            // "agent-stopped" is provided on EVERY path — including the early
+            // returns inside closeAgentTerminal (no sidekick socket, no terminal
+            // to close), a close that timed out, and a thrown error. It does not
+            // claim the agent died; it means "we are done trying".
+            //
+            // It must be unconditional because handlers gated on it (the
+            // presenter's IDE-frame release) have to run for a workspace with no
+            // sidekick too. A throwing handler never merges its `provides`
+            // (dispatcher.ts) and its dependents are then skipped, so anything
+            // conditional here would strand the frame mounted — which is exactly
+            // the state that lets the agent survive the worktree removal.
+            let error: string | undefined;
             try {
               // Drop the config first. From here on a connecting sidekick gets
               // `env: null, agentType: null` and arms nothing — this, not the
@@ -1092,11 +1104,19 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
               await closeAgentTerminal(normalized);
 
               connections.get(normalized)?.disconnect(true);
+            } catch (err) {
+              // Reported as a result error rather than rethrown: the operation
+              // treats both the same way (mergeShutdown folds collect errors and
+              // result errors together), but returning lets us still provide.
+              error = getErrorMessage(err);
             } finally {
               closingWorkspaces.delete(normalized);
             }
 
-            return { result: {} };
+            return {
+              result: error === undefined ? {} : { error },
+              provides: { "agent-stopped": true },
+            };
           },
         },
         delete: {

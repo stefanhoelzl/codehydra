@@ -15,11 +15,26 @@
  * - workspace-lifecycle-module claims the workspace, and the git and sidekick
  *   paths refuse to start new work in it,
  * - the plugin server asks the agent to exit and waits for it,
- * - the presenter unmounts the IDE frame so the IDE server lets go.
+ * - the presenter releases the IDE frame so the IDE server lets go — but only
+ *   AFTER the above, gated on the "agent-stopped" capability. Releasing it
+ *   earlier disconnects the IDE client out from under the agent exit, which
+ *   orphans the agent in the workspace and is what this module then cannot fix.
  *
  * What is left for this module is what none of that can reach: processes we do
  * not own — a user's own shell sitting in the workspace, an external editor,
- * antivirus, the search indexer. Keep it best-effort and keep it cheap.
+ * antivirus, the search indexer.
+ *
+ * Two things follow from "backstop", and both were got wrong before:
+ * - Being cheap is not the goal; being *bounded* is. A scan that gives up early
+ *   returns nothing, and nothing is indistinguishable from "all clear" — which
+ *   is how a deletion came to fail while the dialog reported no blockers. The
+ *   budgets below are ceilings, not delays: a scan that finishes fast is
+ *   unaffected by a generous one, so the pre-removal scan gets room to finish
+ *   and only the post-failure scan (where a user waits on a dialog) starts
+ *   short, escalating once it has proven the short budget insufficient.
+ * - A kill is not done when the kill *command* returns. Termination is
+ *   asynchronous, so every kill here goes through ProcessRunner.kill, which
+ *   waits for the process to actually be gone and reports the ones that aren't.
  *
  * Hooks:
  * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort)
@@ -27,8 +42,8 @@
  * - delete-workspace → flush: kill PIDs collected by detect
  * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  *
- * Detection uses blocking-processes.ps1 with Restart Manager API, NtQuerySystemInformation,
- * and taskkill for process termination.
+ * Detection uses blocking-processes.ps1 (Restart Manager API for file handles,
+ * PEB reads for CWD); termination goes through the ProcessRunner boundary.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -77,17 +92,44 @@ interface DetectOutput {
 const MAX_FILES_PER_PROCESS = 20;
 
 /**
- * Timeout for detect operations.
+ * Timeout for the post-failure "Detect" scan.
  *
  * This runs only after a removal already failed, and the user is sitting in
  * front of a dialog that cannot tell them anything until it returns — 30s of
  * that produced a 63-second failed deletion in one user's logs, and then
- * reported no blockers anyway. The scan is dominated by PowerShell startup and
- * Add-Type compilation, so a shorter budget mostly cuts dead waiting.
+ * reported no blockers anyway. So the FIRST attempt gets a short budget: fail
+ * fast and say "could not determine" rather than stalling the dialog.
+ *
+ * When it does time out we escalate (see DETECT_TIMEOUT_ESCALATED_MS): a
+ * timeout is a ceiling, not a delay, so a bigger one costs nothing on the runs
+ * that finish quickly, and by the time the user is retrying they have already
+ * accepted that this is going slowly.
  */
 const DETECT_TIMEOUT_MS = 8_000;
 
-/** Timeout for taskkill */
+/**
+ * Budget for "Detect" once a scan has already timed out in this session.
+ *
+ * A scan blowing its budget is a property of the machine — process count and
+ * load — not of the workspace being deleted, which is why the escalation is
+ * module-wide rather than keyed by path.
+ */
+const DETECT_TIMEOUT_ESCALATED_MS = 45_000;
+
+/**
+ * Timeout for the pre-emptive CWD scan in the "release" hook.
+ *
+ * Deliberately generous, and NOT the same budget as the post-failure Detect
+ * above. Nothing is waiting on a dialog here — this runs before the removal is
+ * attempted, and its whole job is to find the processes that would make that
+ * removal fail. Returning empty because the clock ran out doesn't save the user
+ * any time; it just moves the failure later and strips the explanation. Since
+ * the timeout only bounds a scan that is genuinely stuck, a larger one costs
+ * nothing on a machine where the scan completes.
+ */
+const DETECT_CWD_TIMEOUT_MS = 45_000;
+
+/** Wait after signalling a blocking process before declaring it a survivor. */
 const KILL_TIMEOUT_MS = 5_000;
 
 // =============================================================================
@@ -162,6 +204,20 @@ function isValidBlockingProcess(
 }
 
 /**
+ * Outcome of a scan.
+ *
+ * `timedOut` exists because an empty `processes` list is otherwise ambiguous:
+ * it means either "nothing is holding this directory" or "we never found out".
+ * Collapsing the two is what let a deletion fail while the dialog reported
+ * "Detecting blocking processes… done" with no blockers — the app asserting a
+ * clean bill of health on the one thing that was actually wrong.
+ */
+export interface DetectScanResult {
+  readonly processes: BlockingProcess[];
+  readonly timedOut: boolean;
+}
+
+/**
  * Run a detect action using the blocking-processes.ps1 script.
  * Exported for boundary tests.
  */
@@ -170,8 +226,9 @@ export async function runDetectAction(
   scriptPath: string,
   path: Path,
   action: "Detect" | "DetectCwd",
-  logger: Logger
-): Promise<BlockingProcess[]> {
+  logger: Logger,
+  timeoutMs: number
+): Promise<DetectScanResult> {
   const proc = processRunner.run("powershell", [
     "-NoProfile",
     "-NonInteractive",
@@ -185,15 +242,16 @@ export async function runDetectAction(
     action,
   ]);
 
-  const result = await proc.wait(DETECT_TIMEOUT_MS);
+  const result = await proc.wait(timeoutMs);
 
   if (result.running) {
     logger.warn("Blocking process detection timed out", {
       path: path.toString(),
       action,
+      timeoutMs,
     });
     await proc.kill(1000, 1000);
-    return [];
+    return { processes: [], timedOut: true };
   }
 
   if (result.exitCode !== 0) {
@@ -203,43 +261,52 @@ export async function runDetectAction(
       exitCode: result.exitCode,
       stderr: result.stderr,
     });
-    return [];
+    return { processes: [], timedOut: false };
   }
 
-  return parseDetectOutput(result.stdout, logger);
+  return { processes: parseDetectOutput(result.stdout, logger), timedOut: false };
 }
 
 /**
- * Kill processes by their PIDs using taskkill.
- * Exported for boundary tests.
+ * Terminate blocking processes and wait for each to actually be gone.
+ *
+ * Returns the PIDs that were still alive afterwards. Exported for boundary tests.
+ *
+ * This used to shell out to a single `taskkill /pid … /t /f` and check its exit
+ * code — which tells you taskkill was *invoked*, not that anything died.
+ * Termination is asynchronous: the call returns before the OS has torn the
+ * process down, so the worktree removal that follows a few milliseconds later
+ * raced the very cleanup it had just requested. `ProcessRunner.kill` waits, and
+ * reports per PID, so a process that refuses to die becomes something we can
+ * name to the user instead of an unexplained EBUSY.
  */
 export async function killBlockingProcesses(
   processRunner: ProcessRunner,
   pids: number[],
   logger: Logger
-): Promise<void> {
+): Promise<number[]> {
   if (pids.length === 0) {
-    return;
+    return [];
   }
-
-  // Build taskkill arguments: /pid X /pid Y /t /f
-  const args: string[] = [];
-  for (const pid of pids) {
-    args.push("/pid", String(pid));
-  }
-  args.push("/t", "/f");
 
   logger.info("Killing blocking processes", {
     pids: pids.join(","),
   });
 
-  const killProc = processRunner.run("taskkill", args);
-  const result = await killProc.wait(KILL_TIMEOUT_MS);
+  const outcomes = await Promise.all(
+    pids.map(async (pid) => ({
+      pid,
+      result: await processRunner.kill(pid, KILL_TIMEOUT_MS, KILL_TIMEOUT_MS),
+    }))
+  );
 
-  if (result.exitCode !== 0) {
-    const failedPids = pids.join(", ");
-    throw new Error(`Failed to kill processes (PIDs: ${failedPids}): ${result.stderr}`);
+  const survivors = outcomes.filter((o) => !o.result.success).map((o) => o.pid);
+  if (survivors.length > 0) {
+    logger.warn("Blocking processes survived termination", {
+      pids: survivors.join(","),
+    });
   }
+  return survivors;
 }
 
 // =============================================================================
@@ -253,6 +320,16 @@ interface WindowsFileLockModuleDeps {
 }
 
 export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): IntentModule {
+  /**
+   * Whether a "Detect" scan has already blown its budget in this session.
+   *
+   * Module-wide on purpose: a scan that cannot finish in 8s says something
+   * about this machine's process count and load, not about the workspace that
+   * happened to be deleted first. Never reset — the escalated budget is a
+   * ceiling, so carrying it costs nothing on the runs that finish quickly.
+   */
+  let detectHasTimedOut = false;
+
   return {
     name: "windows-file-lock",
     requires: { platform: "win32" },
@@ -267,8 +344,8 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
               return { result: {} };
             }
 
-            await runCwdReleaseKill(deps, workspacePath, "deletion");
-            return { result: {} };
+            const error = await runCwdReleaseKill(deps, workspacePath, "deletion");
+            return { result: error === undefined ? {} : { error } };
           },
         },
         detect: {
@@ -276,20 +353,34 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
-              const detected = await runDetectAction(
+              const scan = await runDetectAction(
                 deps.processRunner,
                 deps.scriptPath,
                 new Path(workspacePath),
                 "Detect",
-                deps.logger
+                deps.logger,
+                detectHasTimedOut ? DETECT_TIMEOUT_ESCALATED_MS : DETECT_TIMEOUT_MS
               );
-              return { result: { blockingProcesses: detected } };
+              if (scan.timedOut) {
+                // Escalate so a retry — which the user is about to reach for,
+                // since we just told them the removal failed — gets a budget
+                // that can actually finish.
+                detectHasTimedOut = true;
+                return {
+                  result: {
+                    blockingProcesses: [],
+                    error:
+                      "Could not determine which processes hold the workspace (scan timed out)",
+                  },
+                };
+              }
+              return { result: { blockingProcesses: scan.processes } };
             } catch (error) {
               deps.logger.warn("Detection failed", {
                 workspacePath,
                 error: getErrorMessage(error),
               });
-              return { result: { blockingProcesses: [] } };
+              return { result: { blockingProcesses: [], error: getErrorMessage(error) } };
             }
           },
         },
@@ -298,7 +389,16 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             const { blockingPids } = ctx as FlushHookInput;
             if (blockingPids.length > 0) {
               try {
-                await killBlockingProcesses(deps.processRunner, [...blockingPids], deps.logger);
+                const survivors = await killBlockingProcesses(
+                  deps.processRunner,
+                  [...blockingPids],
+                  deps.logger
+                );
+                if (survivors.length > 0) {
+                  return {
+                    result: { error: `Could not terminate pid ${survivors.join(", ")}` },
+                  };
+                }
               } catch (error) {
                 return { result: { error: getErrorMessage(error) } };
               }
@@ -311,6 +411,9 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
         release: {
           handler: async (ctx: HookContext): Promise<HookOutput<HibernateReleaseHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
+            // Hibernation has no error channel on its release result and no
+            // removal to explain, so the outcome is logged (inside
+            // runCwdReleaseKill) rather than reported.
             await runCwdReleaseKill(deps, workspacePath, "hibernation");
             return { result: {} };
           },
@@ -320,31 +423,56 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
   };
 }
 
+/**
+ * Scan for processes with a CWD under the workspace and kill them.
+ *
+ * Returns a message when something went wrong, rather than swallowing it. The
+ * failure is still non-fatal — the caller reports it and carries on — but a
+ * process we could not kill is the single most actionable thing we can put in
+ * front of a user whose deletion then fails on a locked directory, and it used
+ * to be discarded by a bare `catch {}`.
+ */
 async function runCwdReleaseKill(
   deps: WindowsFileLockModuleDeps,
   workspacePath: string,
   phase: "deletion" | "hibernation"
-): Promise<void> {
+): Promise<string | undefined> {
   try {
-    const cwdProcesses = await runDetectAction(
+    const scan = await runDetectAction(
       deps.processRunner,
       deps.scriptPath,
       new Path(workspacePath),
       "DetectCwd",
+      deps.logger,
+      DETECT_CWD_TIMEOUT_MS
+    );
+    if (scan.timedOut) {
+      return "Could not determine which processes hold the workspace (scan timed out)";
+    }
+    if (scan.processes.length === 0) {
+      return undefined;
+    }
+
+    deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
+      workspacePath,
+      pids: scan.processes.map((p) => p.pid).join(","),
+    });
+    const survivors = await killBlockingProcesses(
+      deps.processRunner,
+      scan.processes.map((p) => p.pid),
       deps.logger
     );
-    if (cwdProcesses.length > 0) {
-      deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
-        workspacePath,
-        pids: cwdProcesses.map((p) => p.pid).join(","),
-      });
-      await killBlockingProcesses(
-        deps.processRunner,
-        cwdProcesses.map((p) => p.pid),
-        deps.logger
-      );
+    if (survivors.length > 0) {
+      const named = survivors
+        .map((pid) => {
+          const proc = scan.processes.find((p) => p.pid === pid);
+          return proc ? `${proc.name} (pid ${pid})` : `pid ${pid}`;
+        })
+        .join(", ");
+      return `Could not terminate: ${named}`;
     }
-  } catch {
-    // Non-fatal: CWD detection/kill failure shouldn't block the operation
+    return undefined;
+  } catch (error) {
+    return getErrorMessage(error);
   }
 }

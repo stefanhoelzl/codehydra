@@ -638,6 +638,13 @@ export class GitWorktreeProvider {
           path: workspacePath.toString(),
           error: getErrorMessage(error),
         });
+        // Time the fallback. `fs.rm`'s internal retries are invisible from
+        // here — a removal rescued on the third attempt looks exactly like one
+        // that succeeded immediately — so the only signal that a holder let go
+        // late (rather than never having been there) is how long this took.
+        // Without it, "should the retry budget go up or down?" is unanswerable
+        // from a bug report, which is precisely where that question lands.
+        const rmStart = Date.now();
         try {
           await this.fileSystemLayer.rm(workspacePath, {
             recursive: true,
@@ -647,7 +654,10 @@ export class GitWorktreeProvider {
             timeout: GitWorktreeProvider.RM_FALLBACK_TIMEOUT_MS,
           });
           await this.gitClient.pruneWorktrees(projectRoot);
-          this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
+          this.logger.info("Removed workspace via fallback", {
+            path: workspacePath.toString(),
+            elapsedMs: Date.now() - rmStart,
+          });
         } catch (fallbackError) {
           // Log BOTH failures. Reports of this only ever carried the git error,
           // which names the directory but never says what was holding it; the
@@ -658,6 +668,7 @@ export class GitWorktreeProvider {
           this.logger.warn("Recursive rm fallback failed too", {
             path: workspacePath.toString(),
             error: getErrorMessage(fallbackError),
+            elapsedMs: Date.now() - rmStart,
           });
           worktreeError = error as Error;
         }

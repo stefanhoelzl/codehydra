@@ -212,17 +212,35 @@ function setupTerminalCloseListener(): void {
   });
 }
 
-/** Timeout for graceful agent close in milliseconds */
-const AGENT_CLOSE_TIMEOUT_MS = 3000;
-
 /** Interval between Ctrl+C signals in milliseconds */
 const AGENT_CLOSE_SIGNAL_INTERVAL_MS = 500;
 
 /**
- * Close the agent terminal gracefully.
- * Sends repeated Ctrl+C signals to exit Claude Code, waits up to 3 seconds
- * for the terminal to close naturally (triggering WrapperEnd hook → gray status),
- * then force-disposes if still open.
+ * How long to keep signalling before giving up (ms).
+ *
+ * This bounds the Ctrl+C loop only — it does NOT dispose the terminal. An agent
+ * that has ignored ~12 signals is not going to take the next one, and the main
+ * process has its own, longer bound after which it falls back to process
+ * cleanup.
+ */
+const AGENT_CLOSE_SIGNAL_DEADLINE_MS = 6000;
+
+/**
+ * Ask the agent to exit by sending Ctrl+C until its terminal closes.
+ *
+ * Claude Code needs two Ctrl+C in succession (the first interrupts, the second
+ * exits), which is why this repeats rather than signalling once.
+ *
+ * There is deliberately NO force-dispose on a timeout. Disposing the terminal
+ * does not stop the agent: with VS Code's persistent terminal sessions the pty
+ * — and the whole tree below it, shell, agent CLI, and the MCP servers the
+ * agent spawned — keeps running, now detached, with the workspace as its CWD.
+ * All a dispose achieves is firing onDidCloseTerminal, which the main process
+ * reads as "the agent exited" and proceeds to remove a worktree the agent is
+ * still sitting in. Reporting a close we cannot back up is worse than not
+ * reporting one: the caller has its own bound (plugin-server-module's
+ * AGENT_CLOSE_TIMEOUT_MS) and can fall back to process cleanup, which it cannot
+ * do if we tell it everything is fine.
  *
  * Returns whether there was a terminal to close. Closing itself is
  * asynchronous — completion is reported to the main process by the
@@ -235,24 +253,28 @@ function closeAgentTerminal(): boolean {
 
   const terminal = agentTerminal;
 
-  // Send Ctrl+C repeatedly until terminal closes or timeout
+  // Send Ctrl+C repeatedly until the terminal closes on its own.
   terminal.sendText("\x03", false);
   const signalInterval = setInterval(() => {
     terminal.sendText("\x03", false);
   }, AGENT_CLOSE_SIGNAL_INTERVAL_MS);
 
-  // Wait for natural close, force-dispose on timeout
-  const timeout = setTimeout(() => {
+  const stopSignalling = (): void => {
     clearInterval(signalInterval);
+    clearTimeout(deadline);
     disposable.dispose();
-    terminal.dispose();
-  }, AGENT_CLOSE_TIMEOUT_MS);
+  };
+
+  // Give up signalling — but leave the terminal alone. See the note above on
+  // why a force-dispose here would be actively harmful.
+  const deadline = setTimeout(() => {
+    stopSignalling();
+    codehydraApi.log.debug("Agent did not exit; stopped signalling (terminal left running)");
+  }, AGENT_CLOSE_SIGNAL_DEADLINE_MS);
 
   const disposable = vscode.window.onDidCloseTerminal((closed) => {
     if (closed === terminal) {
-      clearInterval(signalInterval);
-      clearTimeout(timeout);
-      disposable.dispose();
+      stopSignalling();
     }
   });
 

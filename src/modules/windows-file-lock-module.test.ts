@@ -243,10 +243,12 @@ describe.skipIf(process.platform !== "win32")("runDetectAction", () => {
       SCRIPT_PATH,
       testPath,
       "Detect",
-      createMockLogger()
+      createMockLogger(),
+      8_000
     );
 
-    expect(result).toEqual([
+    expect(result.timedOut).toBe(false);
+    expect(result.processes).toEqual([
       {
         pid: 1234,
         name: "node.exe",
@@ -262,7 +264,7 @@ describe.skipIf(process.platform !== "win32")("runDetectAction", () => {
       defaultResult: { stdout: createDetectJson([]) },
     });
 
-    await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", createMockLogger());
+    await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", createMockLogger(), 8_000);
 
     expect(runner).toHaveSpawned([
       {
@@ -278,24 +280,28 @@ describe.skipIf(process.platform !== "win32")("runDetectAction", () => {
     });
     const logger = createMockLogger();
 
-    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger);
+    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger, 8_000);
 
-    expect(result).toEqual([]);
+    // A non-zero exit is a real answer ("the scan ran and failed"), not the
+    // same state as never finding out — only a timeout sets timedOut.
+    expect(result).toEqual({ processes: [], timedOut: false });
     expect(logger.warn).toHaveBeenCalledWith(
       "Blocking process detection failed",
       expect.objectContaining({ exitCode: 1, stderr: "PowerShell error" })
     );
   });
 
-  it("returns empty array and kills process on timeout", async () => {
+  it("reports timedOut (not a clean empty scan) and kills the process on timeout", async () => {
     const runner = createMockProcessRunner({
       onSpawn: () => ({ running: true, exitCode: null }),
     });
     const logger = createMockLogger();
 
-    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger);
+    const result = await runDetectAction(runner, SCRIPT_PATH, testPath, "Detect", logger, 8_000);
 
-    expect(result).toEqual([]);
+    // The distinction that matters: an empty list from a timed-out scan must
+    // NOT be reported as "nothing is blocking".
+    expect(result).toEqual({ processes: [], timedOut: true });
     expect(logger.warn).toHaveBeenCalledWith(
       "Blocking process detection timed out",
       expect.objectContaining({ path: testPath.toString() })

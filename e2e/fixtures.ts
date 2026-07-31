@@ -163,7 +163,7 @@ export async function expectNoNativeDialogs(driver: AppDriver): Promise<void> {
 }
 
 /** One entry of the app's JSONL log. */
-interface LogEntry {
+export interface LogEntry {
   readonly timestamp?: string;
   readonly level?: string;
   readonly scope?: string;
@@ -233,6 +233,18 @@ export function expectNoErrorLogs(): void {
     "the app logged error(s) in the main process — it kept running, but something it " +
       "depends on is broken"
   ).toEqual([]);
+}
+
+/**
+ * Every main-process log entry since this spec's launch.
+ *
+ * The app is a black box to a spec otherwise: assertions can see the UI and the
+ * filesystem, but not the order the dispatcher ran hook handlers in — and for
+ * teardown that ordering IS the behaviour under test, with the visible symptom
+ * (a worktree that will not delete) only reproducing on Windows.
+ */
+export function appLogEntries(): readonly LogEntry[] {
+  return mainProcessLog(launchedAt);
 }
 
 export interface AppHandle {

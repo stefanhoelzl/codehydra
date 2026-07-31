@@ -24,7 +24,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookOutput } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -55,10 +55,12 @@ import type { WakeWorkspaceIntent } from "../intents/wake-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import {
+  DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETION_PROGRESS,
 } from "../intents/delete-workspace";
 import type {
+  DeletePipelineHookInput,
   DeleteWorkspaceIntent,
   WorkspaceDeletionProgressEvent,
 } from "../intents/delete-workspace";
@@ -200,6 +202,22 @@ export class McpServer {
 
   /** Per-client MCP sessions, keyed by MCP session ID. */
   private sessions = new Map<string, McpSession>();
+
+  /**
+   * How many MCP sessions are currently open for a workspace.
+   *
+   * The client on the other end of an MCP session is the agent process itself,
+   * so a session that is still open during a teardown means the agent is still
+   * alive — the exact fact that is otherwise unobservable at that point, and the
+   * one that decides whether a worktree removal is about to fail.
+   */
+  sessionCountFor(workspacePath: string): number {
+    let count = 0;
+    for (const session of this.sessions.values()) {
+      if (session.workspacePath === workspacePath) count++;
+    }
+    return count;
+  }
 
   /**
    * Resolvers awaiting a terminal deletion-progress event, keyed by workspace
@@ -1162,6 +1180,11 @@ export class McpServerManager implements IDisposable {
   private mcpServer: McpServer | null = null;
   private port: number | null = null;
 
+  /** @see McpServer.sessionCountFor */
+  sessionCountFor(workspacePath: string): number {
+    return this.mcpServer?.sessionCountFor(workspacePath) ?? 0;
+  }
+
   constructor(
     portManager: PortManager,
     dispatcher: Dispatcher,
@@ -1260,6 +1283,30 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
           handler: async (): Promise<HookOutput> => {
             const mcpPort = await mcpServerManager.start();
             return { provides: { mcpPort } };
+          },
+        },
+      },
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        // Diagnostics only — never fails, never blocks, returns nothing.
+        //
+        // The MCP client for a workspace is the agent process itself, so a
+        // session still open here means the agent outlived the teardown that
+        // was supposed to stop it, and is sitting in the directory we are about
+        // to remove. That is the single fact that explains most "deletion
+        // failed, nothing appears to be blocking it" reports, and until now the
+        // only way to recover it from a log was to notice a stray
+        // `Routing to session` line minutes later and correlate it by hand.
+        delete: {
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
+            const sessions = mcpServerManager.sessionCountFor(workspacePath);
+            if (sessions > 0) {
+              deps.logger?.warn("Workspace still has live MCP sessions at removal time", {
+                workspacePath,
+                sessions,
+              });
+            }
+            return {};
           },
         },
       },

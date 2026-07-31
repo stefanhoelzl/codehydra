@@ -55,9 +55,12 @@ import {
 } from "../../intents/open-workspace";
 import type { Intent } from "../../intents/lib/types";
 import {
+  DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
+  INTENT_DELETE_WORKSPACE,
 } from "../../intents/delete-workspace";
+import { ANY_VALUE } from "../../intents/lib/operation";
 import { EVENT_WORKSPACE_SWITCHED } from "../../intents/switch-workspace";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
@@ -793,16 +796,15 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces).toEqual([]);
   });
 
-  it("unmounts the IDE frame as soon as a deletion starts", async () => {
+  it("keeps the IDE frame mounted until the agent has been stopped", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     await flush();
 
-    expect(lastSnapshot(deps).frames).toEqual({
-      [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat",
-    });
+    const frameKey = `${PROJECT_ID}/feat`;
+    expect(lastSnapshot(deps).frames).toEqual({ [frameKey]: "http://127.0.0.1:1/feat" });
 
     const progressBase = {
       workspacePath: workspace.path as WorkspacePath,
@@ -812,18 +814,40 @@ describe("PresentationModule - ui:state snapshots", () => {
       operations: [],
     };
 
+    // The pipeline emits its first progress event BEFORE the shutdown hook
+    // point runs. Unmounting here drops the iframe, which disconnects the IDE
+    // client and disposes the extension host — out from under the graceful
+    // agent exit still travelling over it. The agent then survives as an orphan
+    // holding the worktree, and removal fails. So the frame must stay.
     await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
       ...progressBase,
       completed: false,
       hasErrors: false,
     });
     await flush();
+    expect(lastSnapshot(deps).frames).toEqual({ [frameKey]: "http://127.0.0.1:1/feat" });
 
-    // A mounted frame keeps the IDE server holding the worktree — pty host,
-    // extension host, watchers — while we are trying to remove it.
+    // Only once the delete "shutdown" hook point has run — which the dispatcher
+    // defers until "agent-stopped" is provided — is the frame released.
+    await module.hooks![DELETE_WORKSPACE_OPERATION_ID]!["shutdown"]!.handler({
+      intent: {
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          workspacePath: workspace.path as WorkspacePath,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      },
+      projectPath: PROJECT_PATH,
+      workspacePath: workspace.path as WorkspacePath,
+      workspaceName: workspace.name,
+      active: false,
+    } as never);
+    await flush();
     expect(lastSnapshot(deps).frames).toEqual({});
 
-    // And it stays unmounted after a failure, where workspace:deleted never
+    // And it stays released after a failure, where workspace:deleted never
     // arrives. The deletion panel covers the workspace area in its place.
     await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
       ...progressBase,
@@ -832,6 +856,15 @@ describe("PresentationModule - ui:state snapshots", () => {
     });
     await flush();
     expect(lastSnapshot(deps).frames).toEqual({});
+  });
+
+  it("gates the frame release on the agent-stopped capability", () => {
+    const module = createPresentationModule(createDeps());
+    const handler = module.hooks![DELETE_WORKSPACE_OPERATION_ID]!["shutdown"]!;
+
+    // Without this the handler runs in the first wave, i.e. before the agent has
+    // been asked to exit — which is the bug this whole hook exists to prevent.
+    expect(handler.requires).toEqual({ "agent-stopped": ANY_VALUE });
   });
 
   it("is the single source of deletion progress: full via accessor, render-ready on the row", async () => {

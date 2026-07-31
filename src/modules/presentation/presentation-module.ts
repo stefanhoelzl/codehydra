@@ -84,10 +84,13 @@ import {
   type WorkspaceCreateFailedEvent,
 } from "../../intents/open-workspace";
 import {
+  DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
   INTENT_DELETE_WORKSPACE,
+  type DeletePipelineHookInput,
   type DeleteWorkspaceIntent,
+  type ShutdownHookResult,
   type WorkspaceDeletedEvent,
   type WorkspaceDeletionProgressEvent,
 } from "../../intents/delete-workspace";
@@ -479,6 +482,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * render-ready row view omits (blocking-process pids, keepBranch).
    */
   const deletions = new Map<string, DeletionProgress>();
+  /**
+   * Workspaces whose IDE frame may be dropped from the `frames` region, keyed
+   * by workspace path.
+   *
+   * Populated by the delete "shutdown" handler below, which the dispatcher
+   * defers until the agent has been stopped. Deletion progress alone is NOT
+   * enough: the first progress event is emitted before the shutdown hook point
+   * runs, so unmounting on it tears down the IDE connection the graceful agent
+   * exit is still talking over.
+   */
+  const framesReleased = new Set<string>();
   /** Hibernation screenshot data URLs keyed by workspace key (null = missing). */
   const screenshots = new Map<string, string | null>();
   const screenshotLoads = new Set<string>();
@@ -1029,10 +1043,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       for (const workspace of project.workspaces.values()) {
         // A mounted frame is a live IDE client: the workspace stays open in the
         // IDE server, which keeps its pty host, extension host and file watchers
-        // holding the directory. Unmount as soon as a teardown starts, rather
-        // than on workspace:deleted — that only fires AFTER the worktree removal
-        // has already had to fight those handles (and never at all when the
-        // removal fails).
+        // holding the directory. Unmount during the teardown, rather than on
+        // workspace:deleted — that only fires AFTER the worktree removal has
+        // already had to fight those handles (and never at all when the removal
+        // fails).
+        //
+        // But NOT on deletion progress alone. The first progress event is
+        // emitted before the delete "shutdown" hook point runs, and unmounting
+        // there drops the iframe, which disconnects the IDE client and disposes
+        // the extension host — out from under the graceful agent exit that is
+        // still talking over it. The agent then survives as an orphan with the
+        // workspace as its CWD, and Windows refuses to remove the directory.
+        // So the release is gated on `framesReleased`, which the shutdown
+        // handler below fills once the agent has actually been stopped.
         //
         // Nothing is hidden by this. The pipeline switches away from the
         // workspace at the start, and if the user navigates back the deletion
@@ -1040,8 +1063,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // documented as rendering "over the already-torn-down frame". Dismissing
         // that panel dispatches a force delete, so an entry here can never
         // outlive the workspace.
-        const deleting = workspace.path !== null && deletions.has(workspace.path);
-        if (workspace.url !== undefined && !workspace.hibernated && !deleting) {
+        const released = workspace.path !== null && framesReleased.has(workspace.path);
+        if (workspace.url !== undefined && !workspace.hibernated && !released) {
           frames[workspaceKey(project.id, workspace.name)] = workspace.url;
         }
       }
@@ -1617,6 +1640,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const p = (event as WorkspaceDeletedEvent).payload;
         projects.get(p.projectId)?.workspaces.delete(p.workspaceName as string);
         deletions.delete(p.workspacePath);
+        framesReleased.delete(p.workspacePath);
         agentStatuses.delete(p.workspacePath);
         screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
         scheduleUpdate();
@@ -1940,6 +1964,27 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
       [CLOSE_PROJECT_OPERATION_ID]: {
         confirm: { handler: confirmClose },
+      },
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        // Release the workspace's IDE frame — but only after the agent has been
+        // stopped. `requires` defers this to a later wave than the plugin-server
+        // handler that asks the agent to exit, so the iframe (and with it the
+        // IDE client connection the request travels over) survives until that
+        // has either succeeded or hit its own timeout.
+        //
+        // Dropping the frame earlier is what orphans the agent: the disconnect
+        // disposes the extension host, whose terminals then report "closed"
+        // while the pty — and the agent under it — keeps running with the
+        // workspace as its CWD, so the worktree removal cannot delete it.
+        shutdown: {
+          requires: { "agent-stopped": ANY_VALUE },
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
+            const { workspacePath } = ctx as DeletePipelineHookInput;
+            framesReleased.add(workspacePath);
+            scheduleUpdate();
+            return { result: {} };
+          },
+        },
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         // Collapse the sidebar out of the hibernation screenshot and restore it
