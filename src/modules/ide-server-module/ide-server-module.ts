@@ -53,6 +53,7 @@ import {
   APP_RESUME_OPERATION_ID,
   APP_RESUME_HOOK_RESUME,
   type ResumeHookResult,
+  type AppResumeIntent,
 } from "../../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import { streamProgress } from "../../intents/lib/hook-helpers";
@@ -90,6 +91,22 @@ interface IdeServerConfig {
 
 /** Fixed production port for the embedded IDE server (stable IndexedDB origin). */
 const IDE_SERVER_PORT = 25448;
+
+/**
+ * The distribution's client-side reconnection grace — VSCodium's
+ * `ProtocolConstants.ReconnectionGraceTime`, 108e5 ms in the bundled workbench.
+ *
+ * A workspace iframe disconnected for longer than this cannot recover on its
+ * own. Its reconnect loop compares the elapsed disconnect time against the
+ * grace *before* it reaches the branches that retry transient network errors,
+ * so the first failure after a long sleep — and the network stack is routinely
+ * still down at that moment — is treated as permanent rather than retried. The
+ * workbench then shows a modal "Cannot reconnect. Please reload the window."
+ *
+ * Lives here rather than in view-module because it is a fact about the IDE
+ * distribution we serve, not about how frames are rendered.
+ */
+const IDE_RECONNECTION_GRACE_MS = 3 * 60 * 60 * 1000;
 
 /**
  * Determine the IDE server port from build info.
@@ -772,12 +789,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [APP_RESUME_OPERATION_ID]: {
         [APP_RESUME_HOOK_RESUME]: {
-          handler: async (): Promise<HookOutput<ResumeHookResult>> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResumeHookResult>> => {
             const port = currentPort;
             if (port === null) {
               // Never started — nothing to probe or restart.
               return {};
             }
+
+            const { sleptMs = 0 } = (ctx.intent as AppResumeIntent).payload;
 
             try {
               await waitForHealthy({
@@ -786,6 +805,19 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 intervalMs: 500,
                 errorMessage: "IDE server health check timed out after 5s",
               });
+
+              // The server itself came through the suspend fine — but a sleep
+              // past the grace above killed every workspace iframe's session
+              // regardless, and each is about to show the distribution's own
+              // unrecoverable "Cannot reconnect" modal. Report it so the frames
+              // get reloaded before the user is ever asked to do it by hand.
+              if (sleptMs >= IDE_RECONNECTION_GRACE_MS) {
+                logger.info("Suspend outlasted the IDE reconnection grace; sessions are stale", {
+                  sleptMs,
+                  graceMs: IDE_RECONNECTION_GRACE_MS,
+                });
+                return { result: { staleClients: true } };
+              }
               return {};
             } catch {
               // Fall through to restart

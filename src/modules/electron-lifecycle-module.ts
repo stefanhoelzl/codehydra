@@ -4,7 +4,8 @@
  * Provides:
  * - "before-ready" hook on app:start (noAsar, data paths, electron flags)
  * - "init" hook on app:start (waits for Electron app ready, provides "app-ready" capability)
- * - "start" hook on app:start (power monitor resume handler)
+ * - "start" hook on app:start (power monitor resume handler + the wall-clock
+ *   heartbeat whose gap becomes `sleptMs` on the app:resume payload)
  * - "quit" hook on app:shutdown (calls app.quit())
  */
 
@@ -19,7 +20,22 @@ import type { Dispatcher } from "../intents/lib/dispatcher";
 import { storeString } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { INTENT_APP_RESUME } from "../intents/app-resume";
+import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/**
+ * How often we stamp "the machine was awake at this instant". The gap between
+ * the last stamp and a resume is how long the machine spent suspended.
+ *
+ * A heartbeat rather than powerMonitor's "suspend" event, because that event is
+ * not reliably delivered — Windows hybrid sleep and hibernate can skip it — and
+ * a missed suspend would silently report a gap of zero. A stamp needs nothing
+ * to fire at suspend time.
+ */
+const AWAKE_HEARTBEAT_MS = 60_000;
 
 // =============================================================================
 // Helpers
@@ -164,6 +180,47 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
     },
   });
 
+  // ---------------------------------------------------------------------------
+  // Suspend-gap tracking
+  //
+  // This module owns the power monitor, so it also owns the one fact only it
+  // can observe: how long the machine was actually away. It ships that on the
+  // app:resume payload and interprets none of it — what a given gap *means* is
+  // the business of whichever handler cares (see ide-server-module).
+  // ---------------------------------------------------------------------------
+
+  let lastAwakeAt = Date.now();
+  let heartbeat: NodeJS.Timeout | null = null;
+
+  function startHeartbeat(): void {
+    if (heartbeat !== null) return;
+    heartbeat = setInterval(() => {
+      const now = Date.now();
+      // Advance only on a plausible tick. Timers that come due during a suspend
+      // fire on wake, possibly before the "resume" handler below runs, and
+      // advancing on one of those would erase the very gap we exist to measure.
+      if (now - lastAwakeAt <= AWAKE_HEARTBEAT_MS * 2) {
+        lastAwakeAt = now;
+      }
+    }, AWAKE_HEARTBEAT_MS);
+    // Never hold the process open for this.
+    heartbeat.unref();
+  }
+
+  function stopHeartbeat(): void {
+    if (heartbeat === null) return;
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+
+  /** Consume the gap since the last stamp and re-arm for the next suspend. */
+  function takeSleptMs(): number {
+    const now = Date.now();
+    const sleptMs = now - lastAwakeAt;
+    lastAwakeAt = now;
+    return sleptMs;
+  }
+
   return {
     name: "electron-lifecycle",
     hooks: {
@@ -225,9 +282,14 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
         },
         start: {
           handler: async (): Promise<void> => {
+            startHeartbeat();
             deps.powerMonitor.on("resume", () => {
-              deps.logger.info("System resumed — dispatching app:resume");
-              void deps.dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+              const sleptMs = takeSleptMs();
+              deps.logger.info("System resumed — dispatching app:resume", { sleptMs });
+              void deps.dispatcher.dispatch<AppResumeIntent>({
+                type: INTENT_APP_RESUME,
+                payload: { sleptMs },
+              });
             });
           },
         },
@@ -235,6 +297,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
       [APP_SHUTDOWN_OPERATION_ID]: {
         quit: {
           handler: async () => {
+            stopHeartbeat();
             deps.app.quit();
           },
         },
