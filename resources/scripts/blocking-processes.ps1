@@ -1,19 +1,22 @@
-# Unified script for detecting blocking processes and closing handles
+# Detect processes that would block removal of a directory.
 # Usage:
 #   blocking-processes.ps1 -BasePath "C:\path\to\dir" -Action Detect
-#   blocking-processes.ps1 -BasePath "C:\path\to\dir" -Action CloseHandles
+#   blocking-processes.ps1 -BasePath "C:\path\to\dir" -Action DetectCwd
 #
 # Output: JSON object with structure:
-#   -Action Detect: {"blocking": [...]}
-#   -Action CloseHandles: {"blocking": [...], "closed": [...]}
+#   {"blocking": [...]}
 #   Error: {"error": "message"}
+#
+# -Action Detect    full scan: Restart Manager file handles + CWD
+# -Action DetectCwd CWD only. Runs BEFORE a removal is attempted, so it is on
+#                   the critical path and deliberately does less work.
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$BasePath,
     
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Detect', 'DetectCwd', 'CloseHandles')]
+    [ValidateSet('Detect', 'DetectCwd')]
     [string]$Action
 )
 
@@ -26,51 +29,6 @@ function Write-JsonError {
 }
 
 # Note: ValidateSet already ensures exactly one valid mode is specified
-
-# For CloseHandles mode, check if we need elevation
-if ($Action -eq 'CloseHandles') {
-    # Use the enum instead of string 'Administrator' for reliability
-    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    
-    if (-not $isAdmin) {
-        # Create temp file for output from elevated process
-        # Note: Cannot use -RedirectStandardOutput with -Verb RunAs, so the elevated
-        # script writes to a temp file that we pass as a parameter
-        $outputFile = [System.IO.Path]::GetTempFileName()
-        
-        try {
-            # Escape paths for command line
-            $escapedScript = $MyInvocation.MyCommand.Path -replace "'", "''"
-            $escapedBasePath = $BasePath -replace "'", "''"
-            $escapedOutputFile = $outputFile -replace "'", "''"
-            
-            # Wrap in a command that redirects output to file
-            $wrappedCommand = "& '$escapedScript' -BasePath '$escapedBasePath' -Action CloseHandles | Out-File -FilePath '$escapedOutputFile' -Encoding UTF8"
-            
-            $process = Start-Process powershell -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
-                '-NoProfile',
-                '-NonInteractive',
-                '-ExecutionPolicy', 'Bypass',
-                '-Command', $wrappedCommand
-            )
-            
-            # Read output from elevated process
-            if (Test-Path $outputFile) {
-                Get-Content $outputFile -Raw
-                Remove-Item $outputFile -Force -ErrorAction SilentlyContinue
-            }
-            exit $process.ExitCode
-        } catch {
-            Remove-Item $outputFile -Force -ErrorAction SilentlyContinue
-            if ($_.Exception.Message -match 'canceled by the user') {
-                Write-JsonError "UAC cancelled by user"
-                exit 1
-            }
-            Write-JsonError $_.Exception.Message
-            exit 1
-        }
-    }
-}
 
 try {
     Add-Type -TypeDefinition @'
@@ -196,7 +154,6 @@ public class BlockingProcessDetector {
     private const int PROCESS_QUERY_INFORMATION = 0x0400;
     private const int PROCESS_VM_READ = 0x0010;
     private const int PROCESS_DUP_HANDLE = 0x0040;
-    private const int DUPLICATE_CLOSE_SOURCE = 0x1;
     private const int STATUS_INFO_LENGTH_MISMATCH = unchecked((int)0xC0000004);
 
     // =============================================================================
@@ -592,35 +549,6 @@ public class BlockingProcessDetector {
         return handles;
     }
 
-    // =============================================================================
-    // Handle Closing
-    // =============================================================================
-
-    public static List<string> CloseFileHandles(List<HandleInfo> handles) {
-        var closed = new List<string>();
-        var processHandles = new Dictionary<int, IntPtr>();
-
-        foreach (var handle in handles) {
-            IntPtr processHandle;
-            if (!processHandles.TryGetValue(handle.ProcessId, out processHandle)) {
-                processHandle = OpenProcess(PROCESS_DUP_HANDLE, false, handle.ProcessId);
-                processHandles[handle.ProcessId] = processHandle;
-            }
-
-            if (processHandle == IntPtr.Zero) continue;
-
-            IntPtr dummy;
-            if (DuplicateHandle(processHandle, (IntPtr)handle.Handle, IntPtr.Zero, out dummy, 0, false, DUPLICATE_CLOSE_SOURCE)) {
-                closed.Add(handle.DosPath);
-            }
-        }
-
-        foreach (var h in processHandles.Values) {
-            if (h != IntPtr.Zero) CloseHandle(h);
-        }
-
-        return closed;
-    }
 }
 '@ -ErrorAction SilentlyContinue
 
@@ -690,13 +618,7 @@ public class BlockingProcessDetector {
     }
 
     if ($blockingProcesses.Count -eq 0) {
-        $output = @{
-            blocking = @()
-        }
-        if ($Action -eq 'CloseHandles') {
-            $output.closed = @()
-        }
-        $output | ConvertTo-Json -Compress -Depth 4
+        @{ blocking = @() } | ConvertTo-Json -Compress -Depth 4
         exit 0
     }
 
@@ -747,13 +669,6 @@ public class BlockingProcessDetector {
         $proc.Files = $procFiles
     }
 
-    # Step 4: For CloseHandles mode, close the handles
-    $closedPaths = @()
-    if ($Action -eq 'CloseHandles') {
-        $closedList = [BlockingProcessDetector]::CloseFileHandles($fileHandles)
-        $closedPaths = @($closedList)
-    }
-
     # Build output
     $blocking = @()
     foreach ($proc in $blockingProcesses) {
@@ -766,14 +681,7 @@ public class BlockingProcessDetector {
         }
     }
 
-    $output = @{
-        blocking = $blocking
-    }
-    if ($Action -eq 'CloseHandles') {
-        $output.closed = $closedPaths
-    }
-
-    $output | ConvertTo-Json -Compress -Depth 4
+    @{ blocking = $blocking } | ConvertTo-Json -Compress -Depth 4
     exit 0
 
 } catch {

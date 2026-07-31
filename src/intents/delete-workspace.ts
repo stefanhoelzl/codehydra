@@ -759,8 +759,16 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
 
     // Delete operation (always present, runs before detect/flush in pipeline)
     const deleteStatus = this.hookPointStatus(state.del);
-    const deleteError =
-      state.del && state.del.errors.length > 0 ? state.del.errors.join("; ") : undefined;
+    // A release failure ("could not kill PID 1234") is reported alongside the
+    // removal error rather than on its own row: it is only ever an explanation
+    // for why the removal failed. On a successful removal it is noise — the
+    // process we could not kill evidently wasn't holding anything — so it is
+    // folded in only when there is a delete error to explain.
+    const deleteErrors = [
+      ...(state.del?.errors ?? []),
+      ...(state.del && state.del.errors.length > 0 ? (state.release?.errors ?? []) : []),
+    ];
+    const deleteError = deleteErrors.length > 0 ? deleteErrors.join("; ") : undefined;
 
     operations.push({
       id: "cleanup-workspace",
@@ -772,12 +780,22 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // Detection operation (from detect hook, shown after delete failure)
     if (state.detect?.blockingProcesses !== undefined) {
       const blockersFound = state.detect.blockingProcesses.length > 0;
+      // A detect handler that could not determine the answer reports it here.
+      // Without this, an empty list from a scan that timed out is rendered as a
+      // clean "done" — telling the user nothing is blocking the very removal
+      // that just refused to proceed. "We don't know" is the honest state, and
+      // it is the one that makes a retry worth attempting.
+      const detectError =
+        state.detect.errors.length > 0 ? state.detect.errors.join("; ") : undefined;
+      const status = blockersFound || detectError ? "error" : "done";
       operations.push({
         id: "detecting-blockers",
         label: "Detecting blocking processes...",
-        status: applyCurrentStep("detecting-blockers", blockersFound ? "error" : "done"),
-        ...(blockersFound && {
-          error: `Blocked by ${state.detect.blockingProcesses.length} process(es)`,
+        status: applyCurrentStep("detecting-blockers", status),
+        ...((blockersFound || detectError) && {
+          error: blockersFound
+            ? `Blocked by ${state.detect.blockingProcesses.length} process(es)`
+            : detectError,
         }),
       });
     } else if (currentStep === "detecting-blockers") {

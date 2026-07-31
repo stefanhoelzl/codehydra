@@ -265,6 +265,58 @@ describe("ExecaProcessRunner", () => {
     );
   });
 
+  describe("kill(pid) — processes we did not spawn", () => {
+    // The blocking processes this exists for are found by a scan, so there is
+    // no handle for them. Same contract as the handle method, keyed by PID.
+
+    it(
+      "terminates a foreign PID and only returns once it is gone",
+      async () => {
+        // Spawned through the runner for cleanup, then killed BY PID as if we
+        // had merely discovered it — which is the case under test.
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+        const pid = proc.pid!;
+        expect(isProcessRunning(pid)).toBe(true);
+
+        const result = await runner.kill(pid, 1000, 1000);
+
+        expect(result.success).toBe(true);
+        // No settling delay: the point of this method over a bare taskkill is
+        // that it does not return until the process is actually down. If this
+        // needs a sleep, callers that remove a directory next will race it.
+        expect(isProcessRunning(pid)).toBe(false);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "reports success for a PID that is already gone",
+      async () => {
+        const proc = spawnLongRunning(runner, 30_000);
+        runningProcesses.push(proc);
+        const pid = proc.pid!;
+        await proc.kill(1000, 1000);
+        expect(await waitForProcessDeath(pid, 1000)).toBe(true);
+
+        // A scan's results are stale by the time they are used, so "it exited
+        // between the scan and the kill" is the common case, not an error.
+        const result = await runner.kill(pid, 1000, 1000);
+
+        expect(result.success).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    // Tree semantics are deliberately not re-tested here: kill(pid) and the
+    // handle's kill() both delegate to the same killProcessTree, which the
+    // "Windows kill() with process tree" case below already exercises. A second
+    // copy would have to kill the parent before it could read the child PID off
+    // stdout, which is exactly the kind of ordering-dependent test that earns
+    // its flakiness.
+  });
+
   describe("kill() behavior", () => {
     // Windows-specific test: kill always uses forceful termination
     it.skipIf(!isWindows)(

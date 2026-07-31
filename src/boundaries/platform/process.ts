@@ -155,6 +155,29 @@ export interface ProcessRunner {
    * }
    */
   run(command: string, args: readonly string[], options?: ProcessOptions): SpawnedProcess;
+
+  /**
+   * Terminate a process we did NOT spawn, and wait for it to actually be gone.
+   *
+   * Same contract as `SpawnedProcess.kill` — SIGTERM → wait → SIGKILL → wait,
+   * children included, `{success: false}` when it is still running — but keyed
+   * by PID, because a blocking process discovered by a scan has no handle here.
+   *
+   * The waiting is the point. `taskkill` (and `process.kill`) return once the
+   * request has been made, not once the target is down, so a caller that only
+   * checks the kill command's exit status learns that it was *invoked*, not
+   * that anything died. Acting on that — attempting a directory removal
+   * immediately afterwards, say — races the teardown it just asked for.
+   *
+   * Caveat: process exit is observable, handle release is not. A `{success:
+   * true}` here means the process is gone, not that the OS has finished
+   * releasing what it held.
+   *
+   * @param pid - Process ID to terminate.
+   * @param termTimeout - Wait after SIGTERM (ms). undefined = skip to SIGKILL.
+   * @param killTimeout - Wait after SIGKILL (ms). undefined = return immediately.
+   */
+  kill(pid: number, termTimeout?: number, killTimeout?: number): Promise<KillResult>;
 }
 
 /**
@@ -166,6 +189,95 @@ type ExecaSubprocess = ReturnType<typeof execa>;
  * Symbol used to indicate timeout in Promise.race.
  */
 const TIMEOUT_SYMBOL = Symbol("timeout");
+
+/**
+ * Kill a process and its children using platform-appropriate method.
+ * - Windows: taskkill /pid <pid> /t /f for native tree killing
+ *   (Always uses /f because WM_CLOSE cannot signal console processes)
+ * - Unix: pkill -P to kill children, then process.kill for parent
+ *
+ * Works on any PID, not just one we spawned — the tree-kill mechanics are
+ * identical either way, and `ProcessRunner.kill` needs them for foreign PIDs.
+ *
+ * @param pid - Process ID to kill
+ * @param force - If true, use SIGKILL (Unix only). On Windows, always forceful.
+ */
+async function killProcessTree(pid: number, force: boolean): Promise<void> {
+  if (isWindows) {
+    // Windows: Always use /f because WM_CLOSE (sent by taskkill without /f)
+    // is ignored by console applications. We can't send CTRL_C_EVENT to
+    // detached processes, so forceful termination is our only option.
+    // The `force` parameter is ignored on Windows - always forceful.
+    const args = ["/pid", String(pid), "/t", "/f"];
+    try {
+      await execa("taskkill", args);
+    } catch {
+      // Process may have already exited, or taskkill failed
+      // (e.g., access denied, process not found)
+    }
+  } else {
+    // Unix: kill children first with pkill -P, then kill parent
+    const signal = force ? "SIGKILL" : "SIGTERM";
+
+    // Kill all child processes by parent PID.
+    // The signal must come first: BSD pkill (macOS) only accepts a signal as
+    // its first argument and rejects it anywhere else as an invalid option.
+    try {
+      await execa("pkill", [force ? "-9" : "-15", "-P", String(pid)]);
+    } catch {
+      // pkill returns non-zero if no processes matched - that's fine
+    }
+
+    // Kill the parent process
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Process may have already exited (ESRCH)
+    }
+  }
+}
+
+/** Interval between liveness probes while waiting for a foreign PID to exit. */
+const PID_EXIT_POLL_INTERVAL_MS = 50;
+
+/**
+ * Whether a process with this PID currently exists.
+ *
+ * Signal 0 performs the permission and existence checks without delivering a
+ * signal. ESRCH means gone; EPERM means it exists but belongs to someone else,
+ * which for our purposes is still "alive".
+ */
+function pidExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Wait for a foreign PID to disappear, up to `timeout` ms.
+ *
+ * Polls rather than waiting on a handle: we did not spawn this process, so
+ * there is no child handle to await. Returns true if it is gone.
+ *
+ * Note this observes process *exit*, which is not the same as the OS having
+ * released the file handles it held — termination is asynchronous with respect
+ * to teardown. It is still strictly better than the alternative of assuming a
+ * kill landed because the kill *command* exited.
+ */
+async function waitForPidExit(pid: number, timeout: number): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (!pidExists(pid)) return true;
+    if (Date.now() >= deadline) return false;
+    const remaining = deadline - Date.now();
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(PID_EXIT_POLL_INTERVAL_MS, remaining))
+    );
+  }
+}
 
 /**
  * SpawnedProcess implementation wrapping an execa subprocess.
@@ -253,48 +365,8 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     return { success: false };
   }
 
-  /**
-   * Kill a process and its children using platform-appropriate method.
-   * - Windows: taskkill /pid <pid> /t /f for native tree killing
-   *   (Always uses /f because WM_CLOSE cannot signal console processes)
-   * - Unix: pkill -P to kill children, then process.kill for parent
-   *
-   * @param pid - Process ID to kill
-   * @param force - If true, use SIGKILL (Unix only). On Windows, always forceful.
-   */
   private async killProcess(pid: number, force: boolean): Promise<void> {
-    if (isWindows) {
-      // Windows: Always use /f because WM_CLOSE (sent by taskkill without /f)
-      // is ignored by console applications. We can't send CTRL_C_EVENT to
-      // detached processes, so forceful termination is our only option.
-      // The `force` parameter is ignored on Windows - always forceful.
-      const args = ["/pid", String(pid), "/t", "/f"];
-      try {
-        await execa("taskkill", args);
-      } catch {
-        // Process may have already exited, or taskkill failed
-        // (e.g., access denied, process not found)
-      }
-    } else {
-      // Unix: kill children first with pkill -P, then kill parent
-      const signal = force ? "SIGKILL" : "SIGTERM";
-
-      // Kill all child processes by parent PID.
-      // The signal must come first: BSD pkill (macOS) only accepts a signal as
-      // its first argument and rejects it anywhere else as an invalid option.
-      try {
-        await execa("pkill", [force ? "-9" : "-15", "-P", String(pid)]);
-      } catch {
-        // pkill returns non-zero if no processes matched - that's fine
-      }
-
-      // Kill the parent process
-      try {
-        process.kill(pid, signal);
-      } catch {
-        // Process may have already exited (ESRCH)
-      }
-    }
+    return killProcessTree(pid, force);
   }
 
   async wait(timeout?: number): Promise<ProcessResult> {
@@ -559,5 +631,45 @@ export class ExecaProcessRunner implements ProcessRunner {
     }
 
     return spawned;
+  }
+
+  async kill(pid: number, termTimeout?: number, killTimeout?: number): Promise<KillResult> {
+    // Already gone: nothing to do, and reporting success keeps callers from
+    // treating a race (it exited between the scan and the kill) as a failure.
+    if (!pidExists(pid)) {
+      return { success: true, reason: "SIGTERM" };
+    }
+
+    if (isWindows) {
+      // Windows has no graceful phase for console processes — see killProcessTree.
+      await killProcessTree(pid, true);
+      this.logger.warn("Killed foreign process", { pid, signal: "TASKKILL" });
+
+      const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
+      if (timeout > 0 && (await waitForPidExit(pid, timeout))) {
+        return { success: true, reason: "SIGKILL" };
+      }
+      if (timeout === 0) return { success: false };
+
+      this.logger.warn("Foreign process survived termination", { pid, timeout });
+      return { success: false };
+    }
+
+    await killProcessTree(pid, false);
+    this.logger.info("Killed foreign process", { pid, signal: "SIGTERM" });
+    if (termTimeout !== undefined && (await waitForPidExit(pid, termTimeout))) {
+      return { success: true, reason: "SIGTERM" };
+    }
+
+    await killProcessTree(pid, true);
+    this.logger.warn("Killed foreign process", { pid, signal: "SIGKILL" });
+    if (killTimeout !== undefined && (await waitForPidExit(pid, killTimeout))) {
+      return { success: true, reason: "SIGKILL" };
+    }
+
+    if (killTimeout !== undefined) {
+      this.logger.warn("Foreign process survived termination", { pid, timeout: killTimeout });
+    }
+    return { success: false };
   }
 }

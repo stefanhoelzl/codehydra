@@ -148,12 +148,13 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { pid } = await spawnFileLockingProcess();
 
         // Detect blocking processes
-        const processes = await runDetectAction(
+        const { processes } = await runDetectAction(
           processRunner,
           scriptPath,
           new Path(tempDir),
           "Detect",
-          createMockLogger()
+          createMockLogger(),
+          TEST_TIMEOUT
         );
 
         // Verify the blocking process is detected
@@ -179,12 +180,13 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { pid } = await spawnFileLockingProcess();
 
         // Detect blocking processes
-        const processes = await runDetectAction(
+        const { processes } = await runDetectAction(
           processRunner,
           scriptPath,
           new Path(tempDir),
           "Detect",
-          createMockLogger()
+          createMockLogger(),
+          TEST_TIMEOUT
         );
 
         // Find our process
@@ -202,12 +204,13 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
       "returns empty array when no processes are blocking",
       async () => {
         // No locking process, just query the empty temp dir
-        const processes = await runDetectAction(
+        const { processes } = await runDetectAction(
           processRunner,
           scriptPath,
           new Path(tempDir),
           "Detect",
-          createMockLogger()
+          createMockLogger(),
+          TEST_TIMEOUT
         );
 
         expect(processes).toEqual([]);
@@ -218,7 +221,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
 
   describe("killBlockingProcesses", () => {
     it(
-      "kills processes via taskkill",
+      "returns only once the process is actually gone",
       async () => {
         // Spawn a process that locks the file
         const { pid } = await spawnFileLockingProcess();
@@ -226,14 +229,15 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         // Verify process is running
         expect(isProcessRunning(pid)).toBe(true);
 
-        // Kill the process
-        await killBlockingProcesses(processRunner, [pid], createMockLogger());
+        const survivors = await killBlockingProcesses(processRunner, [pid], createMockLogger());
 
-        // Give taskkill time to complete
-        await delay(500);
-
-        // Process should be dead now
+        // No settling delay here, deliberately. Termination is asynchronous, so
+        // this used to need one — which is the whole bug: the delete hook ran
+        // milliseconds after taskkill returned and raced the teardown it had
+        // just asked for. If this assertion needs a sleep to pass, the waiting
+        // is not working.
         expect(isProcessRunning(pid)).toBe(false);
+        expect(survivors).toEqual([]);
 
         // Clean up references since process is dead
         lockingProcess = null;
@@ -242,13 +246,18 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
       TEST_TIMEOUT
     );
 
+    // The "process refuses to die" path is covered in
+    // windows-file-lock-module.integration.test.ts via the mock's onKill. There
+    // is no safe way to construct a genuinely unkillable process here: PID 0 is
+    // the obvious candidate but `process.kill(0, …)` addresses the caller's own
+    // process group, which would take out the test runner.
+
     it(
       "succeeds when no PIDs are provided",
       async () => {
-        // Should not throw even with empty array
-        await expect(
-          killBlockingProcesses(processRunner, [], createMockLogger())
-        ).resolves.toBeUndefined();
+        await expect(killBlockingProcesses(processRunner, [], createMockLogger())).resolves.toEqual(
+          []
+        );
       },
       TEST_TIMEOUT
     );

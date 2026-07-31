@@ -69,6 +69,9 @@ export interface ProcessRunnerMockState extends MockState {
    * @throws Error if no match found
    */
   spawned(filter: { command: string }): MockSpawnedProcess;
+
+  /** PIDs passed to `kill(pid, …)`, in call order. */
+  readonly killedPids: readonly number[];
 }
 
 /**
@@ -188,13 +191,22 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
  */
 class ProcessRunnerMockStateImpl implements ProcessRunnerMockState {
   private readonly processes: MockSpawnedProcess[] = [];
+  private readonly killed: number[] = [];
 
   get spawnedCount(): number {
     return this.processes.length;
   }
 
+  get killedPids(): readonly number[] {
+    return this.killed;
+  }
+
   addProcess(process: MockSpawnedProcess): void {
     this.processes.push(process);
+  }
+
+  addKilledPid(pid: number): void {
+    this.killed.push(pid);
   }
 
   spawned(indexOrFilter: number | { command: string }): MockSpawnedProcess {
@@ -251,6 +263,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   private readonly defaultResult: ProcessResult;
   private readonly defaultKillResult: KillResult;
   private readonly onSpawn: OnSpawnCallback | undefined;
+  private readonly onKill: ((pid: number) => KillResult | void) | undefined;
 
   constructor(options?: MockProcessRunnerOptions) {
     this.defaultResult = {
@@ -263,6 +276,12 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       reason: "SIGTERM",
     };
     this.onSpawn = options?.onSpawn;
+    this.onKill = options?.onKill;
+  }
+
+  async kill(pid: number, _termTimeout?: number, _killTimeout?: number): Promise<KillResult> {
+    this.state.addKilledPid(pid);
+    return this.onKill?.(pid) ?? this.defaultKillResult;
   }
 
   get $(): ProcessRunnerMockState {
@@ -353,6 +372,13 @@ export interface MockProcessRunnerOptions {
    * When this returns void or undefined, defaultResult is used.
    */
   onSpawn?: OnSpawnCallback;
+
+  /**
+   * Called when kill(pid, …) is invoked on a process we did not spawn.
+   * Return an override to model a process that refuses to die; returning void
+   * or undefined means it terminated.
+   */
+  onKill?: (pid: number) => KillResult | void;
 }
 
 /**
