@@ -221,14 +221,20 @@ describe("parseDetectOutput", () => {
 });
 
 // =============================================================================
-// runDetectAction (Windows-only: requires Path with Windows-style paths)
+// runDetectAction
 // =============================================================================
+//
+// The module only ever runs on Windows, but these tests drive a mock
+// ProcessRunner and assert on the action passed and the JSON parsed back — none
+// of which is platform-dependent. Gating them on win32 only meant every change
+// to this function went unverified on the machine making it, which is how a
+// signature change reached CI unnoticed. Use a path the host can represent and
+// let them run everywhere.
 
-describe.skipIf(process.platform !== "win32")("runDetectAction", () => {
-  let testPath: Path;
-  if (process.platform === "win32") {
-    testPath = new Path("C:\\workspace\\test");
-  }
+describe("runDetectAction", () => {
+  const testPath = new Path(
+    process.platform === "win32" ? "C:\\workspace\\test" : "/workspace/test"
+  );
 
   it("parses valid detect output", async () => {
     const output = createDetectJson([
@@ -311,46 +317,58 @@ describe.skipIf(process.platform !== "win32")("runDetectAction", () => {
 });
 
 // =============================================================================
-// killBlockingProcesses (Windows-only: uses taskkill)
+// killBlockingProcesses
 // =============================================================================
+//
+// Not platform-gated. These drive a mock ProcessRunner and never touch a path,
+// so there was never anything Windows-specific about them — but the gate made
+// them invisible on every other OS, which is how they went on asserting a
+// taskkill invocation that no longer happens.
 
-describe.skipIf(process.platform !== "win32")("killBlockingProcesses", () => {
-  it("calls taskkill with correct arguments for single PID", async () => {
+describe("killBlockingProcesses", () => {
+  it("terminates each PID through the boundary rather than shelling out", async () => {
     const runner = createMockProcessRunner();
 
-    await killBlockingProcesses(runner, [1234], createMockLogger());
+    const survivors = await killBlockingProcesses(runner, [1234], createMockLogger());
 
-    expect(runner).toHaveSpawned([{ command: "taskkill", args: ["/pid", "1234", "/t", "/f"] }]);
+    // ProcessRunner.kill waits for the process to actually be gone; a taskkill
+    // spawn would only tell us the request was made.
+    expect(runner.$.killedPids).toEqual([1234]);
+    expect(runner.$.spawnedCount).toBe(0);
+    expect(survivors).toEqual([]);
   });
 
-  it("batches multiple PIDs in single taskkill call", async () => {
+  it("terminates every PID it is given", async () => {
     const runner = createMockProcessRunner();
 
     await killBlockingProcesses(runner, [1234, 5678, 9012], createMockLogger());
 
-    expect(runner).toHaveSpawned([
-      {
-        command: "taskkill",
-        args: ["/pid", "1234", "/pid", "5678", "/pid", "9012", "/t", "/f"],
-      },
-    ]);
+    expect(runner.$.killedPids).toEqual([1234, 5678, 9012]);
   });
 
-  it("does not call taskkill when no PIDs provided", async () => {
+  it("does nothing when no PIDs provided", async () => {
     const runner = createMockProcessRunner();
 
     await killBlockingProcesses(runner, [], createMockLogger());
 
-    expect(runner).toHaveSpawned([]);
+    expect(runner.$.killedPids).toEqual([]);
+    expect(runner.$.spawnedCount).toBe(0);
   });
 
-  it("throws error when taskkill fails", async () => {
+  it("reports the PIDs that survived instead of throwing", async () => {
     const runner = createMockProcessRunner({
-      defaultResult: { exitCode: 1, stderr: "Access denied" },
+      onKill: (pid) => (pid === 1234 ? { success: false } : undefined),
     });
+    const logger = createMockLogger();
 
-    await expect(killBlockingProcesses(runner, [1234], createMockLogger())).rejects.toThrow(
-      "Failed to kill processes"
+    const survivors = await killBlockingProcesses(runner, [1234, 5678], logger);
+
+    // Returned, not thrown: one process refusing to die must not abort the
+    // cleanup of the others, and the caller needs the PID to name it to the user.
+    expect(survivors).toEqual([1234]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Blocking processes survived termination",
+      expect.objectContaining({ pids: "1234" })
     );
   });
 });
