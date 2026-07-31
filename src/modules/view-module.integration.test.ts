@@ -30,8 +30,8 @@ import {
   APP_SHUTDOWN_OPERATION_ID,
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
-import type { IdeServerRestartedEvent } from "../intents/app-resume";
+import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
+import type { IdeServerRestartedEvent, IdeServerSessionsStaleEvent } from "../intents/app-resume";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
@@ -200,6 +200,25 @@ describe("ViewModule Integration", () => {
         payload: {},
       };
       await module.events![EVENT_IDE_SERVER_RESTARTED]!.handler(event);
+
+      expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ide-server:sessions-stale → reload workspace iframes. Same remedy as a
+  // restart, different cause: the server survived the suspend but every frame's
+  // session outlasted what the IDE can reconnect across.
+  // -------------------------------------------------------------------------
+  describe("ide-server:sessions-stale", () => {
+    it("asks the view manager to reload frames", async () => {
+      const { viewManager, module } = createTestSetup();
+
+      const event: IdeServerSessionsStaleEvent = {
+        type: EVENT_IDE_SERVER_SESSIONS_STALE,
+        payload: {},
+      };
+      await module.events![EVENT_IDE_SERVER_SESSIONS_STALE]!.handler(event);
 
       expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
     });

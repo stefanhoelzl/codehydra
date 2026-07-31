@@ -48,6 +48,7 @@ import {
   INTENT_APP_RESUME,
   EVENT_APP_RESUMED,
   EVENT_APP_RESUME_FAILED,
+  EVENT_IDE_SERVER_SESSIONS_STALE,
   EVENT_IDE_SERVER_RESTARTED,
 } from "../../intents/app-resume";
 import type { DomainEvent } from "../../intents/lib/types";
@@ -1585,6 +1586,86 @@ describe("IdeServerModule", () => {
       expect(resumedEvents).toHaveLength(1);
       // Healthy probe → no restart → no frame reload
       expect(restartedEvents).toHaveLength(0);
+    });
+
+    // -------------------------------------------------------------------------
+    // Stale client sessions: the server survives the suspend, its clients don't
+    // -------------------------------------------------------------------------
+
+    /** Past VSCodium's 3h ProtocolConstants.ReconnectionGraceTime. */
+    const SLEPT_PAST_GRACE_MS = 4 * 60 * 60 * 1000;
+
+    it("reports stale clients when a healthy server outlasted the reconnection grace", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = await startIdeServer(deps);
+
+      const staleEvents: DomainEvent[] = [];
+      const restartedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_IDE_SERVER_SESSIONS_STALE, (e) => staleEvents.push(e));
+      dispatcher.subscribe(EVENT_IDE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+
+      const initialRunCount = asMockRunner(deps).$.spawnedCount;
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_RESUME,
+        payload: { sleptMs: SLEPT_PAST_GRACE_MS },
+      });
+
+      // The frames are unrecoverable and must be reloaded...
+      expect(staleEvents).toHaveLength(1);
+      // ...but nothing was wrong with the server, so it is neither restarted
+      // nor reported as such.
+      expect(restartedEvents).toHaveLength(0);
+      expect(asMockRunner(deps).$.spawnedCount).toBe(initialRunCount);
+    });
+
+    it("leaves a healthy server's sessions alone when the suspend stayed inside the grace", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = await startIdeServer(deps);
+
+      const staleEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_IDE_SERVER_SESSIONS_STALE, (e) => staleEvents.push(e));
+
+      // 30 minutes — the IDE reconnects on its own well inside 3h.
+      await dispatcher.dispatch({
+        type: INTENT_APP_RESUME,
+        payload: { sleptMs: 30 * 60 * 1000 },
+      });
+
+      expect(staleEvents).toHaveLength(0);
+    });
+
+    it("reports a restart rather than stale clients when a long suspend also killed the server", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const deps = createMockDeps();
+        const { dispatcher } = await startIdeServer(deps);
+
+        // Probe fails, restart succeeds.
+        const fetch = deps.httpClient.fetch as ReturnType<typeof vi.fn>;
+        for (let i = 0; i < 10; i++) fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValue({ status: 200 });
+
+        const staleEvents: DomainEvent[] = [];
+        const restartedEvents: DomainEvent[] = [];
+        dispatcher.subscribe(EVENT_IDE_SERVER_SESSIONS_STALE, (e) => staleEvents.push(e));
+        dispatcher.subscribe(EVENT_IDE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+
+        const resumePromise = dispatcher.dispatch({
+          type: INTENT_APP_RESUME,
+          payload: { sleptMs: SLEPT_PAST_GRACE_MS },
+        });
+        await vi.advanceTimersByTimeAsync(6000);
+        await resumePromise;
+
+        // The restart already invalidates every session; reporting both would
+        // reload the frames twice for one resume.
+        expect(restartedEvents).toHaveLength(1);
+        expect(staleEvents).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("skips probe when the IDE server was never started", async () => {

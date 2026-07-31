@@ -31,7 +31,7 @@ import type { SelectFolderHookResult } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
+import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import { projectPathSchema } from "../intents/contract";
 
 // =============================================================================
@@ -202,6 +202,19 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // server instead of leaving the IDE server's "Reload" dialog in each one.
       // -------------------------------------------------------------------
       [EVENT_IDE_SERVER_RESTARTED]: {
+        handler: async (): Promise<void> => {
+          viewManager.reloadFrames();
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // ide-server:sessions-stale → same remedy, different cause. The server
+      // was never replaced; a suspend outlasted what its clients can reconnect
+      // across, so every frame's session is dead and would otherwise sit there
+      // showing the IDE's own "Cannot reconnect" dialog. ide-server-module owns
+      // that judgement — this module only knows how to reload.
+      // -------------------------------------------------------------------
+      [EVENT_IDE_SERVER_SESSIONS_STALE]: {
         handler: async (): Promise<void> => {
           viewManager.reloadFrames();
         },

@@ -466,8 +466,14 @@ describe("ElectronLifecycleModule Integration", () => {
   // app-start/activate — powerMonitor resume dispatches app:resume
   // ---------------------------------------------------------------------------
   describe("app-start/activate — powerMonitor resume", () => {
-    it("dispatches app:resume on powerMonitor resume event", async () => {
-      const mockApp = createMockApp();
+    /**
+     * Wire up the module with a captured "resume" callback, run app:start so the
+     * heartbeat is armed, and hand back the pieces the assertions need.
+     */
+    async function setupResume(): Promise<{
+      fireResume: () => void;
+      mockDispatcher: { dispatch: ReturnType<typeof vi.fn> };
+    }> {
       const resumeCallbacks: (() => void)[] = [];
       const mockPowerMonitor = {
         on: vi.fn((event: string, callback: () => void) => {
@@ -477,30 +483,97 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockDispatcher = { dispatch: vi.fn().mockResolvedValue(undefined) };
 
       const dispatcher = createMockDispatcher();
-
       dispatcher.registerOperation(
         createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
       );
-
-      const module = createElectronLifecycleModule(
-        createDeps({
-          app: mockApp,
-          powerMonitor: mockPowerMonitor,
-          dispatcher: mockDispatcher,
-        })
+      dispatcher.registerModule(
+        createElectronLifecycleModule(
+          createDeps({
+            app: createMockApp(),
+            powerMonitor: mockPowerMonitor,
+            dispatcher: mockDispatcher,
+          })
+        )
       );
-      dispatcher.registerModule(module);
 
-      await dispatcher.dispatch<AppStartIntent>({
-        type: INTENT_APP_START,
-        payload: {},
-      });
+      await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
 
-      // Simulate resume
       expect(resumeCallbacks.length).toBe(1);
-      resumeCallbacks[0]!();
+      return { fireResume: () => resumeCallbacks[0]!(), mockDispatcher };
+    }
 
-      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({ type: "app:resume", payload: {} });
+    function dispatchedSleptMs(mockDispatcher: {
+      dispatch: ReturnType<typeof vi.fn>;
+    }): number | undefined {
+      const intent = mockDispatcher.dispatch.mock.calls[0]![0] as {
+        type: string;
+        payload: { sleptMs?: number };
+      };
+      expect(intent.type).toBe("app:resume");
+      return intent.payload.sleptMs;
+    }
+
+    it("dispatches app:resume on powerMonitor resume event", async () => {
+      const { fireResume, mockDispatcher } = await setupResume();
+
+      fireResume();
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatchedSleptMs(mockDispatcher)).toBeTypeOf("number");
+    });
+
+    it("reports the wall-clock gap the machine spent suspended", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-07-30T20:22:54Z"));
+        const { fireResume, mockDispatcher } = await setupResume();
+
+        // The 12h53m gap from the reported incident.
+        vi.setSystemTime(new Date("2026-07-31T09:15:43Z"));
+        fireResume();
+
+        // Measured from the last heartbeat stamp, so it may over-state the
+        // suspend by up to one interval — never under-state it.
+        const sleptMs = dispatchedSleptMs(mockDispatcher)!;
+        expect(sleptMs).toBeGreaterThanOrEqual(12 * 60 * 60 * 1000);
+        expect(sleptMs).toBeLessThan(13 * 60 * 60 * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not let heartbeat ticks that come due on wake erase the gap", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-07-30T20:22:54Z"));
+        const { fireResume, mockDispatcher } = await setupResume();
+
+        // Jump the clock as a suspend does, then let the timers that came due
+        // during it run — as they do on wake, before "resume" is delivered.
+        vi.setSystemTime(new Date("2026-07-31T09:15:43Z"));
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        fireResume();
+
+        expect(dispatchedSleptMs(mockDispatcher)!).toBeGreaterThanOrEqual(12 * 60 * 60 * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reports a negligible gap when the machine did not actually sleep", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-07-30T20:22:54Z"));
+        const { fireResume, mockDispatcher } = await setupResume();
+
+        // A spurious resume with no preceding suspend must not look like one.
+        fireResume();
+
+        expect(dispatchedSleptMs(mockDispatcher)).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
