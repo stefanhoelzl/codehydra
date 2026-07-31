@@ -45,6 +45,8 @@ export interface SpawnedProcessMockState extends MockState {
   readonly env: NodeJS.ProcessEnv | undefined;
   /** True when the caller asked for shell interpretation of `command`. */
   readonly shell: boolean;
+  /** The replacement identity the caller passed as `redactBy`, if any. */
+  readonly redactBy: string | undefined;
   readonly killCalls: ReadonlyArray<KillCallRecord>;
 }
 
@@ -92,6 +94,7 @@ interface MockSpawnedProcessOptions {
   cwd: string | undefined;
   env: NodeJS.ProcessEnv | undefined;
   shell: boolean;
+  redactBy: string | undefined;
   pid: number | undefined;
   waitResult: ProcessResult;
   killResult: KillResult;
@@ -106,6 +109,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
   readonly cwd: string | undefined;
   readonly env: NodeJS.ProcessEnv | undefined;
   readonly shell: boolean;
+  readonly redactBy: string | undefined;
   private readonly _killCalls: KillCallRecord[] = [];
 
   constructor(options: {
@@ -114,12 +118,14 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
     cwd: string | undefined;
     env: NodeJS.ProcessEnv | undefined;
     shell: boolean;
+    redactBy: string | undefined;
   }) {
     this.command = options.command;
     this.args = options.args;
     this.cwd = options.cwd;
     this.env = options.env;
     this.shell = options.shell;
+    this.redactBy = options.redactBy;
   }
 
   get killCalls(): ReadonlyArray<KillCallRecord> {
@@ -159,6 +165,7 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
       cwd: options.cwd,
       env: options.env,
       shell: options.shell,
+      redactBy: options.redactBy,
     });
   }
 
@@ -265,7 +272,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   run(
     command: string,
     args: readonly string[],
-    options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean }
+    options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean; redactBy?: string }
   ): SpawnedProcess {
     // Get per-spawn configuration
     const config = this.onSpawn?.(command, args, options?.cwd, options?.env);
@@ -292,6 +299,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       cwd: options?.cwd,
       env: options?.env,
       shell: options?.shell ?? false,
+      redactBy: options?.redactBy,
       pid,
       waitResult,
       killResult,

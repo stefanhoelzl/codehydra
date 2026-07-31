@@ -45,6 +45,23 @@ export interface ProcessOptions {
    * unmangled.
    */
   readonly shell?: boolean;
+  /**
+   * Mark this spawn as untrusted: its command line and its output may contain
+   * credentials, so neither is written to the log verbatim at debug level.
+   *
+   * The string is the replacement identity. Every log site that would print the
+   * command prints `command=<your text>` instead, and `args`/`spawnargs` are
+   * omitted entirely — nothing of the real command line is ever logged. Output
+   * lines are reduced to a byte count at debug (`stdout: 1234 bytes`); the full
+   * line is still emitted at `silly`, which is opt-in.
+   *
+   * There is deliberately NO pattern-matching fallback: a spawn without
+   * `redactBy` has its command, args and output logged in full. If you are
+   * putting a token, password or credential-bearing URL into argv — or running
+   * a user-authored command line that might — you MUST set this. Nothing else
+   * will catch it.
+   */
+  readonly redactBy?: string;
 }
 
 /**
@@ -156,14 +173,22 @@ const TIMEOUT_SYMBOL = Symbol("timeout");
 class ExecaSpawnedProcess implements SpawnedProcess {
   private readonly subprocess: ExecaSubprocess;
   private readonly logger: Logger;
-  private readonly command: string;
+  /**
+   * The only form of the command any log site may print. Computed once here so
+   * that a redacted spawn cannot leak through a site that forgot to redact —
+   * the raw command line is never stored on the instance.
+   */
+  readonly loggableCommand: string;
+  /** True when the caller passed `redactBy` (see ProcessOptions.redactBy). */
+  readonly redacted: boolean;
   private cachedResult: ProcessResult | null = null;
   private readonly streamingActive: boolean;
 
-  constructor(subprocess: ExecaSubprocess, logger: Logger, command: string) {
+  constructor(subprocess: ExecaSubprocess, logger: Logger, command: string, redactBy?: string) {
     this.subprocess = subprocess;
     this.logger = logger;
-    this.command = command;
+    this.redacted = redactBy !== undefined;
+    this.loggableCommand = redactBy !== undefined ? `<${redactBy}>` : command;
     this.streamingActive = this.setupStreamLogging();
   }
 
@@ -184,7 +209,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
       // 2. We can't send CTRL_C_EVENT to detached processes
       // So we skip the "graceful" phase entirely and go straight to forceful.
       await this.killProcess(pid, true);
-      this.logger.warn("Killed", { command: this.command, pid, signal: "TASKKILL" });
+      this.logger.warn("Killed", { command: this.loggableCommand, pid, signal: "TASKKILL" });
 
       // Wait for termTimeout (combined wait since we only do one kill)
       const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
@@ -202,7 +227,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     // Unix: Two-phase SIGTERM → SIGKILL
     // 1. Send SIGTERM
     await this.killProcess(pid, false);
-    this.logger.info("Killed", { command: this.command, pid, signal: "SIGTERM" });
+    this.logger.info("Killed", { command: this.loggableCommand, pid, signal: "SIGTERM" });
 
     // 2. If termTimeout defined, wait for graceful exit
     if (termTimeout !== undefined) {
@@ -214,7 +239,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
 
     // 3. Send SIGKILL
     await this.killProcess(pid, true);
-    this.logger.warn("Killed", { command: this.command, pid, signal: "SIGKILL" });
+    this.logger.warn("Killed", { command: this.loggableCommand, pid, signal: "SIGKILL" });
 
     // 4. If killTimeout defined, wait for forced exit
     if (killTimeout !== undefined) {
@@ -299,7 +324,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     if (raceResult === TIMEOUT_SYMBOL) {
       // Timeout occurred, process is still running
       this.logger.silly("Wait timeout", {
-        command: this.command,
+        command: this.loggableCommand,
         pid: this.pid ?? 0,
         timeout,
       });
@@ -373,7 +398,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     } else {
       // Normal exit
       this.logger.debug("Exited", {
-        command: this.command,
+        command: this.loggableCommand,
         pid: this.pid ?? 0,
         exitCode: result.exitCode ?? -1,
       });
@@ -389,13 +414,29 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   }
 
   /**
-   * Log non-empty lines at DEBUG level, prefixed with the command + pid.
+   * Log non-empty lines, prefixed with the pid. The pid (rather than the
+   * command) keeps the prefix short on chatty processes and correlates with
+   * the "Spawned" record, the OS, and the process-cleanup modules; it is
+   * reused by the OS over a long session, so resolve it against the nearest
+   * preceding "Spawned" line.
+   *
+   * For a redacted spawn the line content itself may carry credentials (argv
+   * redaction cannot reach a response body), so debug gets only a byte count
+   * and the content is deferred to `silly`, which is opt-in. Both calls are
+   * always made — the transport filters by level — so at `silly` a redacted
+   * spawn shows the count line and the content line.
+   *
    * Shared by the streaming logger and the batch (post-exit) logger.
    */
   private logLines(lines: string[], stream: "stdout" | "stderr"): void {
-    const prefix = `[${this.command} ${this.pid ?? 0}]`;
+    const prefix = `[${this.pid ?? 0}]`;
     for (const line of lines) {
       if (line.trim() === "") continue;
+      if (this.redacted) {
+        this.logger.debug(`${prefix} ${stream}: ${Buffer.byteLength(line)} bytes`);
+        this.logger.silly(`${prefix} ${stream}: ${line}`);
+        continue;
+      }
       this.logger.debug(`${prefix} ${stream}: ${line}`);
     }
   }
@@ -429,7 +470,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
 
       // Pure spawn error (ENOENT, EACCES, etc.)
       this.logger.error("Spawn failed", {
-        command: this.command,
+        command: this.loggableCommand,
         error: err.message,
       });
       return {
@@ -486,7 +527,7 @@ export class ExecaProcessRunner implements ProcessRunner {
       ...(options?.env && { env: options.env, extendEnv: false }),
     }) as ExecaSubprocess;
 
-    const spawned = new ExecaSpawnedProcess(subprocess, this.logger, command);
+    const spawned = new ExecaSpawnedProcess(subprocess, this.logger, command, options?.redactBy);
 
     // Check if spawn failed (no PID)
     if (spawned.pid === undefined) {
@@ -499,13 +540,21 @@ export class ExecaProcessRunner implements ProcessRunner {
       // shell transformation. On Windows a `.cmd` goes through cmd.exe, and how its
       // arguments end up quoted decides whether a batch script can parse them at all —
       // VSCodium's codium-server.cmd dies on a quoted first argument.
+      //
+      // A redacted spawn logs its replacement identity and nothing else: `args`
+      // and `spawnargs` are both derived from the real command line, and
+      // `spawnargs` in particular re-embeds it (`["/bin/sh", "-c", <line>]`).
       const child = subprocess as unknown as { spawnfile?: string; spawnargs?: string[] };
       this.logger.debug("Spawned", {
-        command,
-        args: args.join(" "),
+        // Same computed value the handle's own log sites use, so the two can
+        // never disagree about what is safe to print.
+        command: spawned.loggableCommand,
         pid: spawned.pid,
-        ...(child.spawnfile !== undefined && { spawnfile: child.spawnfile }),
-        ...(child.spawnargs !== undefined && { spawnargs: JSON.stringify(child.spawnargs) }),
+        ...(!spawned.redacted && {
+          args: args.join(" "),
+          ...(child.spawnfile !== undefined && { spawnfile: child.spawnfile }),
+          ...(child.spawnargs !== undefined && { spawnargs: JSON.stringify(child.spawnargs) }),
+        }),
       });
     }
 

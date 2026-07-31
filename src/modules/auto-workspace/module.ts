@@ -362,7 +362,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   async function pollSource(source: ParsedSource): Promise<boolean> {
     let items: unknown[];
     try {
-      items = await runCmd({ processRunner: deps.processRunner }, source.cmd);
+      items = await runCmd({ processRunner: deps.processRunner }, source.name, source.cmd);
     } catch (error) {
       deps.logger.warn("Source cmd failed, skipping tick", {
         source: source.name,
