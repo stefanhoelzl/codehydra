@@ -857,16 +857,33 @@ The logging system provides comprehensive logging across both main and renderer 
 
 ### Configuration
 
-| Variable        | Values                   | Description                                           |
-| --------------- | ------------------------ | ----------------------------------------------------- |
-| `CH_LOGLEVEL`   | debug\|info\|warn\|error | Override default log level                            |
-| `CH_PRINT_LOGS` | any non-empty value      | Print logs to stdout/stderr                           |
-| `CH_LOGGER`     | comma-separated names    | Only log from specified loggers (e.g., `git,process`) |
+Logging is configured through the normal config keys (registered by
+`createLoggingModule`), so each one works as a `config.json` entry, an env var,
+or a CLI flag — see the Configuration section of CLAUDE.md for the precedence
+rules.
+
+| Config key   | Env var          | Values                            | Description              |
+| ------------ | ---------------- | --------------------------------- | ------------------------ |
+| `log.level`  | `CH_LOG__LEVEL`  | `<level>` or `<level>:<filter>`   | Level, optionally scoped |
+| `log.output` | `CH_LOG__OUTPUT` | `file`, `console`, `file,console` | Output destinations      |
+| `log.format` | `CH_LOG__FORMAT` | `text`\|`json`                    | Text lines or JSONL      |
+
+Levels, most verbose first: `silly`, `debug`, `info`, `warn`, `error`. The
+optional filter is a comma-separated **whitelist** of logger names (or `*` for
+all) — naming loggers restricts output to them; it cannot exclude one from an
+otherwise unfiltered level. A line that should stay out of a default `debug`
+capture therefore belongs at `silly`, not behind a filter.
+
+```bash
+CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev   # everything, to stdout
+CH_LOG__LEVEL=debug:git,process pnpm dev              # only those two scopes
+CH_LOG__LEVEL=silly:presenter pnpm dev                # one scope, maximum detail
+```
 
 **Default Levels**:
 
-- Development (isDevelopment=true): DEBUG
-- Production (isDevelopment=false): WARN
+- Development (isDevelopment=true): `debug` (computed default)
+- Production (isDevelopment=false): `warn`
 
 ### Logger Names/Scopes
 
@@ -886,6 +903,33 @@ The logging system provides comprehensive logging across both main and renderer 
 | `[app]`       | Application Lifecycle     | Bootstrap, startup, shutdown          |
 | `[ui]`        | Renderer Components       | Dialog events, user actions           |
 | `[extension]` | PluginServer              | Extension-side logs forwarded to main |
+| `[presenter]` | PresentationModule        | ui:event intake, ui:state pushes      |
+
+(An abridged list — CLAUDE.md carries the full set of `LoggerName` values.)
+
+### Payload Size
+
+A log line's context must be bounded by something small. Anything that scales
+with user data — a git branch list, a file's contents, a screenshot, an SDK
+response — belongs in the log as a size, an id, or a count, not verbatim.
+`FileSystemBoundary.writeFileBuffer` is the pattern: it logs `size`, never
+`content`.
+
+The file rotates at 20 MB and bug reports ship a gzipped tail of it, so an
+unbounded line does not merely bloat the log — it evicts the context a report
+is read for. Payloads also leave the machine: bug reports attach the log, so a
+line that dumps a dialog's render model or a screenshot is exfiltrating what it
+renders.
+
+`[presenter]` logs each `ui:state` push at two fidelities:
+
+| Level   | Context key | Content                                                                                                                                              |
+| ------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `debug` | `state`     | Bounded projection: frames as keys, dialogs as `id` + `kind`, a hibernated `main.screenshot` as its length. Rows, notifications, and flags verbatim. |
+| `silly` | `snapshot`  | The verbatim snapshot, unbounded.                                                                                                                    |
+
+The projection is built from a mapped type over `UiState`, so a new field is a
+compile error until it is deliberately projected. Both lines fire at `silly`.
 
 ### Log File Location
 
