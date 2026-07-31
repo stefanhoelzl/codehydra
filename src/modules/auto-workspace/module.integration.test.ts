@@ -11,7 +11,7 @@
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { createBehavioralLogger } from "../../boundaries/platform/logging.test-utils";
 import { z } from "zod/v4";
 import type {
   Operation,
@@ -177,6 +177,7 @@ template:
 interface CmdControl {
   items: unknown[];
   exitCode: number;
+  stderr: string;
 }
 
 function createSetup(options?: {
@@ -185,10 +186,15 @@ function createSetup(options?: {
   legacyStateFileContent?: string;
   existingEntries?: Record<string, StateEntry>;
 }) {
-  const cmd: CmdControl = { items: [], exitCode: 0 };
+  const cmd: CmdControl = { items: [], exitCode: 0, stderr: "" };
   const processRunner = createMockProcessRunner({
-    onSpawn: () => ({ exitCode: cmd.exitCode, stdout: JSON.stringify(cmd.items) }),
+    onSpawn: () => ({
+      exitCode: cmd.exitCode,
+      stdout: JSON.stringify(cmd.items),
+      stderr: cmd.stderr,
+    }),
   });
+  const logger = createBehavioralLogger();
 
   const fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
     "/data": directory(),
@@ -225,7 +231,7 @@ function createSetup(options?: {
 
   const module = createAutoWorkspaceModule({
     fs,
-    logger: SILENT_LOGGER,
+    logger,
     legacyStateFilePath: "/data/auto-workspaces.json",
     dispatcher,
     processRunner,
@@ -234,7 +240,17 @@ function createSetup(options?: {
   });
   dispatcher.registerModule(module);
 
-  return { dispatcher, fs, state, cmd, mockConfig, openProjectOp, openWorkspaceOp, setMetaOp };
+  return {
+    dispatcher,
+    fs,
+    state,
+    cmd,
+    logger,
+    mockConfig,
+    openProjectOp,
+    openWorkspaceOp,
+    setMetaOp,
+  };
 }
 
 const startIntent = (): AppStartIntent => ({
@@ -342,6 +358,25 @@ describe("AutoWorkspaceModule Integration", () => {
     cmd.exitCode = 0; // cmd recovers
     await tick();
     expect(entriesOf(state)).toHaveProperty("gh/1");
+  });
+
+  it("keeps a failing cmd's stderr out of the warn line", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, logger } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    cmd.exitCode = 1;
+    cmd.stderr = "401 Unauthorized: token perm-SECRET is expired";
+
+    await dispatcher.dispatch(startIntent());
+
+    // This line is emitted at the DEFAULT log level, so a cmd that echoes its
+    // own credentials on failure would leak them to every bug report without
+    // anyone enabling debug logging.
+    const warned = logger.getMessagesByLevel("warn");
+    const text = warned.map((m) => `${m.message} ${JSON.stringify(m.context ?? {})}`).join("\n");
+    expect(text).toContain("Source cmd failed");
+    expect(text).not.toContain("perm-SECRET");
+    expect(text).toContain("46 bytes of stderr");
   });
 
   it("picks up a newly added source without a restart (each cycle re-reads config)", async () => {

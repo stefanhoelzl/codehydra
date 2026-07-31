@@ -23,9 +23,20 @@ export interface RunCmdDeps {
  * Execute `cmd` and return the parsed top-level JSON array. Throws on non-zero
  * exit, timeout, non-JSON output, or output that is not an array — the caller
  * logs and skips the tick.
+ *
+ * `sourceName` is only used as the command's logged identity: the cmd is
+ * user-authored and routinely inlines an API token, so `redactBy` keeps the
+ * line itself out of the log entirely (see ProcessOptions.redactBy).
  */
-export async function runCmd(deps: RunCmdDeps, cmd: string): Promise<unknown[]> {
-  const proc = deps.processRunner.run(cmd, [], { shell: true });
+export async function runCmd(
+  deps: RunCmdDeps,
+  sourceName: string,
+  cmd: string
+): Promise<unknown[]> {
+  const proc = deps.processRunner.run(cmd, [], {
+    shell: true,
+    redactBy: `${sourceName} cmd`,
+  });
   const result = await proc.wait(CMD_TIMEOUT_MS);
 
   if (result.running) {
@@ -33,8 +44,15 @@ export async function runCmd(deps: RunCmdDeps, cmd: string): Promise<unknown[]> 
     throw new Error(`cmd timed out after ${CMD_TIMEOUT_MS}ms`);
   }
   if (result.exitCode !== 0) {
-    const stderr = result.stderr.slice(0, 500).trim();
-    throw new Error(`cmd exited with ${result.exitCode ?? "signal"}${stderr ? `: ${stderr}` : ""}`);
+    // Deliberately no stderr text: this message reaches the caller's `warn`
+    // line, which is emitted at the DEFAULT log level, and a failing cmd can
+    // echo its own credentials (a 401 body, a usage line quoting argv). The
+    // byte count says whether the cmd said anything at all; the text itself is
+    // recoverable at `silly` from the stderr line ProcessRunner logs.
+    const stderrBytes = Buffer.byteLength(result.stderr);
+    throw new Error(
+      `cmd exited with ${result.exitCode ?? "signal"} (${stderrBytes} bytes of stderr)`
+    );
   }
 
   let parsed: unknown;

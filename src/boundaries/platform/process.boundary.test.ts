@@ -940,6 +940,29 @@ describe("ExecaProcessRunner", () => {
     );
 
     it(
+      "prefixes output lines with the pid, not the command",
+      async () => {
+        const logger = createBehavioralLogger();
+        const streamRunner = new ExecaProcessRunner(logger);
+
+        const proc = streamRunner.run(process.execPath, ["-e", 'console.log("prefixed-line")']);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const line = logger
+          .getMessagesByLevel("debug")
+          .find((m) => m.message.includes("prefixed-line"));
+        expect(line?.message).toBe(`[${proc.pid ?? 0}] stdout: prefixed-line`);
+        // The command is repeated once per line if it lands in the prefix; on a
+        // chatty process that is the bulk of the log.
+        expect(line?.message).not.toContain(process.execPath);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
       "streams output before wait() is called",
       async () => {
         const logger = createBehavioralLogger();
@@ -959,6 +982,231 @@ describe("ExecaProcessRunner", () => {
         expect(debugMessages.some((m) => m.message.includes("early-output"))).toBe(true);
 
         await proc.kill(100, 100);
+      },
+      TEST_TIMEOUT
+    );
+  });
+
+  describe("redactBy", () => {
+    /** A credential shaped like the YouTrack permanent token that leaked. */
+    const SECRET = "perm-AAAABBBBCCCCDDDDEEEEFFFF";
+    const REDACT_BY = "youtrack cmd";
+
+    /**
+     * Everything the logger was given, at every level, message text and context
+     * values alike. The leak assertions run against this rather than against
+     * debug-level messages: three of the sites that print the command log at
+     * info/warn/error, i.e. at or above the DEFAULT level, so scoping the
+     * assertion to debug would miss exactly the cases that leak without anyone
+     * turning debug on.
+     */
+    function allLoggedText(logger: ReturnType<typeof createBehavioralLogger>): string {
+      return logger
+        .getMessages()
+        .map((m) => `${m.message} ${m.context ? JSON.stringify(m.context) : ""}`)
+        .join("\n");
+    }
+
+    /**
+     * A shell line carrying a credential in argv, as the auto-workspace poller
+     * does. The `--` keeps node from claiming `--oauth2-bearer` as one of its
+     * own options and bailing out before the script runs.
+     */
+    function sensitiveLine(script: string): string {
+      return `"${process.execPath}" -e "${script}" -- --oauth2-bearer ${SECRET}`;
+    }
+
+    it(
+      "keeps a credential in argv out of the log on the normal exit path",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        const proc = redactRunner.run(sensitiveLine("process.exit(0)"), [], {
+          shell: true,
+          redactBy: REDACT_BY,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        expect(allLoggedText(logger)).not.toContain(SECRET);
+        expect(allLoggedText(logger)).toContain(`<${REDACT_BY}>`);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "keeps a credential in argv out of the log on the kill path",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        const proc = redactRunner.run(sensitiveLine("setTimeout(() => {}, 30000)"), [], {
+          shell: true,
+          redactBy: REDACT_BY,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // "Killed" logs at info/warn — above the default log level, so this is
+        // the path that leaked for users who never enabled debug logging.
+        await proc.kill(100, 100);
+
+        const text = allLoggedText(logger);
+        expect(text).not.toContain(SECRET);
+        expect(text).toContain("Killed");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "keeps a credential in argv out of the log on the wait-timeout path",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        const proc = redactRunner.run(sensitiveLine("setTimeout(() => {}, 30000)"), [], {
+          shell: true,
+          redactBy: REDACT_BY,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        // The poller waits with a timeout, so "Wait timeout" fires on every
+        // slow source cmd.
+        const result = await proc.wait(50);
+        expect(result.running).toBe(true);
+        expect(allLoggedText(logger)).not.toContain(SECRET);
+
+        await proc.kill(100, 100);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "keeps a credential in argv out of the log when the spawn itself fails",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        // Not a shell spawn: a missing binary is what produces the ENOENT that
+        // reaches "Spawn failed", which logs at error level.
+        const proc = redactRunner.run(
+          "codehydra-definitely-not-a-real-binary",
+          ["--oauth2-bearer", SECRET],
+          { redactBy: REDACT_BY }
+        );
+        runningProcesses.push(proc);
+
+        await proc.wait();
+
+        expect(allLoggedText(logger)).not.toContain(SECRET);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "counts redacted output at debug and defers the content to silly",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        // Argv redaction cannot reach a response body, so the body is treated
+        // as untrusted too: an API response can carry a token of its own.
+        const body = "RESPONSE-BODY-abcdef";
+        const proc = redactRunner.run(process.execPath, ["-e", `console.log("${body}")`], {
+          redactBy: REDACT_BY,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const debugText = logger
+          .getMessagesByLevel("debug")
+          .map((m) => m.message)
+          .join("\n");
+        expect(debugText).not.toContain(body);
+        expect(debugText).toContain(`stdout: ${Buffer.byteLength(body)} bytes`);
+
+        const sillyText = logger
+          .getMessagesByLevel("silly")
+          .map((m) => m.message)
+          .join("\n");
+        expect(sillyText).toContain(body);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "omits args and spawnargs from the Spawned record of a redacted spawn",
+      async () => {
+        const logger = createBehavioralLogger();
+        const redactRunner = new ExecaProcessRunner(logger);
+
+        const proc = redactRunner.run(process.execPath, ["-e", "process.exit(0)", SECRET], {
+          redactBy: REDACT_BY,
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        const spawned = logger.getMessagesByLevel("debug").find((m) => m.message === "Spawned");
+        expect(spawned?.context?.command).toBe(`<${REDACT_BY}>`);
+        // spawnargs re-embeds the real argv, so it has to go too.
+        expect(spawned?.context).not.toHaveProperty("args");
+        expect(spawned?.context).not.toHaveProperty("spawnargs");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "leaves a spawn without redactBy fully logged",
+      async () => {
+        const logger = createBehavioralLogger();
+        const plainRunner = new ExecaProcessRunner(logger);
+
+        const proc = plainRunner.run(process.execPath, ["-e", 'console.log("plain-output")']);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        // Redaction is strictly opt-in: nothing is inferred, and an unflagged
+        // spawn keeps the command, args and output it logs today.
+        const spawned = logger.getMessagesByLevel("debug").find((m) => m.message === "Spawned");
+        expect(spawned?.context?.command).toBe(process.execPath);
+        expect(spawned?.context?.args).toContain("plain-output");
+
+        const debugText = logger
+          .getMessagesByLevel("debug")
+          .map((m) => m.message)
+          .join("\n");
+        expect(debugText).toContain("stdout: plain-output");
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "never logs the environment, redacted or not",
+      async () => {
+        const logger = createBehavioralLogger();
+        const envRunner = new ExecaProcessRunner(logger);
+
+        // Backs the guidance to keep credentials in env rather than argv:
+        // that only helps if env genuinely never reaches the log.
+        const proc = envRunner.run(process.execPath, ["-e", "process.exit(0)"], {
+          env: { ...process.env, YT_TOKEN: SECRET },
+        });
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await proc.wait();
+
+        expect(allLoggedText(logger)).not.toContain(SECRET);
       },
       TEST_TIMEOUT
     );
