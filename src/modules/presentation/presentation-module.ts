@@ -375,6 +375,49 @@ function buildCloseConfirmConfig(
   return { sections };
 }
 
+/**
+ * The snapshot projection logged on every push at `debug` (minified JSON).
+ *
+ * A verbatim snapshot is unbounded, and two fields carry nearly all of it: a
+ * hibernated `main` inlines the workspace screenshot as a base64 data URL
+ * (~1.25 MB for a real 940 KB PNG), and a create-workspace dialog's `config`
+ * holds one dropdown suggestion per branch (22.8 KB at 428 remote branches).
+ * Re-serialised on every push, that made `[presenter]` 64% of an 11.5 MB bug
+ * report — ~1 MB/hour from this one line. Dropping the dialog config also
+ * keeps the settings dialog's unredacted `Config.getEffective()` values out of
+ * the log file that bug reports attach.
+ *
+ * Everything else stays verbatim: rows are ~155 bytes each and carry what a
+ * report is read for (which row hung in `creating`, which deletion failed and
+ * why, which agent was busy). The mapped type is the guard — a new `UiState`
+ * field fails to compile here until it is deliberately projected.
+ *
+ * The verbatim snapshot remains available one level down (`log.level=silly:presenter`).
+ */
+function projectForLog(state: UiState): string {
+  const projected: { [K in keyof UiState]: unknown } = {
+    sidebar: state.sidebar,
+    // The mounted-frame *set* is the diagnostic fact (an orphaned frame, a
+    // frame surviving a teardown); each URL is just the IDE port plus the
+    // worktree path, both already elsewhere in the log.
+    frames: Object.keys(state.frames),
+    main:
+      state.main.kind === "hibernated"
+        ? { ...state.main, screenshot: state.main.screenshot?.length ?? null }
+        : state.main,
+    theme: state.theme,
+    labelScroll: state.labelScroll,
+    silent: state.silent,
+    mode: state.mode,
+    capturing: state.capturing,
+    // Which dialogs are open, in open order — enough for the modal-stack
+    // questions ("was the app blocked", "did the loading dialog never close").
+    dialogs: state.dialogs.map(({ id, kind }) => ({ id, kind })),
+    notifications: state.notifications,
+  };
+  return JSON.stringify(projected);
+}
+
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
   const logger = deps.loggingService.createLogger("presenter");
 
@@ -1046,7 +1089,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     inPush = false;
     const snapshot = buildSnapshot();
     deps.viewManager.sendToUI(ApiIpcChannels.UI_STATE, snapshot);
-    logger.debug("ui:state push", { snapshot: JSON.stringify(snapshot) });
+    // Two fidelities, same message: `state` is the bounded projection every
+    // debug-level bug report carries, `snapshot` the verbatim dump (both fire
+    // at silly — the projection stays greppable either way).
+    logger.debug("ui:state push", { state: projectForLog(snapshot) });
+    logger.silly("ui:state push", { snapshot: JSON.stringify(snapshot) });
   }
 
   // ---------------------------------------------------------------------------

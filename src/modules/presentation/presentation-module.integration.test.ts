@@ -404,9 +404,14 @@ describe("PresentationModule - ui:state snapshots", () => {
         notifications: [],
       },
     ]);
+    // The push is logged at two fidelities (see "push logging" below): the
+    // bounded projection at debug, the verbatim snapshot at silly.
     const logger = deps.loggingService.getLogger("presenter");
-    expect(logger?.debug).toHaveBeenCalledWith("ui:state push", {
+    expect(logger?.silly).toHaveBeenCalledWith("ui:state push", {
       snapshot: JSON.stringify(snapshots(deps)[0]),
+    });
+    expect(logger?.debug).toHaveBeenCalledWith("ui:state push", {
+      state: expect.stringContaining('"main":{"kind":"starting"}') as string,
     });
   });
 
@@ -2474,5 +2479,139 @@ describe("PresentationModule - background-focus suppression", () => {
 
     const result = await interceptor(module).before(openIntent("mcp", true));
     expect(stealFocusOf(result)).toBe(false);
+  });
+});
+
+// =============================================================================
+// Push logging
+//
+// Every push is logged twice: a bounded projection at `debug` (what a bug
+// report captured at the default level carries) and the verbatim snapshot at
+// `silly`. The projection drops exactly the three unbounded fields — dialog
+// configs, frame URLs, and the hibernation screenshot's bytes.
+// =============================================================================
+
+describe("PresentationModule - push logging", () => {
+  /** The context of the last `debug` "ui:state push", parsed back from JSON. */
+  function loggedProjection(deps: Deps): Record<string, unknown> {
+    const logger = deps.loggingService.getLogger("presenter")!;
+    const call = logger.debug.mock.calls.filter(([message]) => message === "ui:state push").at(-1);
+    expect(call).toBeDefined();
+    return JSON.parse(call![1]!.state as string) as Record<string, unknown>;
+  }
+
+  it("projects frames to their keys and drops the IDE URLs", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:25448/?folder=/ws/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    expect(lastSnapshot(deps).frames).toEqual({ [`${PROJECT_ID}/feat`]: workspace.url });
+    expect(loggedProjection(deps).frames).toEqual([`${PROJECT_ID}/feat`]);
+  });
+
+  it("projects dialogs to id + kind, dropping the config", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    // A create-workspace dialog carries one dropdown suggestion per branch —
+    // 428 remote branches was 22.8 KB of the 26.7 KB snapshot in the report.
+    module.dialog(
+      {
+        sections: [
+          {
+            type: "dropdown",
+            id: "name",
+            suggestions: [
+              {
+                items: Array.from({ length: 428 }, (_, i) => ({
+                  value: `origin/feature-${i}`,
+                  label: `origin/feature-${i}`,
+                })),
+              },
+            ],
+          },
+        ],
+      },
+      { kind: "panel" }
+    );
+    await flush();
+
+    const dialogs = lastSnapshot(deps).dialogs;
+    expect(dialogs).toHaveLength(1);
+    expect(dialogs[0]!.config.sections).toHaveLength(1);
+
+    const projected = loggedProjection(deps);
+    expect(projected.dialogs).toEqual([{ id: dialogs[0]!.id, kind: "panel" }]);
+    expect(JSON.stringify(projected)).not.toContain("origin/feature-");
+  });
+
+  it("projects the hibernation screenshot to its length", async () => {
+    const deps = createDeps();
+    deps.fileSystem.readFileBuffer = vi.fn(() => Promise.resolve(Buffer.from("PNG")));
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { metadata: { hibernated: "true" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    await flush();
+
+    const main = lastSnapshot(deps).main as { kind: string; screenshot: string };
+    expect(main.screenshot).toMatch(/^data:image\/png;base64,/);
+    expect(loggedProjection(deps).main).toEqual({
+      kind: "hibernated",
+      screenshot: main.screenshot.length,
+    });
+    expect(JSON.stringify(loggedProjection(deps))).not.toContain("data:image");
+  });
+
+  it("preserves a null screenshot (the PNG read failed)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { metadata: { hibernated: "true" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "hibernated", screenshot: null });
+    expect(loggedProjection(deps).main).toEqual({ kind: "hibernated", screenshot: null });
+  });
+
+  it("keeps rows, notifications and flags verbatim", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { metadata: { "tags.new": '{"color":"blue"}' } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    module.notification({ title: "Update available", type: "info" });
+    await flush();
+
+    const snapshot = lastSnapshot(deps);
+    const projected = loggedProjection(deps);
+    expect(projected.sidebar).toEqual(snapshot.sidebar);
+    expect(projected.notifications).toEqual(snapshot.notifications);
+    expect(projected.mode).toBe(snapshot.mode);
+    expect(projected.theme).toBe(snapshot.theme);
+    expect(projected.capturing).toBe(snapshot.capturing);
+    expect(projected.labelScroll).toBe(snapshot.labelScroll);
+    expect(projected.silent).toBe(snapshot.silent);
+  });
+
+  it("logs the verbatim snapshot at silly", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:25448/?folder=/ws/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+
+    const logger = deps.loggingService.getLogger("presenter")!;
+    const call = logger.silly.mock.calls.filter(([message]) => message === "ui:state push").at(-1);
+    expect(call).toBeDefined();
+    expect(JSON.parse(call![1]!.snapshot as string)).toEqual(lastSnapshot(deps));
+    // One line of each per push — silly is additive, not a replacement.
+    expect(logger.silly.mock.calls.length).toBe(
+      logger.debug.mock.calls.filter(([message]) => message === "ui:state push").length
+    );
   });
 });
