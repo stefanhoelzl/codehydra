@@ -276,6 +276,16 @@ true so the wizard stays away). `workers: 1`, `retries: 0`.
 - `createWorkspace()` waits for the workspace to become _active_, not merely listed: its
   iframe unmounts the creation panel on activation, so a caller reopening the panel
   immediately would race that teardown.
+- **Keyboard shortcuts cannot be driven from a spec.** Electron emits `before-input-event`
+  from the browser process's input router; Playwright's CDP `Input.dispatchKeyEvent`
+  injects at the renderer widget and never passes through it, so `shortcut-module` never
+  sees the key. Measured, not assumed: with `--log.level=debug`, synthetic Alt/X/H events
+  produce zero `Alt keyUp detected` entries and no `ui:set-shortcut-active` intent while
+  the listener is registered. Anything reachable _only_ via Alt+X (hibernate, devtools,
+  settings) has to be set up another way — `auto-workspace.e2e.ts` writes the `hibernated`
+  branch config and relaunches, which is the same state startup discovery reads.
+- `extraArgs` accepts a thunk, resolved at launch. A spec whose flags name temp paths needs
+  it: `useApp()` is called at module scope, before its own `beforeAll` has created them.
 
 ### Unit Tests (\*.test.ts) - DEPRECATED
 

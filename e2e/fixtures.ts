@@ -30,7 +30,14 @@ export interface LaunchAppOptions {
    * picker appears regardless.
    */
   agent?: Agent;
-  extraArgs?: string[];
+  /**
+   * Extra `--key=value` flags.
+   *
+   * A thunk is resolved at launch, not at `useApp()` — which is what a spec whose
+   * flags depend on a temp path needs, since `useApp` is called at module scope
+   * and the paths only exist once its own `beforeAll` has run.
+   */
+  extraArgs?: readonly string[] | (() => readonly string[]);
 }
 
 /** Build the app flags. Every one is `--key=value` or a bare `--flag`; never a loose token. */
@@ -63,7 +70,8 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
     flags.push("--electron.flags=--ozone-platform=x11");
   }
 
-  flags.push(...(options.extraArgs ?? []));
+  const extra = typeof options.extraArgs === "function" ? options.extraArgs() : options.extraArgs;
+  flags.push(...(extra ?? []));
   return flags;
 }
 

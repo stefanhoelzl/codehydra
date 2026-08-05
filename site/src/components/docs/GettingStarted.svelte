@@ -264,9 +264,10 @@
       CodeHydra can create workspaces for you on a schedule from any command that emits JSON &mdash;
       for example, opening a workspace per assigned GitHub issue or review request. Each source runs
       a command periodically and renders one workspace per returned item from a template, so agents
-      can start working before you even sit down. Configure these under <code
-        >auto-workspace.sources</code
-      >
+      can start working before you even sit down. A source can instead run in <code>events</code>
+      mode, where each thing the command reports acts on the matching workspace &mdash; creating it, or
+      waking it and refreshing its tags. Configure these under
+      <code>auto-workspace.sources</code>
       in settings.
     </p>
   </section>

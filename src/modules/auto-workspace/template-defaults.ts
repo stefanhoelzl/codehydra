@@ -14,7 +14,9 @@ A multi-document YAML stream — one document per source, separated by
 "---":
 
   name       source name (also the state-key prefix); must be unique
-  type       cron (default; the only supported type)
+  type       the trigger: cron (default; the only supported type)
+  mode       what the cmd emits: workspaces (default) or events
+             (see MODES)
   cmd        shell command line, run by the platform shell (sh on POSIX,
              cmd.exe on Windows). Must print a top-level JSON array of
              objects to stdout. Inherits the app environment; inline any
@@ -25,17 +27,49 @@ A multi-document YAML stream — one document per source, separated by
   template   mapping rendered once per emitted object into one workspace
              (see FIELDS)`;
 
+const MODES = `=== MODES ===
+
+Both modes poll on the same timer. What differs is what the cmd's
+objects mean.
+
+mode: workspaces (default) — the cmd emits the workspaces that SHOULD
+exist, and each poll reconciles against that list:
+  - an item not seen before creates a workspace
+  - an item already handled is skipped (tracked by its key)
+  - an item that disappears is forgotten, so if it comes back the
+    workspace is created again
+Nothing is ever auto-deleted; deleting a workspace by hand is final
+while its item is still listed.
+
+mode: events — the cmd emits things that HAPPENED, and each object
+fires exactly once. Nothing is tracked, so the cmd must emit only what
+it has not emitted before (mark it read, pop the queue, keep its own
+cursor) — an object emitted twice fires twice. Per event, the project
+is opened and template.name is matched against its workspaces:
+  - no match       -> create it, exactly like workspaces mode
+  - match          -> re-apply metadata, then wake it if hibernated,
+                      or switch to it if focus: true
+  - being deleted  -> skipped
+An existing workspace gets NO prompt — a prompt only reaches an agent
+when it launches. Use metadata (a tag, an updated title) to say what
+happened. A failed event is logged and gone; there is no retry.`;
+
 const FIELDS = `=== FIELDS (keys under template) ===
 
   Key          Required  Default         Meaning
   name         yes       —               workspace name (also the git branch)
   key          no        rendered name   dedup identity across polls
+                                         (workspaces mode only; events
+                                         mode matches on name)
   base         no        —               branch to fork the new worktree from
+                                         (only when the item creates)
   tracking     no        —               remote branch to track (upstream set)
+                                         (only when the item creates)
   project      no        —               local project path (or use git)
   git          no        —               git URL to clone as the project
   focus        no        false           true = switch to it once created
-  prompt       no        "" (no prompt)  agent prompt
+                                         (events mode: also on a match)
+  prompt       no        "" (no prompt)  agent prompt (only when it creates)
   agent        no        —               agent config (see below)
   metadata     no        —               title / tags / extra keys (see METADATA)
 
@@ -100,4 +134,34 @@ template:
 
     PR: {{ html_url }}`;
 
-export const SOURCES_HELP = `${FORMAT}\n\n${FIELDS}\n\n${LIQUID}\n\n${METADATA}\n\n${GITHUB_EXAMPLE}`;
+const EVENTS_EXAMPLE = `=== EXAMPLE — events ===
+
+Unread GitHub notifications. The second command is the ack: it marks
+them read, so the same notification is never emitted twice.
+
+name: gh-notify
+type: cron
+mode: events
+cmd: |
+  gh api /notifications \\
+    --jq '[.[]|{reason,title:.subject.title,url:.subject.url,
+           number:(.subject.url|split("/")|last),
+           clone_url:(.repository.clone_url)}]'
+  gh api -X PUT /notifications >/dev/null
+template:
+  name: "pr-{{ number }}"
+  project: "{{ clone_url }}"
+  metadata:
+    title: "PR #{{ number }} — {{ reason }}"
+    tags:
+      nudge: { color: "#c47f2a" }
+  prompt: |
+    {{ reason }} on "{{ title }}".
+
+    {{ url }}
+
+The first notification about PR #42 creates the workspace with that
+prompt. A later one finds it: the title and tag are refreshed, and it
+is woken if it was hibernated.`;
+
+export const SOURCES_HELP = `${FORMAT}\n\n${MODES}\n\n${FIELDS}\n\n${LIQUID}\n\n${METADATA}\n\n${GITHUB_EXAMPLE}\n\n${EVENTS_EXAMPLE}`;

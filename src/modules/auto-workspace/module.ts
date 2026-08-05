@@ -8,7 +8,11 @@
  * `template` renders one workspace definition per object (see template-render.ts).
  *
  * A single chained timer drives everything: each cycle re-reads the config
- * (picking up edits without a restart), then polls every source. Per source:
+ * (picking up edits without a restart), then polls every source. What a poll
+ * *means* depends on the source's `mode`:
+ *
+ * `mode: workspaces` (the default) — the cmd emits the desired workspace list,
+ * and the poll reconciles against it:
  *   - a key already tracked in state is skipped
  *   - a new key creates a workspace (state entry written only on success)
  *   - a tracked key absent from this cycle is forgotten (so a re-appearing item
@@ -17,6 +21,20 @@
  * persists (so it is not recreated while its item is still active) and is
  * forgotten once the item disappears. Name collision on create is the
  * idempotency backstop.
+ *
+ * `mode: events` — the cmd emits things that happened, and each one fires
+ * exactly once. Nothing is tracked in state: the cmd owns dedup (it acks, pops
+ * a queue, or keeps its own cursor), so an event that is emitted twice fires
+ * twice. Per event the module resolves the project, then matches the rendered
+ * `template.name` against that project's workspaces:
+ *   - no match          → create, exactly like the workspaces mode
+ *   - match, closing    → skip (a teardown pipeline owns it)
+ *   - match             → re-apply the rendered metadata, then wake it if it is
+ *                         hibernated, or switch to it if `focus: true`
+ * The metadata is the whole signal — no prompt is delivered to an existing
+ * workspace's agent, because a prompt only reaches one at launch. A failed
+ * event is logged and gone: unlike a workspaces-mode item there is no retry,
+ * since the cmd has already consumed it.
  *
  * `auto-workspace.poll-interval` (seconds, default 60) is the *gap between
  * runs*: the next wait is armed only once a cycle has settled, so a slow poll
@@ -42,6 +60,17 @@ import {
   type GetProjectBasesIntent,
 } from "../../intents/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  type ResolveWorkspaceIntent,
+} from "../../intents/resolve-workspace";
+import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
+import {
+  INTENT_SWITCH_WORKSPACE,
+  type SwitchWorkspaceIntent,
+} from "../../intents/switch-workspace";
+import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import type { Config } from "../../boundaries/platform/config";
 import {
@@ -60,9 +89,9 @@ import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import { parseSources, validateSourcesConfig, type ParsedSource } from "./source-config";
-import { renderDefinition } from "./template-render";
+import { renderDefinition, type WorkspaceDefinition } from "./template-render";
 import { runCmd } from "./cmd-runner";
-import { projectPathSchema } from "../../intents/contract";
+import { projectPathSchema, type ProjectPath, type WorkspacePath } from "../../intents/contract";
 
 // =============================================================================
 // State
@@ -262,21 +291,21 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   // ------ Workspace lifecycle ------
 
   /**
-   * Create a workspace for a new item. Returns the state entry on success, or
-   * null on any failure — the caller then does NOT record the item, so it is
-   * retried next tick.
+   * Open (cloning if needed) the project a rendered definition points at, and
+   * return its path. Null when the template names neither `project` nor `git`,
+   * when project:open yields nothing, or when it fails.
+   *
+   * Failure is swallowed rather than thrown because this is the first step of
+   * handling one item, and one item must never take the cycle down with it: a
+   * bad `project` path or an unreachable clone URL would otherwise abandon every
+   * later item AND every later source. Null leaves a workspaces-mode item
+   * unrecorded (retried next tick) and drops an event (there is no retry).
    */
-  async function createWorkspace(
-    source: ParsedSource,
-    key: string,
-    data: unknown
-  ): Promise<StateEntry | null> {
+  async function resolveProjectPath(
+    definition: WorkspaceDefinition,
+    key: string
+  ): Promise<ProjectPath | null> {
     try {
-      const { definition, warnings } = renderDefinition(source.template, data);
-      for (const warning of warnings) {
-        deps.logger.warn("Template warning", { source: source.name, key, warning });
-      }
-
       let projectPayload: OpenProjectIntent["payload"] | null = null;
       if (definition.project)
         // A user-authored template value: normalize, then mint the brand by parsing.
@@ -295,10 +324,66 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         deps.logger.warn("project:open returned null for auto-workspace", { key });
         return null;
       }
+      return project.path;
+    } catch (error) {
+      deps.logger.warn("Failed to open project for auto-workspace", {
+        key,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
 
+  /**
+   * Write the source identity plus the template's rendered metadata onto a
+   * workspace. Best-effort per key: metadata is cosmetic, so one bad key never
+   * fails the create (or the event) around it.
+   *
+   * `source` is rewritten on every hit, not only at create — an events-mode
+   * source that acts on a workspace is its current owner as far as the sidebar
+   * is concerned, including one the user made by hand under a matching name.
+   */
+  async function applyMetadata(
+    source: ParsedSource,
+    workspacePath: WorkspacePath,
+    definition: WorkspaceDefinition,
+    key: string
+  ): Promise<void> {
+    const allMetadata: Record<string, string> = {
+      [METADATA_SOURCE_KEY]: source.name,
+      ...(definition.metadata ?? {}),
+    };
+    for (const [metaKey, value] of Object.entries(allMetadata)) {
+      try {
+        await deps.dispatcher.dispatch<SetMetadataIntent>({
+          type: INTENT_SET_METADATA,
+          payload: { workspacePath, key: metaKey, value },
+        });
+      } catch (error) {
+        deps.logger.warn("Failed to set workspace metadata", {
+          key: metaKey,
+          stateKey: key,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Create a workspace for a rendered definition. Returns the state entry on
+   * success, or null on any failure — a workspaces-mode caller then does NOT
+   * record the item, so it is retried next tick.
+   */
+  async function createWorkspace(
+    source: ParsedSource,
+    key: string,
+    definition: WorkspaceDefinition,
+    projectPath: ProjectPath
+  ): Promise<StateEntry | null> {
+    try {
       await deps.dispatcher.dispatch<GetProjectBasesIntent>({
         type: INTENT_GET_PROJECT_BASES,
-        payload: { projectPath: project.path, refresh: true, wait: true },
+        payload: { projectPath, refresh: true, wait: true },
       });
 
       const agent: AgentSpec = definition.agent ?? {
@@ -313,30 +398,13 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           ...(definition.base !== undefined && { base: definition.base }),
           ...(definition.tracking !== undefined && { tracking: definition.tracking }),
           stealFocus: definition.focus ?? false,
-          projectPath: project.path,
+          projectPath,
           agent,
           source: "auto-workspace",
         },
       });
 
-      const allMetadata: Record<string, string> = {
-        [METADATA_SOURCE_KEY]: source.name,
-        ...(definition.metadata ?? {}),
-      };
-      for (const [metaKey, value] of Object.entries(allMetadata)) {
-        try {
-          await deps.dispatcher.dispatch<SetMetadataIntent>({
-            type: INTENT_SET_METADATA,
-            payload: { workspacePath: wsResult.path, key: metaKey, value },
-          });
-        } catch (error) {
-          deps.logger.warn("Failed to set workspace metadata", {
-            key: metaKey,
-            stateKey: key,
-            error: getErrorMessage(error),
-          });
-        }
-      }
+      await applyMetadata(source, wsResult.path, definition, key);
 
       deps.logger.info("Auto-workspace created", {
         source: source.name,
@@ -345,9 +413,9 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       });
       return { workspaceName: definition.name, createdAt: new Date().toISOString() };
     } catch (error) {
-      // No entry written → retried next tick (name collision, invalid name, or a
-      // transient failure all land here; the intent's source:"auto-workspace"
-      // suppresses a user-facing error notification).
+      // No entry written → retried next tick in workspaces mode (name collision,
+      // invalid name, or a transient failure all land here; the intent's
+      // source:"auto-workspace" suppresses a user-facing error notification).
       deps.logger.warn("Failed to create auto-workspace (will retry)", {
         source: source.name,
         key,
@@ -357,38 +425,161 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   }
 
+  /**
+   * Find a workspace of `projectPath` whose name is exactly `name`.
+   *
+   * Name is the whole match identity for events mode: it is the worktree and
+   * branch identity, and the thing a create would collide on anyway. Nothing is
+   * persisted to match on, so a renamed workspace simply stops matching.
+   * Comparison is case-sensitive, like every other workspace-name match.
+   */
+  async function findWorkspaceByName(
+    projectPath: ProjectPath,
+    name: string
+  ): Promise<WorkspacePath | null> {
+    const projects = await deps.dispatcher.dispatch<ListProjectsIntent>({
+      type: INTENT_LIST_PROJECTS,
+      payload: {},
+    });
+    const target = new Path(projectPath);
+    for (const project of projects) {
+      if (!target.equals(new Path(project.path))) continue;
+      for (const workspace of project.workspaces) {
+        if (workspace.name === name) return workspace.path;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Apply one event: create the workspace it names, or act on the existing one.
+   *
+   * Nothing here writes state — an event fires once and is then gone, so a
+   * failure is logged rather than retried (the cmd has already consumed it).
+   */
+  async function applyEvent(source: ParsedSource, definition: WorkspaceDefinition): Promise<void> {
+    const key = stateKey(source.name, definition.name);
+    try {
+      const projectPath = await resolveProjectPath(definition, key);
+      if (!projectPath) return;
+
+      const workspacePath = await findWorkspaceByName(projectPath, definition.name);
+      if (!workspacePath) {
+        await createWorkspace(source, key, definition, projectPath);
+        return;
+      }
+
+      const resolved = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
+        type: INTENT_RESOLVE_WORKSPACE,
+        payload: { workspacePath },
+      });
+      if (resolved.closing !== null) {
+        // A teardown pipeline owns it: waking fights the deletion, and creating
+        // would collide on the worktree that is still there. The next event
+        // about it lands cleanly once the teardown finishes.
+        deps.logger.warn("Skipping auto-workspace event (workspace is closing)", {
+          source: source.name,
+          key,
+          closing: resolved.closing,
+        });
+        return;
+      }
+
+      // The rendered metadata is the event's only signal — a prompt cannot reach
+      // an agent that is already running (it is read from a file at launch).
+      await applyMetadata(source, workspacePath, definition, key);
+
+      const hibernated = resolved.metadata[HIBERNATED_METADATA_KEY] === "true";
+      if (hibernated) {
+        await deps.dispatcher.dispatch<WakeWorkspaceIntent>({
+          type: INTENT_WAKE_WORKSPACE,
+          payload: {
+            workspacePath,
+            stealFocus: definition.focus ?? false,
+            source: "auto-workspace",
+          },
+        });
+      } else if (definition.focus === true) {
+        await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { workspacePath, focus: true },
+        });
+      }
+
+      deps.logger.info("Auto-workspace event applied", {
+        source: source.name,
+        key,
+        workspaceName: definition.name,
+        action: hibernated ? "wake" : "update",
+      });
+    } catch (error) {
+      // No retry: the cmd owns dedup, so the event is gone either way.
+      deps.logger.warn("Failed to apply auto-workspace event", {
+        source: source.name,
+        key,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   // ------ Poll cycle ------
 
-  async function pollSource(source: ParsedSource): Promise<boolean> {
-    let items: unknown[];
+  /** Run a source's cmd, or null when it failed (the tick is then skipped). */
+  async function runSourceCmd(source: ParsedSource): Promise<unknown[] | null> {
     try {
-      items = await runCmd({ processRunner: deps.processRunner }, source.name, source.cmd);
+      return await runCmd({ processRunner: deps.processRunner }, source.name, source.cmd);
     } catch (error) {
       deps.logger.warn("Source cmd failed, skipping tick", {
         source: source.name,
         error: getErrorMessage(error),
       });
-      return false;
+      return null;
     }
+  }
+
+  /**
+   * Render one emitted object, logging any template warnings under `key`.
+   * Null when Liquid rendering itself failed — that item is skipped.
+   */
+  function render(
+    source: ParsedSource,
+    data: unknown,
+    keyOf: (definition: WorkspaceDefinition) => string
+  ): WorkspaceDefinition | null {
+    try {
+      const { definition, warnings } = renderDefinition(source.template, data);
+      for (const warning of warnings) {
+        deps.logger.warn("Template warning", {
+          source: source.name,
+          key: keyOf(definition),
+          warning,
+        });
+      }
+      return definition;
+    } catch (error) {
+      deps.logger.warn("Failed to render item, skipping it", {
+        source: source.name,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  /** Reconcile a `mode: workspaces` source against the list its cmd emitted. */
+  async function pollWorkspacesSource(source: ParsedSource): Promise<boolean> {
+    const items = await runSourceCmd(source);
+    if (items === null) return false;
 
     const prefix = `${source.name}/`;
     const activeStateKeys = new Set<string>();
-    const newItems: { key: string; data: unknown }[] = [];
+    const newItems: { key: string; definition: WorkspaceDefinition }[] = [];
 
     for (const data of items) {
-      let key: string;
-      try {
-        key = renderDefinition(source.template, data).definition.key;
-      } catch (error) {
-        deps.logger.warn("Failed to render item key, skipping item", {
-          source: source.name,
-          error: getErrorMessage(error),
-        });
-        continue;
-      }
-      const fullKey = stateKey(source.name, key);
+      const definition = render(source, data, (d) => stateKey(source.name, d.key));
+      if (!definition) continue;
+      const fullKey = stateKey(source.name, definition.key);
       activeStateKeys.add(fullKey);
-      if (!(fullKey in entries)) newItems.push({ key: fullKey, data });
+      if (!(fullKey in entries)) newItems.push({ key: fullKey, definition });
     }
 
     let changed = false;
@@ -406,8 +597,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
 
     // Create workspaces for new items.
-    for (const { key, data } of newItems) {
-      const entry = await createWorkspace(source, key, data);
+    for (const { key, definition } of newItems) {
+      const projectPath = await resolveProjectPath(definition, key);
+      const entry = projectPath
+        ? await createWorkspace(source, key, definition, projectPath)
+        : null;
       if (entry) {
         entries[key] = entry;
         changed = true;
@@ -415,6 +609,18 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
 
     return changed;
+  }
+
+  /** Fire every event a `mode: events` source emitted, in order. Writes no state. */
+  async function pollEventsSource(source: ParsedSource): Promise<void> {
+    const items = await runSourceCmd(source);
+    if (items === null) return;
+
+    for (const data of items) {
+      const definition = render(source, data, (d) => stateKey(source.name, d.name));
+      if (!definition) continue;
+      await applyEvent(source, definition);
+    }
   }
 
   async function reconcile(): Promise<void> {
@@ -428,18 +634,26 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
     let changed = false;
 
-    // Orphan cleanup: drop entries whose source no longer exists in config.
-    const validNames = new Set(sources.map((s) => s.name));
+    // Orphan cleanup: drop entries whose source no longer exists in config — or
+    // is no longer a workspaces source, since an events source is defined as
+    // writing no state and its old entries would resurrect wrongly on a flip back.
+    const validNames = new Set(sources.filter((s) => s.mode === "workspaces").map((s) => s.name));
     for (const key of Object.keys(entries)) {
       if (!validNames.has(sourceOfKey(key))) {
         delete entries[key];
         changed = true;
-        deps.logger.info("Forgot auto-workspace entry (source removed)", { key });
+        deps.logger.info("Forgot auto-workspace entry (source removed or now events-mode)", {
+          key,
+        });
       }
     }
 
     for (const source of sources) {
-      if (await pollSource(source)) changed = true;
+      if (source.mode === "events") {
+        await pollEventsSource(source);
+      } else if (await pollWorkspacesSource(source)) {
+        changed = true;
+      }
     }
 
     if (changed) await persist();
