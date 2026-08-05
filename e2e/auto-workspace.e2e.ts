@@ -239,7 +239,12 @@ test("a workspaces source creates a worktree and records it", async () => {
   writeArmed(wsArmed, [{ id: "1", name: "tracked-1" }]);
 
   await expect(workspaceRow(ui, "tracked-1")).toBeVisible({ timeout: CREATE_TIMEOUT });
-  expect(existsSync(join(workspacesDir(), "tracked-1"))).toBe(true);
+  // Poll, don't assert: the row matches the *creating* placeholder too, which is
+  // emitted before the worktree exists. On a slow runner the directory lands
+  // after the row does.
+  await expect
+    .poll(() => existsSync(join(workspacesDir(), "tracked-1")), { timeout: CREATE_TIMEOUT })
+    .toBe(true);
 
   // The state entry is what makes the next poll skip it rather than collide.
   await expect.poll(() => Object.keys(trackedEntries()), { timeout: 30_000 }).toContain("ws-src/1");
@@ -266,7 +271,9 @@ test("an events source creates on the first event, writing no state", async () =
   armEvent("ev-42", "review_requested");
 
   await expect(workspaceRow(ui, "ev-42")).toBeVisible({ timeout: CREATE_TIMEOUT });
-  expect(existsSync(join(workspacesDir(), "ev-42"))).toBe(true);
+  await expect
+    .poll(() => existsSync(join(workspacesDir(), "ev-42")), { timeout: CREATE_TIMEOUT })
+    .toBe(true);
   await waitForWorkspaceFrame(app(), "ev-42"); // focus: true — it takes the view
 
   await expandSidebar(ui);
