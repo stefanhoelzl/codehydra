@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../utils/path/path";
 import { SILENT_LOGGER } from "./logging";
 import { createFileSystemMock, file, directory } from "./filesystem.state-mock";
-import { DefaultConfig, parseEnvVars, parseCliArgs } from "./config";
+import { DefaultConfig, parseEnvVars, parseCliArgs, resolveFileReferences } from "./config";
 import type { Config, ConfigDeps } from "./config";
 import type { PersistedKeyDefinition } from "./store-definition";
 import { parseBool, PersistedValidationError } from "./store-definition";
@@ -1059,6 +1059,105 @@ describe("parseCliArgs", () => {
 
   it("tokenizes unknown flags too (classification happens later)", () => {
     expect(parseCliArgs(["--unknown-flag=val"])).toEqual({ "unknown-flag": "val" });
+  });
+});
+
+// =============================================================================
+// `--key=@path`: the only way to give a key a multi-line value on the CLI
+// =============================================================================
+
+describe("resolveFileReferences", () => {
+  const reader = (files: Record<string, string>): ((path: string) => string) => {
+    return (path: string) => {
+      const content = files[path];
+      if (content === undefined) {
+        const err = new Error(`ENOENT: no such file: ${path}`) as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      }
+      return content;
+    };
+  };
+
+  it("leaves a value that is not a reference untouched", () => {
+    const { values, issues } = resolveFileReferences({ "a.b": "plain" }, reader({}));
+    expect(values).toEqual({ "a.b": "plain" });
+    expect(issues).toEqual([]);
+  });
+
+  it("leaves an @ that is not at the start untouched", () => {
+    const { values } = resolveFileReferences({ "a.b": "user@example.com" }, reader({}));
+    expect(values).toEqual({ "a.b": "user@example.com" });
+  });
+
+  it("reads a referenced file", () => {
+    const { values, issues } = resolveFileReferences(
+      { "a.b": "@/cfg/value.txt" },
+      reader({ "/cfg/value.txt": "from-file" })
+    );
+    expect(values).toEqual({ "a.b": "from-file" });
+    expect(issues).toEqual([]);
+  });
+
+  it("carries a multi-line value, which is the whole point", () => {
+    // A command line cannot: Windows delimits arguments on whitespace, so only
+    // the first line of an inline value would ever arrive.
+    const yaml = "name: gh\ntype: cron\nmode: events\ncmd: poll\n";
+    const { values } = resolveFileReferences(
+      { "auto-workspace.sources": "@/cfg/sources.yaml" },
+      reader({ "/cfg/sources.yaml": yaml })
+    );
+    expect(values["auto-workspace.sources"]).toBe("name: gh\ntype: cron\nmode: events\ncmd: poll");
+  });
+
+  it("strips one trailing newline but keeps interior blank lines", () => {
+    const { values } = resolveFileReferences(
+      { "a.b": "@/cfg/v" },
+      reader({ "/cfg/v": "first\n\nlast\r\n" })
+    );
+    expect(values["a.b"]).toBe("first\n\nlast");
+  });
+
+  it("unescapes @@ to a literal leading @ without reading anything", () => {
+    const { values, issues } = resolveFileReferences({ "a.b": "@@literal" }, reader({}));
+    expect(values).toEqual({ "a.b": "@literal" });
+    expect(issues).toEqual([]);
+  });
+
+  it("reports an unreadable file as invalid, naming the path", () => {
+    const { values, issues } = resolveFileReferences({ "a.b": "@/cfg/missing" }, reader({}));
+    expect(values).toEqual({});
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ kind: "invalid", key: "a.b", value: "@/cfg/missing" });
+    // The path is the actionable part of the message, so it must survive.
+    expect((issues[0] as { description?: string }).description).toContain("/cfg/missing");
+  });
+});
+
+describe("Config — CLI @file references", () => {
+  it("loads a multi-line value a CLI flag could not carry inline", () => {
+    const yaml = "name: gh\ntype: cron\nmode: events\n";
+    const service = createService({
+      argv: ["--test.key=@/app/sources.yaml"],
+      fileEntries: { "/app": directory(), "/app/sources.yaml": file(yaml) },
+    });
+    const accessor = service.register("test.key", stringDef("test.key"));
+    service.load();
+
+    expect(accessor.get()).toBe("name: gh\ntype: cron\nmode: events");
+    expect(service.getSource("test.key")).toBe("cli");
+  });
+
+  it("fails startup with the path when the referenced file is missing", () => {
+    const service = createService({
+      argv: ["--test.key=@/app/missing.yaml"],
+      fileEntries: { "/app": directory() },
+    });
+    service.register("test.key", stringDef("test.key"));
+
+    expect(() => {
+      service.load();
+    }).toThrow(PersistedValidationError);
   });
 });
 
