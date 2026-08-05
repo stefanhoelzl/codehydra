@@ -351,7 +351,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
     },
   };
 
-  const module = createPluginServerModule(moduleDeps);
+  const { module } = createPluginServerModule(moduleDeps);
 
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({ logger: createMockLogger() });

@@ -157,7 +157,26 @@ export interface PluginServerOptions {
 // Factory
 // =============================================================================
 
-export function createPluginServerModule(deps: PluginServerModuleDeps): IntentModule {
+/**
+ * The module plus a runtime readiness probe.
+ *
+ * `isReady()` exists for callers that fire a *best-effort* vscode command and
+ * already treat "not connected yet" as normal — terminal focus on first idle,
+ * notably. Dispatching anyway works, but the intent rejects and the dispatcher
+ * logs that rejection at error level, so an expected startup condition ends up
+ * in the log (and in every bug report) looking like a fault. Asking first keeps
+ * the log honest; the caller's own retry-on-next-trigger still covers it.
+ *
+ * Do NOT use this to pre-check a command whose failure actually matters — the
+ * hook still throws, and that error is the real signal.
+ */
+export interface PluginServerModuleHandle {
+  readonly module: IntentModule;
+  /** True once the Socket.IO server is listening (workspaces may still be connecting). */
+  isReady(): boolean;
+}
+
+export function createPluginServerModule(deps: PluginServerModuleDeps): PluginServerModuleHandle {
   const { portManager, dispatcher, appLayer, logger } = deps;
   const transports: readonly ("polling" | "websocket")[] = deps.options?.transports ?? [
     "websocket",
@@ -1013,7 +1032,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
   // Module definition
   // ---------------------------------------------------------------------------
 
-  return {
+  const module: IntentModule = {
     name: "plugin-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -1189,6 +1208,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
       },
     },
   };
+
+  return { module, isReady: () => io !== null };
 }
 
 // =============================================================================

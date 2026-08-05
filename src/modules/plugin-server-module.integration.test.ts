@@ -138,11 +138,11 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
 function createTestSetup(mockDeps?: PluginServerModuleDeps) {
   const deps = mockDeps ?? createMockDeps();
   const dispatcher = createMockDispatcher();
-  const module = createPluginServerModule(deps);
+  const pluginServer = createPluginServerModule(deps);
 
-  dispatcher.registerModule(module);
+  dispatcher.registerModule(pluginServer.module);
 
-  return { deps, dispatcher };
+  return { deps, dispatcher, pluginServer };
 }
 
 // =============================================================================
@@ -183,6 +183,34 @@ describe("PluginServerModule", () => {
       // This is tested with real Socket.IO in boundary tests.
       // Integration test only verifies graceful degradation above.
       // The start hook catches errors and returns null pluginPort.
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // isReady — the probe best-effort callers use instead of dispatching blind
+  // ---------------------------------------------------------------------------
+
+  describe("isReady", () => {
+    it("is false before start", () => {
+      const { pluginServer } = createTestSetup();
+      expect(pluginServer.isReady()).toBe(false);
+    });
+
+    it("stays false when the server failed to start", async () => {
+      // The failure path a caller must not dispatch into: the start hook
+      // degrades to a null port rather than throwing, so "app started" is not
+      // the same question as "the plugin server is up".
+      const deps = createMockDeps({
+        portManager: {
+          listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
+        },
+      });
+      const { dispatcher, pluginServer } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(pluginServer.isReady()).toBe(false);
     });
   });
 

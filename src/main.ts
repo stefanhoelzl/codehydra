@@ -820,6 +820,15 @@ dispatcher.registerOperation(new VscodeCommandOperation());
 const firstFocused = new Set<string>();
 
 const focusTerminal = (workspacePath: string): void => {
+  // Ask before dispatching. This fires on the first idle status, which can beat
+  // the plugin server coming up — most visibly right after a wake, or on a
+  // relaunch that rediscovers workspaces. Dispatching regardless still "works"
+  // (the catch below is exactly for that), but the intent rejects and the
+  // dispatcher logs the rejection at error level, so a routine startup ordering
+  // shows up in the log, and in every bug report, as a fault. The retry on the
+  // next trigger is what actually focuses the terminal either way.
+  if (!pluginServerModule.isReady()) return;
+
   void dispatcher
     .dispatch({
       type: INTENT_VSCODE_COMMAND,
@@ -882,7 +891,7 @@ dispatcher.registerModule(idempotencyModule);
 // failed. See workspace-lifecycle-module.ts.
 dispatcher.registerModule(workspaceLifecycleModule);
 dispatcher.registerModule(viewModule);
-dispatcher.registerModule(pluginServerModule);
+dispatcher.registerModule(pluginServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule);
 dispatcher.registerModule(workspaceAgentResolverModule);
