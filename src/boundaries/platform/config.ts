@@ -102,6 +102,11 @@ function generateHelpText(
     "  Env var:    CH_ prefix, . → __, - → _, UPPER  e.g. CH_LOG__LEVEL=debug",
     "  Config file: " + configFilePath,
     "",
+    "A CLI value of @<path> is read from that file instead — the only way to pass",
+    "a multi-line value (Windows splits a command line on whitespace, so only the",
+    "first line of one would arrive). Use @@ for a value that starts with a literal @.",
+    "  e.g. --auto-workspace.sources=@./sources.yaml",
+    "",
     "Keys:",
     "",
   ];
@@ -245,6 +250,63 @@ export function parseEnvVars(env: Record<string, string | undefined>): Record<st
  * --inspect) are collected too and surface as `unknown` issues from validate(), which
  * load() logs and ignores. The result feeds PersistedDefinitions.parse().
  */
+/** Marks a CLI value that lives in a file: `--key=@path`. `@@` escapes a literal `@`. */
+const FILE_REFERENCE_PREFIX = "@";
+
+/**
+ * Resolve `@<path>` CLI values by reading the file they name.
+ *
+ * This is the only way to give a key a multi-line value on the command line.
+ * Windows delimits arguments on whitespace before any of our code runs, so a
+ * flag carrying a YAML document arrives truncated at its first newline — the
+ * app then rejects the fragment and refuses to start, which is exactly what
+ * `--auto-workspace.sources=<yaml>` did. A path has no whitespace to split on,
+ * and it reads better than a screenful of quoted argument on every platform.
+ *
+ * Deliberately CLI-only: env vars and config.json carry newlines just fine, so
+ * neither needs this, and giving `@` a meaning there would only create a new way
+ * for an ordinary value to be misread.
+ *
+ * `@@` at the start yields a literal leading `@`, so a value that genuinely
+ * begins with one is still expressible. A single trailing newline is stripped —
+ * every editor adds one, and no scalar value wants it.
+ *
+ * Pure but for the injected reader: a failure becomes an `invalid` issue, which
+ * `load()` turns into the same startup error any bad value produces.
+ */
+export function resolveFileReferences(
+  rawValues: Record<string, string>,
+  readFile: (path: string) => string
+): { values: Record<string, string>; issues: PersistedIssue[] } {
+  const values: Record<string, string> = {};
+  const issues: PersistedIssue[] = [];
+
+  for (const [key, raw] of Object.entries(rawValues)) {
+    if (raw.startsWith(`${FILE_REFERENCE_PREFIX}${FILE_REFERENCE_PREFIX}`)) {
+      values[key] = raw.slice(1);
+      continue;
+    }
+    if (!raw.startsWith(FILE_REFERENCE_PREFIX)) {
+      values[key] = raw;
+      continue;
+    }
+
+    const path = raw.slice(FILE_REFERENCE_PREFIX.length);
+    try {
+      values[key] = readFile(path).replace(/\r?\n$/, "");
+    } catch (error) {
+      issues.push({
+        kind: "invalid",
+        key,
+        value: raw,
+        description: `could not read ${path}: ${getErrorMessage(error)}`,
+      });
+    }
+  }
+
+  return { values, issues };
+}
+
 export function parseCliArgs(argv: readonly string[]): Record<string, string> {
   const rawValues: Record<string, string> = {};
 
@@ -391,12 +453,15 @@ export class DefaultConfig implements Config {
 
     // 3. env + CLI: tokenize → parse (strings → typed) → validate.
     const envResult = this.store.parseAndValidate(parseEnvVars(env));
-    const cliResult = this.store.parseAndValidate(parseCliArgs(argv));
+    // `@path` values are read from disk first, so a multi-line value can reach a
+    // key that the command line itself could never carry (see resolveFileReferences).
+    const cliFiles = resolveFileReferences(parseCliArgs(argv), syncRead);
+    const cliResult = this.store.parseAndValidate(cliFiles.values);
 
     // 4. Interpret issues per source (precedence order): log benign kinds, throw on invalid.
     this.reportIssues("config.json", [...file.issues, ...fileResult.issues]);
     this.reportIssues("env var", envResult.issues);
-    this.reportIssues("CLI flag", cliResult.issues);
+    this.reportIssues("CLI flag", [...cliFiles.issues, ...cliResult.issues]);
 
     // 5. Merge with precedence: defaults < file < env < CLI.
     this.store.applyValues({

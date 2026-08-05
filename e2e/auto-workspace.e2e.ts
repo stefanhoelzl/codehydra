@@ -72,15 +72,17 @@ if (!existsSync(file)) {
 /**
  * Build the sources stream.
  *
- * Every interpolated path goes through JSON.stringify: a Windows path is full
- * of backslashes, and a YAML double-quoted scalar reads those as escapes. JSON
- * string syntax is a subset of YAML's double-quoted style, so this is both a
- * correct escape and a correct quote.
+ * Each path is quoted exactly once, by the layer that needs it. Inside the
+ * command line, plain `"` around the raw path (no path here contains a quote);
+ * then JSON.stringify for the YAML scalar, whose double-quoted style reads
+ * backslashes as escapes and shares JSON's escaping rules. Stringifying twice
+ * would quadruple every backslash in a Windows path and yield `D:\\a\\node.exe`
+ * after parsing.
  */
 function sourcesYaml(): string {
   const emitter = join(fixtureDir, "emit.cjs");
-  const wsCmd = `${JSON.stringify(process.execPath)} ${JSON.stringify(emitter)} ${JSON.stringify(wsArmed)}`;
-  const evCmd = `${JSON.stringify(process.execPath)} ${JSON.stringify(emitter)} ${JSON.stringify(evArmed)} --consume`;
+  const wsCmd = `"${process.execPath}" "${emitter}" "${wsArmed}"`;
+  const evCmd = `"${process.execPath}" "${emitter}" "${evArmed}" --consume`;
   const project = JSON.stringify(repo.path);
 
   return `name: ws-src
@@ -199,13 +201,21 @@ test.beforeAll(async () => {
   wsArmed = join(fixtureDir, "workspaces.json");
   evArmed = join(fixtureDir, "events.json");
   writeFileSync(join(fixtureDir, "emit.cjs"), EMITTER);
+  writeFileSync(join(fixtureDir, "sources.yaml"), sourcesYaml());
 });
 
-/** The flags that configure both sources. Shared by the launch and the relaunch. */
+/**
+ * The flags that configure both sources. Shared by the launch and the relaunch.
+ *
+ * The sources go in by `@path`, not inline. A multi-document YAML stream cannot
+ * cross a command line on Windows — arguments are delimited on whitespace, so
+ * only the first line arrives and the app rejects the fragment and refuses to
+ * start. This spec is where that regressed once; keep it a file reference.
+ */
 function sourceFlags(): string[] {
   return [
     `--auto-workspace.poll-interval=${POLL_SECONDS}`,
-    `--auto-workspace.sources=${sourcesYaml()}`,
+    `--auto-workspace.sources=@${join(fixtureDir, "sources.yaml")}`,
   ];
 }
 
