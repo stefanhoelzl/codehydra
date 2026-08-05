@@ -20,7 +20,7 @@ import type {
   IntentOf,
   HookContext,
 } from "../../intents/lib/operation";
-import type { Project, ProjectId } from "../../shared/api/types";
+import type { Project, ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -40,6 +40,18 @@ import {
   type GetProjectBasesResult,
 } from "../../intents/get-project-bases";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  type ResolveWorkspaceIntent,
+  type ResolveWorkspaceResult,
+} from "../../intents/resolve-workspace";
+import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
+import {
+  INTENT_SWITCH_WORKSPACE,
+  type SwitchWorkspaceIntent,
+} from "../../intents/switch-workspace";
+import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import {
   createFileSystemMock,
   file,
@@ -49,7 +61,7 @@ import { createMockProcessRunner } from "../../boundaries/platform/process.state
 import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
-import { projPath } from "../../shared/test-fixtures";
+import { projPath, wsPath } from "../../shared/test-fixtures";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -83,10 +95,14 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
   readonly id = "open-project";
   readonly schemas = openProjectSchemas;
   readonly dispatched: IntentOf<typeof openProjectSchemas>[] = [];
+  /** Git URLs whose open throws (unreachable remote, bad path, …). */
+  readonly failFor = new Set<string>();
   async execute(
     ctx: OperationContext<IntentOf<typeof openProjectSchemas>, typeof openProjectSchemas>
   ): Promise<Project> {
     this.dispatched.push(ctx.intent);
+    const git = ctx.intent.payload.git;
+    if (git !== undefined && this.failFor.has(git)) throw new Error(`clone failed for ${git}`);
     const pathStr = ctx.intent.payload.path?.toString() ?? "/home/user/projects/repo";
     return { id: "project-1" as ProjectId, name: "repo", path: projPath(pathStr), workspaces: [] };
   }
@@ -162,6 +178,108 @@ class SetMetaOp implements Operation<typeof setMetaSchemas> {
   }
 }
 
+/** The path OpenProjectOp resolves a `git:` template to. */
+const PROJECT_PATH = "/home/user/projects/repo";
+
+function workspaceNamed(name: string, metadata: Record<string, string> = {}): Workspace {
+  return {
+    projectId: "project-1" as ProjectId,
+    name: name as WorkspaceName,
+    branch: name,
+    metadata: { base: "main", ...metadata },
+    path: wsPath(`${PROJECT_PATH}/${name}`),
+  };
+}
+
+const listProjectsSchemas = {
+  type: INTENT_LIST_PROJECTS,
+  payload: z.custom<ListProjectsIntent["payload"]>(),
+  result: z.custom<Project[]>(),
+} satisfies OperationSchemas;
+class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
+  readonly id = "list-projects";
+  readonly schemas = listProjectsSchemas;
+  /** Workspaces the project is discovered to have. Tests push onto this. */
+  readonly workspaces: Workspace[] = [];
+  async execute(): Promise<Project[]> {
+    return [
+      {
+        id: "project-1" as ProjectId,
+        name: "repo",
+        path: projPath(PROJECT_PATH),
+        workspaces: [...this.workspaces],
+      },
+    ];
+  }
+}
+
+const resolveWsSchemas = {
+  type: INTENT_RESOLVE_WORKSPACE,
+  payload: z.custom<ResolveWorkspaceIntent["payload"]>(),
+  result: z.custom<ResolveWorkspaceResult>(),
+} satisfies OperationSchemas;
+class ResolveWorkspaceOp implements Operation<typeof resolveWsSchemas> {
+  readonly id = "resolve-workspace";
+  readonly schemas = resolveWsSchemas;
+  /** Set by tests to put the matched workspace mid-teardown. */
+  closing: ResolveWorkspaceResult["closing"] = null;
+  constructor(private readonly projects: ListProjectsOp) {}
+  async execute(
+    ctx: OperationContext<IntentOf<typeof resolveWsSchemas>, typeof resolveWsSchemas>
+  ): Promise<ResolveWorkspaceResult> {
+    const path = ctx.intent.payload.workspacePath;
+    const found = this.projects.workspaces.find((w) => w.path === path);
+    if (!found) throw new Error(`unknown workspace ${path}`);
+    return {
+      projectPath: projPath(PROJECT_PATH),
+      workspaceName: found.name,
+      active: false,
+      branch: found.branch,
+      metadata: found.metadata,
+      closing: this.closing,
+    };
+  }
+}
+
+const wakeSchemas = {
+  type: INTENT_WAKE_WORKSPACE,
+  payload: z.custom<WakeWorkspaceIntent["payload"]>(),
+  result: z.custom<WsResult>(),
+} satisfies OperationSchemas;
+class WakeWorkspaceOp implements Operation<typeof wakeSchemas> {
+  readonly id = "wake-workspace";
+  readonly schemas = wakeSchemas;
+  readonly dispatched: IntentOf<typeof wakeSchemas>[] = [];
+  async execute(
+    ctx: OperationContext<IntentOf<typeof wakeSchemas>, typeof wakeSchemas>
+  ): Promise<WsResult> {
+    this.dispatched.push(ctx.intent);
+    const path = ctx.intent.payload.workspacePath;
+    return {
+      projectId: "project-1",
+      name: path.split("/").pop() ?? "ws",
+      path,
+      branch: "feature",
+      metadata: {},
+    };
+  }
+}
+
+const switchSchemas = {
+  type: INTENT_SWITCH_WORKSPACE,
+  payload: z.custom<SwitchWorkspaceIntent["payload"]>(),
+} satisfies OperationSchemas;
+class SwitchWorkspaceOp implements Operation<typeof switchSchemas> {
+  readonly id = "switch-workspace";
+  readonly schemas = switchSchemas;
+  readonly dispatched: IntentOf<typeof switchSchemas>[] = [];
+  async execute(
+    ctx: OperationContext<IntentOf<typeof switchSchemas>, typeof switchSchemas>
+  ): Promise<void> {
+    this.dispatched.push(ctx.intent);
+  }
+}
+
 // ---- Setup ----
 
 function sourceYaml(name = "gh"): string {
@@ -172,6 +290,20 @@ template:
   key: "{{ id }}"
   git: "https://github.com/org/repo.git"
   prompt: "Work on {{ id }}"`;
+}
+
+/** An events-mode source. `focus` is appended verbatim when given. */
+function eventsYaml(options?: { name?: string; focus?: boolean }): string {
+  return `name: ${options?.name ?? "gh"}
+type: cron
+mode: events
+cmd: fetch
+template:
+  name: "ws-{{ id }}"
+  git: "https://github.com/org/repo.git"
+  prompt: "Work on {{ id }}"
+  metadata:
+    title: "Event {{ id }}"${options?.focus === undefined ? "" : `\n  focus: ${String(options.focus)}`}`;
 }
 
 interface CmdControl {
@@ -215,6 +347,10 @@ function createSetup(options?: {
   const openWorkspaceOp = new OpenWorkspaceOp();
   const getBasesOp = new GetBasesOp();
   const setMetaOp = new SetMetaOp();
+  const listProjectsOp = new ListProjectsOp();
+  const resolveWsOp = new ResolveWorkspaceOp(listProjectsOp);
+  const wakeOp = new WakeWorkspaceOp();
+  const switchOp = new SwitchWorkspaceOp();
 
   const configDefaults: Record<string, unknown> = { ...(options?.configDefaults ?? {}) };
   if (options?.sources !== undefined && options.sources !== null) {
@@ -228,6 +364,10 @@ function createSetup(options?: {
   dispatcher.registerOperation(openWorkspaceOp);
   dispatcher.registerOperation(getBasesOp);
   dispatcher.registerOperation(setMetaOp);
+  dispatcher.registerOperation(listProjectsOp);
+  dispatcher.registerOperation(resolveWsOp);
+  dispatcher.registerOperation(wakeOp);
+  dispatcher.registerOperation(switchOp);
 
   const module = createAutoWorkspaceModule({
     fs,
@@ -250,6 +390,10 @@ function createSetup(options?: {
     openProjectOp,
     openWorkspaceOp,
     setMetaOp,
+    listProjectsOp,
+    resolveWsOp,
+    wakeOp,
+    switchOp,
   };
 }
 
@@ -404,6 +548,31 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(entriesOf(state)).not.toHaveProperty("gh/1");
   });
 
+  it("contains a failing project open to its own item, finishing the cycle", async () => {
+    vi.useFakeTimers();
+    const broken = "https://github.com/org/broken.git";
+    const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp } = createSetup({
+      sources: `name: bad
+cmd: fetch
+template:
+  name: "bad-{{ id }}"
+  key: "{{ id }}"
+  git: "${broken}"
+---
+${sourceYaml("good")}`,
+    });
+    openProjectOp.failFor.add(broken);
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    // The later source still ran: one bad item must not abandon the cycle.
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
+    expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("ws-1");
+    expect(entriesOf(state)).not.toHaveProperty("bad/1"); // unrecorded → retried next tick
+    expect(entriesOf(state)).toHaveProperty("good/1");
+  });
+
   describe("poll interval", () => {
     it("honors a configured interval instead of the 60s default", async () => {
       vi.useFakeTimers();
@@ -486,6 +655,154 @@ describe("AutoWorkspaceModule Integration", () => {
     await tick();
     // No further work after shutdown: only the original item was created.
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
+  });
+
+  describe("mode: events", () => {
+    it("creates a workspace when nothing matches the rendered name", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, state, openWorkspaceOp, setMetaOp, wakeOp } = createSetup({
+        sources: eventsYaml(),
+      });
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("ws-1");
+      expect(openWorkspaceOp.dispatched[0]!.payload.agent).toEqual({
+        type: "default",
+        prompt: "Work on 1",
+      });
+      expect(wakeOp.dispatched).toHaveLength(0);
+      expect(
+        setMetaOp.dispatched.some((d) => d.payload.key === "title" && d.payload.value === "Event 1")
+      ).toBe(true);
+      // An events source is defined as writing nothing.
+      expect(entriesOf(state)).toEqual({});
+    });
+
+    it("wakes a hibernated match and re-applies metadata instead of creating", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, setMetaOp, wakeOp } = createSetup({
+        sources: eventsYaml(),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(wakeOp.dispatched).toHaveLength(1);
+      expect(wakeOp.dispatched[0]!.payload.workspacePath).toBe(`${PROJECT_PATH}/ws-1`);
+      expect(wakeOp.dispatched[0]!.payload.stealFocus).toBe(false);
+      // The metadata is the whole signal — no prompt reaches an existing agent.
+      expect(
+        setMetaOp.dispatched.some((d) => d.payload.key === "title" && d.payload.value === "Event 1")
+      ).toBe(true);
+      expect(
+        setMetaOp.dispatched.some((d) => d.payload.key === "source" && d.payload.value === "gh")
+      ).toBe(true);
+    });
+
+    it("only refreshes metadata when the match is awake", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, setMetaOp, wakeOp, switchOp } =
+        createSetup({ sources: eventsYaml() });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(wakeOp.dispatched).toHaveLength(0);
+      expect(switchOp.dispatched).toHaveLength(0); // focus defaults to false
+      expect(setMetaOp.dispatched.map((d) => d.payload.key)).toContain("title");
+    });
+
+    it("switches to an awake match when the template asks for focus", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, switchOp } = createSetup({
+        sources: eventsYaml({ focus: true }),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(switchOp.dispatched).toHaveLength(1);
+      expect(switchOp.dispatched[0]!.payload).toEqual({
+        workspacePath: `${PROJECT_PATH}/ws-1`,
+        focus: true,
+      });
+    });
+
+    it("skips an event whose workspace is mid-teardown", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, resolveWsOp, openWorkspaceOp, setMetaOp, wakeOp } =
+        createSetup({ sources: eventsYaml() });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
+      resolveWsOp.closing = "delete";
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(wakeOp.dispatched).toHaveLength(0);
+      expect(setMetaOp.dispatched).toHaveLength(0);
+    });
+
+    it("fires again for a repeated event — the cmd owns dedup", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, wakeOp } = createSetup({
+        sources: eventsYaml(),
+      });
+      cmd.items = [{ id: "1" }];
+      await dispatcher.dispatch(startIntent());
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+
+      // The cmd re-emits it; nothing was tracked, so it is handled again — this
+      // time as a match, because the workspace now exists.
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+      await tick();
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(wakeOp.dispatched).toHaveLength(0); // awake match: metadata only
+    });
+
+    it("drops an event whose project cannot be opened, without stopping the cycle", async () => {
+      vi.useFakeTimers();
+      const broken = "https://github.com/org/broken.git";
+      const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp } = createSetup({
+        sources: `name: ev
+mode: events
+cmd: fetch
+template:
+  name: "ev-{{ id }}"
+  git: "${broken}"
+---
+${sourceYaml("good")}`,
+      });
+      openProjectOp.failFor.add(broken);
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("ws-1");
+      expect(entriesOf(state)).toEqual({ "good/1": expect.anything() }); // nothing from `ev`
+    });
+
+    it("forgets entries left behind when a source flips to events mode", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, state, mockConfig } = createSetup({ sources: sourceYaml("gh") });
+      cmd.items = [{ id: "1" }];
+      await dispatcher.dispatch(startIntent());
+      expect(entriesOf(state)).toHaveProperty("gh/1");
+
+      await mockConfig.set("auto-workspace.sources", eventsYaml());
+      cmd.items = [];
+      await tick();
+      expect(entriesOf(state)).not.toHaveProperty("gh/1");
+    });
   });
 
   describe("retired experimental.* keys", () => {

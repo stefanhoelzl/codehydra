@@ -6,6 +6,7 @@
  *
  *   name: github
  *   type: cron          # optional, defaults to "cron"; only "cron" is supported
+ *   mode: workspaces    # optional, defaults to "workspaces"; or "events"
  *   cmd: |              # shell command line, run via `sh -c` / `cmd /c`
  *     gh api graphql ... --jq '...'
  *   template:           # nested mapping; every string leaf is a Liquid template
@@ -16,6 +17,10 @@
  *
  * The cmd emits a JSON array of raw domain objects; `template` renders one
  * workspace definition per object (see template-render.ts).
+ *
+ * `type` and `mode` are separate axes on purpose. `type` is the *trigger* —
+ * cron, i.e. the poll timer, and still the only one. `mode` is what the cmd's
+ * objects *mean*, which is what actually changes the module's behavior.
  */
 
 import { parseAllDocuments } from "yaml";
@@ -27,10 +32,24 @@ export interface TemplateObject {
   readonly [key: string]: TemplateValue;
 }
 
+/**
+ * What a source's cmd emits, which decides how the module treats each object.
+ *
+ * - "workspaces": the desired workspace list. Unseen keys create, tracked keys
+ *   absent from a poll are forgotten — the reconcile loop, with state.
+ * - "events": things that happened. Each object fires once and nothing is
+ *   tracked; the cmd owns dedup (it acks, pops, or keeps its own cursor).
+ */
+export type SourceMode = "workspaces" | "events";
+
+export const SOURCE_MODES: readonly SourceMode[] = ["workspaces", "events"];
+
 export interface ParsedSource {
   readonly name: string;
-  /** Only "cron" is supported today; the field exists for a future "event" arm. */
+  /** The trigger. Only "cron" (the poll timer) is supported today. */
   readonly type: "cron";
+  /** What the cmd's objects mean. Defaults to "workspaces". */
+  readonly mode: SourceMode;
   readonly cmd: string;
   readonly template: TemplateObject;
 }
@@ -108,6 +127,16 @@ export function parseSources(raw: string | null): ParseSourcesResult {
       continue;
     }
 
+    const mode = js.mode ?? "workspaces";
+    if (mode !== "workspaces" && mode !== "events") {
+      errors.push({
+        index,
+        name,
+        message: `Unsupported mode '${String(mode)}' (expected 'workspaces' or 'events')`,
+      });
+      continue;
+    }
+
     const cmd = js.cmd;
     if (typeof cmd !== "string" || cmd.trim() === "") {
       errors.push({ index, name, message: "Missing or invalid 'cmd'" });
@@ -133,7 +162,7 @@ export function parseSources(raw: string | null): ParseSourcesResult {
     }
 
     seen.add(name);
-    sources.push({ name, type: "cron", cmd, template: template as TemplateObject });
+    sources.push({ name, type: "cron", mode, cmd, template: template as TemplateObject });
   }
 
   return { sources, errors };

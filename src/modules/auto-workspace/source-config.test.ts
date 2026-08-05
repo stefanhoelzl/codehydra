@@ -33,6 +33,28 @@ describe("parseSources", () => {
     expect(sources[0]!.type).toBe("cron");
   });
 
+  it("defaults mode to workspaces when omitted", () => {
+    const { sources } = parseSources(YT);
+    expect(sources[0]!.mode).toBe("workspaces");
+  });
+
+  it("parses mode: events", () => {
+    const { sources, errors } = parseSources(
+      `name: a\ntype: cron\nmode: events\ncmd: x\ntemplate:\n  name: y`
+    );
+    expect(errors).toEqual([]);
+    expect(sources[0]!.mode).toBe("events");
+    expect(sources[0]!.type).toBe("cron"); // mode is a separate axis from the trigger
+  });
+
+  it("errors on an unsupported mode", () => {
+    const { sources, errors } = parseSources(
+      `name: a\nmode: webhook\ncmd: x\ntemplate:\n  name: y`
+    );
+    expect(sources).toHaveLength(0);
+    expect(errors[0]).toMatchObject({ name: "a", message: expect.stringContaining("webhook") });
+  });
+
   it("ignores an empty trailing document", () => {
     const { sources, errors } = parseSources(`${GH}\n---\n`);
     expect(errors).toEqual([]);
