@@ -534,6 +534,22 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS).toContain("prompt");
     expect(SERVER_INSTRUCTIONS).toContain("default mode");
   });
+
+  it("keeps the report_bug restraint, which must hold before the tool schema loads", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("report_bug");
+    expect(SERVER_INSTRUCTIONS).toContain("never proactively");
+  });
+
+  it("leaves environment framing to the CodeHydra system prompt", () => {
+    // Worktree/agent-session framing moved to resources/bin/codehydra-prompt.md,
+    // which is always loaded; repeating it here costs context in every session.
+    expect(SERVER_INSTRUCTIONS).not.toContain("worktree");
+  });
+
+  it("does not restate mechanics a tool description already documents", () => {
+    // ui_show_message's type table lives in its own description, with examples.
+    expect(SERVER_INSTRUCTIONS).not.toContain("ui_show_message");
+  });
 });
 
 describe("agentSpecSchema validation", () => {

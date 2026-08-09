@@ -476,11 +476,46 @@ describe("OpenCodeServerManager", () => {
       expect(parsed.mcp.codehydra.enabled).toBe(true);
     });
 
-    it("does not pass env when MCP config not set", async () => {
+    it("omits the mcp block when MCP config not set", async () => {
       await manager.startServer("/workspace/feature-a");
 
       const spawned = mockProcessRunner.$.spawned(0);
-      expect(spawned.$.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+      const configContent = spawned.$.env?.OPENCODE_CONFIG_CONTENT;
+      expect(configContent).toBeDefined();
+
+      const parsed = JSON.parse(configContent!) as Record<string, unknown>;
+      expect(parsed.mcp).toBeUndefined();
+    });
+  });
+
+  describe("system prompt", () => {
+    it("loads the CodeHydra system prompt via instructions", async () => {
+      await manager.startServer("/workspace/feature-a");
+
+      const spawned = mockProcessRunner.$.spawned(0);
+      const parsed = JSON.parse(spawned.$.env!.OPENCODE_CONFIG_CONTENT!) as {
+        instructions: string[];
+      };
+
+      // POSIX separators: the value is embedded in JSON, and opencode accepts
+      // absolute paths (globbed by basename within their directory).
+      expect(parsed.instructions).toHaveLength(1);
+      expect(parsed.instructions[0]).toContain("bin/codehydra-prompt-opencode.md");
+    });
+
+    it("loads it even when MCP is configured", async () => {
+      manager.setMcpConfig({ port: 12345 });
+
+      await manager.startServer("/workspace/feature-a");
+
+      const spawned = mockProcessRunner.$.spawned(0);
+      const parsed = JSON.parse(spawned.$.env!.OPENCODE_CONFIG_CONTENT!) as {
+        instructions: string[];
+        mcp: unknown;
+      };
+
+      expect(parsed.instructions[0]).toContain("codehydra-prompt-opencode.md");
+      expect(parsed.mcp).toBeDefined();
     });
   });
 });

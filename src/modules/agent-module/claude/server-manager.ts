@@ -1006,4 +1006,16 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   getMcpConfigPath(workspacePath: string): Path {
     return this.configFilePath(workspacePath, "codehydra-mcp.json");
   }
+
+  /**
+   * Get the path to the CodeHydra system prompt appended to every Claude session.
+   *
+   * Same resolution as the hook handler: the runtime dir, which is outside the
+   * ASAR in production so claude (a separate process) can read it. The file is
+   * identical for every workspace, so it is not generated per workspace — it is
+   * composed at build time from resources/prompts (shared + the Claude appendix).
+   */
+  getSystemPromptPath(): Path {
+    return this.pathProvider.runtimePath("bin/codehydra-prompt-claude.md");
+  }
 }

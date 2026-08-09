@@ -970,6 +970,15 @@ describe("ClaudeCodeServerManager integration", () => {
 
       expect(pathA.toString()).not.toBe(pathB.toString());
     });
+
+    it("resolves the system prompt from the runtime dir, shared by all workspaces", () => {
+      // Not per workspace and not generated: the same shipped file for everyone,
+      // read by claude itself so it must sit outside the ASAR like the hook handler.
+      const promptPath = serverManager.getSystemPromptPath();
+
+      expect(promptPath.toString()).toContain("bin/codehydra-prompt-claude.md");
+      expect(promptPath.toString()).not.toContain("claude/configs");
+    });
   });
 
   describe("dispose", () => {

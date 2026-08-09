@@ -1135,14 +1135,15 @@ CodeHydra sets environment variables in workspace terminals for integration with
 
 These variables are set when using the Claude agent provider.
 
-| Variable                  | Description                                                                                                                                     |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_CH_CLAUDE_SETTINGS`     | Path to hooks configuration file                                                                                                                |
-| `_CH_CLAUDE_MCP_CONFIG`   | Path to MCP configuration file                                                                                                                  |
-| `_CH_BRIDGE_PORT`         | HTTP bridge server port for hook notifications                                                                                                  |
-| `_CH_MCP_PORT`            | Main MCP server port                                                                                                                            |
-| `_CH_WORKSPACE_PATH`      | Absolute path to the workspace directory                                                                                                        |
-| `_CH_INITIAL_PROMPT_FILE` | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper. |
+| Variable                   | Description                                                                                                                                                                                                                                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `_CH_CLAUDE_SETTINGS`      | Path to hooks configuration file                                                                                                                                                                                                                                                                                               |
+| `_CH_CLAUDE_MCP_CONFIG`    | Path to MCP configuration file                                                                                                                                                                                                                                                                                                 |
+| `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
+| `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
+| `_CH_MCP_PORT`             | Main MCP server port                                                                                                                                                                                                                                                                                                           |
+| `_CH_WORKSPACE_PATH`       | Absolute path to the workspace directory                                                                                                                                                                                                                                                                                       |
+| `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
 ---
 

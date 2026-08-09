@@ -2,7 +2,52 @@ import { defineConfig } from "electron-vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { resolve } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import type { Plugin } from "vite";
 import { codehydraDefaults } from "./vite.defaults";
+
+/**
+ * Compose the per-agent CodeHydra system prompts from resources/prompts/.
+ *
+ * Every agent gets `shared.md`; an agent whose behavior differs adds its own
+ * appendix (Claude's `ch-bg` only works against Claude's background_tasks, so
+ * only Claude is told about it). Claude accepts exactly one prompt source —
+ * `--append-system-prompt-file` is last-wins and cannot be combined with
+ * `--append-system-prompt` — so the agent files must be composed here rather
+ * than passed as a list at launch.
+ *
+ * Emitted into assets/bin, which electron-builder ships to `bin` in
+ * extraResources, so the files sit outside the ASAR where the agents can read
+ * them (see the hook handler for the same constraint).
+ */
+function composeAgentPrompts(): Plugin {
+  const AGENTS = [
+    { name: "claude", appendix: "claude.md" },
+    { name: "opencode", appendix: null },
+  ] as const;
+
+  return {
+    name: "codehydra-compose-agent-prompts",
+    apply: "build",
+    closeBundle() {
+      const promptsDir = resolve(__dirname, "resources/prompts");
+      const outDir = resolve(__dirname, "out/main/assets/bin");
+      const shared = readFileSync(resolve(promptsDir, "shared.md"), "utf-8").trimEnd();
+
+      mkdirSync(outDir, { recursive: true });
+      for (const agent of AGENTS) {
+        const parts = [shared];
+        if (agent.appendix) {
+          parts.push(readFileSync(resolve(promptsDir, agent.appendix), "utf-8").trimEnd());
+        }
+        writeFileSync(
+          resolve(outDir, `codehydra-prompt-${agent.name}.md`),
+          `${parts.join("\n\n")}\n`
+        );
+      }
+    },
+  };
+}
 
 const appVersion =
   process.env._CH_BUILD_VERSION ??
@@ -66,6 +111,7 @@ export default defineConfig({
         // vite-plugin-static-copy defaults to "client" and skips otherwise.
         environment: "ssr",
       }),
+      composeAgentPrompts(),
     ],
   },
   preload: {

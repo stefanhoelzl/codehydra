@@ -107,6 +107,7 @@ describe("ch-claude.cjs boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -122,6 +123,23 @@ describe("ch-claude.cjs boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          PATH: buildPath(fakeBinDir),
+        },
+        tempDir.path
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("CodeHydra Claude configuration not set");
+      expect(result.stderr).toContain("Make sure you're in a CodeHydra workspace terminal");
+    });
+
+    it("errors when _CH_CLAUDE_SYSTEM_PROMPT is not set", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -140,6 +158,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           // PATH only includes node dir — no fake claude binary
           PATH: dirname(process.execPath),
         },
@@ -158,6 +177,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -174,6 +194,8 @@ describe("ch-claude.cjs boundary tests", () => {
       expect(output!.args).toContain("/tmp/settings.json");
       expect(output!.args).toContain("--mcp-config");
       expect(output!.args).toContain("/tmp/mcp.json");
+      expect(output!.args).toContain("--append-system-prompt-file");
+      expect(output!.args).toContain("/tmp/codehydra-prompt.md");
       expect(output!.args).toContain("--allow-dangerously-skip-permissions");
     });
 
@@ -183,6 +205,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
           CLAUDECODE: "1",
         },
@@ -204,6 +227,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
           CLAUDE_CODE_CHILD_SESSION: "1",
         },
@@ -229,6 +253,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
           // Both --continue attempt and retry exit 42
           CLAUDE_EXIT_CODE: "42",
@@ -253,6 +278,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
@@ -279,6 +305,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
@@ -304,6 +331,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
@@ -335,6 +363,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -359,6 +388,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -385,6 +415,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
@@ -411,6 +442,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path
@@ -433,6 +465,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
           CLAUDE_EXIT_CODES: "1,0",
           CLAUDE_COUNTER_FILE: counterFile,
@@ -461,6 +494,7 @@ describe("ch-claude.cjs boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_CLAUDE_NO_SESSION_MARKER_PATH: markerPath,
           PATH: buildPath(fakeBinDir),
         },
@@ -550,6 +584,7 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
       {
         _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
         _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+        _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
         PATH: buildPath(cmdBinDir),
       },
       tempDir.path
@@ -579,6 +614,7 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
       {
         _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
         _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+        _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
         _CH_INITIAL_PROMPT_FILE: promptFile,
         PATH: buildPath(cmdBinDir),
       },

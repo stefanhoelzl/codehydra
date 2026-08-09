@@ -324,6 +324,16 @@ OpenCode servers receive the MCP config inline via the `OPENCODE_CONFIG_CONTENT`
 
 The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) from JSON templates with `${VARIABLE}` substitution, stored under `<data>/claude/configs/<workspace-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
 
+### CodeHydra System Prompt
+
+Every agent session is given a shipped description of the environment it runs in: busy/idle semantics, worktree lifecycle ownership, the editor it can act on, and operator-driven workspace creation. It is not generated per workspace — `getSystemPromptPath()` on each server manager resolves it from the runtime dir (`runtimePath("bin/...")`, outside the ASAR) exactly like the hook handler.
+
+**Composition.** Sources live in `resources/prompts/`: `shared.md` plus a per-agent appendix. A plugin in `electron.vite.config.ts` concatenates them at build time into `assets/bin/codehydra-prompt-claude.md` and `codehydra-prompt-opencode.md`. Composition happens at build rather than launch because Claude accepts exactly one prompt source: `--append-system-prompt-file` is last-wins, and combining it with `--append-system-prompt` is rejected outright. Only Claude gets the `ch-bg` appendix — that wrapper is detectable only in Claude's `background_tasks`, and it is not on OpenCode's PATH.
+
+**Delivery.** Claude: the provider passes `_CH_CLAUDE_SYSTEM_PROMPT` and `ch-claude` turns it into `--append-system-prompt-file`. The wrapper treats it as required — a missing variable fails startup like a missing settings path, because a session without it is a broken setup rather than a session with less context. OpenCode: the server manager puts the path in the `instructions` array of `OPENCODE_CONFIG_CONTENT`, which opencode merges last and renders into the system prompt as `Instructions from: <path>`. Note that opencode replaces arrays on merge (only `plugin` is unioned), so a user's own `instructions` entries do not survive.
+
+It is the counterpart of the MCP `SERVER_INSTRUCTIONS`: the system prompt carries what is always true about the environment, the MCP instructions carry cross-tool facts no single tool schema can express. Mechanics documented in a tool's own description are not repeated in either.
+
 ### MCP Tools Available to Agents
 
 The MCP server exposes workspace management tools (`workspace.getStatus`, `workspace.getMetadata`, `workspace.setMetadata`, `workspace.delete`, `workspace.create`, `workspace.executeCommand`, ...). See docs/API.md.

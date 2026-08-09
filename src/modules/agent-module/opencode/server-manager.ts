@@ -222,26 +222,32 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * @throws Error if server fails to spawn or health check times out
    */
   private async spawnServerOnPort(workspacePath: string, port: number): Promise<SpawnedProcess> {
-    // Build environment variables with MCP config if available
-    let env: NodeJS.ProcessEnv | undefined;
+    // OPENCODE_CONFIG_CONTENT is merged into the resolved config last, so these
+    // values win over the user's opencode.json. Note that arrays are replaced,
+    // not concatenated (only `plugin` is special-cased to union): a user's own
+    // `instructions` entries do not survive this merge.
+    //
+    // Use Path.toString() for paths (already POSIX format). Backslashes would
+    // become invalid escape sequences in JSON.
+    const normalizedWorkspacePath = new Path(workspacePath).toString();
+    const config: Record<string, unknown> = {
+      // Appended to the system prompt as "Instructions from: <path>".
+      instructions: [this.getSystemPromptPath().toString()],
+    };
     if (this.mcpConfig) {
-      // Use Path.toString() for the workspace path (already POSIX format).
-      // Backslashes would become invalid escape sequences in JSON.
-      const normalizedWorkspacePath = new Path(workspacePath).toString();
-      env = {
-        ...process.env,
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          mcp: {
-            codehydra: {
-              type: "remote",
-              url: `http://127.0.0.1:${this.mcpConfig.port}/mcp`,
-              headers: { "X-Workspace-Path": normalizedWorkspacePath },
-              enabled: true,
-            },
-          },
-        }),
+      config.mcp = {
+        codehydra: {
+          type: "remote",
+          url: `http://127.0.0.1:${this.mcpConfig.port}/mcp`,
+          headers: { "X-Workspace-Path": normalizedWorkspacePath },
+          enabled: true,
+        },
       };
     }
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    };
 
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;
@@ -252,7 +258,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     ).toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {
       cwd: workspacePath,
-      ...(env && { env }),
+      env,
     });
 
     // Check if spawn failed
@@ -504,6 +510,17 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   setMcpConfig(config: McpConfig): void {
     this.mcpConfig = config;
     this.logger.debug("MCP config set", { port: config.port });
+  }
+
+  /**
+   * Get the path to the CodeHydra system prompt loaded into every OpenCode session.
+   *
+   * The runtime dir, outside the ASAR, so the opencode process can read it. The
+   * OpenCode file omits the `ch-bg` section: that wrapper is only detectable in
+   * Claude's background_tasks, and it is not on OpenCode's PATH.
+   */
+  getSystemPromptPath(): Path {
+    return this.pathProvider.runtimePath("bin/codehydra-prompt-opencode.md");
   }
 
   /**

@@ -161,6 +161,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     const envVars: Record<string, string> = {
       _CH_CLAUDE_SETTINGS: hooksConfigPath.toNative(),
       _CH_CLAUDE_MCP_CONFIG: mcpConfigPath.toNative(),
+      _CH_CLAUDE_SYSTEM_PROMPT: this.serverManager.getSystemPromptPath().toNative(),
       _CH_BRIDGE_PORT: String(this.port),
       _CH_MCP_PORT: mcpConfig ? String(mcpConfig.port) : "",
       _CH_WORKSPACE_PATH: this.workspacePath,

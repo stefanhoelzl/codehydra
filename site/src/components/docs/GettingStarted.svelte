@@ -227,11 +227,18 @@
       <code>ch-bg npm run dev</code>
     </div>
     <p>
-      <code>ch-bg</code> runs the command unchanged &mdash; same output, same exit code &mdash; it
-      only tells CodeHydra to leave the workspace status alone. The easiest way to make an agent use
-      it is a line in your project's <code>CLAUDE.md</code>, e.g. &ldquo;start dev servers and
-      watchers with <code>ch-bg</code> so they don't pin the workspace busy.&rdquo; Everything not wrapped
-      keeps the default busy behavior.
+      <code>ch-bg</code> runs the command unchanged &mdash; same output, same exit code &mdash; it only
+      tells CodeHydra to leave the workspace status alone. Everything not wrapped keeps the default busy
+      behavior.
+    </p>
+    <p>
+      You don't have to tell your agent about this. CodeHydra gives every agent session a short
+      system prompt describing the workspace it runs in &mdash; what busy and idle mean, that the
+      worktree's lifecycle belongs to CodeHydra, and that creating another workspace is your call
+      rather than the agent's. Claude also gets the <code>ch-bg</code> rule above; OpenCode doesn't,
+      since background shells don't affect its status. A line in your project's
+      <code>CLAUDE.md</code> or <code>AGENTS.md</code> is still the place to tighten or loosen any of
+      it for your repo.
     </p>
   </section>
 

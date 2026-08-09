@@ -148,21 +148,20 @@ export type McpServerFactory = () => McpServerSdk;
 
 /**
  * Server-level instructions surfaced to AI agents via MCP initialize response.
- * Guides agents on how to use CodeHydra tools effectively.
+ *
+ * Scoped to cross-tool facts no single tool schema can carry. What an agent
+ * needs to know about the environment it runs in — worktree, busy/idle,
+ * ch-bg, delegation restraint — lives in the CodeHydra system prompt
+ * (resources/prompts/), which is always loaded; mechanics that a tool's own
+ * description already documents are not repeated here.
+ *
+ * The report_bug restraint is the one deliberate duplicate: a client may leave
+ * tool schemas unloaded until first use, and a rule about NOT calling a tool
+ * has to be in context before that point.
  */
 export const SERVER_INSTRUCTIONS = [
-  "CodeHydra manages workspaces as git worktrees, each with its own AI agent session.",
-  "",
   "When creating a workspace with workspace_create, pass an optional prompt to tell the new workspace's agent what to do.",
   "The prompt runs under the workspace agent's default mode and model; backend selection, permission mode and model are configured on the CodeHydra side, not via this tool.",
-  "",
-  "When working with tool results, write down any important information you might need later in your response,",
-  "as the original tool result may be cleared later.",
-  "",
-  "ui_show_message is a unified tool for all VS Code UI interactions. The type field controls the behavior:",
-  '- "info", "warning", "error" — show a notification. Add options for action buttons.',
-  '- "status" — update the status bar (single entry per workspace). Set message to null to clear it. hint is the tooltip.',
-  '- "select" — show a selection dialog. With options: quick pick list. Without options: free text input. hint is the placeholder.',
   "",
   "report_bug files a bug report about CodeHydra itself with the maintainers. Use it only when the user explicitly asks to report a CodeHydra bug or send feedback — never proactively. It attaches CodeHydra's current logs and redacted config and sends even if telemetry is off.",
 ].join("\n");
