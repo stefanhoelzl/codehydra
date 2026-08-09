@@ -14,6 +14,8 @@ import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
+import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
 import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
@@ -24,6 +26,7 @@ import {
   type MockToolOperations,
 } from "./mcp-server.test-utils";
 import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
+import { WorkspaceError } from "../shared/errors/service-errors";
 
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
@@ -62,6 +65,8 @@ function createMockMcpSdk() {
 }
 
 const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
+/** A workspace other than the session's own — the target of the tools that take a path. */
+const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
 
 /**
  * Send an initialize request to trigger session creation.
@@ -240,7 +245,6 @@ describe("McpServer", () => {
 
       const tools = mockMcpSdk.getRegisteredTools();
       const hibernateTool = tools.find((t) => t.name === "workspace_hibernate");
-      const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
 
       await hibernateTool!.handler(
         { workspacePath: otherWorkspacePath },
@@ -256,7 +260,6 @@ describe("McpServer", () => {
 
       const tools = mockMcpSdk.getRegisteredTools();
       const wakeTool = tools.find((t) => t.name === "workspace_wake");
-      const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
 
       await wakeTool!.handler(
         { workspacePath: otherWorkspacePath },
@@ -265,6 +268,107 @@ describe("McpServer", () => {
 
       const intent = mockDispatcher.operations.wake!.mock.calls[0]![0].intent as Intent;
       expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
+    });
+
+    it("workspace_get_metadata reads the session workspace by default", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const getMetadataTool = tools.find((t) => t.name === "workspace_get_metadata");
+
+      await getMetadataTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.getMetadata!.mock.calls[0]![0].intent as Intent;
+      expect(intent.type).toBe(INTENT_GET_METADATA);
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(testWorkspacePath);
+    });
+
+    it("workspace_get_metadata targets an explicit workspacePath argument", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const getMetadataTool = tools.find((t) => t.name === "workspace_get_metadata");
+
+      await getMetadataTool!.handler(
+        { workspacePath: otherWorkspacePath },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.getMetadata!.mock.calls[0]![0].intent as Intent;
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
+    });
+
+    it("workspace_set_metadata writes to the session workspace by default", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const setMetadataTool = tools.find((t) => t.name === "workspace_set_metadata");
+
+      await setMetadataTool!.handler(
+        { key: "tags.review", value: "{}" },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.setMetadata!.mock.calls[0]![0].intent as Intent;
+      expect(intent.type).toBe(INTENT_SET_METADATA);
+      expect(intent.payload).toMatchObject({
+        workspacePath: testWorkspacePath,
+        key: "tags.review",
+        value: "{}",
+      });
+    });
+
+    it("workspace_set_metadata targets an explicit workspacePath argument", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const setMetadataTool = tools.find((t) => t.name === "workspace_set_metadata");
+
+      // The provenance case: an agent tagging a workspace it just created.
+      await setMetadataTool!.handler(
+        { workspacePath: otherWorkspacePath, key: "tags.from-feature-branch", value: "{}" },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.setMetadata!.mock.calls[0]![0].intent as Intent;
+      expect(intent.payload).toMatchObject({
+        workspacePath: otherWorkspacePath,
+        key: "tags.from-feature-branch",
+        value: "{}",
+      });
+    });
+
+    it("reports a target workspace that does not exist as workspace-not-found", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const setMetadataTool = tools.find((t) => t.name === "workspace_set_metadata");
+      mockDispatcher.operations.setMetadata!.mockRejectedValueOnce(
+        new WorkspaceError(`Workspace not found: ${otherWorkspacePath}`, "WORKSPACE_NOT_FOUND")
+      );
+
+      const result = await setMetadataTool!.handler(
+        { workspacePath: otherWorkspacePath, key: "tags.review", value: "{}" },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: {
+                code: "workspace-not-found",
+                message: `Workspace not found: ${otherWorkspacePath}`,
+              },
+            }),
+          },
+        ],
+        isError: true,
+      });
     });
 
     it("workspace_delete deletes the session workspace and reports success", async () => {

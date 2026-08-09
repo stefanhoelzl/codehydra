@@ -34,7 +34,7 @@ import type { Logger, LogContext } from "../boundaries/platform/logging";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
 import type { LogLevel } from "../boundaries/platform/logging-types";
 import type { IDisposable } from "../shared/types";
-import { getErrorMessage } from "../shared/errors/service-errors";
+import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import { type Workspace, type DeletionProgress } from "../shared/api/types";
 
 // Intent types for direct dispatch
@@ -77,8 +77,9 @@ import type { WorkspacePath } from "../intents/contract";
 
 /**
  * Optional target workspace path for tools that can act on a workspace other
- * than the session's own (hibernate/wake/delete). Omit to target the current
- * workspace; use project_list to discover other workspaces' paths.
+ * than the session's own (hibernate/wake/delete, get/set metadata). Omit to
+ * target the current workspace; use project_list to discover other workspaces'
+ * paths.
  */
 const targetWorkspacePathSchema = workspacePathSchema
   .min(1)
@@ -550,17 +551,24 @@ export class McpServer {
       "workspace_get_metadata",
       {
         description:
-          "Get all metadata for the current workspace. Always includes a 'base' key with the base branch name.",
-        inputSchema: z.object({}),
+          "Get all metadata for a workspace. Always includes a 'base' key with the base branch name. " +
+          "Omit workspacePath to read the current workspace; pass one to read another. " +
+          "Use project_list to discover paths.",
+        inputSchema: z.object({
+          workspacePath: targetWorkspacePathSchema,
+        }),
       },
-      this.createWorkspaceHandler(async (workspacePath) => {
-        const result = await this.dispatcher.dispatch<GetMetadataIntent>({
-          type: INTENT_GET_METADATA,
-          payload: { workspacePath },
-        });
-        if (!result) throw new Error("Get metadata dispatch returned no result");
-        return result;
-      })
+      this.createWorkspaceHandler(
+        async (sessionWorkspacePath, args: { workspacePath?: WorkspacePath | undefined }) => {
+          const workspacePath = args.workspacePath ?? sessionWorkspacePath;
+          const result = await this.dispatcher.dispatch<GetMetadataIntent>({
+            type: INTENT_GET_METADATA,
+            payload: { workspacePath },
+          });
+          if (!result) throw new Error("Get metadata dispatch returned no result");
+          return result;
+        }
+      )
     );
 
     // workspace_set_metadata
@@ -568,12 +576,15 @@ export class McpServer {
       "workspace_set_metadata",
       {
         description:
-          "Set or delete a metadata key for the current workspace. " +
+          "Set or delete a metadata key for a workspace. " +
+          "Omit workspacePath to target the current workspace; pass one to target another — " +
+          "for example to record which workspace created it. Use project_list to discover paths. " +
           "Use key 'title' to set the workspace's sidebar display title; set value to null to delete/clear the title and revert the row to the branch name (this is how you 'delete the workspace title' — do not use workspace_delete for that). " +
           "To set tags, use the 'tags.' prefix for the key (e.g., key: 'tags.bugfix'). " +
           "The value is a JSON object with an optional color field: '{\"color\":\"#ff0000\"}' or '{}' for no color. " +
           "To remove a tag, set value to null.",
         inputSchema: z.object({
+          workspacePath: targetWorkspacePathSchema,
           key: z
             .string()
             .describe("Metadata key (must start with letter, contain only letters/digits/hyphens)"),
@@ -583,7 +594,15 @@ export class McpServer {
         }),
       },
       this.createWorkspaceHandler(
-        async (workspacePath, args: { key: string; value: string | null }) => {
+        async (
+          sessionWorkspacePath,
+          args: {
+            workspacePath?: WorkspacePath | undefined;
+            key: string;
+            value: string | null;
+          }
+        ) => {
+          const workspacePath = args.workspacePath ?? sessionWorkspacePath;
           await this.dispatcher.dispatch<SetMetadataIntent>({
             type: INTENT_SET_METADATA,
             payload: { workspacePath, key: args.key, value: args.value },
@@ -1140,6 +1159,11 @@ export class McpServer {
 
   /**
    * Handle errors from API calls.
+   *
+   * A workspacePath naming a workspace that doesn't exist is the one caller
+   * mistake that is worth its own code — every tool taking a target path can
+   * hit it, and the caller can fix it by re-reading project_list. Everything
+   * else stays internal-error.
    */
   private handleError(error: unknown): {
     content: Array<{ type: "text"; text: string }>;
@@ -1147,7 +1171,11 @@ export class McpServer {
   } {
     const message = getErrorMessage(error);
     this.logger.error("Tool error", { error: message });
-    return this.errorResult("internal-error", message);
+    const code: McpErrorCode =
+      error instanceof WorkspaceError && error.code === "WORKSPACE_NOT_FOUND"
+        ? "workspace-not-found"
+        : "internal-error";
+    return this.errorResult(code, message);
   }
 }
 

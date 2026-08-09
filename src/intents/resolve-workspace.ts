@@ -27,6 +27,7 @@ import {
 } from "./contract";
 import type { ProjectPath, WorkspaceClosing } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
+import { WorkspaceError } from "../shared/errors/service-errors";
 
 export const INTENT_RESOLVE_WORKSPACE = "workspace:resolve" as const;
 export const RESOLVE_WORKSPACE_OPERATION_ID = "resolve-workspace";
@@ -149,7 +150,13 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     if (!projectPath || !workspaceName) {
-      throw new Error(`Workspace not found: ${payload.workspacePath}`);
+      // Coded so callers can tell "you named a workspace that isn't there" apart
+      // from a genuine failure — the MCP tools map it to `workspace-not-found`.
+      // Same code and message the provider already uses for this condition.
+      throw new WorkspaceError(
+        `Workspace not found: ${payload.workspacePath}`,
+        "WORKSPACE_NOT_FOUND"
+      );
     }
 
     return { projectPath, workspaceName, active, branch, metadata, closing };
