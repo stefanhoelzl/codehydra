@@ -13,6 +13,7 @@
  * Environment variables (set by sidekick extension):
  * - _CH_CLAUDE_SETTINGS: Path to codehydra-hooks.json
  * - _CH_CLAUDE_MCP_CONFIG: Path to codehydra-mcp.json
+ * - _CH_CLAUDE_SYSTEM_PROMPT: Path to codehydra-prompt.md
  * - _CH_MCP_PORT: Main MCP server port
  * - _CH_WORKSPACE_PATH: Workspace path for MCP header
  * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
@@ -384,8 +385,12 @@ async function main(): Promise<never> {
   // 1. Validate required environment variables
   const settingsPath = process.env._CH_CLAUDE_SETTINGS;
   const mcpConfigPath = process.env._CH_CLAUDE_MCP_CONFIG;
+  // Required, not optional like _CH_INITIAL_PROMPT_FILE: the CodeHydra system
+  // prompt is part of every session, so its absence is a broken setup, not a
+  // launch that happens to carry no prompt.
+  const systemPromptPath = process.env._CH_CLAUDE_SYSTEM_PROMPT;
 
-  if (!settingsPath || !mcpConfigPath) {
+  if (!settingsPath || !mcpConfigPath || !systemPromptPath) {
     console.error("Error: CodeHydra Claude configuration not set.");
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
@@ -410,6 +415,8 @@ async function main(): Promise<never> {
   // --ide: Enable IDE-specific features
   // --settings: Our hooks config (merges with user's)
   // --mcp-config: Our MCP config (merges with user's)
+  // --append-system-prompt-file: What every agent in a CodeHydra workspace is
+  //   told about the environment it runs in (busy/idle, ch-bg, the worktree).
   // Initial prompt args come first (prompt as positional, then --model/--agent)
   // User args can override these if they come after
   const args = [
@@ -420,6 +427,8 @@ async function main(): Promise<never> {
     settingsPath,
     "--mcp-config",
     mcpConfigPath,
+    "--append-system-prompt-file",
+    systemPromptPath,
     ...getUserArgs(), // Auto-detect user args for both terminal and panel modes
   ];
 

@@ -255,6 +255,7 @@ describe("ClaudeCodeProvider integration", () => {
 
       expect(env).toHaveProperty("_CH_CLAUDE_SETTINGS");
       expect(env).toHaveProperty("_CH_CLAUDE_MCP_CONFIG");
+      expect(env).toHaveProperty("_CH_CLAUDE_SYSTEM_PROMPT");
       expect(env).toHaveProperty("_CH_BRIDGE_PORT");
       expect(env).toHaveProperty("_CH_MCP_PORT");
       expect(env).toHaveProperty("_CH_WORKSPACE_PATH");
@@ -265,6 +266,8 @@ describe("ClaudeCodeProvider integration", () => {
       expect(env._CH_WORKSPACE_PATH).toBe(workspacePath);
       expect(env._CH_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
       expect(env._CH_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
+      // Shared across workspaces: the runtime bin dir, not the per-workspace config dir
+      expect(env._CH_CLAUDE_SYSTEM_PROMPT).toContain("codehydra-prompt-claude.md");
     });
 
     it("returns empty MCP port if not configured", async () => {
