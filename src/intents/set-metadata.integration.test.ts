@@ -242,6 +242,17 @@ describe("SetMetadata Operation", () => {
       ).rejects.toThrow("Workspace not found: /nonexistent/path");
     });
 
+    // The code has to survive the nested workspace:resolve dispatch this
+    // operation makes — that is what lets the MCP tools report a bad target
+    // path as `workspace-not-found` rather than a generic internal error.
+    it("codes an unknown workspace path as WORKSPACE_NOT_FOUND", async () => {
+      const { dispatcher } = setup;
+
+      await expect(
+        dispatcher.dispatch(setMetadataIntent(wsPath("/nonexistent/path"), "key", "value"))
+      ).rejects.toMatchObject({ code: "WORKSPACE_NOT_FOUND" });
+    });
+
     it("no event emitted on error", async () => {
       const { dispatcher, workspacePath } = setup;
 

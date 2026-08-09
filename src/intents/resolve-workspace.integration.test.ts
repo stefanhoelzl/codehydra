@@ -171,6 +171,16 @@ describe("ResolveWorkspaceOperation Integration", () => {
       );
     });
 
+    // Coded so callers can distinguish "that workspace doesn't exist" from a
+    // genuine failure — the MCP tools turn this into `workspace-not-found`.
+    it("codes the not-found error as WORKSPACE_NOT_FOUND", async () => {
+      const { dispatcher } = createTestSetup();
+
+      await expect(dispatcher.dispatch(resolveIntent(WORKSPACE_PATH))).rejects.toMatchObject({
+        code: "WORKSPACE_NOT_FOUND",
+      });
+    });
+
     it("propagates hook handler errors (#4)", async () => {
       const { dispatcher } = createTestSetup(async () => {
         throw new Error("provider error");
