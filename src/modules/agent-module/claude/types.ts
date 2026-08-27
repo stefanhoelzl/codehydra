@@ -151,16 +151,24 @@ export function isValidHookName(name: string): name is ClaudeCodeHookName {
 }
 
 /**
- * Detect the `ch-bg` background-wrapper marker in a shell command.
+ * Detect the background-wrapper marker in a shell command.
  *
- * `ch-bg` is a passthrough wrapper CodeHydra ships onto the agent's PATH. A
- * background shell invoked through it (`ch-bg npm run dev`) carries the marker
- * in the command string Claude Code reports, which excludes it from keeping the
- * workspace busy. The match is a word boundary so it fires for `ch-bg foo`,
- * `bash -c "ch-bg foo"`, and `/path/to/ch-bg foo`, but not `xch-bg`/`ch-bgx`.
+ * A background shell invoked through the wrapper carries the marker in the
+ * command string Claude Code reports, which excludes it from keeping the
+ * workspace busy.
+ *
+ * Both spellings count. `ch bg npm run dev` is the canonical form — `bg` is a
+ * subcommand of the `ch` CLI — and `ch-bg npm run dev` is the standalone alias,
+ * which is still on PATH and still what most existing prompts and habits reach
+ * for. Matching only one of them would silently make every wrapped shell keep
+ * the workspace busy again.
+ *
+ * The word boundaries mean it fires for `ch-bg foo`, `bash -c "ch-bg foo"` and
+ * `/path/to/ch-bg foo`, but not `xch-bg` or `ch-bgx`. The spaced form requires
+ * real whitespace between the two words, so `ch bgfoo` does not qualify.
  */
 export function isBackgroundWrapped(command: string): boolean {
-  return /\bch-bg\b/.test(command);
+  return /\bch-bg\b|\bch\s+bg\b/.test(command);
 }
 
 /**

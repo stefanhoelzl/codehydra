@@ -149,6 +149,7 @@ import { createViewModule } from "./modules/view-module";
 import { createIdeServerModule } from "./modules/ide-server-module/ide-server-module";
 import { createPluginServerModule } from "./modules/plugin-server-module";
 import { createAgentModule } from "./modules/agent-module/agent-module";
+import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
@@ -166,7 +167,9 @@ import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspa
 import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createPowerModule } from "./modules/power-module";
-import { createMcpModule } from "./modules/mcp-module";
+import { createCliModule } from "./modules/cli-module";
+import { createRegistry } from "./api/entries";
+import { createDeletionWaiter } from "./api/deletion-waiter";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
@@ -504,7 +507,6 @@ const ideServerModule = createIdeServerModule({
   buildInfo,
   platform,
   arch,
-  wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
   logger: apiLogger,
   archiveExtractor,
   configService,
@@ -512,11 +514,57 @@ const ideServerModule = createIdeServerModule({
     getOpencodeBundleDir(pathProvider, opencodeVersionConfig.get()).toNative(),
 });
 
+// The CLI's scripts, token and published connection details. Constructed before
+// the plugin server so its token can be read lazily from the handshake.
+const cliModule = createCliModule({
+  stateService,
+  logger: loggingService.createLogger("cli"),
+});
+
+/** Where `ch.cjs` lands once script-module has synced the bin directory. */
+const cliBundlePath = pathProvider.dataPath("bin/ch.cjs").toNative();
+
+/**
+ * How agents launch CodeHydra's MCP server.
+ *
+ * `ch mcp` is given everything explicitly at launch — interpreter, bundle, port
+ * and token — so it reads no state file and needs nothing on PATH. Null until
+ * the plugin server has bound and published a token, which is the same condition
+ * under which no agent should be told to connect.
+ */
+const resolveMcpConfig = (): McpConfig | null => {
+  const port = pluginServerModule.port();
+  const token = cliModule.token();
+  const nodePath = ideServerModule.nodePath();
+  if (port === null || token === null) return null;
+  return { nodePath, cliPath: cliBundlePath, port, token };
+};
+
+/**
+ * Every operation the outside world can reach, in one place.
+ *
+ * The MCP, plugin and CLI adapters are generic loops over this; none of them
+ * holds per-operation code, so an operation cannot exist on one surface and be
+ * missing or behave differently on another.
+ */
+const deletionWaiter = createDeletionWaiter(dispatcher);
+
+const operationRegistry = createRegistry(
+  {
+    dispatcher,
+    appLayer,
+    awaitDeletion: (workspacePath) => deletionWaiter.await(workspacePath),
+  },
+  apiLogger
+);
+
 const pluginServerModule = createPluginServerModule({
   portManager: networkLayer,
   dispatcher,
   appLayer,
   logger: apiLogger,
+  registry: operationRegistry,
+  cliToken: () => cliModule.token(),
   options: {
     isDevelopment: buildInfo.isDevelopment,
     extensionLogger: loggingService.createLogger("extension"),
@@ -544,6 +592,7 @@ const claudeAgentModule = createAgentModule(claudeProvider, {
   dispatcher,
   logger: apiLogger,
   agentConfig,
+  resolveMcpConfig,
 });
 
 const opencodeProvider = createOpenCodeModuleProvider({
@@ -560,6 +609,7 @@ const opencodeAgentModule = createAgentModule(opencodeProvider, {
   dispatcher,
   logger: apiLogger,
   agentConfig,
+  resolveMcpConfig,
 });
 
 // Agents whose binaries are currently present — same probe the app:ready
@@ -681,11 +731,6 @@ const creationModule = createCreationModule({
   logger: apiLogger,
 });
 const workspaceSelectionModule = createWorkspaceSelectionModule();
-const mcpModule = createMcpModule({
-  portManager: networkLayer,
-  dispatcher,
-  logger: loggingService.createLogger("mcp"),
-});
 const autoWorkspaceModule = createAutoWorkspaceModule({
   fs: fileSystemLayer,
   logger: loggingService.createLogger("auto-workspace"),
@@ -726,6 +771,9 @@ const scriptModule = createScriptModule({
   fileSystem: fileSystemLayer,
   pathProvider,
   logger: appLogger,
+  // Read at sync time: the interpreter path follows the configured IDE version,
+  // so it is only correct once config has loaded.
+  templateVariables: () => ({ ideNode: ideServerModule.nodePath() }),
 });
 
 const tempDirModule = createTempDirModule({
@@ -894,7 +942,7 @@ dispatcher.registerModule(workspaceLifecycleModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule.module);
 dispatcher.registerModule(extensionModule);
-dispatcher.registerModule(ideServerModule);
+dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
@@ -914,7 +962,6 @@ dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(stateModule);
 dispatcher.registerModule(telemetryModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
-dispatcher.registerModule(mcpModule);
 dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
@@ -930,6 +977,7 @@ dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);
 dispatcher.registerModule(presentationModule);
+dispatcher.registerModule(cliModule.module);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 try {

@@ -59,7 +59,7 @@ import {
   type OperationSchemas,
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
-import type { BinaryType } from "./app-start";
+import type { BinaryType, RequiredScript } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 
@@ -890,7 +890,7 @@ describe("AppStart Operation", () => {
 
     function createInitModule(
       state: TestState,
-      options?: { fail?: boolean; captureScripts?: (scripts: readonly string[]) => void }
+      options?: { fail?: boolean; captureScripts?: (scripts: readonly RequiredScript[]) => void }
     ): IntentModule {
       return {
         name: "test",
@@ -915,7 +915,7 @@ describe("AppStart Operation", () => {
 
     it("before-ready hook collects scripts from multiple modules (#13)", async () => {
       const state = createTestState();
-      let capturedScripts: readonly string[] = [];
+      let capturedScripts: readonly RequiredScript[] = [];
 
       const { dispatcher } = createTestSetup([
         createConfigureModule(["script-a", "script-b"]),
@@ -954,7 +954,7 @@ describe("AppStart Operation", () => {
 
     it("init hook receives requiredScripts from before-ready results (#15)", async () => {
       const state = createTestState();
-      let capturedScripts: readonly string[] = [];
+      let capturedScripts: readonly RequiredScript[] = [];
 
       const { dispatcher } = createTestSetup([
         createConfigureModule(["bin/agent-wrapper"]),
@@ -1029,7 +1029,7 @@ describe("AppStart Operation", () => {
 
     it("empty before-ready results produce empty requiredScripts", async () => {
       const state = createTestState();
-      let capturedScripts: readonly string[] | undefined;
+      let capturedScripts: readonly RequiredScript[] | undefined;
 
       const { dispatcher } = createTestSetup([
         createInitModule(state, {

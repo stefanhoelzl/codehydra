@@ -917,7 +917,12 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("generates MCP config file", async () => {
-      serverManager.setMcpConfig({ port: 9999 });
+      serverManager.setMcpConfig({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
+        port: 9999,
+        token: "test-token",
+      });
       await serverManager.startServer("/workspace/feature-a");
 
       // Find the generated config file

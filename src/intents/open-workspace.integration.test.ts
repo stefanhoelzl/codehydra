@@ -38,6 +38,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
+import { z } from "zod/v4";
+import { INTENT_LIST_PROJECTS } from "./list-projects";
+import { INTENT_OPEN_PROJECT } from "./open-project";
 import {
   OpenWorkspaceOperation,
   OPEN_WORKSPACE_OPERATION_ID,
@@ -1197,5 +1200,129 @@ describe("OpenWorkspace Operation", () => {
       // No switch dispatched
       expect(switchedIntents).toHaveLength(0);
     });
+  });
+});
+
+// ===========================================================================
+// Project references
+// ===========================================================================
+
+describe("OpenWorkspaceOperation project references", () => {
+  /**
+   * Stand-ins for project:list and project:open, so the reference paths can be
+   * driven without a real project module.
+   */
+  /** Dispatch open-workspace, letting the contract check the payload. */
+  async function open(dispatcher: Dispatcher, payload: OpenWorkspacePayload): Promise<Workspace> {
+    return (await dispatcher.dispatch<OpenWorkspaceIntent>({
+      type: INTENT_OPEN_WORKSPACE,
+      payload,
+    })) as Workspace;
+  }
+
+  function withProjectOps(
+    dispatcher: Dispatcher,
+    options: {
+      open: readonly { name: string; path: string }[];
+      opened?: { path: string } | null;
+      onOpen?: (payload: { path?: string; git?: string }) => void;
+    }
+  ) {
+    dispatcher.registerOperation({
+      id: "list-projects",
+      schemas: { type: INTENT_LIST_PROJECTS, payload: z.unknown(), result: z.unknown() },
+      execute: async () => options.open,
+    } as never);
+    dispatcher.registerOperation({
+      id: "open-project",
+      schemas: { type: INTENT_OPEN_PROJECT, payload: z.unknown(), result: z.unknown() },
+      execute: async (ctx: { intent: { payload: { path?: string; git?: string } } }) => {
+        options.onOpen?.(ctx.intent.payload);
+        return options.opened === undefined ? { path: PROJECT_ROOT } : options.opened;
+      },
+    } as never);
+  }
+
+  it("uses an open project matched by name, without opening anything", async () => {
+    const { dispatcher } = createTestSetup();
+    let openedWith: unknown;
+    withProjectOps(dispatcher, {
+      open: [{ name: "test", path: PROJECT_ROOT }],
+      onOpen: (payload) => (openedWith = payload),
+    });
+
+    const result = await open(dispatcher, {
+      project: "test",
+      workspaceName: "by-name",
+      base: "main",
+    });
+
+    expect(result.name).toBe("by-name");
+    expect(openedWith, "an already-open project must not be reopened").toBeUndefined();
+  });
+
+  it("opens a project given by path when it is not open yet", async () => {
+    const { dispatcher } = createTestSetup();
+    let openedWith: { path?: string; git?: string } | undefined;
+    withProjectOps(dispatcher, { open: [], onOpen: (payload) => (openedWith = payload) });
+
+    await open(dispatcher, {
+      project: PROJECT_ROOT,
+      workspaceName: "by-path",
+      base: "main",
+    });
+
+    expect(openedWith).toEqual({ path: PROJECT_ROOT });
+  });
+
+  it("clones a project given as a git url", async () => {
+    // The point of resolving here rather than per-adapter: creating a workspace
+    // against a repository CodeHydra has never seen works from every surface.
+    const { dispatcher } = createTestSetup();
+    let openedWith: { path?: string; git?: string } | undefined;
+    withProjectOps(dispatcher, { open: [], onOpen: (payload) => (openedWith = payload) });
+
+    await open(dispatcher, {
+      project: "https://github.com/org/repo",
+      workspaceName: "from-url",
+      base: "main",
+    });
+
+    expect(openedWith).toEqual({ git: "https://github.com/org/repo" });
+  });
+
+  it("fails when the project cannot be opened", async () => {
+    const { dispatcher } = createTestSetup();
+    withProjectOps(dispatcher, { open: [], opened: null });
+
+    await expect(
+      open(dispatcher, {
+        project: "https://github.com/org/nope",
+        workspaceName: "doomed",
+        base: "main",
+      })
+    ).rejects.toThrow(/Could not open project/);
+  });
+
+  it("still accepts an explicit projectPath, and resolves nothing", async () => {
+    const { dispatcher } = createTestSetup();
+    let listed = false;
+    dispatcher.registerOperation({
+      id: "list-projects",
+      schemas: { type: INTENT_LIST_PROJECTS, payload: z.unknown(), result: z.unknown() },
+      execute: async () => {
+        listed = true;
+        return [];
+      },
+    } as never);
+
+    const result = await open(dispatcher, {
+      projectPath: PROJECT_ROOT,
+      workspaceName: "explicit",
+      base: "main",
+    });
+
+    expect(result.name).toBe("explicit");
+    expect(listed, "a caller holding a path has already resolved it").toBe(false);
   });
 });

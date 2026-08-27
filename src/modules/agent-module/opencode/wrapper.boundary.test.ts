@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for the compiled opencode wrapper (dist/bin/ch-opencode.cjs).
+ * Boundary tests for the compiled opencode wrapper (dist/bin/ch.cjs).
  *
  * Tests the script with real Node.js execution and mock HTTP server.
  * These tests verify:
@@ -19,10 +19,10 @@ import {
 } from "../wrapper-boundary-test-utils";
 
 /**
- * Path to the compiled ch-opencode.cjs script.
+ * Path to the compiled `ch` bundle, which carries the opencode launcher.
  * This is built by `pnpm build:wrappers` before running tests.
  */
-const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch-opencode.cjs");
+const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch.cjs");
 
 /**
  * Output from the fake opencode binary.
@@ -70,7 +70,7 @@ process.exit(isNaN(exitCode) ? 0 : exitCode);
   });
 }
 
-describe("ch-opencode.cjs boundary tests", () => {
+describe("ch opencode boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let opencodeDir: string;
 
@@ -96,7 +96,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           // _CH_OPENCODE_PORT not set
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -111,7 +112,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "not-a-number",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -125,7 +127,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "0",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -139,7 +142,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "-100",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -153,7 +157,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "70000",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -167,7 +172,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "14001",
           // _CH_OPENCODE_DIR not set
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(1);
@@ -187,7 +193,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);
@@ -205,7 +212,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);
@@ -223,7 +231,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           OPENCODE_EXIT_CODE: "42",
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(42);
@@ -242,7 +251,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           _CH_OPENCODE_SESSION_ID: "ses-abc123",
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);
@@ -260,7 +270,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           // _CH_OPENCODE_SESSION_ID not set
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);
@@ -277,7 +288,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           _CH_OPENCODE_SESSION_ID: "",
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);
@@ -300,7 +312,8 @@ describe("ch-opencode.cjs boundary tests", () => {
           _CH_OPENCODE_DIR: opencodeDir,
           _CH_OPENCODE_SESSION_ID: "ses-123",
         },
-        tempDir.path
+        tempDir.path,
+        ["opencode"]
       );
 
       expect(result.status).toBe(0);

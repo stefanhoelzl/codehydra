@@ -44,6 +44,7 @@ export type LoggerName =
   | "plugin" // PluginServer - VS Code extension communication
   | "badge" // BadgeManager - app icon badge
   | "mcp" // McpServerManager - MCP server
+  | "cli" // CliModule - the ch CLI's scripts and published connection details
   | "extension" // PluginServer - extension-side logs forwarded to main
   | "ext-manager" // ExtensionModule - extension manifest loading
   | "dialog" // DialogBoundary - system dialogs

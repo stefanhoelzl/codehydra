@@ -9,6 +9,26 @@ import { describe, it, expect } from "vitest";
 import { isBackgroundWrapped, taskKeepsBusy } from "./types";
 
 describe("isBackgroundWrapped", () => {
+  it("matches the ch bg subcommand form", () => {
+    // The canonical spelling. Missing it would silently make every wrapped
+    // shell keep the workspace busy again.
+    expect(isBackgroundWrapped("ch bg npm run dev")).toBe(true);
+  });
+
+  it("matches the subcommand form through a shell and an absolute path", () => {
+    expect(isBackgroundWrapped('bash -c "ch bg npm run dev"')).toBe(true);
+    expect(isBackgroundWrapped("/app-data/bin/ch bg npm run dev")).toBe(true);
+  });
+
+  it("tolerates extra whitespace between the words", () => {
+    expect(isBackgroundWrapped("ch  bg npm run dev")).toBe(true);
+  });
+
+  it("does not match a command that merely starts with those letters", () => {
+    expect(isBackgroundWrapped("ch bgfoo")).toBe(false);
+    expect(isBackgroundWrapped("switch bg")).toBe(false);
+  });
+
   it("matches the ch-bg wrapper as a leading command", () => {
     expect(isBackgroundWrapped("ch-bg npm run dev")).toBe(true);
   });

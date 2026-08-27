@@ -212,7 +212,9 @@ describe("OpenCode module provider", () => {
     });
 
     it("has correct scripts", () => {
-      expect(provider.scripts).toEqual(["ch-opencode", "ch-opencode.cjs", "ch-opencode.cmd"]);
+      // No scripts of its own: `ch opencode` is inside the ch.cjs bundle that
+      // cli-module declares, and the sidekick types that into the terminal.
+      expect(provider.scripts).toEqual([]);
     });
 
     it("has correct binaryType", () => {
@@ -244,8 +246,18 @@ describe("OpenCode module provider", () => {
     });
 
     it("sets MCP config when provided", () => {
-      provider.initialize({ port: 5555 });
-      expect(serverManager.setMcpConfig).toHaveBeenCalledWith({ port: 5555 });
+      provider.initialize({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
+        port: 5555,
+        token: "test-token",
+      });
+      expect(serverManager.setMcpConfig).toHaveBeenCalledWith({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
+        port: 5555,
+        token: "test-token",
+      });
     });
 
     it("does not set MCP config when null", () => {

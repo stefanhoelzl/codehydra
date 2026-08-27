@@ -1033,6 +1033,59 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(result.projectPath).toBeUndefined();
       });
 
+      it("resolves a path inside a workspace to that workspace", async () => {
+        // The `ch` CLI knows its working directory, not the worktree root.
+        const { dispatcher, provider } = setup;
+        const { projectPath } = await setupWithWorkspace(dispatcher, provider);
+
+        const result = await dispatchResolveWorkspace(
+          dispatcher,
+          wsPath(`${projectPath}/.worktrees/feature-1/src/deep/nested`)
+        );
+
+        expect(result.projectPath).toBe(projectPath);
+        expect(result.workspaceName).toBe("feature-1");
+      });
+
+      it("does not let a workspace claim a sibling whose name extends it", async () => {
+        // A bare startsWith would resolve feature-1-old to feature-1.
+        const { dispatcher, provider } = setup;
+        const { projectPath } = await setupWithWorkspace(dispatcher, provider);
+
+        const result = await dispatchResolveWorkspace(
+          dispatcher,
+          wsPath(`${projectPath}/.worktrees/feature-1-old`)
+        );
+
+        expect(result.projectPath).toBeUndefined();
+      });
+
+      it("resolves to the innermost workspace when they nest", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = projPath("/projects/my-app");
+        const outer: Workspace = {
+          name: "outer",
+          path: new Path(`${projectPath}/.worktrees/outer`),
+          branch: "outer",
+          metadata: { base: "main" },
+        };
+        const inner: Workspace = {
+          name: "inner",
+          path: new Path(`${projectPath}/.worktrees/outer/nested`),
+          branch: "inner",
+          metadata: { base: "main" },
+        };
+        provider.discover.mockResolvedValue([outer, inner]);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+        const result = await dispatchResolveWorkspace(
+          dispatcher,
+          wsPath(`${projectPath}/.worktrees/outer/nested/src`)
+        );
+
+        expect(result.workspaceName).toBe("inner");
+      });
+
       it("returns the stored workspace name, not the path basename", async () => {
         // Regression: on Windows, Path normalization lowercases the path, so a
         // name re-derived from the path ("sdk-214") diverges from the stored

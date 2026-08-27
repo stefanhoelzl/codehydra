@@ -17,6 +17,18 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { dirname } from "node:path";
 import { stat } from "node:fs/promises";
 
+import type { OperationRegistry } from "../api/registry";
+import { attachPluginAdapter, type ClientKind } from "../api/adapters/plugin";
+import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
+import type { DomainEvent } from "../intents/lib/types";
+import {
+  allWorkspaces,
+  findWorkspaceContaining,
+  resolveWorkspaceReference,
+  type ProjectLocation,
+} from "../api/workspace-lookup";
+import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
+import type { ListProjectsIntent } from "../intents/list-projects";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -141,6 +153,21 @@ export interface PluginServerModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
+  /**
+   * Registry-backed operations, mounted for every connection.
+   *
+   * Optional so existing callers (and the boundary tests) can stand the server
+   * up without one; when absent, only the hand-written channels are served.
+   */
+  readonly registry?: OperationRegistry;
+  /**
+   * The shared secret `ch` and the MCP shim must present.
+   *
+   * Read lazily because it is generated during app:start, after this module is
+   * constructed. Returning null refuses every non-sidekick connection, which is
+   * the correct posture before a token exists.
+   */
+  readonly cliToken?: () => string | null;
   readonly options?: PluginServerOptions;
 }
 
@@ -174,6 +201,8 @@ export interface PluginServerModuleHandle {
   readonly module: IntentModule;
   /** True once the Socket.IO server is listening (workspaces may still be connecting). */
   isReady(): boolean;
+  /** The bound port, or null before the server has started. */
+  port(): number | null;
 }
 
 export function createPluginServerModule(deps: PluginServerModuleDeps): PluginServerModuleHandle {
@@ -235,6 +264,13 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
     setupEventHandlers();
 
+    // One subscription per forwarded event for the life of the server, rather
+    // than per connection: subscribe() leaks its handler on unsubscribe, so a
+    // per-client subscription would accumulate one per `ch` invocation.
+    eventSubscriptions = FORWARDED_EVENTS.map((type) =>
+      dispatcher.subscribe(type, (event: DomainEvent) => forwardEvent(event))
+    );
+
     // Bind and discover in one step; a port discovered up front can be lost
     // again before listen() reaches it.
     const assignedPort = await portManager.listenOnFreePort(httpServer, "127.0.0.1");
@@ -248,6 +284,10 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     if (!io) {
       return;
     }
+
+    for (const unsubscribe of eventSubscriptions) unsubscribe();
+    eventSubscriptions = [];
+    eventClients.clear();
 
     logger.info("Closing");
 
@@ -322,6 +362,48 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   // ---------------------------------------------------------------------------
   // Graceful agent shutdown
   // ---------------------------------------------------------------------------
+
+  /**
+   * Clients that receive forwarded domain events.
+   *
+   * Separate from `connections`, which is the sidekick registry and carries
+   * teardown meaning. A `ch` invocation is a guest: it must never appear there,
+   * but it does want to hear what is happening while it waits.
+   */
+  const eventClients = new Set<{
+    readonly socket: TypedSocket;
+    readonly workspacePath: WorkspacePath | null;
+  }>();
+
+  /** Unsubscribe callbacks for the forwarded-event subscriptions. */
+  let eventSubscriptions: (() => void)[] = [];
+
+  /**
+   * Forward one domain event to the clients it concerns.
+   *
+   * A client scoped to a workspace hears only that workspace's events; a
+   * workspace-less client — a shell standing outside every worktree — hears
+   * everything, which is what makes progress visible for `project open`.
+   */
+  function forwardEvent(event: DomainEvent): void {
+    const eventWorkspace = eventWorkspacePath(event.payload);
+
+    for (const client of eventClients) {
+      if (
+        eventWorkspace !== undefined &&
+        client.workspacePath !== null &&
+        client.workspacePath !== eventWorkspace
+      ) {
+        continue;
+      }
+      // The typed socket describes the sidekick's server-to-client events; this
+      // channel exists only for CLI and MCP clients, so it is emitted untyped.
+      (client.socket as unknown as { emit: (channel: string, payload: unknown) => void }).emit(
+        EVENT_CHANNEL,
+        { type: event.type, payload: event.payload }
+      );
+    }
+  }
 
   /** Waiters for `api:workspace:agentLifecycle {event: "close"}`, by workspace. */
   const agentClosedWaiters = new Map<string, Set<() => void>>();
@@ -521,14 +603,119 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   // Auth validation
   // ---------------------------------------------------------------------------
 
-  function isValidAuth(auth: unknown): auth is { workspacePath: WorkspacePath } {
-    return (
-      typeof auth === "object" &&
-      auth !== null &&
-      "workspacePath" in auth &&
-      typeof (auth as { workspacePath: unknown }).workspacePath === "string" &&
-      (auth as { workspacePath: string }).workspacePath.length > 0
-    );
+  /**
+   * What a connection is allowed to do, decided entirely from its handshake.
+   *
+   * Two shapes arrive here. A sidekick presents a workspace path and nothing
+   * else — unchanged, because that handshake is a published contract. `ch` and
+   * the MCP shim present a client kind and a token, and may present a working
+   * directory instead of a workspace path, because a shell knows where it is
+   * standing but not which worktree that is.
+   */
+  interface Handshake {
+    readonly kind: ClientKind;
+    /** Explicit workspace, when the client named one. */
+    readonly workspacePath?: string;
+    /** Working directory to resolve into a workspace, when it did not. */
+    readonly cwd?: string;
+  }
+
+  function readHandshake(auth: unknown): Handshake | { error: string } {
+    if (typeof auth !== "object" || auth === null) {
+      return { error: "invalid auth" };
+    }
+    const record = auth as Record<string, unknown>;
+    const kind = record.client;
+
+    // No client kind: the sidekick's original handshake.
+    if (kind === undefined) {
+      const workspacePath = record.workspacePath;
+      if (typeof workspacePath !== "string" || workspacePath.length === 0) {
+        return { error: "invalid auth" };
+      }
+      return { kind: "sidekick", workspacePath };
+    }
+
+    if (kind !== "cli" && kind !== "mcp") {
+      return { error: `unknown client kind "${String(kind)}"` };
+    }
+
+    // The token is what separates a deliberate caller from any local process
+    // that guessed the port. Its absence refuses the connection outright rather
+    // than degrading to a workspace-less one.
+    const expected = deps.cliToken?.() ?? null;
+    if (expected === null) {
+      return { error: "this CodeHydra is not accepting CLI connections" };
+    }
+    if (typeof record.token !== "string" || record.token !== expected) {
+      return { error: "invalid token" };
+    }
+
+    return {
+      kind,
+      ...(typeof record.workspacePath === "string" &&
+        record.workspacePath.length > 0 && { workspacePath: record.workspacePath }),
+      ...(typeof record.cwd === "string" && record.cwd.length > 0 && { cwd: record.cwd }),
+    };
+  }
+
+  /**
+   * The workspace a connection acts on, or null when it acts on none.
+   *
+   * A path the client gave is normalized and used as-is; a working directory is
+   * resolved through workspace:resolve, which matches the deepest workspace
+   * containing it. Resolving to nothing is not an error for a CLI client — that
+   * is simply a shell standing outside any worktree, and app-global commands
+   * still work there.
+   */
+  async function resolveConnectionWorkspace(handshake: Handshake): Promise<WorkspacePath | null> {
+    // A sidekick always presents its own workspace path, and has always been
+    // taken at its word — it may name a workspace still being opened.
+    if (handshake.kind === "sidekick") {
+      if (handshake.workspacePath === undefined) return null;
+      try {
+        return workspacePathSchema.parse(new Path(handshake.workspacePath).toString());
+      } catch {
+        return null;
+      }
+    }
+
+    const reference = handshake.workspacePath;
+    if (reference === undefined && handshake.cwd === undefined) return null;
+
+    // Deliberately NOT workspace:resolve: that intent throws when the path is
+    // not a workspace, and the dispatcher logs the rejection at error level —
+    // so a shell standing outside every worktree, which is a normal caller,
+    // would write a fault into the log and into every bug report. Listing is
+    // the non-throwing way to ask the same question, and it is also what lets a
+    // caller name a workspace instead of pasting its path.
+    let projects: readonly ProjectLocation[];
+    try {
+      projects = ((await dispatcher.dispatch<ListProjectsIntent>({
+        type: INTENT_LIST_PROJECTS,
+        payload: {} as Record<string, never>,
+      })) ?? []) as readonly ProjectLocation[];
+    } catch (error) {
+      logger.debug("Could not list projects to resolve a client's workspace", {
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+
+    if (reference !== undefined) {
+      const resolved = resolveWorkspaceReference(projects, reference);
+      if ("error" in resolved) {
+        logger.debug("Could not resolve the workspace a client named", {
+          reference,
+          error: resolved.error,
+        });
+        return null;
+      }
+      return workspacePathSchema.parse(resolved.path);
+    }
+
+    const match = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd!);
+    return match === null ? null : workspacePathSchema.parse(match);
   }
 
   // ---------------------------------------------------------------------------
@@ -537,30 +724,68 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
   function setupEventHandlers(): void {
     io!.on("connection", (socket: TypedSocket) => {
-      const auth = socket.handshake.auth as unknown;
+      void acceptConnection(socket);
+    });
+  }
 
-      if (!isValidAuth(auth)) {
-        logger.warn("Connection rejected: invalid auth", {
-          socketId: socket.id,
-        });
-        socket.disconnect(true);
-        return;
-      }
+  /**
+   * Admit one connection, or turn it away.
+   *
+   * Async because a CLI client hands over a working directory rather than a
+   * workspace, and turning that into a workspace means asking the intent system.
+   */
+  async function acceptConnection(socket: TypedSocket): Promise<void> {
+    const handshake = readHandshake(socket.handshake.auth as unknown);
 
-      // The extension's handshake carries a raw string over a socket — the external edge
-      // where this module mints the workspace-path brand. Every handler below flows from here.
-      let workspacePath: WorkspacePath;
-      try {
-        workspacePath = workspacePathSchema.parse(new Path(auth.workspacePath).toString());
-      } catch {
-        logger.warn("Connection rejected: invalid path", {
-          socketId: socket.id,
-          path: auth.workspacePath,
-        });
-        socket.disconnect(true);
-        return;
-      }
+    if ("error" in handshake) {
+      logger.warn("Connection rejected", { socketId: socket.id, reason: handshake.error });
+      socket.disconnect(true);
+      return;
+    }
 
+    const resolved = await resolveConnectionWorkspace(handshake);
+
+    // The socket may have gone while we were resolving.
+    if (socket.disconnected) return;
+
+    // Registry operations are mounted for every kind of client. Which operations
+    // that is, and what they are called, follows the client kind.
+    if (deps.registry) {
+      attachPluginAdapter({
+        socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
+        registry: deps.registry,
+        workspacePath: resolved,
+        cwd: handshake.cwd ?? null,
+        logger,
+        kind: handshake.kind,
+      });
+    }
+
+    // A CLI or MCP client is a guest: it never becomes the workspace's
+    // registered socket, so it cannot displace the sidekick, and teardown's wait
+    // for the agent to close is not something it can strand. That is what lets
+    // it connect during teardown, and without a workspace at all.
+    if (handshake.kind !== "sidekick") {
+      const client = { socket, workspacePath: resolved };
+      eventClients.add(client);
+      socket.on("disconnect", () => eventClients.delete(client));
+
+      logger.debug("Client connected", {
+        kind: handshake.kind,
+        workspace: resolved,
+        socketId: socket.id,
+      });
+      return;
+    }
+
+    if (resolved === null) {
+      logger.warn("Connection rejected: invalid path", { socketId: socket.id });
+      socket.disconnect(true);
+      return;
+    }
+    const workspacePath = resolved;
+
+    {
       // This workspace's teardown is mid-flight and is waiting on its current
       // socket for the agent to report that it closed. Accepting would displace
       // that socket (see the duplicate-connection handling below) and strand the
@@ -623,7 +848,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       });
 
       setupApiHandlers(socket, workspacePath);
-    });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1209,7 +1434,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     },
   };
 
-  return { module, isReady: () => io !== null };
+  return { module, isReady: () => io !== null, port: () => port };
 }
 
 // =============================================================================

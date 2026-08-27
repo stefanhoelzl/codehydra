@@ -129,8 +129,24 @@ export function createGitWorktreeWorkspaceModule(
     workspacePathSchema.parse(new Path(p).toString());
 
   /**
-   * Shared reverse-lookup: workspacePath → (projectPath, workspaceName).
+   * True when `candidate` is the workspace at `workspaceRoot`, or lies inside it.
+   *
+   * The separator check is what stops `/repo/wt/feature` claiming a sibling
+   * called `/repo/wt/feature-2`, which a bare `startsWith` would.
+   */
+  function isWithin(candidate: string, workspaceRoot: string): boolean {
+    return candidate === workspaceRoot || candidate.startsWith(`${workspaceRoot}/`);
+  }
+
+  /**
+   * Shared reverse-lookup: a path → (projectPath, workspaceName).
    * Used by the resolve-workspace operation.
+   *
+   * Matches the deepest workspace containing the path rather than requiring the
+   * workspace root exactly, so a caller that only knows its working directory —
+   * the `ch` CLI, run from anywhere inside a worktree — resolves the same way a
+   * caller holding the root does. An exact match is the longest possible one, so
+   * it still wins; nesting resolves to the innermost workspace.
    */
   function resolveFromWorkspacePath(workspacePath: WorkspacePath):
     | {
@@ -142,23 +158,42 @@ export function createGitWorktreeWorkspaceModule(
     | undefined {
     const normalizedPath = new Path(workspacePath).toString();
 
+    let best:
+      | {
+          projectPath: ProjectPath;
+          workspaceName: WorkspaceName;
+          branch: string | null;
+          metadata: Readonly<Record<string, string>>;
+          rootLength: number;
+        }
+      | undefined;
+
     for (const [projectKey, wsList] of getMergedWorkspaces()) {
       for (const ws of wsList) {
-        if (ws.path.toString() === normalizedPath) {
-          return {
-            projectPath: projectKey,
-            // The stored name, NOT the basename of ws.path: Path lowercases
-            // on Windows, so a path-derived name breaks the renderer's
-            // case-sensitive name matching for uppercase workspace names.
-            workspaceName: ws.name as WorkspaceName,
-            branch: ws.branch,
-            metadata: ws.metadata,
-          };
-        }
+        const root = ws.path.toString();
+        if (!isWithin(normalizedPath, root)) continue;
+        if (best !== undefined && root.length <= best.rootLength) continue;
+
+        best = {
+          projectPath: projectKey,
+          // The stored name, NOT the basename of ws.path: Path lowercases
+          // on Windows, so a path-derived name breaks the renderer's
+          // case-sensitive name matching for uppercase workspace names.
+          workspaceName: ws.name as WorkspaceName,
+          branch: ws.branch,
+          metadata: ws.metadata,
+          rootLength: root.length,
+        };
       }
     }
 
-    return undefined;
+    if (best === undefined) return undefined;
+    return {
+      projectPath: best.projectPath,
+      workspaceName: best.workspaceName,
+      branch: best.branch,
+      metadata: best.metadata,
+    };
   }
 
   function unregisterWorkspaceFromState(

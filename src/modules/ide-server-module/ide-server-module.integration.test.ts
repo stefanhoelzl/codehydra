@@ -354,7 +354,6 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     buildInfo: { isPackaged: true },
     platform: "linux",
     arch: "x64",
-    wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
@@ -392,7 +391,7 @@ function createTestSetup(mockDeps?: IdeServerModuleDeps, pluginPort: number | nu
   // Register pluginPort provider before the IDE server module so the capability is available
   dispatcher.registerModule(createPluginPortProvider(pluginPort));
 
-  const module = createIdeServerModule(deps);
+  const { module } = createIdeServerModule(deps);
   dispatcher.registerModule(module);
 
   return { deps, dispatcher };
@@ -1094,7 +1093,7 @@ describe("IdeServerModule", () => {
       // Create single setup with both operations
       const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
-      const module = createIdeServerModule(deps);
+      const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
@@ -1152,7 +1151,7 @@ describe("IdeServerModule", () => {
 
       const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
-      const module = createIdeServerModule(deps);
+      const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Start to set port

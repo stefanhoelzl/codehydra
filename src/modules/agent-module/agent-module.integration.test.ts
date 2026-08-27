@@ -71,6 +71,8 @@ import {
   INTENT_AGENT_LIFECYCLE,
 } from "../../intents/agent-lifecycle";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
+import type { McpConfig } from "./types";
+import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
@@ -194,11 +196,30 @@ function minimalCheckDeps(
  * Minimal app:start operation that runs the "start" hook point with `mcpPort` seeded as a
  * capability (defaults to null). Replaces the old MinimalStart / MinimalStartWithMcpPort classes.
  */
-function minimalStart(mcpPort: number | null = null): Operation<OperationSchemas> {
+/**
+ * The app:start "start" hook point.
+ *
+ * The agent module gates on two capabilities: `pluginPort`, because the MCP
+ * config carries the plugin server's port, and `cliConnection`, because it also
+ * carries the CLI's token — which cli-module mints in its own start hook, and
+ * which would otherwise be read before it exists.
+ */
+function minimalStart(pluginPort: number | null = null): Operation<OperationSchemas> {
   return createMinimalOperation<void>(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-    hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { mcpPort } }),
+    hookContext: (ctx) => ({
+      intent: ctx.intent,
+      capabilities: { pluginPort, [CLI_CONNECTION_CAPABILITY]: true },
+    }),
   });
 }
+
+/** A stdio MCP launch config, as the composition root would resolve one. */
+const TEST_MCP_CONFIG: McpConfig = {
+  nodePath: "/ide/node",
+  cliPath: "/data/bin/ch.cjs",
+  port: 9999,
+  token: "test-token",
+};
 
 const registerAgentsSchemas = {
   type: INTENT_APP_START,
@@ -337,7 +358,10 @@ function minimalShutdown(agentCapability: string | null = "claude"): Operation<O
 // Test Setup
 // =============================================================================
 
-function createTestSetup(providerOverrides: Partial<AgentModuleProvider> = {}) {
+function createTestSetup(
+  providerOverrides: Partial<AgentModuleProvider> = {},
+  mcpConfig: McpConfig | null = null
+) {
   const mockProvider = createMockProvider(providerOverrides);
   const agentConfig = createMockAccessor<ConfigAgentType>("agent", "claude");
 
@@ -349,6 +373,7 @@ function createTestSetup(providerOverrides: Partial<AgentModuleProvider> = {}) {
     dispatcher: mockDispatcher,
     logger: SILENT_LOGGER,
     agentConfig,
+    resolveMcpConfig: () => mcpConfig,
   };
 
   const dispatcher = createMockDispatcher();
@@ -544,8 +569,8 @@ describe("createAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("lazy init", () => {
-    it("initializes provider with captured mcpPort on first workspace:open", async () => {
-      const { dispatcher, mockProvider } = createTestSetup();
+    it("initializes provider with the resolved MCP config on first workspace:open", async () => {
+      const { dispatcher, mockProvider } = createTestSetup({}, TEST_MCP_CONFIG);
       dispatcher.registerOperation(minimalStart(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -565,11 +590,11 @@ describe("createAgentModule", () => {
         },
       } as unknown as OpenWorkspaceIntent);
 
-      expect(mockProvider.initialize).toHaveBeenCalledWith({ port: 9999 });
+      expect(mockProvider.initialize).toHaveBeenCalledWith(TEST_MCP_CONFIG);
       expect(mockProvider.onStatusChange).toHaveBeenCalled();
     });
 
-    it("passes null mcpConfig when no mcpPort was captured", async () => {
+    it("passes null mcpConfig when none could be resolved", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
       dispatcher.registerOperation(minimalStart(null));
       await dispatcher.dispatch({ type: "app:start", payload: {} });

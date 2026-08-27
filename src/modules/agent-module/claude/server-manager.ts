@@ -920,12 +920,20 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Ensure config directory exists
     await this.fileSystem.mkdir(workspaceConfigDir);
 
-    // Variables for template substitution
+    // Variables for template substitution.
+    //
+    // The MCP entry launches `ch mcp` directly — interpreter, bundle and
+    // credentials all passed explicitly — rather than pointing at an HTTP
+    // endpoint inside the app. That is what lets the shim read no state file and
+    // need nothing on PATH.
     const variables: Record<string, string> = {
       HOOK_HANDLER_PATH: this.hookHandlerPath,
       BRIDGE_PORT: String(this.port),
       WORKSPACE_PATH: workspacePath,
-      MCP_PORT: String(this.mcpConfig?.port ?? 0),
+      NODE_PATH: this.mcpConfig?.nodePath ?? "",
+      CLI_PATH: this.mcpConfig?.cliPath ?? "",
+      PLUGIN_PORT: String(this.mcpConfig?.port ?? 0),
+      PLUGIN_TOKEN: this.mcpConfig?.token ?? "",
     };
 
     // Generate hooks config

@@ -107,14 +107,12 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       displayName: "Claude Code",
       icon: "sparkle",
       serverName: "Claude Code hook",
-      scripts: [
-        "ch-claude",
-        "ch-claude.cjs",
-        "ch-claude.cmd",
-        "claude-code-hook-handler.cjs",
-        "ch-bg",
-        "ch-bg.cmd",
-      ],
+      // No launcher of its own: `ch claude` lives in the ch.cjs bundle that
+      // cli-module declares, and the sidekick types that into the agent
+      // terminal. What remains is Claude-specific: the hook handler its settings
+      // file points at, and the background wrapper only Claude's
+      // background_tasks can report.
+      scripts: ["claude-code-hook-handler.cjs", "ch-bg", "ch-bg.cmd"],
 
       serverManager,
 

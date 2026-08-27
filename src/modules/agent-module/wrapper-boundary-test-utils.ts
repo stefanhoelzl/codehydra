@@ -69,13 +69,17 @@ export async function createFakeAgentBinary(options: FakeAgentBinaryOptions): Pr
 }
 
 /**
- * Execute a compiled wrapper script and capture output.
+ * Execute a compiled script and capture output.
  * Strips CodeHydra and test framework env vars, then merges provided vars.
+ *
+ * `args` carries the subcommand for scripts that take one: the agent launchers
+ * live inside the `ch` bundle now, reached as `ch claude` / `ch opencode`.
  */
 export async function executeScript(
   compiledScriptPath: string,
   env: Record<string, string | undefined>,
-  cwd: string
+  cwd: string,
+  args: readonly string[] = []
 ): Promise<{ stdout: string; stderr: string; status: number | null }> {
   const baseEnv: Record<string, string> = {};
   const excludedPrefixes = ["CH_", "_CH_", "VITEST", "TEST"];
@@ -93,7 +97,7 @@ export async function executeScript(
   }
 
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [compiledScriptPath], {
+    const child = spawn(process.execPath, [compiledScriptPath, ...args], {
       env: finalEnv,
       cwd,
     });

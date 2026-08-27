@@ -11,6 +11,21 @@
 import { z } from "zod/v4";
 
 // =============================================================================
+// Intent types that cross operations
+// =============================================================================
+
+/**
+ * `project:open`'s intent type, defined here rather than in its own module.
+ *
+ * open-project dispatches workspace:open, and open-workspace dispatches
+ * project:open to resolve a project reference that is not open yet — a genuine
+ * two-way relationship between the operations. Importing a value across it
+ * makes a module cycle the bundler rejects, so the shared name lives in this
+ * module, which both already depend on and which depends on neither.
+ */
+export const INTENT_OPEN_PROJECT = "project:open" as const;
+
+// =============================================================================
 // Branded identifiers
 // =============================================================================
 // Each id is a `z.string().brand<…>()` schema and its TS type is `z.infer<schema>`.

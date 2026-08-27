@@ -77,7 +77,12 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     // Set MCP config for environment variables
-    serverManager.setMcpConfig({ port: 9999 });
+    serverManager.setMcpConfig({
+      nodePath: "/ide/node",
+      cliPath: "/data/bin/ch.cjs",
+      port: 9999,
+      token: "test-token",
+    });
 
     provider = new ClaudeCodeProvider({
       serverManager,
@@ -257,12 +262,14 @@ describe("ClaudeCodeProvider integration", () => {
       expect(env).toHaveProperty("_CH_CLAUDE_MCP_CONFIG");
       expect(env).toHaveProperty("_CH_CLAUDE_SYSTEM_PROMPT");
       expect(env).toHaveProperty("_CH_BRIDGE_PORT");
-      expect(env).toHaveProperty("_CH_MCP_PORT");
+      expect(env).toHaveProperty("_CH_PLUGIN_TOKEN");
       expect(env).toHaveProperty("_CH_WORKSPACE_PATH");
 
       // Check values
       expect(env._CH_BRIDGE_PORT).toBe(String(port));
-      expect(env._CH_MCP_PORT).toBe("9999");
+      // The token lets `ch` in this terminal reach CodeHydra; the MCP server has
+      // no port of its own any more, being a stdio subprocess.
+      expect(env._CH_PLUGIN_TOKEN).toBe("test-token");
       expect(env._CH_WORKSPACE_PATH).toBe(workspacePath);
       expect(env._CH_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
       expect(env._CH_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
@@ -270,7 +277,7 @@ describe("ClaudeCodeProvider integration", () => {
       expect(env._CH_CLAUDE_SYSTEM_PROMPT).toContain("codehydra-prompt-claude.md");
     });
 
-    it("returns empty MCP port if not configured", async () => {
+    it("returns an empty token when MCP is not configured", async () => {
       // Create server manager without MCP config
       const serverManagerNoMcp = new ClaudeCodeServerManager({
         portManager: createPortManagerMock(),
@@ -290,7 +297,7 @@ describe("ClaudeCodeProvider integration", () => {
       await providerNoMcp.connect(port);
 
       const env = providerNoMcp.getEnvironmentVariables();
-      expect(env._CH_MCP_PORT).toBe("");
+      expect(env._CH_PLUGIN_TOKEN).toBe("");
 
       providerNoMcp.dispose();
       await serverManagerNoMcp.dispose();

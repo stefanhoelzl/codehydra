@@ -26,6 +26,7 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type { ProjectPath, WorkspaceName } from "./contract";
+import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   agentSpecSchema,
   hookCtxSchema,
@@ -38,6 +39,9 @@ import {
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "./list-projects";
+import type { OpenProjectIntent } from "./open-project";
+import { looksLikeGitUrl, matchOpenProject } from "../utils/project-reference";
 import { throwHookErrors, mergeHookResults, lastDefined } from "./lib/hook-helpers";
 
 export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
@@ -89,8 +93,22 @@ export const openWorkspacePayloadSchema = z
     stealFocus: z.boolean().optional(),
     /** When set, skip worktree creation and populate context from existing workspace data. */
     existingWorkspace: existingWorkspaceDataSchema.optional(),
-    /** Authoritative project path. */
-    projectPath: projectPathSchema,
+    /**
+     * Authoritative project path, for a project already known to be open.
+     *
+     * Exactly one of this and `project` is required. In-app callers hold a path
+     * already; a caller working from a name or a URL passes `project` instead.
+     */
+    projectPath: projectPathSchema.optional(),
+    /**
+     * Project reference: an open project's name, a local path, or a git URL.
+     *
+     * Resolved before anything else happens, opening — or cloning — the project
+     * when it is not open yet. Creating a workspace in a project you have not
+     * opened is a reasonable thing to ask for, and doing it here rather than in
+     * each adapter means every surface gets it.
+     */
+    project: z.string().min(1).optional(),
     /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
     source: workspaceOpenSourceSchema.optional(),
     /**
@@ -100,7 +118,11 @@ export const openWorkspacePayloadSchema = z
      */
     agent: agentSpecSchema.optional(),
   })
-  .readonly();
+  .readonly()
+  .refine(
+    (payload) => payload.projectPath !== undefined || payload.project !== undefined,
+    "Either projectPath or project is required"
+  );
 
 export const openWorkspaceResultSchema = workspaceSchema;
 
@@ -292,7 +314,10 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   async execute(
     ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>
   ): Promise<OpenWorkspaceResult> {
-    const { projectPath } = ctx.intent.payload;
+    // Before anything else, including the loading row: a reference may name a
+    // project that is not open, and opening it can clone from the network. The
+    // row would otherwise appear against a project that turns out not to exist.
+    const projectPath = await this.resolveProjectPath(ctx);
 
     // Announce every fresh worktree creation, foreground or background: the
     // placeholder row is how the user learns a creation started, and gating it
@@ -331,6 +356,47 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       } satisfies WorkspaceCreateFailedEvent);
       throw error;
     }
+  }
+
+  /**
+   * Turn the payload's project into a path for an open project.
+   *
+   * A caller holding a path has already done this. A caller with a reference
+   * gets it resolved here: an open project matched by name is used as-is, and
+   * anything else is opened — which clones it when the reference is a git URL.
+   * project:open reports `alreadyOpen` for a project that is already open, so
+   * taking this route twice is harmless.
+   */
+  private async resolveProjectPath(
+    ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>
+  ): Promise<ProjectPath> {
+    const { projectPath, project } = ctx.intent.payload;
+    if (projectPath !== undefined) return projectPath;
+    if (project === undefined) {
+      // Unreachable via the schema's refine; a direct construction could miss it.
+      throw new Error("open-workspace requires either projectPath or project");
+    }
+
+    const projects = await ctx.dispatch<ListProjectsIntent>({
+      type: INTENT_LIST_PROJECTS,
+      payload: {} as Record<string, never>,
+    });
+    const matched = matchOpenProject(projects ?? [], project);
+    if (matched !== undefined) {
+      if ("error" in matched) throw new Error(matched.error);
+      return projectPathSchema.parse(matched.path);
+    }
+
+    const opened = await ctx.dispatch<OpenProjectIntent>({
+      type: INTENT_OPEN_PROJECT,
+      payload: looksLikeGitUrl(project)
+        ? { git: project }
+        : { path: projectPathSchema.parse(project) },
+    });
+    if (!opened) {
+      throw new Error(`Could not open project "${project}"`);
+    }
+    return opened.path;
   }
 
   private async executeWorkspaceOpen(
