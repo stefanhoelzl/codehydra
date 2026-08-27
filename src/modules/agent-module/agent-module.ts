@@ -70,7 +70,8 @@ import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { AgentSpec } from "../../shared/api/types";
-import type { AgentPromptConfig } from "./types";
+import type { AgentPromptConfig, McpConfig } from "./types";
+import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import type { AgentModuleProvider } from "./agent-module-provider";
 
 // =============================================================================
@@ -85,6 +86,15 @@ export interface AgentModuleDeps {
   readonly logger: Logger;
   /** Accessor for the user's agent selection (registered in the composition root). */
   readonly agentConfig: PersistedAccessor<ConfigAgentType>;
+  /**
+   * How agents should launch CodeHydra's MCP server, or null when they cannot.
+   *
+   * Resolved by the composition root, which is the only place that knows all
+   * four pieces — the interpreter, the CLI bundle, the plugin port and the
+   * token. Read at app:start rather than injected as a value because the port
+   * and token only exist once the plugin server has bound.
+   */
+  readonly resolveMcpConfig: () => McpConfig | null;
 }
 
 // =============================================================================
@@ -132,7 +142,7 @@ export function createAgentModule(
   // =========================================================================
 
   /** MCP port captured during app:start; consumed on lazy initialize. */
-  let capturedMcpPort: number | null = null;
+  let capturedMcpConfig: McpConfig | null = null;
 
   /** Whether the provider has been initialized (lazy on first workspace:open). */
   let initialized = false;
@@ -143,7 +153,7 @@ export function createAgentModule(
   /** Initialize the provider on demand. Idempotent. */
   function ensureInitialized(): void {
     if (initialized) return;
-    provider.initialize(capturedMcpPort !== null ? { port: capturedMcpPort } : null);
+    provider.initialize(capturedMcpConfig);
     statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
       void deps.dispatcher.dispatch<UpdateAgentStatusIntent>({
         type: INTENT_UPDATE_AGENT_STATUS,
@@ -240,10 +250,15 @@ export function createAgentModule(
         },
 
         start: {
-          requires: { mcpPort: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<void> => {
-            const mcpPort = ctx.capabilities?.mcpPort as number | null | undefined;
-            capturedMcpPort = mcpPort !== null && mcpPort !== undefined ? mcpPort : null;
+          // The MCP config carries the plugin port AND the CLI's token, so it
+          // cannot be resolved until the plugin server has bound and cli-module
+          // has minted and published one. Requiring only `pluginPort` would let
+          // this run alongside cli-module and read a token that does not exist
+          // yet, writing an MCP config with an empty command and no credentials
+          // — an agent with no CodeHydra tools at all.
+          requires: { pluginPort: ANY_VALUE, [CLI_CONNECTION_CAPABILITY]: ANY_VALUE },
+          handler: async (): Promise<void> => {
+            capturedMcpConfig = deps.resolveMcpConfig();
             // Initialization is deferred until the first workspace using this
             // agent is opened (see open-workspace setup hook).
           },

@@ -156,7 +156,10 @@ function openAgentTerminal(
   }
 
   const terminalName = agentType === "claude" ? "Claude" : "OpenCode";
-  const command = agentType === "claude" ? "ch-claude" : "ch-opencode";
+  // The `ch` CLI carries both launchers. The `ch-claude` script still exists,
+  // but only because the Claude Code extension's process-wrapper setting takes a
+  // bare path; nothing needs it here.
+  const command = agentType === "claude" ? "ch claude" : "ch opencode";
 
   if (!show) {
     // Reopened workspace: dispose stale restored terminals (empty creationOptions

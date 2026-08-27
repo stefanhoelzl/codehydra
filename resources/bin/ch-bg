@@ -2,8 +2,13 @@
 # CodeHydra background wrapper.
 #
 # Runs the given command transparently (same stdio, same exit code). Its only
-# job is to put the "ch-bg" marker into the command string CodeHydra sees in
-# Claude Code's background_tasks, so this background shell is excluded from
-# keeping the workspace busy. Wrap long-lived background processes (dev servers,
-# watchers, tail -f) with it:  ch-bg npm run dev
+# job is to put the "ch-bg" marker into the command string CodeHydra sees in the
+# agent's background task list, so this background shell is excluded from keeping
+# the workspace busy. Wrap long-lived background processes with it:
+#   ch-bg npm run dev
+#
+# `ch bg` does the same thing and is the canonical spelling. This one stays a
+# self-contained passthrough rather than a shim: it must work with no
+# dependencies at all — before `ch` has been rendered, and without an
+# interpreter — and its whole implementation is the line below.
 exec "$@"

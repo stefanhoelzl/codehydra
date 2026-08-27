@@ -81,7 +81,9 @@ export function createOpenCodeModuleProvider(
       displayName: "OpenCode",
       icon: "terminal",
       serverName: "OpenCode",
-      scripts: ["ch-opencode", "ch-opencode.cjs", "ch-opencode.cmd"],
+      // No scripts of its own: the launcher is `ch opencode`, inside the ch.cjs
+      // bundle that cli-module declares, and the sidekick types that directly.
+      scripts: [],
 
       serverManager,
 

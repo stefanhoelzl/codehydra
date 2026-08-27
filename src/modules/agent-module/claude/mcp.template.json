@@ -1,10 +1,13 @@
 {
   "mcpServers": {
     "codehydra": {
-      "type": "http",
-      "url": "http://127.0.0.1:${MCP_PORT}/mcp",
-      "headers": {
-        "X-Workspace-Path": "${WORKSPACE_PATH}"
+      "type": "stdio",
+      "command": "${NODE_PATH}",
+      "args": ["${CLI_PATH}", "mcp"],
+      "env": {
+        "_CH_WORKSPACE_PATH": "${WORKSPACE_PATH}",
+        "_CH_PLUGIN_PORT": "${PLUGIN_PORT}",
+        "_CH_PLUGIN_TOKEN": "${PLUGIN_TOKEN}"
       }
     }
   }

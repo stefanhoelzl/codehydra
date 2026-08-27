@@ -31,6 +31,7 @@ import {
   hookCtxSchema,
 } from "./contract";
 import type { ProjectPath, DiscoveredWorkspace } from "./contract";
+import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
@@ -43,7 +44,9 @@ import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
 import { throwHookErrors } from "./lib/hook-helpers";
 
-export const INTENT_OPEN_PROJECT = "project:open" as const;
+// Defined in ./contract so open-workspace can import it without a module cycle;
+// re-exported here so this stays the obvious place to find it.
+export { INTENT_OPEN_PROJECT };
 export const OPEN_PROJECT_OPERATION_ID = "open-project";
 
 export const EVENT_PROJECT_OPENED = "project:opened" as const;

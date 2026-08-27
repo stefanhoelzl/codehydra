@@ -7,11 +7,18 @@ CodeHydra exposes APIs at two levels:
 | **Private** | Full API       | CodeHydra renderer UI only           |
 | **Public**  | Workspace-only | VS Code extensions, external systems |
 
+Every operation the Public API exposes comes from one **operation registry**
+(`src/api/`). MCP, the plugin wire and the `ch` CLI are generic adapters over it:
+none contains per-operation code, so an operation cannot exist on one surface and
+be missing — or behave differently — on another. See
+[CLAUDE.md](../CLAUDE.md#key-concepts) for the registry's shape.
+
 ## Quick Links
 
 - [Public API](#public-api) - Workspace-scoped API for external consumers
   - [VS Code Extension Access](#vs-code-extension-access)
   - [WebSocket Access](#websocket-access)
+  - [`ch` CLI](#ch-cli) - the same operations from a shell, and MCP over stdio
 - [VS Code Object Serialization](#vs-code-object-serialization) - Format for passing VS Code objects through JSON
 - [Private API](#private-api) - Full API for CodeHydra internals
 - [Type Definitions](#type-definitions) - Shared types
@@ -397,6 +404,31 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 2. Connect via Socket.IO to `http://localhost:${port}`
 3. Authenticate with workspace path
 
+#### Client kinds
+
+The wire carries three kinds of client, declared in the handshake. They differ in
+what they may call and in how operations are addressed.
+
+| Kind     | Handshake                                          | Addresses operations as      |
+| -------- | -------------------------------------------------- | ---------------------------- |
+| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.** | `api:workspace:getStatus`, … |
+| `cli`    | `{ client: "cli", token, cwd? , workspacePath? }`  | `api:operation:<name>`       |
+| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`   | `api:operation:<name>`       |
+
+The historical channel names are a compatibility surface for extensions, so they
+are kept exactly as they are and never grow for a new client. `ch` and the stdio
+MCP shim address operations by registry name instead, which is why adding an
+operation does not widen the extension-facing contract.
+
+Two further differences matter for anyone writing a client:
+
+- **Token.** `cli` and `mcp` clients must present the token from `plugin.token`
+  in `state.json`. An extension's handshake carries none and is unaffected.
+- **Non-exclusive.** A `cli`/`mcp` connection never becomes the workspace's
+  registered socket, so it cannot displace an extension or strand a teardown
+  waiting on one — which is also why it may connect during teardown, and with no
+  workspace at all (for operations like `project.list` that need none).
+
 ```typescript
 import { io, Socket } from "socket.io-client";
 
@@ -424,19 +456,50 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                              | Request Payload                        | Response                                |
-| ---------------------------------- | -------------------------------------- | --------------------------------------- |
-| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `PluginResult<WorkspaceStatus>`         |
-| `api:workspace:getAgentSession`    | None                                   | `PluginResult<AgentSession \| null>`    |
-| `api:workspace:restartAgentServer` | None                                   | `PluginResult<number>`                  |
-| `api:workspace:getMetadata`        | None                                   | `PluginResult<Record<string, string>>`  |
-| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `PluginResult<void>`                    |
-| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `PluginResult<unknown>`                 |
-| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `PluginResult<void>`                    |
-| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `PluginResult<DeleteWorkspaceResponse>` |
-| `api:workspace:create`             | `WorkspaceCreateRequest`               | `PluginResult<Workspace>`               |
-| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                 |
-| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                 |
+| Event                              | Request Payload                        | Response                                   |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------ |
+| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `PluginResult<WorkspaceStatus>`            |
+| `api:workspace:getAgentSession`    | None                                   | `PluginResult<AgentSession \| null>`       |
+| `api:workspace:restartAgentServer` | None                                   | `PluginResult<number>`                     |
+| `api:workspace:getMetadata`        | None                                   | `PluginResult<Record<string, string>>`     |
+| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `PluginResult<void>`                       |
+| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `PluginResult<unknown>`                    |
+| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `PluginResult<void>`                       |
+| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `PluginResult<DeleteWorkspaceResponse>`    |
+| `api:workspace:create`             | `WorkspaceCreateRequest`               | `PluginResult<Workspace>`                  |
+| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                    |
+| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                    |
+| `api:workspace:hibernate`          | None                                   | `PluginResult<{ started: boolean }>`       |
+| `api:workspace:wake`               | None                                   | `PluginResult<Workspace>`                  |
+| `api:workspace:setTitle`           | `{ title: string \| null }`            | `PluginResult<void>`                       |
+| `api:workspace:listTags`           | None                                   | `PluginResult<WorkspaceTag[]>`             |
+| `api:workspace:setTag`             | `{ name: string; color?: string }`     | `PluginResult<void>`                       |
+| `api:workspace:removeTag`          | `{ name: string }`                     | `PluginResult<void>`                       |
+| `api:workspace:openAgent`          | None                                   | `PluginResult<unknown>`                    |
+| `api:workspace:closeAgent`         | None                                   | `PluginResult<{ closed: boolean }>`        |
+| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `PluginResult<void>`                       |
+| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `PluginResult<{ result: string \| null }>` |
+| `api:workspace:openBrowser`        | `{ url: string }`                      | `PluginResult<unknown>`                    |
+| `api:workspace:openDiff`           | `{ left, right, title? }`              | `PluginResult<unknown>`                    |
+| `api:workspace:goto`               | `{ location: string }`                 | `PluginResult<unknown>`                    |
+| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `PluginResult<unknown>`                    |
+| `api:project:list`                 | None                                   | `PluginResult<Project[]>`                  |
+| `api:reportIssue`                  | `{ description: string }`              | `PluginResult<{ submitted: true }>`        |
+| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `PluginResult<OperationDescriptor[]>`      |
+
+Everything below `api:log` is new: these operations existed only as MCP tools
+before the registry, and are now on both surfaces. Purely additive — no existing
+channel changed shape.
+
+**Two behaviour changes to `api:workspace:delete`**, both deliberate:
+
+- `keepBranch` now defaults to **`false`**, matching what the MCP tool has always
+  done and what "delete" plainly means. It previously defaulted to `true` here.
+- It now **blocks** until deletion finishes and reports real failures, instead of
+  returning `{ started: true }` immediately. Pass `wait: false` for the old
+  fire-and-forget behaviour.
+
+It also gained `ignoreWarnings`, which the MCP tool already had.
 
 ### Event Channels (Server → Client)
 
@@ -646,6 +709,96 @@ socket.on("command", (request: CommandRequest, ack: (result: PluginResult<unknow
 ```
 
 This is used by CodeHydra to send startup commands (close sidebars, open terminal) when a workspace connects.
+
+---
+
+## `ch` CLI
+
+`ch` is the same operations from a shell. It ships in `<dataRoot>/bin` and is on
+the PATH of every CodeHydra terminal; add that directory to your own PATH to use
+it from an ordinary shell.
+
+```console
+$ ch ws status                       # the workspace containing the current directory
+$ ch ws create feature-x main --prompt "add the export button"
+$ ch ws switch feature-x             # by name, from anywhere
+$ ch ws delete --keep-branch
+$ ch project open .                  # a path, or a git URL to clone
+$ ch project list
+$ ch project close ohi               # by name
+$ ch ws notify "build finished" --level warning
+$ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
+```
+
+Run `ch --help` for the command list, or `ch <command> --help` for one command's
+arguments. Both are built from the running app's registry, so they describe the
+operations that instance actually has.
+
+### Conventions
+
+|               |                                                                                                                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <path>` overrides; several operations also accept a target so one workspace can act on another.                                                                 |
+| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. |
+| **Output**    | JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. `--json` / `--no-json` force either.                                                                                                                  |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `--data-dir <path>` targets a different instance.                                                                              |
+
+### Exit codes
+
+| Code | Meaning                                            |
+| ---- | -------------------------------------------------- |
+| `0`  | Success                                            |
+| `1`  | The operation ran and failed                       |
+| `2`  | Usage error — unknown command, bad arguments       |
+| `3`  | CodeHydra could not be reached                     |
+| `4`  | The operation needs a workspace and none was found |
+
+`3` and `4` are separate from `1` on purpose: a script that cannot tell "the app
+is not running" and "you are in the wrong directory" from "the operation was
+refused" cannot retry sensibly.
+
+### Progress events
+
+The plugin server pushes selected domain events to CLI and MCP clients on
+`api:event`, as `{ type, payload }`. Forwarding is opt-in per event, so an event
+reaches clients because it was declared, not because it was emitted:
+
+| Event                                                                 | Carries                                                                                                                       |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `clone:progress`                                                      | `{ stage, progress, name, url }` — percentage during a clone                                                                  |
+| `project:opened` / `project:open-failed`                              | the project, or the error                                                                                                     |
+| `workspace:loading` / `workspace:created` / `workspace:create-failed` | creation start, finish, failure                                                                                               |
+| `workspace:deletion-progress`                                         | full state each step: labelled operations, `completed`, `hasErrors`, and `blockingProcesses` when a worktree will not release |
+
+A client scoped to a workspace receives only that workspace's events. A
+workspace-less client receives instance-wide ones too — which is what makes a
+clone visible, since a clone has no workspace and `project open <url>` is run
+from outside every worktree.
+
+### MCP
+
+`ch mcp` runs CodeHydra's MCP server over stdio. Both bundled agents launch it
+this way, and any MCP client can:
+
+```jsonc
+{
+  "type": "stdio",
+  "command": "<node>",
+  "args": ["<dataRoot>/bin/ch.cjs", "mcp"],
+  "env": { "_CH_WORKSPACE_PATH": "…", "_CH_PLUGIN_PORT": "…", "_CH_PLUGIN_TOKEN": "…" },
+}
+```
+
+The tool list comes from the same registry as the CLI's commands. Passing the
+connection in the environment means the shim reads no state file and needs
+nothing on PATH.
+
+### Other subcommands
+
+| Command                     | Purpose                                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ch bg <cmd…>`              | Run a command without keeping the workspace busy. Never contacts the app.                                      |
+| `ch claude` / `ch opencode` | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. |
 
 ---
 
@@ -1141,7 +1294,7 @@ These variables are set when using the Claude agent provider.
 | `_CH_CLAUDE_MCP_CONFIG`    | Path to MCP configuration file                                                                                                                                                                                                                                                                                                 |
 | `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
 | `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
-| `_CH_MCP_PORT`             | Main MCP server port                                                                                                                                                                                                                                                                                                           |
+| `_CH_PLUGIN_TOKEN`         | Token `ch` and `ch mcp` present when connecting to the plugin server                                                                                                                                                                                                                                                           |
 | `_CH_WORKSPACE_PATH`       | Absolute path to the workspace directory                                                                                                                                                                                                                                                                                       |
 | `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
@@ -1151,6 +1304,11 @@ These variables are set when using the Claude agent provider.
 
 | Purpose              | File                            |
 | -------------------- | ------------------------------- |
+| Operation registry   | `src/api/registry.ts`           |
+| Operation vocabulary | `src/api/names.ts`              |
+| Operations           | `src/api/entries/`              |
+| Adapter mappings     | `src/api/adapters/*-map.ts`     |
+| `ch` CLI             | `src/cli/`                      |
 | Core Interface       | `src/shared/api/interfaces.ts`  |
 | Type Definitions     | `src/shared/api/types.ts`       |
 | IPC Channels         | `src/shared/ipc.ts`             |

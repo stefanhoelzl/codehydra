@@ -186,7 +186,6 @@ export interface IdeServerModuleDeps {
   readonly buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
-  readonly wrapperPath: string;
   readonly logger: Logger;
   readonly archiveExtractor?: ArchiveExtractor;
   readonly configService: Config;
@@ -206,7 +205,22 @@ export interface IdeServerModuleDeps {
  * Create an IdeServerModule that manages the embedded IDE server lifecycle,
  * extensions, and per-workspace .code-workspace files.
  */
-export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
+/**
+ * The module plus the paths other modules need from it.
+ *
+ * `nodePath` is the interpreter bundled with the IDE server. Two things outside
+ * this module need it: the `ch` wrapper scripts, which are rendered with it
+ * baked in, and the agent MCP configs, which launch `ch mcp` with it directly.
+ * Both are resolvable before startup because the path is derived from config and
+ * the bundle layout, not from a running server.
+ */
+export interface IdeServerModuleHandle {
+  readonly module: IntentModule;
+  /** Absolute path to the IDE server's bundled node interpreter. */
+  nodePath(): string;
+}
+
+export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModuleHandle {
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // Register config keys
@@ -993,9 +1007,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 name,
                 value,
               }));
+              // No claudeProcessWrapper: CodeHydra launches Claude itself, via
+              // the sidekick typing `ch claude` into the agent terminal. The
+              // setting existed for the retired panel mode, which nothing has
+              // invoked since the switch to terminal mode.
               const agentSettings: Record<string, unknown> = {
                 "claudeCode.useTerminal": true,
-                "claudeCode.claudeProcessWrapper": deps.wrapperPath,
                 "claudeCode.environmentVariables": envVarsArray,
                 "chat.agent.enabled": false,
               };
@@ -1044,5 +1061,11 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     },
   };
 
-  return module;
+  return {
+    module,
+    nodePath: () => {
+      const { ideServerDir } = resolveIdeServerPaths();
+      return getIdeServer().nodeBinary(ideServerDir, deps.platform);
+    },
+  };
 }

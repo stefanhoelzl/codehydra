@@ -1,9 +1,10 @@
 /**
  * Vite config for building CLI wrapper scripts.
  *
- * Compiles agent wrapper scripts to out/main/agents/ as self-contained CJS bundles:
- * - src/modules/agent-module/opencode/wrapper.ts -> opencode-wrapper.cjs
- * - src/modules/agent-module/claude/wrapper.ts -> claude-wrapper.cjs
+ * Compiles the shipped scripts to out/main/agents/ as self-contained CJS bundles:
+ * - src/cli/main.ts -> ch.cjs — the `ch` CLI. Also serves `ch mcp` (the stdio
+ *   MCP server) and `ch claude` / `ch opencode` (the agent launchers), which the
+ *   ch-claude / ch-opencode shims call.
  * - src/modules/agent-module/claude/hook-handler.ts -> hook-handler.cjs
  *
  * Also copies compiled wrappers to ./dist/bin/ for production packaging, and
@@ -69,19 +70,13 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: "out/main/agents/opencode-wrapper.cjs",
-          dest: "../../../dist/bin",
-          rename: "ch-opencode.cjs",
-        },
-        {
-          src: "out/main/agents/claude-wrapper.cjs",
-          dest: "../../../dist/bin",
-          rename: "ch-claude.cjs",
-        },
-        {
           src: "out/main/agents/hook-handler.cjs",
           dest: "../../../dist/bin",
           rename: "claude-code-hook-handler.cjs",
+        },
+        {
+          src: "out/main/agents/ch.cjs",
+          dest: "../../../dist/bin",
         },
       ],
       hook: "closeBundle",
@@ -91,9 +86,8 @@ export default defineConfig({
   build: {
     lib: {
       entry: {
-        "opencode-wrapper": resolve(__dirname, "src/modules/agent-module/opencode/wrapper.ts"),
-        "claude-wrapper": resolve(__dirname, "src/modules/agent-module/claude/wrapper.ts"),
         "hook-handler": resolve(__dirname, "src/modules/agent-module/claude/hook-handler.ts"),
+        ch: resolve(__dirname, "src/cli/main.ts"),
       },
       formats: ["cjs"],
       fileName: (_, entryName) => `${entryName}.cjs`,

@@ -1,0 +1,17 @@
+#!/bin/sh
+# CodeHydra CLI.
+#
+# Rendered from a template at install time with the bundled interpreter's path
+# baked in, so `ch` works from a plain shell that inherited none of CodeHydra's
+# environment. A CodeHydra terminal still wins with its own _CH_IDE_NODE, which
+# stays correct across an IDE upgrade even before this file is rewritten.
+NODE="$_CH_IDE_NODE"
+[ -n "$NODE" ] || NODE="{{ ideNode }}"
+
+if [ ! -x "$NODE" ]; then
+  echo "Error: CodeHydra's node interpreter was not found at $NODE." >&2
+  echo "Start CodeHydra once to repair the CLI." >&2
+  exit 3
+fi
+
+exec "$NODE" "$(dirname "$0")/ch.cjs" "$@"

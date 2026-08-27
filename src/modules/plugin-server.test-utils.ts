@@ -8,6 +8,8 @@
 import { vi, type Mock } from "vitest";
 import { z } from "zod/v4";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
+import type { OperationRegistry } from "../api/registry";
+import type { DomainEvent } from "../intents/lib/types";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
   ServerToClientEvents,
@@ -78,6 +80,8 @@ export interface TestClientOptions {
   readonly workspacePath: WorkspacePath;
   /** Whether to connect immediately. Default: false */
   readonly autoConnect?: boolean;
+  /** Raw handshake auth, for presenting a non-sidekick client kind. */
+  readonly auth?: Record<string, unknown>;
 }
 
 /**
@@ -91,9 +95,9 @@ export function createTestClient(port: number, options: TestClientOptions): Test
   return ioClient(`http://127.0.0.1:${port}`, {
     transports: ["polling"],
     autoConnect: options.autoConnect ?? false,
-    auth: {
-      workspacePath: options.workspacePath,
-    },
+    // `auth` lets a test present a non-sidekick handshake (a `ch` client kind
+    // plus token); without it the sidekick's original shape is sent.
+    auth: options.auth ?? { workspacePath: options.workspacePath },
     reconnectionDelay: 100,
     reconnectionDelayMax: 500,
   });
@@ -335,16 +339,33 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
  * - showMessage: dispatches VscodeShowMessageIntent
  * - setWorkspaceConfig: dispatches workspace:open finalize
  */
-export async function createPluginServerEnv(options?: PluginServerOptions) {
+export async function createPluginServerEnv(
+  options?: PluginServerOptions,
+  extra?: { registry?: OperationRegistry; cliToken?: string | null }
+) {
   const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
   const mockDispatch = createMockDispatch();
-  const mockDispatcher = { dispatch: mockDispatch } as unknown as Dispatcher;
+
+  // The module subscribes to domain events at start, so the mock needs a real
+  // subscription registry — and the test needs a way to fire one.
+  const subscribers = new Map<string, Set<(event: DomainEvent) => void>>();
+  const mockDispatcher = {
+    dispatch: mockDispatch,
+    subscribe: (type: string, handler: (event: DomainEvent) => void) => {
+      const forType = subscribers.get(type) ?? new Set();
+      forType.add(handler);
+      subscribers.set(type, forType);
+      return () => forType.delete(handler);
+    },
+  } as unknown as Dispatcher;
 
   const moduleDeps: PluginServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
     appLayer: { openPath: async () => {} },
     logger: SILENT_LOGGER,
+    ...(extra?.registry !== undefined && { registry: extra.registry }),
+    ...(extra?.cliToken !== undefined && { cliToken: () => extra.cliToken ?? null }),
     options: {
       transports: ["polling"],
       ...options,
@@ -385,6 +406,21 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
 
     createClient(workspacePath: WorkspacePath): TestClientSocket {
       const client = createTestClient(this.port, { workspacePath });
+      clients.push(client);
+      return client;
+    },
+
+    /** Fire a domain event at whatever the module subscribed with. */
+    emitDomainEvent(event: DomainEvent): void {
+      for (const handler of subscribers.get(event.type) ?? []) handler(event);
+    },
+
+    /** A `ch`-style client, which authenticates and may name no workspace. */
+    createCliClient(auth: Record<string, unknown>): TestClientSocket {
+      const client = createTestClient(this.port, {
+        workspacePath: "" as WorkspacePath,
+        auth,
+      });
       clients.push(client);
       return client;
     },

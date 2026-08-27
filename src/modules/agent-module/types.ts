@@ -22,9 +22,23 @@ export interface AgentPromptConfig {
 /**
  * MCP server configuration shared by both agent server managers.
  */
+/**
+ * How an agent launches CodeHydra's MCP server.
+ *
+ * The server is `ch mcp`, a stdio mode of the CLI, rather than an HTTP endpoint
+ * inside the app. Everything it needs is passed explicitly at launch, so the
+ * shim reads no state file and needs nothing on PATH — which is what makes it
+ * work for OpenCode, whose server is spawned without CodeHydra's bin directory.
+ */
 export interface McpConfig {
-  /** MCP server port */
+  /** Absolute path to the node interpreter that runs the CLI. */
+  readonly nodePath: string;
+  /** Absolute path to the CLI bundle (`ch.cjs`). */
+  readonly cliPath: string;
+  /** Plugin server port the shim connects back on. */
   readonly port: number;
+  /** Token the shim presents when connecting. */
+  readonly token: string;
 }
 
 // Re-export AggregatedAgentStatus from shared/ipc (single source of truth)

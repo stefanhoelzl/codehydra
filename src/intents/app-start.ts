@@ -123,12 +123,27 @@ export const appStartPhaseSchema = z.enum([
 export const registerAgentResultSchema = agentInfoSchema;
 
 /**
+ * A script the bin directory must carry.
+ *
+ * A bare name is copied verbatim. `{ name, template: true }` is rendered first,
+ * which is how a wrapper can carry a value only the app knows — the path of the
+ * bundled node interpreter, so the CLI works in a shell that inherited none of
+ * CodeHydra's environment.
+ */
+export const requiredScriptSchema = z.union([
+  z.string(),
+  z.object({ name: z.string(), template: z.literal(true) }).readonly(),
+]);
+
+export type RequiredScript = z.infer<typeof requiredScriptSchema>;
+
+/**
  * Per-handler result for "before-ready" hook point.
  * Returns optional script declarations to be copied to bin directory.
  */
 export const configureResultSchema = z
   .object({
-    scripts: z.array(z.string()).readonly().optional(),
+    scripts: z.array(requiredScriptSchema).readonly().optional(),
   })
   .readonly();
 
@@ -165,7 +180,7 @@ export const checkDepsResultSchema = z
 
 /** Operation-added enrichment for "init" -- carries requiredScripts from before-ready results. */
 const initEnrichmentSchema = z.object({
-  requiredScripts: z.array(z.string()).readonly(),
+  requiredScripts: z.array(requiredScriptSchema).readonly(),
 });
 const initHookInputSchema = hookCtxSchema(appStartPayloadSchema, initEnrichmentSchema.shape);
 

@@ -12,6 +12,7 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, InitHookContext } from "../intents/app-start";
 import { createScriptModule } from "./script-module";
+import type { RequiredScript } from "../intents/app-start";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import { FileSystemError } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
@@ -21,7 +22,7 @@ import { Path } from "../utils/path/path";
 // =============================================================================
 
 /** Runs "init" hook point with InitHookContext. */
-function createMinimalInitOperation(scripts: readonly string[] = ["ch-claude", "code"]) {
+function createMinimalInitOperation(scripts: readonly RequiredScript[] = ["ch-claude", "code"]) {
   return createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
     hookContext: (ctx): InitHookContext => ({
       intent: ctx.intent,
@@ -75,6 +76,11 @@ function createFakeFileSystem(options?: FakeFsOptions) {
     copyTree: vi.fn(async (src: Path, dest: Path) => {
       files.set(dest.toString(), files.get(src.toString()) ?? "");
     }),
+    // Scripts are written by content rather than copied, so a template can be
+    // rendered on the way.
+    writeFile: vi.fn(async (path: Path, content: string) => {
+      files.set(path.toString(), content);
+    }),
     makeExecutable: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -82,7 +88,7 @@ function createFakeFileSystem(options?: FakeFsOptions) {
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), silly: vi.fn() };
 
 function createHarness(
-  scripts: readonly string[],
+  scripts: readonly RequiredScript[],
   fileSystem: ReturnType<typeof createFakeFileSystem>
 ) {
   // Distinct runtime vs asset roots: the wrappers MUST be read from runtimePath
@@ -102,6 +108,7 @@ function createHarness(
       fileSystem: fileSystem as never,
       pathProvider: pathProvider as never,
       logger: logger as never,
+      templateVariables: () => ({ ideNode: "/ide/node" }),
     })
   );
 
@@ -130,23 +137,22 @@ describe("ScriptModule Integration", () => {
 
     expect(fileSystem.mkdir).toHaveBeenCalledWith(new Path("/app-data/bin"));
 
-    expect(fileSystem.copyTree).toHaveBeenCalledTimes(4);
-    expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/runtime/bin/ch-claude"),
-      new Path("/app-data/bin/ch-claude")
+    // Written by content rather than copied, so a templated script can be
+    // rendered on the way. The source is still runtimePath — see createHarness.
+    expect(fileSystem.writeFile).toHaveBeenCalledTimes(4);
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+      new Path("/app-data/bin/ch-claude"),
+      "claude-sh"
     );
-    expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/runtime/bin/ch-claude.cjs"),
-      new Path("/app-data/bin/ch-claude.cjs")
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+      new Path("/app-data/bin/ch-claude.cjs"),
+      "claude-js"
     );
-    expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/runtime/bin/ch-claude.cmd"),
-      new Path("/app-data/bin/ch-claude.cmd")
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+      new Path("/app-data/bin/ch-claude.cmd"),
+      "claude-cmd"
     );
-    expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/runtime/bin/code"),
-      new Path("/app-data/bin/code")
-    );
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(new Path("/app-data/bin/code"), "code-sh");
 
     // Should make non-.cmd, non-.cjs files executable
     expect(fileSystem.makeExecutable).toHaveBeenCalledTimes(2);
@@ -170,7 +176,7 @@ describe("ScriptModule Integration", () => {
 
     await createHarness(SCRIPTS, fileSystem).dispatch();
 
-    expect(fileSystem.copyTree).not.toHaveBeenCalled();
+    expect(fileSystem.writeFile).not.toHaveBeenCalled();
     expect(fileSystem.rm).not.toHaveBeenCalled();
   });
 
@@ -187,12 +193,70 @@ describe("ScriptModule Integration", () => {
 
     await createHarness(SCRIPTS, fileSystem).dispatch();
 
-    expect(fileSystem.copyTree).toHaveBeenCalledTimes(1);
-    expect(fileSystem.copyTree).toHaveBeenCalledWith(
-      new Path("/runtime/bin/ch-claude.cjs"),
-      new Path("/app-data/bin/ch-claude.cjs")
+    expect(fileSystem.writeFile).toHaveBeenCalledTimes(1);
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+      new Path("/app-data/bin/ch-claude.cjs"),
+      "claude-js"
     );
     expect(fileSystem.files.get("/app-data/bin/ch-claude.cjs")).toBe("claude-js");
+  });
+
+  describe("templated scripts", () => {
+    it("renders a template before writing it", async () => {
+      // The `ch` wrapper carries the bundled interpreter's path so the CLI runs
+      // in a shell that inherited none of CodeHydra's environment.
+      const fileSystem = createFakeFileSystem({
+        files: { "/runtime/bin/ch": 'NODE="{{ ideNode }}"\nexec "$NODE" ch.cjs' },
+      });
+
+      await createHarness([{ name: "ch", template: true }], fileSystem).dispatch();
+
+      expect(fileSystem.files.get("/app-data/bin/ch")).toBe(
+        'NODE="/ide/node"\nexec "$NODE" ch.cjs'
+      );
+    });
+
+    it("copies a non-template verbatim, braces and all", async () => {
+      // Shell scripts contain real ${...} expansions; only declared templates
+      // are rendered, so an undeclared one is never touched.
+      const fileSystem = createFakeFileSystem({
+        files: { "/runtime/bin/code": 'exec "$_CH_IDE_REMOTE_CLI" ${ARGS} "$@"' },
+      });
+
+      await createHarness(["code"], fileSystem).dispatch();
+
+      expect(fileSystem.files.get("/app-data/bin/code")).toBe(
+        'exec "$_CH_IDE_REMOTE_CLI" ${ARGS} "$@"'
+      );
+    });
+
+    it("rewrites a template when its rendered content changes", async () => {
+      // An IDE upgrade moves the interpreter; the same content-compare that
+      // spares unchanged files must notice this one did change.
+      const fileSystem = createFakeFileSystem({
+        files: {
+          "/runtime/bin/ch": 'NODE="{{ ideNode }}"',
+          "/app-data/bin/ch": 'NODE="/old/ide/node"',
+        },
+      });
+
+      await createHarness([{ name: "ch", template: true }], fileSystem).dispatch();
+
+      expect(fileSystem.files.get("/app-data/bin/ch")).toBe('NODE="/ide/node"');
+    });
+
+    it("leaves a template alone when its rendered content is unchanged", async () => {
+      const fileSystem = createFakeFileSystem({
+        files: {
+          "/runtime/bin/ch": 'NODE="{{ ideNode }}"',
+          "/app-data/bin/ch": 'NODE="/ide/node"',
+        },
+      });
+
+      await createHarness([{ name: "ch", template: true }], fileSystem).dispatch();
+
+      expect(fileSystem.writeFile).not.toHaveBeenCalled();
+    });
   });
 
   it("prunes entries that are no longer required", async () => {
@@ -249,18 +313,18 @@ describe("ScriptModule Integration", () => {
         files: { ...BUNDLED, "/app-data/bin/ch-claude": "claude-sh-OLD" },
         binEntries: ["ch-claude"],
       });
-      const realCopyTree = fileSystem.copyTree.getMockImplementation()!;
-      fileSystem.copyTree
+      const realWriteFile = fileSystem.writeFile.getMockImplementation()!;
+      fileSystem.writeFile
         .mockRejectedValueOnce(
           new FileSystemError("EPERM", "/app-data/bin/ch-claude", "EPERM: not permitted")
         )
-        .mockImplementation(realCopyTree);
+        .mockImplementation(realWriteFile);
 
       const pending = createHarness(["ch-claude"], fileSystem).dispatch();
       await vi.advanceTimersByTimeAsync(1000);
 
       await expect(pending).resolves.toBeUndefined();
-      expect(fileSystem.copyTree).toHaveBeenCalledTimes(2);
+      expect(fileSystem.writeFile).toHaveBeenCalledTimes(2);
       expect(fileSystem.files.get("/app-data/bin/ch-claude")).toBe("claude-sh");
     } finally {
       vi.useRealTimers();
@@ -274,7 +338,7 @@ describe("ScriptModule Integration", () => {
         files: { ...BUNDLED, "/app-data/bin/ch-claude": "claude-sh-OLD" },
         binEntries: ["ch-claude"],
       });
-      fileSystem.copyTree.mockRejectedValue(
+      fileSystem.writeFile.mockRejectedValue(
         new FileSystemError("EPERM", "/app-data/bin/ch-claude", "EPERM: not permitted")
       );
 
@@ -287,7 +351,7 @@ describe("ScriptModule Integration", () => {
       await vi.advanceTimersByTimeAsync(5000);
       await assertion;
 
-      expect(fileSystem.copyTree).toHaveBeenCalledTimes(4);
+      expect(fileSystem.writeFile).toHaveBeenCalledTimes(4);
     } finally {
       vi.useRealTimers();
     }

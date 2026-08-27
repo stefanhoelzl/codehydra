@@ -7,6 +7,8 @@
  * and redirects to `opencode attach`.
  */
 
+import { delimiter } from "node:path";
+
 import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -235,19 +237,44 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       instructions: [this.getSystemPromptPath().toString()],
     };
     if (this.mcpConfig) {
+      // A local (stdio) server rather than a remote URL: `ch mcp` is launched as
+      // a subprocess with everything it needs passed explicitly, so it does not
+      // depend on CodeHydra's bin directory being on OpenCode's PATH.
       config.mcp = {
         codehydra: {
-          type: "remote",
-          url: `http://127.0.0.1:${this.mcpConfig.port}/mcp`,
-          headers: { "X-Workspace-Path": normalizedWorkspacePath },
+          type: "local",
+          command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
+          environment: {
+            _CH_WORKSPACE_PATH: normalizedWorkspacePath,
+            _CH_PLUGIN_PORT: String(this.mcpConfig.port),
+            _CH_PLUGIN_TOKEN: this.mcpConfig.token,
+          },
           enabled: true,
         },
       };
     }
+    // OpenCode's server is spawned from the Electron main process, which does
+    // not have CodeHydra's bin directory on PATH — so without this, its bash
+    // tool can reach neither `ch` nor `ch-bg`, and a background shell it starts
+    // has no way to opt out of keeping the workspace busy. Prepended so a
+    // CodeHydra script wins over a same-named one elsewhere on PATH.
+    const binDir = this.pathProvider.dataPath("bin").toNative();
+    const existingPath = process.env.PATH ?? process.env.Path ?? "";
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      PATH: existingPath ? `${binDir}${delimiter}${existingPath}` : binDir,
+      // The agent's own workspace, so `ch` run from its bash tool resolves the
+      // right one without depending on the process's working directory.
+      _CH_WORKSPACE_PATH: normalizedWorkspacePath,
+      ...(this.mcpConfig && {
+        _CH_PLUGIN_PORT: String(this.mcpConfig.port),
+        _CH_PLUGIN_TOKEN: this.mcpConfig.token,
+      }),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     };
+    // Windows resolves PATH case-insensitively but Node exposes both spellings;
+    // leaving `Path` set would let the un-prefixed copy win.
+    delete env.Path;
 
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;

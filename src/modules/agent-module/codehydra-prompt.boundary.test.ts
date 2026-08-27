@@ -63,12 +63,14 @@ describe("composed agent system prompts", () => {
   });
 
   it("tells Claude how to opt a background shell out of keeping the workspace busy", () => {
-    expect(claude).toContain("ch-bg");
+    // Either spelling is detected by isBackgroundWrapped; the prompt names the
+    // canonical one, since it has just introduced `ch`.
+    expect(claude).toMatch(/ch[- ]bg/);
   });
 
-  it("does not tell OpenCode about ch-bg", () => {
-    // Only detectable in Claude's background_tasks, and not on OpenCode's PATH.
-    expect(opencode).not.toContain("ch-bg");
+  it("does not tell OpenCode about the background wrapper", () => {
+    // Only detectable in Claude's background_tasks.
+    expect(opencode).not.toMatch(/ch[- ]bg/);
   });
 
   it("gives OpenCode the whole shared prompt, and Claude that plus its appendix", () => {

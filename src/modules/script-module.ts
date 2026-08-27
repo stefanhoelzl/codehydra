@@ -26,6 +26,8 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { FileSystemError } from "../shared/errors/service-errors";
 import { getErrorMessage } from "../shared/error-utils";
 import { Path } from "../utils/path/path";
+import { renderTemplate } from "../utils/liquid/liquid-renderer";
+import type { RequiredScript } from "../intents/app-start";
 
 // =============================================================================
 // Constants
@@ -48,6 +50,14 @@ export interface ScriptModuleDeps {
   readonly fileSystem: FileSystemBoundary;
   readonly pathProvider: PathProvider;
   readonly logger: Logger;
+  /**
+   * Values available to templated scripts.
+   *
+   * Read at sync time rather than injected as a value: the bundled interpreter's
+   * path depends on the configured IDE version, so it is only correct once
+   * config has loaded.
+   */
+  readonly templateVariables: () => Record<string, string>;
 }
 
 // =============================================================================
@@ -69,6 +79,11 @@ function isLockError(error: unknown): boolean {
     return false;
   }
   return error.fsCode === "EPERM" || error.fsCode === "EACCES" || error.originalCode === "EBUSY";
+}
+
+/** The filename a required script lands under, whether or not it is a template. */
+function scriptName(script: RequiredScript): string {
+  return typeof script === "string" ? script : script.name;
 }
 
 /** Read a file, returning undefined when it doesn't exist. Other errors propagate. */
@@ -96,9 +111,9 @@ async function readIfPresent(
 async function pruneStaleScripts(
   deps: ScriptModuleDeps,
   binDir: Path,
-  requiredScripts: readonly string[]
+  requiredScripts: readonly RequiredScript[]
 ): Promise<void> {
-  const required = new Set(requiredScripts);
+  const required = new Set(requiredScripts.map(scriptName));
 
   let entries;
   try {
@@ -137,10 +152,10 @@ async function pruneStaleScripts(
  * message — running an outdated wrapper against a new app version is worse than
  * refusing to start.
  */
-async function writeScript(deps: ScriptModuleDeps, srcPath: Path, destPath: Path): Promise<void> {
+async function writeScript(deps: ScriptModuleDeps, destPath: Path, content: string): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     try {
-      await deps.fileSystem.copyTree(srcPath, destPath);
+      await deps.fileSystem.writeFile(destPath, content);
       return;
     } catch (error) {
       if (attempt >= WRITE_MAX_ATTEMPTS || !isLockError(error)) {
@@ -168,18 +183,32 @@ async function syncRequiredScripts(
   deps: ScriptModuleDeps,
   binDir: Path,
   binAssetsDir: Path,
-  requiredScripts: readonly string[]
+  requiredScripts: readonly RequiredScript[]
 ): Promise<void> {
-  for (const name of requiredScripts) {
+  // Resolved once per sync: rendering is per script, but the values are not.
+  let variables: Record<string, string> | undefined;
+
+  for (const script of requiredScripts) {
+    const name = scriptName(script);
     const srcPath = new Path(binAssetsDir, name);
     const destPath = new Path(binDir, name);
 
     // A missing or unreadable source is a packaging bug — let it abort startup.
-    const desired = await deps.fileSystem.readFile(srcPath);
+    const source = await deps.fileSystem.readFile(srcPath);
+
+    let desired = source;
+    if (typeof script !== "string" && script.template) {
+      variables ??= deps.templateVariables();
+      // Liquid rather than the ${VAR} form used for the agent JSON configs:
+      // `${...}` is shell variable syntax, and these templates are shell and
+      // batch scripts that contain real ones.
+      desired = renderTemplate(source, variables);
+    }
+
     const current = await readIfPresent(deps.fileSystem, destPath);
 
     if (current !== desired) {
-      await writeScript(deps, srcPath, destPath);
+      await writeScript(deps, destPath, desired);
     }
 
     if (!name.endsWith(".cmd") && !name.endsWith(".cjs")) {

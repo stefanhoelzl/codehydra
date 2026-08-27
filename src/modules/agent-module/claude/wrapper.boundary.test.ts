@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for the compiled Claude wrapper (dist/bin/ch-claude.cjs).
+ * Boundary tests for the compiled Claude wrapper (dist/bin/ch.cjs).
  *
  * Tests the script with real Node.js execution and a fake claude binary.
  * These tests verify:
@@ -25,10 +25,10 @@ import {
 const isWindows = process.platform === "win32";
 
 /**
- * Path to the compiled ch-claude.cjs script.
+ * Path to the compiled `ch` bundle, which carries the claude launcher.
  * Built by `pnpm build:wrappers`.
  */
-const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch-claude.cjs");
+const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch.cjs");
 
 /**
  * Output from the fake claude binary.
@@ -77,7 +77,7 @@ function buildPath(fakeBinDir: string): string {
   return `${fakeBinDir}${delimiter}${dirname(process.execPath)}`;
 }
 
-describe("ch-claude.cjs boundary tests", () => {
+describe("ch claude boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let fakeBinDir: string;
 
@@ -110,7 +110,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(result.status).toBe(1);
@@ -126,7 +127,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(result.status).toBe(1);
@@ -142,7 +144,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(result.status).toBe(1);
@@ -162,7 +165,8 @@ describe("ch-claude.cjs boundary tests", () => {
           // PATH only includes node dir — no fake claude binary
           PATH: dirname(process.execPath),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(result.status).toBe(3);
@@ -180,7 +184,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -209,7 +214,8 @@ describe("ch-claude.cjs boundary tests", () => {
           PATH: buildPath(fakeBinDir),
           CLAUDECODE: "1",
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -231,7 +237,8 @@ describe("ch-claude.cjs boundary tests", () => {
           PATH: buildPath(fakeBinDir),
           CLAUDE_CODE_CHILD_SESSION: "1",
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -259,7 +266,8 @@ describe("ch-claude.cjs boundary tests", () => {
           CLAUDE_EXIT_CODE: "42",
           CLAUDE_COUNTER_FILE: counterFile,
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(result.status).toBe(42);
@@ -282,7 +290,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -309,7 +318,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(existsSync(promptFile)).toBe(false);
@@ -335,7 +345,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -366,7 +377,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -391,7 +403,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -419,7 +432,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_INITIAL_PROMPT_FILE: promptFile,
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -445,7 +459,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -470,7 +485,8 @@ describe("ch-claude.cjs boundary tests", () => {
           CLAUDE_EXIT_CODES: "1,0",
           CLAUDE_COUNTER_FILE: counterFile,
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -498,7 +514,8 @@ describe("ch-claude.cjs boundary tests", () => {
           _CH_CLAUDE_NO_SESSION_MARKER_PATH: markerPath,
           PATH: buildPath(fakeBinDir),
         },
-        tempDir.path
+        tempDir.path,
+        ["claude"]
       );
 
       expect(
@@ -587,7 +604,8 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
         _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
         PATH: buildPath(cmdBinDir),
       },
-      tempDir.path
+      tempDir.path,
+      ["claude"]
     );
 
     expect(
@@ -618,7 +636,8 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
         _CH_INITIAL_PROMPT_FILE: promptFile,
         PATH: buildPath(cmdBinDir),
       },
-      tempDir.path
+      tempDir.path,
+      ["claude"]
     );
 
     expect(

@@ -458,13 +458,20 @@ async function main(): Promise<never> {
   process.exit(result.exitCode ?? EXIT_SPAWN_FAILED);
 }
 
-// Run main and handle any uncaught errors
-// Skip when running in test environment (Vitest sets VITEST env var)
-if (!process.env.VITEST) {
-  main().catch((error: unknown) => {
+/**
+ * Launch Claude, reporting a failure the way a shell wrapper should.
+ *
+ * Exported because `ch claude` is the entry point — the sidekick types that into
+ * the agent terminal. There is no separate script on disk.
+ */
+export async function runClaudeWrapper(): Promise<never> {
+  try {
+    await main();
+  } catch (error: unknown) {
     console.error("Fatal error:", error instanceof Error ? error.message : error);
     process.exit(EXIT_ENV_ERROR);
-  });
+  }
+  process.exit(EXIT_ENV_ERROR);
 }
 
 // Export for testing

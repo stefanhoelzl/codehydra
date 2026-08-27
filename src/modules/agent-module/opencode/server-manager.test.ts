@@ -451,7 +451,10 @@ describe("OpenCodeServerManager", () => {
   describe("MCP configuration", () => {
     it("passes OPENCODE_CONFIG_CONTENT env var when config is set", async () => {
       manager.setMcpConfig({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
         port: 12345,
+        token: "test-token",
       });
 
       await manager.startServer("/workspace/feature-a");
@@ -464,15 +467,20 @@ describe("OpenCodeServerManager", () => {
         mcp: {
           codehydra: {
             type: string;
-            url: string;
-            headers: Record<string, string>;
+            command: string[];
+            environment: Record<string, string>;
             enabled: boolean;
           };
         };
       };
-      expect(parsed.mcp.codehydra.type).toBe("remote");
-      expect(parsed.mcp.codehydra.url).toBe("http://127.0.0.1:12345/mcp");
-      expect(parsed.mcp.codehydra.headers["X-Workspace-Path"]).toBe("/workspace/feature-a");
+      // A stdio subprocess rather than a URL: OpenCode's server is spawned
+      // without CodeHydra's bin directory on PATH, so the launch has to name the
+      // interpreter and bundle outright and pass credentials in its environment.
+      expect(parsed.mcp.codehydra.type).toBe("local");
+      expect(parsed.mcp.codehydra.command).toEqual(["/ide/node", "/data/bin/ch.cjs", "mcp"]);
+      expect(parsed.mcp.codehydra.environment._CH_WORKSPACE_PATH).toBe("/workspace/feature-a");
+      expect(parsed.mcp.codehydra.environment._CH_PLUGIN_PORT).toBe("12345");
+      expect(parsed.mcp.codehydra.environment._CH_PLUGIN_TOKEN).toBe("test-token");
       expect(parsed.mcp.codehydra.enabled).toBe(true);
     });
 
@@ -504,7 +512,12 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("loads it even when MCP is configured", async () => {
-      manager.setMcpConfig({ port: 12345 });
+      manager.setMcpConfig({
+        nodePath: "/ide/node",
+        cliPath: "/data/bin/ch.cjs",
+        port: 12345,
+        token: "test-token",
+      });
 
       await manager.startServer("/workspace/feature-a");
 
