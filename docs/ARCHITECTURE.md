@@ -1569,7 +1569,12 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 ```
 User: Click "Open Project"
   → System folder picker
-  → IPC: api:project:open → project:open intent dispatched
+  → IPC: api:project:open → project:open intent dispatched (payload.initial = true)
+  → OpenProjectOperation runs "prepare" hook point (local paths only):
+      → LocalProjectModule: offer git init for a non-repo directory
+      → GitWorktreeWorkspaceModule: offer the repo's unmanaged worktrees for
+        adoption (only when payload.initial — startup restore and auto-workspace
+        re-run this same intent and must not raise a dialog). Cancel aborts the add.
   → OpenProjectOperation runs "open" hook point:
       → LocalProjectModule: validate git repository, discover worktrees
       → (or RemoteProjectModule: clone from URL)

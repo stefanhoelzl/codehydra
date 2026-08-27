@@ -69,6 +69,10 @@ import {
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
+import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
+import type { MockDialogManager } from "./presentation/dialog-manager.state-mock";
+import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
+import type { MockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { wsPath, projPath } from "../shared/test-fixtures";
@@ -93,6 +97,8 @@ function createMockGitWorktreeProvider() {
     cleanupOrphanedWorkspaces: vi.fn().mockResolvedValue({ removedCount: 0, failedPaths: [] }),
     validateRepository: vi.fn().mockResolvedValue(undefined),
     ensureWorkspaceRegistered: vi.fn(),
+    listUnmanagedWorktrees: vi.fn().mockResolvedValue([]),
+    adoptWorktree: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -412,6 +418,25 @@ interface TestSetup {
   module: IntentModule;
   /** Drives the `closing` enrichment the status hook reads. */
   closing: Map<string, WorkspaceClosing>;
+  /** Dialogs the add-project worktree picker opens. */
+  dialogs: MockDialogManager;
+  /** Notifications the module raises (adoption failures). */
+  notifications: MockNotificationManager;
+}
+
+/** The dialog + notification surfaces the module takes as its `ui` dependency. */
+function createMockUi(): {
+  dialogs: MockDialogManager;
+  notifications: MockNotificationManager;
+  ui: Parameters<typeof createGitWorktreeWorkspaceModule>[3];
+} {
+  const dialogs = createMockDialogManager();
+  const notifications = createMockNotificationManager();
+  return {
+    dialogs,
+    notifications,
+    ui: { dialog: dialogs.ui.dialog, notification: notifications.ui.notification },
+  };
 }
 
 function createTestSetup(): TestSetup {
@@ -435,10 +460,12 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test
+  const { dialogs, notifications, ui } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER
+    SILENT_LOGGER,
+    ui
   );
   dispatcher.registerModule(module);
 
@@ -461,7 +488,7 @@ function createTestSetup(): TestSetup {
     },
   });
 
-  return { dispatcher, provider, pathProvider, module, closing };
+  return { dispatcher, provider, pathProvider, module, closing, dialogs, notifications };
 }
 
 function createPreflightTestSetup(): Omit<TestSetup, "module"> {
@@ -476,14 +503,23 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   dispatcher.registerOperation(minimalPreflightOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
+  const { dialogs, notifications, ui } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
-    SILENT_LOGGER
+    SILENT_LOGGER,
+    ui
   );
   dispatcher.registerModule(module);
 
-  return { dispatcher, provider, pathProvider, closing: new Map<string, WorkspaceClosing>() };
+  return {
+    dispatcher,
+    provider,
+    pathProvider,
+    closing: new Map<string, WorkspaceClosing>(),
+    dialogs,
+    notifications,
+  };
 }
 
 // =============================================================================
@@ -1676,5 +1712,348 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const originalWs = entry!.workspaces.find((w) => w.name === "feature-1");
       expect(originalWs!.metadata).toEqual({ base: "origin/main" });
     });
+  });
+});
+
+// =============================================================================
+// Add-project worktree picker (project:open "prepare")
+// =============================================================================
+
+describe("Add-project worktree picker", () => {
+  const PROJECT = projPath("/test/project");
+
+  /** The prepare hook point, isolated from the discover-collecting operation above. */
+  const prepareOperation = createMinimalOperation<{ canceled?: boolean } | undefined>(
+    OPEN_PROJECT_OPERATION_ID,
+    INTENT_OPEN_PROJECT,
+    "prepare"
+  );
+
+  function makeUnmanaged(name: string, branch: string | null) {
+    return {
+      name,
+      path: new Path(`/code/${name}`),
+      branch,
+      adoptable: branch !== null,
+    };
+  }
+
+  function createPickerSetup(unmanaged: ReturnType<typeof makeUnmanaged>[]) {
+    const provider = createMockGitWorktreeProvider();
+    provider.listUnmanagedWorktrees.mockResolvedValue(unmanaged);
+    const pathProvider = createMockPathProvider({
+      getProjectWorkspacesDir: () => new Path("/workspaces"),
+    });
+    const dispatcher = createMockDispatcher();
+    dispatcher.registerOperation(prepareOperation);
+
+    const { dialogs, notifications, ui } = createMockUi();
+    dispatcher.registerModule(
+      createGitWorktreeWorkspaceModule(
+        provider as unknown as GitWorktreeProvider,
+        pathProvider,
+        SILENT_LOGGER,
+        ui
+      )
+    );
+
+    return { dispatcher, provider, dialogs, notifications };
+  }
+
+  async function prepare(
+    dispatcher: Dispatcher,
+    payload: Record<string, unknown>
+  ): Promise<{ canceled?: boolean } | undefined> {
+    return (await dispatcher.dispatch({ type: INTENT_OPEN_PROJECT, payload } as Intent)) as
+      | { canceled?: boolean }
+      | undefined;
+  }
+
+  /**
+   * Settle microtasks until the picker opens. The handler awaits the worktree
+   * listing first, so the dialog is not there on the dispatch's own turn.
+   */
+  async function openedDialog(dialogs: MockDialogManager) {
+    for (let i = 0; i < 20 && !dialogs.lastHandle; i++) await Promise.resolve();
+    const handle = dialogs.lastHandle;
+    if (!handle) throw new Error("picker dialog was never opened");
+    return handle;
+  }
+
+  /** Ids of the checkboxes in a picker config, in render order. */
+  function checkboxIds(config: { sections: readonly { type: string }[] }): string[] {
+    return config.sections
+      .filter((s): s is { type: "checkbox"; id: string } => s.type === "checkbox")
+      .map((s) => s.id);
+  }
+
+  /** Every checkbox in a picker config, id → checked. */
+  function rowValues(config: { sections: readonly { type: string }[] }): Record<string, boolean> {
+    const boxes = config.sections.filter(
+      (s): s is { type: "checkbox"; id: string; value: boolean } => s.type === "checkbox"
+    );
+    return Object.fromEntries(boxes.map((box) => [box.id, box.value]));
+  }
+
+  it("does not show the picker for a restart re-open (no `initial`)", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+    ]);
+
+    await prepare(dispatcher, { path: PROJECT });
+
+    expect(dialogs.handles).toHaveLength(0);
+    expect(provider.adoptWorktree).not.toHaveBeenCalled();
+  });
+
+  it("does not show the picker when cloning from a URL", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+    ]);
+
+    await prepare(dispatcher, { git: "org/repo", initial: true });
+
+    expect(dialogs.handles).toHaveLength(0);
+  });
+
+  it("stays silent when nothing is adoptable", async () => {
+    // An agent's scratch worktree is detached, so adding a project alongside one
+    // must not put a dialog in the way.
+    const { dispatcher, dialogs } = createPickerSetup([makeUnmanaged("wt-8fa2", null)]);
+
+    await prepare(dispatcher, { path: PROJECT, initial: true });
+
+    expect(dialogs.handles).toHaveLength(0);
+  });
+
+  it("lists unmanaged worktrees with nothing pre-ticked, detached ones disabled", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("wt-8fa2", null),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+
+    // One checkbox per worktree, name first (that is what the workspace gets
+    // called), then where it lives. The branch is shown only where it differs.
+    expect(handle.config.sections).toContainEqual({
+      type: "checkbox",
+      id: "wt-0",
+      label: "repo-login (feature/login) — /code/repo-login",
+      value: false,
+      changeEvent: true,
+      disabled: false,
+    });
+    expect(handle.config.sections).toContainEqual({
+      type: "checkbox",
+      id: "wt-1",
+      label: "wt-8fa2 — /code/wt-8fa2 — detached HEAD, cannot be adopted",
+      value: false,
+      changeEvent: true,
+      disabled: true,
+    });
+    // No orphaned detail lines: a second section per row is centered by the
+    // default layout and a full gap away from its own checkbox.
+    expect(handle.config.sections.filter((s) => s.type === "text")).toHaveLength(2);
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("omits the branch when it matches the directory name", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([makeUnmanaged("wt", "wt")]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+
+    expect(handle.config.sections).toContainEqual(
+      expect.objectContaining({ id: "wt-0", label: "wt — /code/wt" })
+    );
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("adopts the ticked worktrees on Continue", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("repo-hotfix", "hotfix-2"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitAction("continue", { "wt-0": "true", "wt-1": "false" });
+
+    const result = await pending;
+    expect(result?.canceled).toBeUndefined();
+    expect(provider.adoptWorktree).toHaveBeenCalledTimes(1);
+    expect(provider.adoptWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ toString: expect.any(Function) }),
+      expect.objectContaining({ toString: expect.any(Function) }),
+      "feature/login"
+    );
+    expect(handle.closed).toBe(true);
+  });
+
+  it("Select all ticks every adoptable worktree, never the detached one", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("wt-8fa2", null),
+      makeUnmanaged("repo-hotfix", "hotfix-2"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitChange("select-all", { "select-all": "true" });
+
+    // [select-all, wt-0, wt-1 (detached), wt-2]
+    expect(rowValues(handle.config)).toEqual({
+      "select-all": true,
+      "wt-0": true,
+      "wt-1": false,
+      "wt-2": true,
+    });
+
+    handle.emitAction("continue", { "wt-0": "true", "wt-1": "false", "wt-2": "true" });
+    await pending;
+
+    expect(provider.adoptWorktree.mock.calls.map((call) => call[2])).toEqual([
+      "feature/login",
+      "hotfix-2",
+    ]);
+  });
+
+  it("unticking Select all clears every row", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("repo-hotfix", "hotfix-2"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitChange("select-all", { "select-all": "true" });
+    handle.emitChange("select-all", { "select-all": "false" });
+
+    expect(rowValues(handle.config)).toEqual({
+      "select-all": false,
+      "wt-0": false,
+      "wt-1": false,
+    });
+
+    handle.emitAction("continue", { "wt-0": "false", "wt-1": "false" });
+    await pending;
+    expect(provider.adoptWorktree).not.toHaveBeenCalled();
+  });
+
+  it("Select all reflects the rows: unticking one clears it", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("repo-hotfix", "hotfix-2"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitChange("select-all", { "select-all": "true" });
+    handle.emitChange("wt-1", { "wt-1": "false" });
+
+    expect(rowValues(handle.config)).toEqual({
+      "select-all": false,
+      "wt-0": true,
+      "wt-1": false,
+    });
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("re-ticks a box the user unticked after a first Select all", async () => {
+    // The renderer adopts a pushed value it has not seen yet, so the module has to
+    // echo its own model on every update — otherwise the second Select all is a
+    // no-op for that box.
+    const { dispatcher, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+      makeUnmanaged("repo-hotfix", "hotfix-2"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+
+    handle.emitChange("select-all", { "select-all": "true" });
+    handle.emitChange("wt-0", { "wt-0": "false" });
+    expect(rowValues(handle.config)["wt-0"]).toBe(false);
+
+    handle.emitChange("select-all", { "select-all": "true" });
+    expect(rowValues(handle.config)["wt-0"]).toBe(true);
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("Cancel aborts the whole project add", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitAction("cancel", { "wt-0": "true" });
+
+    expect(await pending).toEqual({ canceled: true });
+    expect(provider.adoptWorktree).not.toHaveBeenCalled();
+  });
+
+  it("Escape aborts the add, same as Cancel", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitDismiss();
+
+    expect(await pending).toEqual({ canceled: true });
+    expect(provider.adoptWorktree).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed adoption instead of letting the workspace vanish later", async () => {
+    const { dispatcher, provider, dialogs, notifications } = createPickerSetup([
+      makeUnmanaged("repo-login", "feature/login"),
+    ]);
+    provider.adoptWorktree.mockRejectedValue(new Error("config is read-only"));
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    handle.emitAction("continue", { "wt-0": "true" });
+
+    // The add still goes through — only the adoption failed.
+    expect(await pending).toEqual({});
+    expect(notifications.lastNotification?.latestConfig).toMatchObject({
+      type: "error",
+      message: expect.stringContaining("repo-login") as unknown as string,
+    });
+  });
+
+  it("proceeds without a picker when the worktree listing fails", async () => {
+    const { dispatcher, provider, dialogs } = createPickerSetup([]);
+    provider.listUnmanagedWorktrees.mockRejectedValue(new Error("not a git repository"));
+
+    expect(await prepare(dispatcher, { path: PROJECT, initial: true })).toEqual({});
+    expect(dialogs.handles).toHaveLength(0);
+  });
+
+  it("keeps checkbox ids aligned with the listed worktrees", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([
+      makeUnmanaged("a", "branch-a"),
+      makeUnmanaged("b", "branch-b"),
+      makeUnmanaged("c", "branch-c"),
+    ]);
+
+    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
+    const handle = await openedDialog(dialogs);
+    expect(checkboxIds(handle.config)).toEqual(["select-all", "wt-0", "wt-1", "wt-2"]);
+
+    handle.emitAction("cancel");
+    await pending;
   });
 });

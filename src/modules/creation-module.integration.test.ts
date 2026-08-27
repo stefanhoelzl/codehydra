@@ -777,7 +777,8 @@ describe("CreationModule", () => {
       expect(field(panel.config, "open-folder")["busy"]).toBe(true);
       expect(field(panel.config, "name")["disabled"]).toBe(true);
       expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)).toHaveLength(1);
-      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({});
+      // `initial`: an add the user is standing in front of, so the worktree picker may run.
+      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({ initial: true });
 
       resolveOpen(PROJECT_B);
       await flush();
@@ -883,7 +884,10 @@ describe("CreationModule", () => {
       expect(field(clone.config, "url")["disabled"]).toBe(true);
       expect(sectionById(clone.config, "background")).toBeDefined();
       expect(sectionById(clone.config, "cancel")).toBeUndefined();
-      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({ git: "org/repo" });
+      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({
+        git: "org/repo",
+        initial: true,
+      });
 
       resolveClone(PROJECT_B);
       await flush();

@@ -13,6 +13,7 @@ import type {
   BaseInfo,
   CleanupResult,
   RemovalResult,
+  UnmanagedWorktree,
   UpdateBasesResult,
   Workspace,
 } from "./git-types";
@@ -75,6 +76,25 @@ export function parseBranchConfigs(
 
   return result;
 }
+
+/**
+ * Tag name marking a worktree the user explicitly adopted into CodeHydra.
+ *
+ * Adopted worktrees live outside `workspacesDir` (they were created by hand or by
+ * another tool), so the directory alone cannot prove ownership. The tag is both the
+ * ownership record read by `discover()` and the `external` badge the sidebar renders
+ * — `extractTags()` picks up any `tags.*` metadata key without further plumbing.
+ */
+export const EXTERNAL_TAG_NAME = "external";
+
+/** Metadata key holding the external tag (`tags.` prefix + the tag name). */
+export const EXTERNAL_TAG_METADATA_KEY = `tags.${EXTERNAL_TAG_NAME}`;
+
+/**
+ * Tag value: a neutral grey, quieter than CodeHydra's blue `new` tag — this marks a
+ * permanent property of the workspace, not a call to action.
+ */
+export const EXTERNAL_TAG_VALUE = JSON.stringify({ color: "#8b949e" });
 
 /**
  * Global provider managing git worktree operations across all projects.
@@ -248,7 +268,17 @@ export class GitWorktreeProvider {
     return all.get(branch) ?? {};
   }
 
+  /**
+   * Discover the workspaces CodeHydra manages for a project.
+   *
+   * A worktree is managed when CodeHydra created it (it lives under the project's
+   * `workspacesDir`) or when the user adopted it through the add-project picker (its
+   * branch carries the external tag). Every other worktree of the repository is
+   * skipped: agents (Claude's `isolation: "worktree"`, for one) create worktrees of
+   * the same repo as scratch space, and those must not surface as workspaces.
+   */
   async discover(projectRoot: Path): Promise<readonly Workspace[]> {
+    const registration = this.getProjectRegistration(projectRoot);
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
     // Prune stale worktrees (directory deleted outside of CodeHydra)
@@ -272,26 +302,124 @@ export class GitWorktreeProvider {
       branchMetadata = new Map();
     }
 
-    // Filter out the main worktree and prunable entries, map to Workspace objects
+    // Filter out the main worktree, prunable entries and worktrees CodeHydra does
+    // not manage; map the rest to Workspace objects
     const workspaces: Workspace[] = [];
     for (const wt of worktrees) {
       if (wt.isMain || wt.prunable) continue;
-
-      // Register workspace in the workspace registry for metadata resolution
-      this.ensureWorkspaceRegistered(wt.path, projectRoot);
 
       const metadata: Record<string, string> = wt.branch
         ? { ...(branchMetadata.get(wt.branch) ?? {}) }
         : {};
 
+      const own = wt.path.isChildOf(registration.workspacesDir);
+      if (!own && metadata[EXTERNAL_TAG_METADATA_KEY] === undefined) {
+        this.logger.warn("Skipping unmanaged worktree", {
+          path: wt.path.toString(),
+          branch: wt.branch,
+        });
+        continue;
+      }
+
+      // Register workspace in the workspace registry for metadata resolution
+      this.ensureWorkspaceRegistered(wt.path, projectRoot);
+
       workspaces.push({
-        name: wt.branch ?? wt.name,
+        // CodeHydra's own worktrees are named after their branch (the directory is
+        // just its sanitized form). An adopted one sits in a directory the user
+        // named, so it takes the directory name instead — that keeps basename ↔ name
+        // the invariant the rest of the app assumes.
+        name: own ? (wt.branch ?? wt.name) : wt.name,
         path: wt.path,
         branch: wt.branch,
         metadata,
       });
     }
     return workspaces;
+  }
+
+  /**
+   * List the worktrees of a project that `discover()` would skip — everything the
+   * user could still adopt, plus the ones that cannot be adopted at all.
+   *
+   * Feeds the add-project picker. `adoptable` is false for a detached HEAD: the
+   * external tag is stored per branch, so there is nowhere to record the adoption.
+   *
+   * @param projectRoot Root of the git repository
+   * @param workspacesDir Directory CodeHydra creates this project's worktrees in
+   */
+  async listUnmanagedWorktrees(
+    projectRoot: Path,
+    workspacesDir: Path
+  ): Promise<readonly UnmanagedWorktree[]> {
+    const worktrees = await this.gitClient.listWorktrees(projectRoot);
+
+    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
+    try {
+      branchMetadata = await this.getAllBranchMetadata(projectRoot);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Unknown error");
+      this.logger.warn("Failed to get metadata config", { error: message });
+      branchMetadata = new Map();
+    }
+
+    const unmanaged: UnmanagedWorktree[] = [];
+    for (const wt of worktrees) {
+      if (wt.isMain || wt.prunable) continue;
+      if (wt.path.isChildOf(workspacesDir)) continue;
+
+      const metadata = wt.branch ? (branchMetadata.get(wt.branch) ?? {}) : {};
+      if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) continue;
+
+      unmanaged.push({
+        name: wt.name,
+        path: wt.path,
+        branch: wt.branch,
+        adoptable: wt.branch !== null,
+      });
+    }
+    return unmanaged;
+  }
+
+  /**
+   * Adopt an existing worktree so `discover()` treats it as a workspace from now on.
+   *
+   * Writes the external tag against the worktree's branch. Unlike the best-effort
+   * metadata write in `createWorkspace()`, a failure here throws: the tag IS the
+   * ownership record, so a silent failure would hand the user a workspace that
+   * disappears on the next restart.
+   *
+   * @throws WorkspaceError if the worktree has no branch or the tag cannot be written
+   */
+  async adoptWorktree(projectRoot: Path, worktreePath: Path, branch: string): Promise<Workspace> {
+    if (!branch) {
+      throw new WorkspaceError(
+        `Cannot adopt worktree at '${worktreePath.toString()}': it has no branch (detached HEAD).`
+      );
+    }
+
+    try {
+      await this.gitClient.setBranchConfig(
+        projectRoot,
+        branch,
+        `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${EXTERNAL_TAG_METADATA_KEY}`,
+        EXTERNAL_TAG_VALUE
+      );
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Unknown error");
+      throw new WorkspaceError(
+        `Failed to adopt worktree at '${worktreePath.toString()}': ${message}`
+      );
+    }
+
+    this.ensureWorkspaceRegistered(worktreePath, projectRoot);
+
+    return {
+      name: worktreePath.basename,
+      path: worktreePath,
+      branch,
+      metadata: { [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE },
+    };
   }
 
   async listBases(projectRoot: Path): Promise<readonly BaseInfo[]> {
@@ -594,15 +722,25 @@ export class GitWorktreeProvider {
     // Get the branch name before removal (also checks if worktree exists)
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
     const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
-    // A workspace's branch is named after its directory (see createWorkspace), so the
-    // basename recovers it in both cases where the worktree entry can't supply one:
-    // the entry is missing (retry after a partial failure), or HEAD is detached — a
-    // rebase that stopped on a conflict leaves it that way, and worktree.branch is then
-    // null. Falling back matters: on null, both the metadata cleanup and the branch
-    // delete below are skipped and the branch is orphaned with no error. Deleting is
-    // still guarded by the branch-exists check in step 3, so a workspace whose basename
-    // maps to no branch (detached on purpose) stays a no-op.
-    const branchName = worktree?.branch ?? unsanitizeWorkspaceName(workspacePath.basename);
+    // A workspace CodeHydra created has a branch named after its directory (see
+    // createWorkspace), so the basename recovers it in both cases where the worktree
+    // entry can't supply one: the entry is missing (retry after a partial failure), or
+    // HEAD is detached — a rebase that stopped on a conflict leaves it that way, and
+    // worktree.branch is then null. Falling back matters: on null, both the metadata
+    // cleanup and the branch delete below are skipped and the branch is orphaned with
+    // no error. Deleting is still guarded by the branch-exists check in step 3, so a
+    // workspace whose basename maps to no branch (detached on purpose) stays a no-op.
+    //
+    // That derivation only holds inside workspacesDir. An adopted worktree sits in a
+    // directory the user named, unrelated to its branch, so guessing there could hand
+    // deleteBranch an unrelated branch that happens to share the directory name — we
+    // skip the branch work entirely rather than delete something we only inferred.
+    const registration = this.projectRegistry.get(projectRoot.toString());
+    const derivedBranch =
+      registration && workspacePath.isChildOf(registration.workspacesDir)
+        ? unsanitizeWorkspaceName(workspacePath.basename)
+        : "";
+    const branchName = worktree?.branch ?? derivedBranch;
 
     // Step 1: Clear codehydra metadata from branch config
     // Done before worktree removal because metadata lives in project root's .git/config,

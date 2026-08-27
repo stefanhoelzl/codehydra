@@ -46,6 +46,220 @@ describe("GitWorktreeProvider integration", () => {
   });
   const worktreeLogger = SILENT_LOGGER;
 
+  describe("managed-worktree filtering", () => {
+    /**
+     * A repository whose worktrees are: one CodeHydra created, one the user made
+     * elsewhere, one an agent left behind on a detached HEAD.
+     */
+    function mixedRepo(branchConfigs: Record<string, Record<string, string>> = {}) {
+      return createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-a", "feature/login"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-a", path: "/workspaces/feature-a", branch: "feature-a" },
+              { name: "repo-login", path: "/code/repo-login", branch: "feature/login" },
+              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+            ],
+            branchConfigs: { "feature-a": { "codehydra.base": "main" }, ...branchConfigs },
+          },
+        },
+      });
+    }
+
+    it("keeps its own worktrees and skips every other one", async () => {
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mixedRepo(),
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+
+      expect(discovered.map((w) => w.name)).toEqual(["feature-a"]);
+    });
+
+    it("logs each skipped worktree so a missing tab stays diagnosable", async () => {
+      const warn = vi.fn();
+      const provider = await createProvider(PROJECT_ROOT, mixedRepo(), WORKSPACES_DIR, mockFs, {
+        ...SILENT_LOGGER,
+        warn,
+      });
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
+        path: "/code/repo-login",
+        branch: "feature/login",
+      });
+      expect(warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
+        path: "/tmp/wt-8fa2",
+        branch: null,
+      });
+    });
+
+    it("keeps an adopted worktree and names it after its directory", async () => {
+      const client = mixedRepo({
+        "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+
+      const adopted = discovered.find((w) => w.path.toString() === "/code/repo-login");
+      // The directory name, not the branch: everything downstream assumes
+      // basename === name, and the user named this directory.
+      expect(adopted?.name).toBe("repo-login");
+      expect(adopted?.branch).toBe("feature/login");
+      expect(adopted?.metadata["tags.external"]).toBe('{"color":"#8b949e"}');
+    });
+
+    it("still names its own worktrees after their branch", async () => {
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mixedRepo(),
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+
+      expect(discovered[0]?.name).toBe("feature-a");
+    });
+  });
+
+  describe("adoption", () => {
+    function repoWithExternalWorktree() {
+      return createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature/login"],
+            currentBranch: "main",
+            worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
+          },
+        },
+      });
+    }
+
+    it("lists what discover() skips, flagging detached worktrees as unadoptable", async () => {
+      const client = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-a", "feature/login"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-a", path: "/workspaces/feature-a", branch: "feature-a" },
+              { name: "repo-login", path: "/code/repo-login", branch: "feature/login" },
+              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+            ],
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const unmanaged = await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR);
+
+      expect(unmanaged.map((w) => ({ name: w.name, adoptable: w.adoptable }))).toEqual([
+        { name: "repo-login", adoptable: true },
+        { name: "wt-8fa2", adoptable: false },
+      ]);
+    });
+
+    it("omits an already-adopted worktree from the offer", async () => {
+      const client = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature/login"],
+            currentBranch: "main",
+            worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
+            branchConfigs: {
+              "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
+            },
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      expect(await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR)).toEqual([]);
+    });
+
+    it("adopting makes the worktree discoverable across a restart", async () => {
+      const client = repoWithExternalWorktree();
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      expect(await provider.discover(PROJECT_ROOT)).toEqual([]);
+
+      await provider.adoptWorktree(PROJECT_ROOT, new Path("/code/repo-login"), "feature/login");
+
+      // A fresh provider over the same repo: the tag lives in git config, not memory.
+      const restarted = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual(["repo-login"]);
+    });
+
+    it("refuses to adopt a detached worktree — there is no branch to mark", async () => {
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        repoWithExternalWorktree(),
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await expect(
+        provider.adoptWorktree(PROJECT_ROOT, new Path("/tmp/wt-8fa2"), "")
+      ).rejects.toThrow(WorkspaceError);
+    });
+
+    it("throws when the tag cannot be written, rather than reporting a phantom workspace", async () => {
+      const client = repoWithExternalWorktree();
+      vi.spyOn(client, "setBranchConfig").mockRejectedValue(new Error("config is read-only"));
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await expect(
+        provider.adoptWorktree(PROJECT_ROOT, new Path("/code/repo-login"), "feature/login")
+      ).rejects.toThrow(WorkspaceError);
+    });
+  });
+
   describe("metadata.base persistence", () => {
     it("creates workspace with metadata.base and retrieves via discover()", async () => {
       const mockClient = createMockGitClient({
@@ -458,7 +672,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-branch",
-                path: "/data/workspaces/feature-branch",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-branch",
                 branch: "feature-branch",
               },
             ],
@@ -488,7 +702,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "detached-workspace",
-                path: "/data/workspaces/detached",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached",
                 branch: null,
               },
             ],
@@ -516,8 +730,16 @@ describe("GitWorktreeProvider", () => {
             branches: ["main", "feature-a", "feature-b"],
             currentBranch: "main",
             worktrees: [
-              { name: "feature-a", path: "/data/workspaces/feature-a", branch: "feature-a" },
-              { name: "feature-b", path: "/data/workspaces/feature-b", branch: "feature-b" },
+              {
+                name: "feature-a",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-a",
+                branch: "feature-a",
+              },
+              {
+                name: "feature-b",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-b",
+                branch: "feature-b",
+              },
             ],
           },
         },
@@ -544,10 +766,14 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-valid",
-                path: "/data/workspaces/feature-valid",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-valid",
                 branch: "feature-valid",
               },
-              { name: "", path: "/data/workspaces/unnamed", branch: "unnamed-branch" },
+              {
+                name: "",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/unnamed",
+                branch: "unnamed-branch",
+              },
             ],
           },
         },
@@ -575,7 +801,11 @@ describe("GitWorktreeProvider", () => {
             branches: ["main", "feature-x"],
             currentBranch: "main",
             worktrees: [
-              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+              {
+                name: "feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
+                branch: "feature-x",
+              },
             ],
             branchConfigs: {
               "feature-x": { "codehydra.base": "develop" },
@@ -605,11 +835,23 @@ describe("GitWorktreeProvider", () => {
             currentBranch: "main",
             worktrees: [
               // Has config
-              { name: "workspace-a", path: "/data/workspaces/workspace-a", branch: "branch-a" },
+              {
+                name: "workspace-a",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-a",
+                branch: "branch-a",
+              },
               // No config
-              { name: "workspace-b", path: "/data/workspaces/workspace-b", branch: "branch-b" },
+              {
+                name: "workspace-b",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-b",
+                branch: "branch-b",
+              },
               // No config, no branch (detached)
-              { name: "workspace-c", path: "/data/workspaces/workspace-c", branch: null },
+              {
+                name: "workspace-c",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-c",
+                branch: null,
+              },
             ],
             branchConfigs: {
               "branch-a": { "codehydra.base": "configured-base" },
@@ -647,7 +889,11 @@ describe("GitWorktreeProvider", () => {
             branches: ["main", "feature-x"],
             currentBranch: "main",
             worktrees: [
-              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+              {
+                name: "feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
+                branch: "feature-x",
+              },
             ],
             branchConfigs: {
               "feature-x": {
@@ -713,9 +959,21 @@ describe("GitWorktreeProvider", () => {
             branches: ["main", "a", "b", "c"],
             currentBranch: "main",
             worktrees: [
-              { name: "a", path: "/data/workspaces/a", branch: "a" },
-              { name: "b", path: "/data/workspaces/b", branch: "b" },
-              { name: "c", path: "/data/workspaces/c", branch: "c" },
+              {
+                name: "a",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/a",
+                branch: "a",
+              },
+              {
+                name: "b",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/b",
+                branch: "b",
+              },
+              {
+                name: "c",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/c",
+                branch: "c",
+              },
             ],
           },
         },
@@ -792,7 +1050,11 @@ describe("GitWorktreeProvider", () => {
             branches: ["main", "feature-x"],
             currentBranch: "main",
             worktrees: [
-              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+              {
+                name: "feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
+                branch: "feature-x",
+              },
             ],
           },
         },
@@ -1178,7 +1440,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "existing-workspace",
-                path: "/data/workspaces/existing-workspace",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/existing-workspace",
                 branch: "checked-out-branch",
               },
             ],
@@ -1198,7 +1460,7 @@ describe("GitWorktreeProvider", () => {
       ).rejects.toThrow(WorkspaceError);
       await expect(
         provider.createWorkspace(PROJECT_ROOT, "checked-out-branch", "checked-out-branch")
-      ).rejects.toThrow(/already checked out.*\/data\/workspaces\/existing-workspace/);
+      ).rejects.toThrow(/already checked out.*\/workspaces\/existing-workspace/);
     });
 
     it("throws WorkspaceError when branch is checked out in main worktree", async () => {
@@ -1400,7 +1662,9 @@ describe("GitWorktreeProvider", () => {
 
   describe("removeWorkspace", () => {
     it("removes workspace without deleting branch", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1428,7 +1692,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("removes workspace and deletes branch when requested", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1476,7 +1742,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("leaves branches untouched when a detached workspace matches no branch", async () => {
-      const worktreePath = new Path("/data/workspaces/detached");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1504,7 +1772,9 @@ describe("GitWorktreeProvider", () => {
       // A rebase that stops on a conflict leaves HEAD detached, so the worktree
       // reports no branch. The branch name is still recoverable from the directory,
       // and skipping it here orphaned the branch with no error reported.
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1530,7 +1800,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns success when worktree already removed (idempotent)", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       // Worktree is NOT in the list - already removed
       const mockClient = createMockGitClient({
         repositories: {
@@ -1557,7 +1829,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("deletes branch on retry when worktree already unregistered", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       // Worktree is NOT in the list - already unregistered from previous attempt
       // But branch still exists
       const mockClient = createMockGitClient({
@@ -1587,7 +1861,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns success when branch already deleted (idempotent)", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1618,7 +1894,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("clears codehydra metadata from branch config on deletion", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1654,7 +1932,9 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("clears metadata even when worktree removal fails", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -1707,7 +1987,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: "/data/workspaces/feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
                 branch: "feature-x",
                 isDirty: false,
               },
@@ -1723,7 +2003,9 @@ describe("GitWorktreeProvider", () => {
         worktreeLogger
       );
 
-      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
+      const dirty = await provider.isDirty(
+        new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x")
+      );
 
       expect(dirty).toBe(false);
     });
@@ -1737,7 +2019,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: "/data/workspaces/feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
                 branch: "feature-x",
                 isDirty: true,
               },
@@ -1753,7 +2035,9 @@ describe("GitWorktreeProvider", () => {
         worktreeLogger
       );
 
-      const dirty = await provider.isDirty(new Path("/data/workspaces/feature-x"));
+      const dirty = await provider.isDirty(
+        new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x")
+      );
 
       expect(dirty).toBe(true);
     });
@@ -1792,7 +2076,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: "/data/workspaces/feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
                 branch: "feature-x",
                 unmergedCommits: 5,
               },
@@ -1808,7 +2092,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         worktreeLogger
       );
-      const wsPath = new Path("/data/workspaces/feature-x");
+      const wsPath = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x");
       provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
 
       const count = await provider.countUnmergedCommits(wsPath);
@@ -1825,7 +2109,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "detached",
-                path: "/data/workspaces/detached",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached",
                 branch: null,
               },
             ],
@@ -1839,7 +2123,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         worktreeLogger
       );
-      const wsPath = new Path("/data/workspaces/detached");
+      const wsPath = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces/detached");
       provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
 
       const count = await provider.countUnmergedCommits(wsPath);
@@ -1879,7 +2163,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: "/data/workspaces/feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
                 branch: "feature-x",
                 unmergedCommits: 2,
               },
@@ -1894,7 +2178,7 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         worktreeLogger
       );
-      const wsPath = new Path("/data/workspaces/feature-x");
+      const wsPath = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x");
       provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
 
       const count = await provider.countUnmergedCommits(wsPath);
@@ -2558,7 +2842,9 @@ describe("GitWorktreeProvider", () => {
 
   describe("setMetadata", () => {
     it("sets branch config correctly", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -2591,7 +2877,9 @@ describe("GitWorktreeProvider", () => {
 
   describe("getMetadata", () => {
     it("returns all metadata keys", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -2637,12 +2925,12 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "valid-ws",
-                path: "/workspaces/valid-ws",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/valid-ws",
                 branch: "valid-branch",
               },
               {
                 name: "stale-ws",
-                path: "/workspaces/stale-ws",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws",
                 branch: "stale-branch",
                 prunable: true,
               },
@@ -2677,7 +2965,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "stale-ws",
-                path: "/workspaces/stale-ws",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws",
                 branch: "stale-branch",
                 prunable: true,
               },
@@ -2709,7 +2997,7 @@ describe("GitWorktreeProvider", () => {
             worktrees: [
               {
                 name: "healthy-ws",
-                path: "/workspaces/healthy-ws",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/healthy-ws",
                 branch: "healthy-branch",
               },
             ],

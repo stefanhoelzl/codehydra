@@ -653,7 +653,8 @@ const remoteProjectModule = createRemoteProjectModule({
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,
   pathProvider,
-  apiLogger
+  apiLogger,
+  presentationModule
 );
 const badgeModule = createBadgeModule({
   platformInfo,
