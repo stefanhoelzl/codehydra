@@ -335,9 +335,29 @@ describe("UiViewManager", () => {
       for (const listener of win.listeners) listener({ source, data });
     }
 
+    /**
+     * Install the script and discard the announcement it makes on install, so
+     * a test about ping handling starts from a settled page.
+     */
+    function installAndSettle(win: FakeWindow, uiPage: FakeWindow): void {
+      run(installedScript(), win);
+      uiPage.posted.length = 0;
+    }
+
+    it("announces itself as soon as it is installed", () => {
+      // The renderer probes a frame when its element mounts, which is before
+      // this script arrives on load-finish — so a ping alone can never prove a
+      // freshly mounted frame alive (PostHog issue 019fc47c).
+      const { win, uiPage } = createFrameWindow();
+
+      run(installedScript(), win);
+
+      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
+    });
+
     it("answers a ping from the UI page", () => {
       const { win, uiPage } = createFrameWindow();
-      run(installedScript(), win);
+      installAndSettle(win, uiPage);
 
       send(win, { __chPing: true });
 
@@ -346,7 +366,7 @@ describe("UiViewManager", () => {
 
     it("ignores messages that are not pings", () => {
       const { win, uiPage } = createFrameWindow();
-      run(installedScript(), win);
+      installAndSettle(win, uiPage);
 
       send(win, { __chPing: false });
       send(win, "hello");
@@ -357,7 +377,7 @@ describe("UiViewManager", () => {
 
     it("ignores a ping that did not come from the UI page", () => {
       const { win, uiPage } = createFrameWindow();
-      run(installedScript(), win);
+      installAndSettle(win, uiPage);
 
       send(win, { __chPing: true }, { spoofed: true });
 
@@ -366,7 +386,8 @@ describe("UiViewManager", () => {
 
     it("stays silent in VSCodium's nested webview frames", () => {
       // A webview nested inside a workspace frame: its parent is that frame,
-      // not the UI page, so the UI could not attribute its answer.
+      // not the UI page, so the UI could not attribute its announcement or its
+      // answer to any frame it mounted.
       const { win, uiPage } = createFrameWindow();
       const workspaceFrame = { ...win };
       win.parent = workspaceFrame as FakeWindow;
@@ -378,12 +399,15 @@ describe("UiViewManager", () => {
       expect(uiPage.posted).toEqual([]);
     });
 
-    it("does not register a second responder when injected again", () => {
+    it("does not register a second responder or re-announce when injected again", () => {
       const { win, uiPage } = createFrameWindow();
       const script = installedScript();
 
+      installAndSettle(win, uiPage);
       run(script, win);
-      run(script, win);
+
+      expect(uiPage.posted).toEqual([]);
+
       send(win, { __chPing: true });
 
       expect(win.listeners).toHaveLength(1);
@@ -398,6 +422,20 @@ describe("UiViewManager", () => {
       };
 
       expect(() => send(win, { __chPing: true })).not.toThrow();
+    });
+
+    it("installs even when the announcement is rejected", () => {
+      // A parent that rejects postMessage must not abort installation — the
+      // responder still has to be registered for the probe that follows.
+      const { win, uiPage } = createFrameWindow();
+      uiPage.postMessage = (): never => {
+        throw new Error("cross-origin");
+      };
+
+      expect(() => {
+        run(installedScript(), win);
+      }).not.toThrow();
+      expect(win.listeners).toHaveLength(1);
     });
   });
 });

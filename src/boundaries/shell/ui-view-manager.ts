@@ -61,9 +61,19 @@ const CHILD_FRAME_FOCUS_TRACKER = `
 
 /**
  * Script injected into every workspace iframe so it can prove its renderer
- * process is still running. Answers a `__chPing` from the UI page with
- * `__chAlive`; WorkspaceFrames probes a frame when it shows it and logs one
- * that stays silent.
+ * process is still running. Announces `__chAlive` as soon as it is installed
+ * and answers a later `__chPing` with the same; WorkspaceFrames probes a frame
+ * when it shows it and logs one that stays silent.
+ *
+ * The unprompted announcement is what makes a freshly mounted frame provable.
+ * This script arrives on `did-frame-finish-load`, but WorkspaceFrames probes a
+ * frame the moment its element mounts — so on a create or a wake the ping is
+ * delivered to a document with no listener yet and is simply ignored, and the
+ * probe is one-shot. Announcing on install reports liveness at the instant the
+ * frame becomes able to report it, whichever side wins the race: it cancels a
+ * probe already waiting, or is recorded ahead of one still to come (PostHog
+ * issue 019fc47c: a woken workspace was reloaded ten seconds in, after it had
+ * fully come up, because its probe could never have been answered).
  *
  * Why the frames have to answer for themselves: all workspace iframes are
  * same-origin (the one IDE server port), so Chromium hosts them in a single
@@ -90,6 +100,7 @@ const CHILD_FRAME_PROBE = `
       if (!e.data || e.data.__chPing !== true) return;
       try { window.parent.postMessage({ __chAlive: true }, '*'); } catch(err) {}
     });
+    try { window.parent.postMessage({ __chAlive: true }, '*'); } catch(err) {}
   })();
 `;
 

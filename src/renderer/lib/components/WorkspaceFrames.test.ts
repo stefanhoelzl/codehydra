@@ -272,6 +272,55 @@ describe("WorkspaceFrames", () => {
       expect(windows.get("test-12345678/ws1")!.pings).toEqual([{ __chPing: true }]);
     });
 
+    it("lets a frame that finishes loading late settle its own probe", async () => {
+      const { container, rerender } = render(WorkspaceFrames, {
+        props: { frames: FRAMES, activeKey: null },
+      });
+      const windows = giveWindows(container);
+      const setters = trackSrc(container);
+
+      // The probe goes out at mount, before the injected script exists; the
+      // frame announces itself when that script installs on load-finish. The
+      // deadline is a grace period for loading, not an instant handshake.
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      await vi.advanceTimersByTimeAsync(4_000);
+      answer(windows.get("test-12345678/ws1")!);
+      await vi.advanceTimersByTimeAsync(11_000);
+
+      expect(logs()).toEqual([]);
+      expect(setters.get("test-12345678/ws1")!).not.toHaveBeenCalled();
+    });
+
+    it("makes a remounted frame prove itself again", async () => {
+      const { container, rerender } = render(WorkspaceFrames, {
+        props: { frames: FRAMES, activeKey: null },
+      });
+      const windows = giveWindows(container);
+
+      // ws1 proves itself alive...
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      answer(windows.get("test-12345678/ws1")!);
+
+      // ...then hibernates, which unmounts its frame. What a wake mounts is a
+      // new document that has proven nothing, so its silence must read as
+      // never-answered rather than as a death worth reloading (PostHog issue
+      // 019fc47c).
+      await rerender({ frames: [FRAMES[1]!], activeKey: FRAMES[1]!.key });
+      await rerender({ frames: FRAMES, activeKey: FRAMES[0]!.key });
+      giveWindows(container);
+      const setters = trackSrc(container);
+      await vi.advanceTimersByTimeAsync(11_000);
+
+      expect(setters.get("test-12345678/ws1")!).not.toHaveBeenCalled();
+      expect(logs()).toEqual([
+        {
+          level: "warn",
+          message: "Workspace frame never responded (may never have finished loading)",
+          context: { key: "test-12345678/ws1", reloaded: false },
+        },
+      ]);
+    });
+
     it("reports a frame that answered before differently from one that never did", async () => {
       const { container, rerender } = render(WorkspaceFrames, {
         props: { frames: FRAMES, activeKey: null },
