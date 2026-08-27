@@ -46,6 +46,7 @@ export interface WindowMockState {
   readonly title: string;
   readonly backgroundColor: string | null;
   readonly isMaximized: boolean;
+  readonly isFocused: boolean;
   readonly isDestroyed: boolean;
 }
 
@@ -98,11 +99,23 @@ export interface WindowBoundaryMockState extends MockState {
 
   /**
    * Trigger a blur callback for a window (window loses OS focus).
+   * Also sets isFocused=false, so a later isFocused() reads false.
    *
    * @example
    * mock.$.triggerBlur(handle);
    */
   triggerBlur(handle: WindowHandle): void;
+
+  /**
+   * Mark a window as having OS focus, without going through focus().
+   *
+   * The counterpart to triggerBlur for tests that need to set up the focused
+   * case: windows start unfocused, since nothing has shown them yet.
+   *
+   * @example
+   * mock.$.triggerFocus(handle);
+   */
+  triggerFocus(handle: WindowHandle): void;
 
   /**
    * Capture current state as snapshot for later comparison.
@@ -137,6 +150,7 @@ interface WindowStateInternal {
   title: string;
   backgroundColor: string | null;
   isMaximized: boolean;
+  isFocused: boolean;
   isDestroyed: boolean;
   options: WindowOptions;
 }
@@ -164,6 +178,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
         title: state.title,
         backgroundColor: state.backgroundColor,
         isMaximized: state.isMaximized,
+        isFocused: state.isFocused,
         isDestroyed: state.isDestroyed,
       });
     }
@@ -195,7 +210,18 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   }
 
   triggerBlur(handle: WindowHandle): void {
+    const window = this._windows.get(handle.id);
+    if (window) {
+      window.isFocused = false;
+    }
     this._blurCallbacks.trigger(handle.id);
+  }
+
+  triggerFocus(handle: WindowHandle): void {
+    const window = this._windows.get(handle.id);
+    if (window) {
+      window.isFocused = true;
+    }
   }
 
   snapshot(): Snapshot {
@@ -205,7 +231,11 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   toString(): string {
     const sorted = [...this._windows.entries()].sort(([a], [b]) => a.localeCompare(b));
     const lines = sorted.map(([id, state]) => {
-      const flags = [state.isMaximized ? "maximized" : null, state.isDestroyed ? "destroyed" : null]
+      const flags = [
+        state.isMaximized ? "maximized" : null,
+        state.isFocused ? "focused" : null,
+        state.isDestroyed ? "destroyed" : null,
+      ]
         .filter(Boolean)
         .join(",");
       const flagStr = flags ? ` [${flags}]` : "";
@@ -316,6 +346,9 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
         title: options.title ?? "",
         backgroundColor: options.backgroundColor ?? null,
         isMaximized: false,
+        // A freshly created window has not been shown yet, so it is not focused.
+        // Tests that need the focused case call $.triggerFocus() or focus().
+        isFocused: false,
         isDestroyed: false,
         options,
       });
@@ -372,8 +405,15 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     },
 
     focus(handle: WindowHandle): void {
-      getWindow(handle); // Validate handle exists
-      // No-op in mock - focus is an OS-level operation
+      const window = getWindow(handle);
+      // Behavioral: the real boundary requests OS focus, so the mock records
+      // that the window now has it. Lets a test assert that a click handler
+      // brought the window forward.
+      window.isFocused = true;
+    },
+
+    isFocused(handle: WindowHandle): boolean {
+      return getWindow(handle).isFocused;
     },
 
     onResize(handle: WindowHandle, callback: () => void): Unsubscribe {

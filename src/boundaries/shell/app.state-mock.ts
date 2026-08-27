@@ -37,6 +37,8 @@ class AppBoundaryMockStateImpl implements MockState {
   sleepBlockerStops = 0;
   /** Number of times relaunch() was called (Save & Restart). */
   relaunchCount = 0;
+  /** Last id passed to setAppUserModelId(), or null when never called. */
+  appUserModelId: string | null = null;
   readonly themeUpdatedCallbacks = new CallbackSet();
 
   triggerThemeUpdated(): void {
@@ -154,6 +156,10 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
       state.relaunchCount += 1;
     },
 
+    setAppUserModelId(id: string): void {
+      state.appUserModelId = id;
+    },
+
     shouldUseDarkColors(): boolean {
       return state.shouldUseDarkColors;
     },
@@ -196,6 +202,12 @@ export interface AppBoundaryMatchers {
    * @param count - Expected number of relaunch calls
    */
   toHaveRelaunchCount(count: number): void;
+
+  /**
+   * Assert the Windows Application User Model ID that was set.
+   * @param id - Expected id, or null when it should never have been set
+   */
+  toHaveAppUserModelId(id: string | null): void;
 }
 
 // Extend vitest's assertion interface
@@ -243,6 +255,18 @@ const appBoundaryMatchers: MatcherImplementationsFor<
     "relaunch",
     (mock) => mock.$.relaunchCount
   ),
+
+  toHaveAppUserModelId(received, id) {
+    const actual = received.$.appUserModelId;
+    const pass = actual === id;
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected app user model id NOT to be ${JSON.stringify(id)}`
+          : `Expected app user model id to be ${JSON.stringify(id)}, but got ${JSON.stringify(actual)}`,
+    };
+  },
 };
 
 // Register matchers with vitest

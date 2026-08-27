@@ -125,12 +125,27 @@ const UI_PAINT_BARRIER = `new Promise(function (resolve) {
   });
 })`;
 
+/**
+ * Permissions granted to web content in the shared session — the UI view and
+ * every workspace iframe inside it.
+ *
+ * `notifications` is deliberately absent. OS notifications are CodeHydra's to
+ * raise, from the main process via `OsNotificationBoundary`, where they can be
+ * gated on window focus and on the `notification` config key. Web content has
+ * no way to know either, so a toast it raises is a toast we did not decide to
+ * show: VSCodium's workbench fires one whenever a task outruns
+ * `task.notifyWindowOnTaskCompletion` (60s by default) or a chat session
+ * reports back, each of which duplicates or contradicts what the sidebar
+ * already says. Denying the permission is what stops them — the workbench
+ * checks `Notification.requestPermission()` and gives up quietly when it is not
+ * granted, so there is nothing to suppress per-setting and nothing to re-patch
+ * on a VSCodium bump.
+ */
 const ALLOWED_PERMISSIONS = new Set([
   "clipboard-read",
   "clipboard-sanitized-write",
   "clipboard-write",
   "fullscreen",
-  "notifications",
   "openExternal",
   "fileSystem",
   "hid",

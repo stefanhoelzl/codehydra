@@ -86,6 +86,47 @@ describe("WindowBoundary (integration)", () => {
     });
   });
 
+  describe("focus", () => {
+    it("reports a new window as unfocused", () => {
+      const handle = windowLayer.createWindow({});
+
+      expect(windowLayer.isFocused(handle)).toBe(false);
+    });
+
+    it("reports focus after focus()", () => {
+      const handle = windowLayer.createWindow({});
+
+      windowLayer.focus(handle);
+
+      expect(windowLayer.isFocused(handle)).toBe(true);
+    });
+
+    it("reports no focus after a blur", () => {
+      const handle = windowLayer.createWindow({});
+      windowLayer.focus(handle);
+
+      windowLayer.$.triggerBlur(handle);
+
+      expect(windowLayer.isFocused(handle)).toBe(false);
+    });
+
+    it("tracks focus per window", () => {
+      const first = windowLayer.createWindow({});
+      const second = windowLayer.createWindow({});
+
+      windowLayer.focus(first);
+
+      expect(windowLayer.isFocused(first)).toBe(true);
+      expect(windowLayer.isFocused(second)).toBe(false);
+    });
+
+    it("throws for an unknown handle", () => {
+      expect(() => windowLayer.isFocused({ id: "window-999", __brand: "WindowHandle" })).toThrow(
+        ShellError
+      );
+    });
+  });
+
   describe("close events", () => {
     it("triggers close callbacks", () => {
       const handle = windowLayer.createWindow({});

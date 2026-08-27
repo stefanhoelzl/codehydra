@@ -33,6 +33,7 @@ import {
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
+import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
 
 // =============================================================================
 // Minimal Test Operations
@@ -85,6 +86,7 @@ function createMockApp(): ElectronLifecycleModuleDeps["app"] {
 function createDeps(overrides?: Partial<ElectronLifecycleModuleDeps>): ElectronLifecycleModuleDeps {
   return {
     app: createMockApp(),
+    appLayer: createAppBoundaryMock(),
     logger: SILENT_LOGGER,
     buildInfo: { isPackaged: true },
     pathProvider: { dataPath: (subpath: string) => new Path(`/data/${subpath}`) },
@@ -322,6 +324,24 @@ describe("ElectronLifecycleModule Integration", () => {
       });
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("no-proxy-server");
+    });
+
+    it("sets the Windows app user model id to match electron-builder's appId", async () => {
+      // Windows keys toasts to the launching shortcut's AUMID. If Electron's
+      // runtime id disagrees with the one NSIS stamped, notifications can
+      // surface under the wrong name or vanish from Action Center.
+      const appLayer = createAppBoundaryMock();
+      const dispatcher = createMockDispatcher();
+
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerModule(createElectronLifecycleModule(createDeps({ appLayer })));
+
+      await dispatcher.dispatch<AppStartIntent>({
+        type: INTENT_APP_START,
+        payload: {},
+      });
+
+      expect(appLayer).toHaveAppUserModelId("com.codehydra.app");
     });
 
     it("applies curated default --disable-features when electron.disabled-features is unset", async () => {

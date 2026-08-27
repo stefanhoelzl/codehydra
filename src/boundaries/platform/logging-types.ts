@@ -64,7 +64,8 @@ export type LoggerName =
   | "agent-resolver" // AgentResolver - agent selection
   | "power" // AppBoundary.allowPowerSaving - sleep prevention
   | "error-report" // ErrorReportModule - crash + manual bug report
-  | "auto-tagging"; // AutoTaggingModule - "new" tag on background workspaces
+  | "auto-tagging" // AutoTaggingModule - "new" tag on background workspaces
+  | "notification"; // OsNotificationModule + OsNotificationBoundary - OS toasts
 
 /**
  * Context data for log entries.

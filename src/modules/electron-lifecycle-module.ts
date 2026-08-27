@@ -16,6 +16,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookOutput } from "../intents/lib/operation";
 import type { ConfigureResult } from "../intents/app-start";
 import type { Config } from "../boundaries/platform/config";
+import type { AppBoundary } from "../boundaries/shell/app";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { storeString } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -36,6 +37,9 @@ import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
  * to fire at suspend time.
  */
 const AWAKE_HEARTBEAT_MS = 60_000;
+
+/** Windows Application User Model ID. Must match `appId` in electron-builder.yaml. */
+const APP_USER_MODEL_ID = "com.codehydra.app";
 
 // =============================================================================
 // Helpers
@@ -140,6 +144,7 @@ export interface ElectronLifecycleModuleDeps {
     commandLine: { appendSwitch(key: string, value?: string): void };
     setPath(name: string, path: string): void;
   };
+  readonly appLayer: Pick<AppBoundary, "setAppUserModelId">;
   readonly buildInfo: { isPackaged: boolean };
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly asyncWatcher: Pick<AsyncWatcher, "check">;
@@ -235,6 +240,11 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
               deps.app.setPath(name, deps.pathProvider.dataPath(`electron/${name}`).toNative());
             }
+            // Windows keys toasts to the launching shortcut's AUMID; ours is
+            // stamped by the NSIS installer from electron-builder's appId, so
+            // match it here rather than letting Electron derive one from the
+            // exe path. Must precede any notification (os-notification-module).
+            deps.appLayer.setAppUserModelId(APP_USER_MODEL_ID);
             // Disable proxy lookups by default to avoid WPAD/wpad.dat probes.
             // Users can override via electron.flags (e.g. --proxy-server=...).
             deps.app.commandLine.appendSwitch("no-proxy-server");

@@ -42,6 +42,14 @@ export interface MockSessionState {
   readonly partition: string;
   readonly hasPermissionRequestHandler: boolean;
   readonly hasPermissionCheckHandler: boolean;
+  /**
+   * The registered permission handlers, held (not just flagged) so tests can
+   * ask them what a given permission resolves to — which permissions the
+   * allowlist grants is behavior under test, not an implementation detail.
+   * Undefined until the corresponding setter runs.
+   */
+  readonly permissionRequestHandler?: PermissionRequestHandler;
+  readonly permissionCheckHandler?: PermissionCheckHandler;
   readonly hasHeadersReceivedHandler: boolean;
   /**
    * Interceptors registered per scheme. Held (not just flagged) so tests can
@@ -88,6 +96,8 @@ interface MutableSessionState {
   partition: string;
   hasPermissionRequestHandler: boolean;
   hasPermissionCheckHandler: boolean;
+  permissionRequestHandler?: PermissionRequestHandler;
+  permissionCheckHandler?: PermissionCheckHandler;
   hasHeadersReceivedHandler: boolean;
   protocolInterceptors: Map<string, ProtocolInterceptor>;
   cacheClearCount: number;
@@ -253,14 +263,16 @@ export function createSessionBoundaryMock(
       return { id, __brand: "SessionHandle" };
     },
 
-    setPermissionRequestHandler(handle: SessionHandle, _handler: PermissionRequestHandler): void {
+    setPermissionRequestHandler(handle: SessionHandle, handler: PermissionRequestHandler): void {
       const session = getSession(handle);
       session.hasPermissionRequestHandler = true;
+      session.permissionRequestHandler = handler;
     },
 
-    setPermissionCheckHandler(handle: SessionHandle, _handler: PermissionCheckHandler): void {
+    setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler): void {
       const session = getSession(handle);
       session.hasPermissionCheckHandler = true;
+      session.permissionCheckHandler = handler;
     },
 
     setHeadersReceivedHandler(

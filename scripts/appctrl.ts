@@ -172,7 +172,8 @@ export interface LaunchOptions {
    * `--flag` followed by a non-`--` token as that flag's value, so a stray bare
    * argument would be silently swallowed as someone else's value.
    *
-   * `--silent=true` is always prepended; pass `--silent=false` to opt back in.
+   * `--silent=true` and `--notification=disabled` are always prepended; pass
+   * either explicitly to opt back in.
    */
   args?: string[];
   env?: Record<string, string | undefined>;
@@ -264,9 +265,11 @@ export function createDriver() {
       }
     }
 
-    // Never chime at whoever is driving the app. Prepended, not appended, so a
-    // caller can still pass `--silent=false` and win (parseCliArgs: last wins).
-    const appArgs = ["--silent=true", ...args];
+    // Never chime or toast at whoever is driving the app — a driven app is
+    // unfocused by definition, which is exactly when notifications fire.
+    // Prepended, not appended, so an explicit caller value wins (parseCliArgs:
+    // last wins).
+    const appArgs = ["--silent=true", "--notification=disabled", ...args];
 
     if (appPath !== null) {
       try {

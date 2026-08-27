@@ -81,6 +81,36 @@ describe("UiViewManager", () => {
       });
     });
 
+    it("grants the permissions web content legitimately needs", () => {
+      const { sessionLayer } = createManager();
+
+      const session = [...sessionLayer.$.sessions.values()][0];
+      const request = session?.permissionRequestHandler;
+      const check = session?.permissionCheckHandler;
+
+      for (const permission of ["clipboard-write", "fullscreen", "openExternal"] as const) {
+        expect(request?.(permission)).toBe(true);
+        expect(check?.(permission)).toBe(true);
+      }
+    });
+
+    it("denies notifications, so only CodeHydra raises OS toasts", () => {
+      // VSCodium's workbench raises its own toasts when a task outruns
+      // task.notifyWindowOnTaskCompletion or a chat session reports back. It
+      // cannot know about window focus or the `notification` config, so those
+      // duplicate or contradict what the sidebar already says. Denying the
+      // permission is what stops them: the workbench checks
+      // Notification.requestPermission() and gives up quietly.
+      const { sessionLayer } = createManager();
+
+      const session = [...sessionLayer.$.sessions.values()][0];
+
+      expect(session?.permissionRequestHandler?.("notifications")).toBe(false);
+      // Also the synchronous Notification.permission getter, or the workbench
+      // would still believe it had been granted.
+      expect(session?.permissionCheckHandler?.("notifications")).toBe(false);
+    });
+
     it("is idempotent", () => {
       const { manager } = createManager();
       const handle = manager.getUIViewHandle();

@@ -18,6 +18,7 @@ export interface MockWindowManager {
   getWindowHandle: Mock<WindowManager["getWindowHandle"]>;
   maximizeAsync: Mock<WindowManager["maximizeAsync"]>;
   focus: Mock<WindowManager["focus"]>;
+  isFocused: Mock<WindowManager["isFocused"]>;
   setTitle: Mock<WindowManager["setTitle"]>;
   setOverlayIcon: Mock<WindowManager["setOverlayIcon"]>;
   getTheme: Mock<WindowManager["getTheme"]>;
@@ -26,6 +27,12 @@ export interface MockWindowManager {
    * Trigger a theme change for tests subscribed via onThemeChange().
    */
   triggerThemeChange(theme: Theme): void;
+
+  /**
+   * Set what isFocused() reports, simulating the user switching to or away
+   * from CodeHydra.
+   */
+  setFocused(focused: boolean): void;
 
   /**
    * Get all calls to setOverlayIcon with their arguments.
@@ -42,6 +49,8 @@ export interface MockWindowManagerOptions {
   readonly windowHandle?: WindowHandle;
   /** Theme returned by getTheme(). Defaults to "dark". */
   readonly theme?: Theme;
+  /** Initial value reported by isFocused(). Defaults to true. */
+  readonly focused?: boolean;
 }
 
 /**
@@ -64,6 +73,7 @@ export interface MockWindowManagerOptions {
 export function createMockWindowManager(options?: MockWindowManagerOptions): MockWindowManager {
   const windowHandle = options?.windowHandle ?? createWindowHandle("test-window-1");
   let currentTheme: Theme = options?.theme ?? "dark";
+  let focused = options?.focused ?? true;
   const overlayIconCalls: Array<{ image: ImageHandle | null; description: string }> = [];
   const themeCallbacks = new Set<(theme: Theme) => void>();
 
@@ -71,7 +81,11 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
     create: vi.fn(),
     getWindowHandle: vi.fn(() => windowHandle),
     maximizeAsync: vi.fn(async () => {}),
-    focus: vi.fn(),
+    focus: vi.fn(() => {
+      // Behavioral: requesting OS focus brings the window forward.
+      focused = true;
+    }),
+    isFocused: vi.fn(() => focused),
     setTitle: vi.fn(),
     setOverlayIcon: vi.fn((image: ImageHandle | null, description: string) => {
       overlayIconCalls.push({ image, description });
@@ -85,6 +99,10 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
     triggerThemeChange(theme: Theme): void {
       currentTheme = theme;
       for (const cb of themeCallbacks) cb(theme);
+    },
+
+    setFocused(value: boolean): void {
+      focused = value;
     },
 
     getOverlayIconCalls(): Array<{ image: ImageHandle | null; description: string }> {
