@@ -118,25 +118,13 @@
   // dialog lifecycle is backend-owned now, so the snapshot decides what is open
   // — the presenter closes anything that should not coexist with the panel.)
 
-  // Request a fresh form whenever the panel is (re)shown: send a dismiss
-  // event so the backend creation module resets its session (close + reopen
-  // with fresh config = new dialogId). Sent once per show transition, also
-  // covering the startup race where the snapshot shows the panel before the
-  // always-alive session has arrived. NOT re-sent when the dialogId changes
-  // mid-show — that change IS the reset.
-  let showDismissPending = false;
-  let prevShownForDismiss = false;
-  $effect(() => {
-    const shown = creationShown;
-    if (shown && !prevShownForDismiss) showDismissPending = true;
-    if (!shown) showDismissPending = false;
-    prevShownForDismiss = shown;
-    const session = creationDialog;
-    if (showDismissPending && session) {
-      showDismissPending = false;
-      api.sendDialogEvent({ kind: "dismiss", dialogId: session.id });
-    }
-  });
+  // The panel deliberately does NOT reset the creation form when it is
+  // (re)shown: the form remembers what was typed across a close/reopen. This
+  // mount is destroyed on every hide, so the module is the one thing that
+  // survives — it tracks every field and seeds it back (free text via
+  // `initialValue`, discrete pickers via `value`), and the Form remounting on
+  // show restores rather than clears. Resetting is an explicit gesture only:
+  // the Reset button or Escape, both reaching the module's resetSession().
 
   // Subscribe to the surviving domain events (notification chimes) on mount.
   // The ui:state subscription + ui-connected handshake are owned by App.svelte.

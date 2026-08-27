@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
+import type { DialogSection } from "@shared/dialog-types";
 
 // Shared fake: src/renderer/lib/api/__mocks__/index.ts
 vi.mock("$lib/api");
@@ -45,7 +46,10 @@ function pushState(state: UiState): Promise<void> {
 
 /** Simulate the backend creation module's always-alive session by adding
  *  a "modeless" dialog to the current snapshot. */
-function openCreationPanelSession(dialogId = "dlg-creation-1"): Promise<void> {
+function openCreationPanelSession(
+  dialogId = "dlg-creation-1",
+  extraSections: DialogSection[] = []
+): Promise<void> {
   current = {
     ...current,
     dialogs: [
@@ -55,12 +59,28 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): Promise<void> {
         kind: "modeless",
         config: {
           layout: "form",
-          sections: [{ type: "text", content: "New workspace", style: "heading" }],
+          sections: [
+            { type: "text", content: "New workspace", style: "heading" },
+            ...extraSections,
+          ],
         },
       },
     ],
   };
   return rerenderView({ ui: current });
+}
+
+/** The creation form's Prompt field, as the module declares it. */
+function promptSection(initialValue: string): DialogSection {
+  return {
+    type: "input",
+    id: "prompt",
+    label: "Prompt",
+    multiline: true,
+    rows: 3,
+    initialValue,
+    changeEvent: true,
+  };
 }
 
 const WS1 = makeUiWorkspaceRow("feature-1");
@@ -211,21 +231,74 @@ describe("MainView component", () => {
     });
   });
 
-  describe("fresh-form dismiss on panel show", () => {
-    it("sends one dismiss per show transition once the session exists", async () => {
+  describe("creation form survives a panel hide/show", () => {
+    /** The live Prompt textarea in the currently mounted panel. */
+    function promptField(): HTMLTextAreaElement {
+      const node = document.querySelector<HTMLTextAreaElement>("textarea#prompt");
+      expect(node, "prompt field").not.toBeNull();
+      return node!;
+    }
+
+    /** Hide the panel (workspace view) and bring it back, as a switch does. */
+    async function hideAndShow(dialogId: string, sections: DialogSection[]): Promise<void> {
+      await pushState(
+        makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
+          main: { kind: "workspace", frameKey: WS1.key },
+        })
+      );
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession(dialogId, sections);
+    }
+
+    it("restores the remembered text through a real unmount/remount", async () => {
+      renderMainView();
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession("dlg-1", [promptSection("")]);
+
+      // vscode-label is a custom element, so getByLabelText cannot see it.
+      const prompt = promptField();
+      await fireEvent.input(prompt, { target: { value: "do the thing" } });
+      expect(prompt.value).toBe("do the thing");
+
+      // MainView mounts the panel under {#if}, so hiding it destroys the Form
+      // and every value it held. Only the config the module pushed survives —
+      // which is why the module tracks each field and seeds it back.
+      await hideAndShow("dlg-1", [promptSection("do the thing")]);
+
+      expect(promptField().value).toBe("do the thing");
+    });
+
+    it("comes back blank when the module has nothing to seed", async () => {
+      renderMainView();
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession("dlg-1", [promptSection("")]);
+
+      await fireEvent.input(promptField(), { target: { value: "typed but not tracked" } });
+
+      // The negative control for the test above: the restore comes from the
+      // pushed config, never from the DOM surviving on its own.
+      await hideAndShow("dlg-1", [promptSection("")]);
+
+      expect(promptField().value).toBe("");
+    });
+  });
+
+  describe("no fresh-form dismiss on panel show", () => {
+    it("does not reset the form when the panel is shown", async () => {
       renderMainView();
       await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
       await openCreationPanelSession("dlg-1");
-      await waitFor(() => {
-        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
-          kind: "dismiss",
-          dialogId: "dlg-1",
-        });
-      });
-      expect(mockApi.sendDialogEvent).toHaveBeenCalledTimes(1);
 
-      // Leaving and returning re-sends (new show transition). Awaiting each
-      // rerender flushes effects so the intermediate workspace state is seen.
+      // The creation form remembers what was typed across a close/reopen, so
+      // showing the panel must NOT send the dismiss that resets the session.
+      expect(mockApi.sendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("does not reset when leaving and returning to the panel", async () => {
+      renderMainView();
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession("dlg-1");
+
       await pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
           main: { kind: "workspace", frameKey: WS1.key },
@@ -234,12 +307,10 @@ describe("MainView component", () => {
       await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
       await openCreationPanelSession("dlg-1");
 
-      await waitFor(() => {
-        expect(mockApi.sendDialogEvent).toHaveBeenCalledTimes(2);
-      });
+      expect(mockApi.sendDialogEvent).not.toHaveBeenCalled();
     });
 
-    it("covers the startup race: snapshot shows the panel before the session arrives", async () => {
+    it("does not reset when the session arrives after the panel is shown", async () => {
       renderMainView();
 
       await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
@@ -247,12 +318,7 @@ describe("MainView component", () => {
 
       await openCreationPanelSession("dlg-late");
 
-      await waitFor(() => {
-        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
-          kind: "dismiss",
-          dialogId: "dlg-late",
-        });
-      });
+      expect(mockApi.sendDialogEvent).not.toHaveBeenCalled();
     });
   });
 });

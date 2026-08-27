@@ -1171,6 +1171,184 @@ describe("CreationModule", () => {
       expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
     });
   });
+
+  describe("remembering inputs across a close/reopen", () => {
+    /** A panel with branches loaded and every field filled in. */
+    async function filledPanel(s: Setup): Promise<MockDialogHandle> {
+      const panel = await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: BASES_A,
+        defaultBaseBranch: "main",
+      });
+      panel.emitChange("name", { name: "remembered" });
+      panel.emitChange("prompt", { prompt: "do the thing" });
+      panel.emitChange("agent-name", { "agent-name": "reviewer" });
+      await flush();
+      return panel;
+    }
+
+    it("pushes every field back as a controlled value so a remount restores it", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await filledPanel(s);
+
+      // The renderer unmounts the panel on hide, so the module is the only
+      // thing that survives: each field must carry its value in the config.
+      // Free-text fields seed (initialValue) rather than push (value), so
+      // echoing the user's own text back cannot race their typing.
+      expect(field(panel.config, "name")["initialValue"]).toBe("remembered");
+      // Restored text arrives selected so the first keystroke replaces it.
+      expect(field(panel.config, "name")["selectInitialValue"]).toBe(true);
+      expect(field(panel.config, "prompt")["initialValue"]).toBe("do the thing");
+      expect(field(panel.config, "agent-name")["initialValue"]).toBe("reviewer");
+      expect(field(panel.config, "base")["value"]).toBe("main");
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("keeps the session open (no reset) when nothing asks for one", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await filledPanel(s);
+
+      // Nothing dismissed the form, so it is still the same session — the
+      // values above are still there to be restored on the next show.
+      expect(panel.closed).toBe(false);
+      expect(currentPanel(s)).toBe(panel);
+    });
+
+    it("clears every field on reset", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await filledPanel(s);
+
+      panel.emitAction("reset", {});
+      await flush();
+
+      expect(panel.closed).toBe(true);
+      const fresh = currentPanel(s);
+      expect(field(fresh.config, "name")["initialValue"]).toBe("");
+      expect(field(fresh.config, "prompt")["initialValue"]).toBe("");
+      expect(field(fresh.config, "agent-name")["initialValue"]).toBe("");
+    });
+
+    it("re-seeds the project on reset", async () => {
+      const s = setup({
+        projects: [PROJECT_B, PROJECT_A],
+        activeWorkspaceProjectId: PROJECT_A.id,
+        defaultBaseBranch: "main",
+      });
+      const panel = await s.start();
+
+      panel.emitChange("project", { project: PROJECT_B.path });
+      await flush();
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
+
+      currentPanel(s).emitAction("reset", {});
+      await flush();
+
+      // Reset is the only thing that re-seeds; a plain reopen would have kept
+      // the manual pick.
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("clears the remembered fields after a successful create", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await filledPanel(s);
+
+      panel.emitAction("create", {
+        name: "remembered",
+        base: "main",
+        prompt: "do the thing",
+        "agent-name": "reviewer",
+      });
+      await flush();
+
+      const fresh = currentPanel(s);
+      expect(field(fresh.config, "name")["initialValue"]).toBe("");
+      expect(field(fresh.config, "prompt")["initialValue"]).toBe("");
+    });
+  });
+
+  describe("Reset button", () => {
+    it("is disabled on a fresh form and enabled once any input is made", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await s.start();
+      expect(field(panel.config, "reset")["disabled"]).toBe(true);
+
+      panel.emitChange("prompt", { prompt: "x" });
+      await flush();
+
+      // "as soon as any input was made" — the prompt alone is enough, even
+      // though it takes no part in Create gating.
+      expect(field(currentPanel(s).config, "reset")["disabled"]).toBe(false);
+      expect(field(currentPanel(s).config, "create")["disabled"]).toBe(true);
+    });
+
+    it("is disabled again after a reset", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await s.start();
+      panel.emitChange("prompt", { prompt: "x" });
+      await flush();
+
+      currentPanel(s).emitAction("reset", {});
+      await flush();
+
+      expect(field(currentPanel(s).config, "reset")["disabled"]).toBe(true);
+    });
+
+    it("carries role 'cancel' so Escape and the button are the same gesture", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await s.start();
+      panel.emitChange("prompt", { prompt: "x" });
+      await flush();
+
+      expect(cancelButton(currentPanel(s).config)?.id).toBe("reset");
+    });
+
+    it("seeding the form does not count as input", async () => {
+      const s = setup({
+        projects: [PROJECT_B, PROJECT_A],
+        activeWorkspaceProjectId: PROJECT_A.id,
+        defaultBaseBranch: "main",
+      });
+      await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: BASES_A,
+        defaultBaseBranch: "main",
+      });
+
+      // openSession() seeded the project and the base branch without the user
+      // touching anything, so the form is still clean.
+      expect(field(currentPanel(s).config, "base")["value"]).toBe("main");
+      expect(field(currentPanel(s).config, "reset")["disabled"]).toBe(true);
+    });
+  });
+
+  describe("permission mode", () => {
+    it("collapses a remembered mode the current backend does not offer", async () => {
+      const s = setup({
+        agents: [CLAUDE_AGENT, OPENCODE_AGENT],
+      });
+      const panel = await s.start();
+
+      panel.emitChange("permission-mode", { "permission-mode": "plan" });
+      await flush();
+      expect(field(currentPanel(s).config, "permission-mode")["value"]).toBe("plan");
+
+      // Switching backends re-fetches the launch options; OpenCode reports no
+      // modes, so the field goes away and the remembered "plan" cannot leak.
+      currentPanel(s).emitChange("agent", { agent: "opencode" });
+      await flush();
+      expect(sectionById(currentPanel(s).config, "permission-mode")).toBeUndefined();
+
+      // Coming back to a backend that DOES offer modes must not resurrect a
+      // mode the user picked for a different one.
+      currentPanel(s).emitChange("agent", { agent: "claude" });
+      await flush();
+      expect(field(currentPanel(s).config, "permission-mode")["value"]).toBe("plan");
+    });
+  });
 });
 
 describe("validateCloneUrl", () => {
