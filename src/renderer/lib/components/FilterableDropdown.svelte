@@ -23,6 +23,13 @@
     onInput?: ((value: string) => void) | undefined;
     /** Whether to focus the input on mount */
     autofocus?: boolean;
+    /**
+     * Select the seeded text the first time the input takes focus, so the first
+     * keystroke replaces it. One-shot: once the user has been given the
+     * selection, later focuses (tabbing back, closing a dropdown) place a
+     * caret as usual instead of re-selecting what they were editing.
+     */
+    selectOnFirstFocus?: boolean;
     /** Render the input as invalid (red border), e.g. for a validation error */
     invalid?: boolean;
     /** id of the element describing this input (e.g. a validation error) */
@@ -46,12 +53,15 @@
     onEnter,
     onInput: onInputCallback,
     autofocus = false,
+    selectOnFirstFocus = false,
     invalid = false,
     describedBy = undefined,
     searchable = true,
   }: FilterableDropdownProps = $props();
 
   // Internal state
+  /** Whether the one-shot seed selection has already been handed to the user. */
+  let seedSelectionConsumed = false;
   let isOpen = $state(false);
   let highlightedIndex = $state(-1);
   // Track whether user is actively typing (vs selection just happened)
@@ -186,6 +196,10 @@
   function handleFocus(): void {
     if (!disabled) {
       isOpen = true;
+    }
+    if (selectOnFirstFocus && !seedSelectionConsumed) {
+      seedSelectionConsumed = true;
+      inputRef?.select();
     }
     focusJustReceived = true;
     setTimeout(() => {

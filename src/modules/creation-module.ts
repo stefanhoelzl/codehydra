@@ -101,6 +101,7 @@ const FIELD_PERMISSION_MODE = "permission-mode";
 const ACTION_OPEN_FOLDER = "open-folder";
 const ACTION_CLONE = "clone";
 const ACTION_CREATE = "create";
+const ACTION_RESET = "reset";
 
 const CLONE_FIELD_URL = "url";
 const CLONE_ACTION_SUBMIT = "do-clone";
@@ -160,6 +161,24 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   /** Raw name field value (a branch ref after a suggestion pick). */
   let nameValue = "";
   let baseValue = "";
+  /**
+   * Prompt / agent-name / permission-mode field values.
+   *
+   * These are tracked (not just read from the submit snapshot) because the
+   * renderer unmounts the panel on every hide, so the module is the only thing
+   * that survives a close/reopen. Each is pushed back as a controlled `value`
+   * so the remounted Form restores what was typed instead of coming up blank.
+   */
+  let promptValue = "";
+  let agentNameValue = "";
+  let permissionModeValue = "";
+  /**
+   * Whether the user has touched any field since the last reset. Drives the
+   * Reset button's enabled state ("as soon as any input was made"). Set from
+   * field-change events only, so the seeding openSession() does programmatically
+   * (selectProject) never counts as input.
+   */
+  let dirty = false;
   /** Native folder picker in flight. */
   let pickerBusy = false;
   /** Form-level error (e.g. folder-open failure), shown above the footer. */
@@ -217,6 +236,18 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   /** True while the selected backend's launch options are being fetched. */
   function launchOptionsLoading(): boolean {
     return loadingLaunchOptionsFor !== null && loadingLaunchOptionsFor === selectedAgentType;
+  }
+
+  /**
+   * The permission mode to display, guarded against backend switches: a
+   * remembered mode belongs to whichever backend was selected when it was
+   * picked, and switching backends (or the options still loading) can leave it
+   * unofferable. Anything the current backend does not list collapses to ""
+   * — the "default" entry, which omits the flag.
+   */
+  function currentPermissionMode(): string {
+    if (permissionModeValue === "") return "";
+    return currentPermissionModes().includes(permissionModeValue) ? permissionModeValue : "";
   }
 
   /** Permission-mode suggestions: the default entry plus the backend's modes. */
@@ -407,6 +438,15 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         label: "Name",
         freeText: true,
         suggestions: nameSuggestions(),
+        // Seeded (not controlled) so a remembered name survives the Form
+        // remount the panel does on every show. `initialValue` applies on first
+        // sight only and never re-seeds a live field, so echoing the user's own
+        // text back can never race their typing — the reason this field was
+        // left uncontrolled to begin with.
+        initialValue: nameValue,
+        // A restored name arrives selected, so typing replaces it instead of
+        // appending to text the user would have to clear by hand.
+        selectInitialValue: true,
         placeholder: "Enter name or select branch...",
         changeEvent: true,
         disabled: !hasProject || pickerBusy,
@@ -431,6 +471,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         label: "Prompt",
         multiline: true,
         rows: 3,
+        // Seeded, not controlled — see FIELD_NAME above.
+        initialValue: promptValue,
+        changeEvent: true,
         placeholder: "Optional prompt — sent as soon as the workspace is ready",
       },
     ];
@@ -453,6 +496,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       type: "input",
       id: FIELD_AGENT_NAME,
       label: "Agent name",
+      // Seeded, not controlled — see FIELD_NAME above.
+      initialValue: agentNameValue,
+      changeEvent: true,
       placeholder: "default",
     });
 
@@ -467,6 +513,12 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         label: "Permission mode",
         searchable: false,
         suggestions: permissionModeSuggestions(),
+        // Guarded: a remembered mode belongs to whichever backend was selected
+        // when it was picked, and the backend can change under it. Anything the
+        // current backend does not offer collapses to "" (the "default" entry,
+        // which omits the flag) rather than pushing a mode it cannot honour.
+        value: currentPermissionMode(),
+        changeEvent: true,
         loading: launchOptionsLoading(),
       });
     }
@@ -479,6 +531,19 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       type: "group",
       align: "right",
       items: [
+        // role "cancel" makes Escape and this button the same gesture: Form
+        // clicks the first ENABLED cancel-role button, so on a clean form
+        // Escape instead falls through to the dismiss path — which lands on the
+        // same resetSession(), where re-seeding a form that was never touched
+        // is a no-op.
+        {
+          type: "button",
+          id: ACTION_RESET,
+          label: "Reset",
+          variant: "secondary",
+          role: "cancel",
+          disabled: !dirty,
+        },
         {
           type: "button",
           id: ACTION_CREATE,
@@ -591,6 +656,10 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     branchesError = null;
     nameValue = "";
     baseValue = "";
+    promptValue = "";
+    agentNameValue = "";
+    permissionModeValue = "";
+    dirty = false;
     pickerBusy = false;
     formError = null;
     launchOptions = null;
@@ -638,6 +707,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     sessionHandle.onChange((event) => {
       if (handle !== sessionHandle) return;
       const data = event.data;
+      // Any field-change event is user input by definition: the form's own
+      // seeding goes through selectProject()/pushConfig(), never through the
+      // renderer, so it cannot land here.
+      if (!dirty) {
+        dirty = true;
+        pushConfig();
+      }
       if (event.fieldId === FIELD_PROJECT) {
         // The dialog hands back a raw string; resolve it against the module's own
         // project list rather than minting a brand from unvalidated UI input.
@@ -658,6 +734,18 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       } else if (event.fieldId === FIELD_BASE) {
         baseValue = data[FIELD_BASE] ?? "";
         pushConfig();
+      } else if (event.fieldId === FIELD_PROMPT) {
+        // Pushed so the config the renderer holds carries the latest text when
+        // the panel next remounts. Harmless to the live field: a changed
+        // `initialValue` never re-seeds one.
+        promptValue = data[FIELD_PROMPT] ?? "";
+        pushConfig();
+      } else if (event.fieldId === FIELD_AGENT_NAME) {
+        agentNameValue = data[FIELD_AGENT_NAME] ?? "";
+        pushConfig();
+      } else if (event.fieldId === FIELD_PERMISSION_MODE) {
+        permissionModeValue = data[FIELD_PERMISSION_MODE] ?? "";
+        pushConfig();
       } else if (event.fieldId === FIELD_AGENT) {
         const next = data[FIELD_AGENT] ?? "";
         if (isAvailableAgent(next) && next !== selectedAgentType) {
@@ -674,6 +762,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       if (handle !== sessionHandle) return;
       if (event.actionId === ACTION_CREATE) {
         handleCreate(event.data ?? {});
+      } else if (event.actionId === ACTION_RESET) {
+        void resetSession();
       } else if (event.actionId === ACTION_OPEN_FOLDER) {
         handleOpenFolder();
       } else if (event.actionId === ACTION_CLONE) {

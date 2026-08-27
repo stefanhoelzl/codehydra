@@ -856,4 +856,48 @@ describe("FilterableDropdown component", () => {
       expect(input).not.toHaveAttribute("data-autofocus");
     });
   });
+
+  describe("selectOnFirstFocus", () => {
+    it("selects the seeded text on the first focus", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "remembered", selectOnFirstFocus: true },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      await fireEvent.focus(input);
+
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe("remembered".length);
+    });
+
+    it("places a caret on later focuses instead of re-selecting", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "remembered", selectOnFirstFocus: true },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      await fireEvent.focus(input);
+      await fireEvent.blur(input);
+      input.setSelectionRange(3, 3);
+      await fireEvent.focus(input);
+
+      // One-shot: tabbing back into a field mid-edit must not swallow the
+      // user's caret position and re-select what they were editing.
+      expect(input.selectionStart).toBe(3);
+      expect(input.selectionEnd).toBe(3);
+    });
+
+    it("leaves the caret alone when not enabled", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, value: "remembered" },
+      });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      input.setSelectionRange(4, 4);
+      await fireEvent.focus(input);
+
+      expect(input.selectionStart).toBe(4);
+      expect(input.selectionEnd).toBe(4);
+    });
+  });
 });

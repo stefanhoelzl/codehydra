@@ -63,6 +63,7 @@
       searchable={section.searchable ?? true}
       disabled={section.disabled ?? false}
       autofocus={section.autofocus ?? false}
+      selectOnFirstFocus={section.selectInitialValue ?? false}
       invalid={!!section.error}
       describedBy={section.error ? `${section.id}-error` : undefined}
       onSelect={onPick}

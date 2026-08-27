@@ -142,6 +142,9 @@ interface RadioSection extends FieldSection {
  * - searchable false (strict mode only): the input is read-only — the field
  *   behaves like a classic select (focus opens the list, arrow keys + click
  *   pick, typing does nothing). Default true (type-to-filter combobox).
+ * - selectInitialValue selects the seeded text instead of placing a caret, so
+ *   the first keystroke replaces it (same as the input section's). Only
+ *   meaningful together with autofocus, which is what places the caret.
  */
 interface DropdownSection extends FieldSection {
   readonly type: "dropdown";
@@ -150,6 +153,7 @@ interface DropdownSection extends FieldSection {
   readonly searchable?: boolean;
   readonly placeholder?: string;
   readonly initialValue?: string;
+  readonly selectInitialValue?: boolean;
   readonly value?: string;
   readonly changeEvent?: FieldChangeConfig;
   readonly loading?: boolean;
