@@ -116,18 +116,18 @@ test.describe("ch CLI", () => {
     expect(existsSync(join(BIN_DIR, "ch-opencode"))).toBe(false);
   });
 
-  test("had its template rendered with a real interpreter path", () => {
+  test("had its template rendered", () => {
     const wrapper = readFileSync(CH, "utf-8");
 
-    // An unrendered template would leave the Liquid tag in place and the CLI
-    // would fail to start with no interpreter.
+    // An unrendered template leaves the Liquid tag in place, and the CLI then
+    // starts with no interpreter at all.
     expect(wrapper).not.toContain("{{");
 
-    // The baked-in fallback, not the `$_CH_IDE_NODE` line above it: an absolute
-    // path is what makes `ch` work outside a CodeHydra terminal.
-    const match = /"(\/[^"]*node[^"]*)"/.exec(wrapper);
-    expect(match, `wrapper should name an absolute interpreter path:\n${wrapper}`).not.toBeNull();
-    expect(existsSync(match![1]!), `${match![1]} should exist`).toBe(true);
+    // That the baked path is not merely present but correct is proven by the
+    // commands below: `ch` is invoked with every _CH_* variable stripped, so it
+    // can only run by exec'ing the interpreter written into this file. Matching
+    // the path here instead would mean encoding two wrapper dialects — a POSIX
+    // path in `ch`, a drive path in `ch.cmd` — for a weaker check.
   });
 
   test("publishes connection details another process can read", () => {
