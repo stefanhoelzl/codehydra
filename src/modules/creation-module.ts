@@ -780,7 +780,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     formError = null;
     pushConfig();
 
-    const intent: OpenProjectIntent = { type: INTENT_OPEN_PROJECT, payload: {} };
+    // `initial`: the user is adding this project right now, so the add-project
+    // worktree picker may interrupt. Startup restore and auto-workspace omit it.
+    const intent: OpenProjectIntent = { type: INTENT_OPEN_PROJECT, payload: { initial: true } };
     dispatcher.dispatch(intent).then(
       (project) => {
         pickerBusy = false;
@@ -948,7 +950,10 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     updateCloneDialog();
     logger.debug("Cloning repository", { url });
 
-    const intent: OpenProjectIntent = { type: INTENT_OPEN_PROJECT, payload: { git: url } };
+    const intent: OpenProjectIntent = {
+      type: INTENT_OPEN_PROJECT,
+      payload: { git: url, initial: true },
+    };
     dispatcher.dispatch(intent).then(
       (project) => {
         // Only react if this dialog instance still owns the clone.

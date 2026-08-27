@@ -60,6 +60,16 @@ export const openProjectPayloadSchema = z
     path: projectPathSchema.optional(),
     /** Git URL or shorthand (e.g. "org/repo"). Set by the creation module's clone sub-dialog. */
     git: z.string().optional(),
+    /**
+     * True when the user is adding this project right now (the creation module's
+     * folder picker or clone sub-dialog). Absent for the same operation re-run on a
+     * project already known: startup restore and auto-workspace.
+     *
+     * The distinction exists because those are the same intent with the same payload
+     * otherwise, and the add-project worktree picker must only interrupt a person who
+     * is standing at the dialog.
+     */
+    initial: z.boolean().optional(),
   })
   .readonly();
 

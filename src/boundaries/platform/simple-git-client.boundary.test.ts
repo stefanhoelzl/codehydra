@@ -17,6 +17,7 @@ import { promises as fs } from "fs";
 import nodePath from "path";
 import { simpleGit } from "simple-git";
 import { SILENT_LOGGER } from "./logging";
+import { parseBranchConfigs } from "./git-worktree-provider";
 import { Path } from "../../utils/path/path";
 
 // These tests spawn real git processes against temp-dir repos. On Windows CI,
@@ -581,6 +582,24 @@ describe("SimpleGitClient", () => {
       });
 
       expect(Object.fromEntries(configs)).toEqual({ "branch.main.codehydra.base": "develop" });
+    });
+
+    it("round-trips the external tag on a slash-named branch", async () => {
+      // The adoption marker is the riskiest key shape CodeHydra writes: git reads
+      // `branch.feature/login.codehydra.tags.external` as subsection
+      // "feature/login.codehydra.tags" + variable "external", and the value is JSON
+      // containing a `#` (git's comment character). Prove real git survives both, and
+      // that parseBranchConfigs splits the branch back off correctly.
+      const value = JSON.stringify({ color: "#8b949e" });
+      await client.setBranchConfig(repoPath, "feature/login", "codehydra.tags.external", value);
+
+      const configs = await client.getGitConfig(repoPath, {
+        regex: "^branch\\..*\\.codehydra\\.",
+      });
+
+      expect(parseBranchConfigs(configs, "codehydra")).toEqual(
+        new Map([["feature/login", { "tags.external": value }]])
+      );
     });
 
     it("throws GitError for non-repo path", async () => {

@@ -106,7 +106,11 @@ describe("GitWorktreeProvider error injection", () => {
             branches: ["main", "feature-x"],
             currentBranch: "main",
             worktrees: [
-              { name: "feature-x", path: "/data/workspaces/feature-x", branch: "feature-x" },
+              {
+                name: "feature-x",
+                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
+                branch: "feature-x",
+              },
             ],
           },
         },
@@ -352,7 +356,9 @@ describe("GitWorktreeProvider error injection", () => {
 
   describe("removeWorkspace", () => {
     it("falls back to rm + prune when git worktree remove fails", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -395,7 +401,9 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("throws original error when fallback also fails", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -426,7 +434,9 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("throws branch error when worktree succeeds but branch deletion fails", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -454,7 +464,9 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("rejects with original git error when fallback rm times out", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
+      const worktreePath = new Path(
+        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+      );
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {

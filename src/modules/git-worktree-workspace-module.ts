@@ -19,7 +19,9 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { Workspace } from "../boundaries/platform/git-types";
+import type { UnmanagedWorktree, Workspace } from "../boundaries/platform/git-types";
+import type { UiPresenter } from "./presentation/presentation-module";
+import type { DialogSection } from "../shared/dialog-types";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { WorkspaceName } from "../shared/api/types";
@@ -41,7 +43,12 @@ import type {
   DeletePipelineHookInput,
   PreflightHookResult,
 } from "../intents/delete-workspace";
-import type { DiscoverHookResult, DiscoverHookInput } from "../intents/open-project";
+import type {
+  DiscoverHookResult,
+  DiscoverHookInput,
+  OpenProjectIntent,
+  PrepareHookResult,
+} from "../intents/open-project";
 import type {
   CloseHookInput,
   CloseResolveHookResult,
@@ -86,12 +93,14 @@ import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
  * @param gitWorktreeProvider - Global GitWorktreeProvider for all git operations
  * @param pathProvider - PathProvider for resolving workspace directories
  * @param logger - Logger for warnings and errors
+ * @param ui - Presenter for the add-project worktree picker and its failure notice
  * @returns IntentModule with hook contributions
  */
 export function createGitWorktreeWorkspaceModule(
   gitWorktreeProvider: GitWorktreeProvider,
   pathProvider: PathProvider,
-  logger: Logger
+  logger: Logger,
+  ui: Pick<UiPresenter, "dialog" | "notification">
 ): IntentModule {
   // Internal state
   // Keyed by branded paths: these maps feed hook results directly, so keeping the brand on
@@ -206,6 +215,156 @@ export function createGitWorktreeWorkspaceModule(
   }
 
   // ---------------------------------------------------------------------------
+  // Add-project worktree picker
+  // ---------------------------------------------------------------------------
+
+  const ACTION_CONTINUE = "continue";
+  const ACTION_CANCEL = "cancel";
+  const SELECT_ALL_ID = "select-all";
+  const CHECKBOX_ID_PREFIX = "wt-";
+
+  /**
+   * One line identifying a worktree: the name the workspace would take, then where
+   * it lives. The branch is only worth a mention when it differs from the directory
+   * name — for CodeHydra's own naming they are the same word, and repeating it once
+   * per row is noise.
+   */
+  function worktreeLabel(wt: UnmanagedWorktree): string {
+    const branch = wt.branch !== null && wt.branch !== wt.name ? ` (${wt.branch})` : "";
+    const detached = wt.adoptable ? "" : " — detached HEAD, cannot be adopted";
+    return `${wt.name}${branch} — ${wt.path.toString()}${detached}`;
+  }
+
+  /**
+   * Build the picker's sections from the current selection.
+   *
+   * One checkbox per worktree, nothing else: a separate line of detail per row
+   * would be centered by the dialog's default layout and separated from its own
+   * checkbox by a full section gap, which reads as two unrelated things.
+   *
+   * Every checkbox echoes the module's own model value on every render. That is what
+   * the controlled-value contract requires to force a box: the renderer adopts a
+   * pushed value it has not seen yet, so "Select all" only re-ticks a box the user
+   * unticked if the value it last saw was the untick.
+   */
+  function buildPickerSections(
+    projectPath: string,
+    unmanaged: readonly UnmanagedWorktree[],
+    selected: ReadonlySet<number>
+  ): DialogSection[] {
+    const adoptable = unmanaged.filter((wt) => wt.adoptable);
+    const sections: DialogSection[] = [
+      { type: "text", content: "Open existing worktrees?", style: "heading" },
+      { type: "text", content: projectPath, style: "subtitle" },
+      {
+        type: "checkbox",
+        id: SELECT_ALL_ID,
+        label: "Select all",
+        // Reflects the rows rather than driving them alone: unticking one row
+        // unticks this too, which is what a select-all box is expected to do.
+        value: adoptable.length > 0 && adoptable.every((wt) => selected.has(unmanaged.indexOf(wt))),
+        changeEvent: true,
+      },
+    ];
+
+    unmanaged.forEach((wt, index) => {
+      sections.push({
+        type: "checkbox",
+        id: `${CHECKBOX_ID_PREFIX}${index}`,
+        label: worktreeLabel(wt),
+        value: selected.has(index),
+        changeEvent: true,
+        disabled: !wt.adoptable,
+      });
+    });
+
+    sections.push({
+      type: "group",
+      reverse: true,
+      items: [
+        { type: "button", id: ACTION_CONTINUE, label: "Continue", variant: "primary" },
+        {
+          type: "button",
+          id: ACTION_CANCEL,
+          label: "Cancel",
+          variant: "secondary",
+          role: "cancel",
+        },
+      ],
+    });
+
+    return sections;
+  }
+
+  /** Map a checkbox field id back to its index in the unmanaged list. */
+  function checkboxIndex(fieldId: string): number | undefined {
+    if (!fieldId.startsWith(CHECKBOX_ID_PREFIX)) return undefined;
+    const index = Number(fieldId.slice(CHECKBOX_ID_PREFIX.length));
+    return Number.isInteger(index) ? index : undefined;
+  }
+
+  /**
+   * Show the picker and return the worktrees the user ticked, or null if they
+   * canceled (which aborts the whole project add).
+   */
+  async function runPicker(
+    projectPath: string,
+    unmanaged: readonly UnmanagedWorktree[]
+  ): Promise<UnmanagedWorktree[] | null> {
+    const selected = new Set<number>();
+
+    const setAll = (checked: boolean): void => {
+      selected.clear();
+      if (!checked) return;
+      unmanaged.forEach((wt, index) => {
+        if (wt.adoptable) selected.add(index);
+      });
+    };
+
+    const applyValues = (data: Readonly<Record<string, string>> | undefined): void => {
+      if (!data) return;
+      for (const [fieldId, value] of Object.entries(data)) {
+        const index = checkboxIndex(fieldId);
+        if (index === undefined) continue;
+        if (value === "true") selected.add(index);
+        else selected.delete(index);
+      }
+    };
+
+    const dialog = ui.dialog({
+      sections: buildPickerSections(projectPath, unmanaged, selected),
+    });
+    const rerender = (): void => {
+      dialog.update({ sections: buildPickerSections(projectPath, unmanaged, selected) });
+    };
+
+    const confirmed = await new Promise<boolean>((resolve) => {
+      dialog.onChange((event) => {
+        if (event.fieldId === SELECT_ALL_ID) setAll(event.data[SELECT_ALL_ID] === "true");
+        else applyValues(event.data);
+        rerender();
+      });
+      dialog.onEvent((event) => {
+        if (event.actionId === ACTION_CONTINUE) {
+          // The submit payload is the authority: a debounced change event for the
+          // last toggle may still be in flight.
+          applyValues(event.data);
+          resolve(true);
+          return;
+        }
+        resolve(false);
+      });
+      dialog.onDismiss(() => {
+        resolve(false);
+      });
+    });
+    dialog.close();
+
+    if (!confirmed) return null;
+    return unmanaged.filter((wt, index) => wt.adoptable && selected.has(index));
+  }
+
+  // ---------------------------------------------------------------------------
   // Hook Handlers
   // ---------------------------------------------------------------------------
 
@@ -223,8 +382,83 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // open-project -> discover
+      // open-project -> prepare (worktree picker) + discover
       [OPEN_PROJECT_OPERATION_ID]: {
+        // prepare: offer the project's pre-existing worktrees for adoption.
+        //
+        // Only for an interactive add of a local path. Startup restore and
+        // auto-workspace re-run this same operation with the same payload, and must
+        // never interrupt with a dialog — `initial` is what separates them.
+        //
+        // Ordering against the git-init prompt on this hook point does not matter: a
+        // directory that is not yet a repository has no worktrees to list, and one
+        // that just became a repository has only its main worktree.
+        prepare: {
+          handler: async (ctx: HookContext): Promise<HookOutput<PrepareHookResult>> => {
+            const intent = ctx.intent as OpenProjectIntent;
+            const { path, git, initial } = intent.payload;
+
+            // Self-select: interactive add, local path only. A fresh clone has no
+            // pre-existing worktrees, so the picker would always be empty for one.
+            if (!initial || git || !path) return { result: {} };
+
+            const projectPathObj = new Path(path);
+            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
+
+            let unmanaged: readonly UnmanagedWorktree[];
+            try {
+              unmanaged = await gitWorktreeProvider.listUnmanagedWorktrees(
+                projectPathObj,
+                workspacesDir
+              );
+            } catch (error: unknown) {
+              // Not a repository yet (the git-init prompt may not have run), or git
+              // is unhappy — either way the open proceeds and resolve reports it.
+              logger.warn("Failed to list worktrees for the add-project picker", {
+                projectPath: path,
+                error: getErrorMessage(error),
+              });
+              return { result: {} };
+            }
+
+            // Nothing the user could act on: say nothing. discover() logs the
+            // worktrees it skips, so agent scratch worktrees stay diagnosable
+            // without putting a dialog in the way of adding a project.
+            if (!unmanaged.some((wt) => wt.adoptable)) return { result: {} };
+
+            const picked = await runPicker(path, unmanaged);
+            if (picked === null) return { result: { canceled: true } };
+
+            const failed: string[] = [];
+            for (const wt of picked) {
+              if (wt.branch === null) continue;
+              try {
+                await gitWorktreeProvider.adoptWorktree(projectPathObj, wt.path, wt.branch);
+              } catch (error: unknown) {
+                failed.push(wt.name);
+                logger.warn("Failed to adopt worktree", {
+                  path: wt.path.toString(),
+                  branch: wt.branch,
+                  error: getErrorMessage(error),
+                });
+              }
+            }
+
+            // The tag IS the ownership record, so a failed write means the worktree
+            // is not a workspace — say so rather than let it silently disappear on
+            // the next restart.
+            if (failed.length > 0) {
+              ui.notification({
+                title: "Could not open some worktrees",
+                message: `${failed.join(", ")} could not be marked as CodeHydra workspaces.`,
+                type: "error",
+                dismissible: true,
+              });
+            }
+
+            return { result: {} };
+          },
+        },
         discover: {
           handler: async (ctx: HookContext): Promise<HookOutput<DiscoverHookResult>> => {
             const { projectPath } = ctx as DiscoverHookInput;

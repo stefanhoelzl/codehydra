@@ -64,6 +64,21 @@ export interface Workspace {
 }
 
 /**
+ * A worktree of the project that CodeHydra does not manage — neither created by it
+ * nor adopted by the user. Offered in the add-project picker.
+ */
+export interface UnmanagedWorktree {
+  /** Directory name; the name the workspace takes if adopted */
+  readonly name: string;
+  /** Absolute path to the worktree directory (normalized Path) */
+  readonly path: Path;
+  /** Branch checked out in the worktree, null if detached HEAD */
+  readonly branch: string | null;
+  /** False for a detached HEAD: the adoption tag is stored per branch */
+  readonly adoptable: boolean;
+}
+
+/**
  * Base (branch) information for workspace creation.
  * Re-exported from shared types for single source of truth.
  */
