@@ -86,6 +86,7 @@
     return {
       destroy() {
         frameEls.delete(key);
+        forgetFrame(key);
       },
     };
   }
@@ -98,9 +99,22 @@
   // stays silent is logged and reloaded. The frames are the only witnesses to
   // their own renderer process dying — Electron surfaces no event for a
   // subframe process (PostHog issue 019fb265).
+  //
+  // A frame also announces itself unprompted once its injected script installs
+  // (ui-view-manager's CHILD_FRAME_PROBE), which is how a frame mounted after
+  // the probe was sent still gets to answer it: the probe fires at mount, but
+  // the script only arrives on load-finish. Both paths land in
+  // `handleFrameMessage`, so a probe is settled by whichever comes first.
   // ---------------------------------------------------------------------------
 
-  /** Keys that have answered at least once — separates dead from never-loaded. */
+  /**
+   * Keys whose *currently mounted* frame has answered at least once —
+   * separates dead from never-loaded. Scoped to the frame element, not the
+   * workspace: hibernating unmounts the frame, and the one a wake mounts is a
+   * new document that has proven nothing yet. Letting the key outlive its
+   * frame is what turned a woken workspace's unanswerable probe into a reload
+   * (PostHog issue 019fc47c), so `forgetFrame` clears it on unmount.
+   */
   const everAnswered = new SvelteSet<string>();
 
   /** The frame currently being probed, and its pending verdict. */
@@ -111,6 +125,12 @@
     if (probeTimer !== undefined) clearTimeout(probeTimer);
     probeTimer = undefined;
     probeKey = null;
+  }
+
+  /** Drop the liveness record of a frame that is going away. */
+  function forgetFrame(key: string): void {
+    everAnswered.delete(key);
+    if (key === probeKey) cancelProbe();
   }
 
   function probeFrame(key: string, el: HTMLIFrameElement): void {
