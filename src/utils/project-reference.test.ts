@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { Path } from "./path/path";
 import {
   looksLikeGitUrl,
   looksLikeProjectPath,
@@ -58,13 +59,27 @@ describe("looksLikeGitUrl", () => {
 });
 
 describe("resolveLocalPath", () => {
+  /**
+   * A genuinely absolute directory for whichever platform the test runs on.
+   *
+   * A POSIX-style path like "/home/me/repo" is NOT a complete absolute path on
+   * Windows: it has no drive, so node resolves it against the process's current
+   * one and yields "d:/home/me/repo". Taking the real cwd keeps the test about
+   * what resolveLocalPath does rather than about path conventions.
+   */
+  const CWD = new Path(process.cwd()).toString();
+
   it("resolves a relative target against the caller's directory", () => {
-    expect(resolveLocalPath(".", "/home/me/repo")).toBe("/home/me/repo");
-    expect(resolveLocalPath("../other", "/home/me/repo")).toBe("/home/me/other");
+    expect(resolveLocalPath(".", CWD)).toBe(CWD);
+    expect(resolveLocalPath("sub", CWD)).toBe(`${CWD}/sub`);
+  });
+
+  it("climbs out of the caller's directory with ..", () => {
+    expect(resolveLocalPath("../other", CWD)).toBe(`${new Path(CWD).dirname.toString()}/other`);
   });
 
   it("leaves an absolute target alone", () => {
-    expect(resolveLocalPath("/srv/repo", "/home/me")).toBe("/srv/repo");
+    expect(resolveLocalPath(CWD, "/elsewhere")).toBe(CWD);
   });
 
   it("returns a relative target unchanged when there is no directory to resolve against", () => {
