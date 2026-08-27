@@ -20,22 +20,17 @@ import type { WindowHandle } from "./types";
 
 vi.mock("electron");
 
-type FrameLoadListener = (
-  event: unknown,
-  isMainFrame: boolean,
-  frameProcessId: number,
-  frameRoutingId: number
-) => void;
+type WebContentsListener = (...args: unknown[]) => void;
 
 interface FakeFrame {
   executeJavaScript: ReturnType<typeof vi.fn>;
 }
 
-const listeners = new Map<string, FrameLoadListener[]>();
+const listeners = new Map<string, WebContentsListener[]>();
 
 const fakeWebContents = {
   isDestroyed: () => false,
-  on: (event: string, listener: FrameLoadListener) => {
+  on: (event: string, listener: WebContentsListener) => {
     const list = listeners.get(event) ?? [];
     list.push(listener);
     listeners.set(event, list);
@@ -57,10 +52,14 @@ const windowHandle: WindowHandle = { id: "window-1", __brand: "WindowHandle" };
 
 import { DefaultViewBoundary } from "./view";
 
-function emitFrameFinishLoad(isMainFrame: boolean, processId: number, routingId: number): void {
-  for (const listener of listeners.get("did-frame-finish-load") ?? []) {
-    listener(undefined, isMainFrame, processId, routingId);
+function emit(event: string, ...args: unknown[]): void {
+  for (const listener of listeners.get(event) ?? []) {
+    listener(...args);
   }
+}
+
+function emitFrameFinishLoad(isMainFrame: boolean, processId: number, routingId: number): void {
+  emit("did-frame-finish-load", undefined, isMainFrame, processId, routingId);
 }
 
 function createFrame(): FakeFrame {
@@ -184,5 +183,30 @@ describe("DefaultViewBoundary installChildFrameScript", () => {
 
     expect(frame.executeJavaScript).toHaveBeenCalledWith("tracker()");
     expect(rejectionHandled).toBe(true);
+  });
+});
+
+describe("DefaultViewBoundary unload vetoes", () => {
+  let boundary: DefaultViewBoundary;
+  let logger: MockLogger;
+
+  beforeEach(() => {
+    listeners.clear();
+    resetElectronFake();
+    logger = createMockLogger();
+    boundary = new DefaultViewBoundary(windowLayer, logger);
+  });
+
+  it("ignores a frame's beforeunload veto so the window still closes", () => {
+    // The embedded VSCodium workbench vetoes unload whenever a modifier key is
+    // held ("window.confirmBeforeClose": "keyboardOnly" on web), so Alt+F4 was
+    // silently dropped by Electron's default handling and the app kept running.
+    boundary.adoptWindowWebContents(windowHandle);
+    const event = { preventDefault: vi.fn() };
+
+    emit("will-prevent-unload", event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(logger.debug).toHaveBeenCalledWith("unload veto ignored ui");
   });
 });
