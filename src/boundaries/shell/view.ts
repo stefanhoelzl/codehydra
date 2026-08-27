@@ -417,6 +417,26 @@ export class DefaultViewBoundary implements ViewBoundary {
       this.logger.debug(`focus ${label}`);
     });
 
+    // Never let a page frame veto the window close.
+    //
+    // Every workspace iframe shares this webContents, so any of them can cancel
+    // an OS close request from a `beforeunload` handler — and Electron's default
+    // answer to that veto is to silently drop the close: no dialog, no close, no
+    // log line. The embedded VSCodium workbench vetoes routinely: its web
+    // lifecycle service prevents unload whenever a modifier key is held down
+    // (`window.confirmBeforeClose` defaults to "keyboardOnly" on web), which is
+    // every Alt+F4 that beats its own Alt keyUp. The `close` event fires, the
+    // window stays, and the user presses again until one attempt happens to race
+    // the other way.
+    //
+    // preventDefault() means "ignore the veto and unload anyway", so the close
+    // proceeds to `window-all-closed` → app:shutdown, which is what runs the
+    // orderly teardown.
+    webContents.on("will-prevent-unload", (event) => {
+      this.logger.debug(`unload veto ignored ${label}`);
+      event.preventDefault();
+    });
+
     const handle = createViewHandle(id);
     this.logger.debug("Window webContents adopted as view", {
       id,
