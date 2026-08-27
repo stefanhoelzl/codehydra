@@ -38,6 +38,7 @@ import {
 } from "./boundaries/platform/store-definition";
 // Boundaries - Shell
 import { DefaultAppBoundary } from "./boundaries/shell/app";
+import { DefaultOsNotificationBoundary } from "./boundaries/shell/os-notification";
 import { DefaultImageBoundary } from "./boundaries/shell/image";
 import { DefaultDialogBoundary } from "./boundaries/shell/dialog";
 import { DefaultMenuBoundary } from "./boundaries/shell/menu";
@@ -166,6 +167,7 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-module";
 import { createBadgeModule } from "./modules/badge-module";
+import { createOsNotificationModule } from "./modules/os-notification-module";
 import { createPowerModule } from "./modules/power-module";
 import { createCliModule } from "./modules/cli-module";
 import { createRegistry } from "./api/entries";
@@ -288,6 +290,8 @@ const windowLayer = new DefaultWindowBoundary(
 const viewLayer = new DefaultViewBoundary(windowLayer, loggingService.createLogger("view"));
 const sessionLayer = new DefaultSessionBoundary(loggingService.createLogger("view"));
 const appLayer = new DefaultAppBoundary(loggingService.createLogger("badge"));
+const notificationLogger = loggingService.createLogger("notification");
+const osNotificationLayer = new DefaultOsNotificationBoundary(notificationLogger);
 
 // 4. Service construction
 
@@ -713,6 +717,13 @@ const badgeModule = createBadgeModule({
   windowManager,
   logger: loggingService.createLogger("badge"),
 });
+const osNotificationModule = createOsNotificationModule({
+  osNotificationLayer,
+  windowManager,
+  dispatcher,
+  configService,
+  logger: notificationLogger,
+});
 const powerModule = createPowerModule({
   appLayer,
   logger: loggingService.createLogger("power"),
@@ -750,6 +761,7 @@ const autoTaggingModule = createAutoTaggingModule({
 
 const electronLifecycleModule = createElectronLifecycleModule({
   app,
+  appLayer,
   buildInfo,
   pathProvider,
   asyncWatcher,
@@ -947,6 +959,7 @@ dispatcher.registerModule(workspaceAgentResolverModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
+dispatcher.registerModule(osNotificationModule);
 dispatcher.registerModule(powerModule);
 dispatcher.registerModule(deletionDialogModule);
 dispatcher.registerModule(creationModule);

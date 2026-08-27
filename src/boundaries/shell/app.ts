@@ -86,6 +86,21 @@ export interface AppBoundary {
   relaunch(): void;
 
   /**
+   * Set the Application User Model ID (Windows).
+   *
+   * Windows keys toasts to the AUMID of the shortcut that launched the app. Our
+   * NSIS installer stamps its shortcut with electron-builder's `appId`, but
+   * Electron's runtime default is derived from the executable path instead —
+   * and when the two disagree, toasts can surface under the wrong name or fail
+   * to persist in Action Center. Setting it explicitly makes them agree.
+   *
+   * No-op on macOS and Linux, which have no such concept.
+   *
+   * @param id - Must match `appId` in electron-builder.yaml
+   */
+  setAppUserModelId(id: string): void;
+
+  /**
    * Whether the OS is currently using a dark color scheme.
    */
   shouldUseDarkColors(): boolean;
@@ -161,6 +176,11 @@ export class DefaultAppBoundary implements AppBoundary {
     this.logger.info("Relaunching app");
     app.relaunch();
     app.quit();
+  }
+
+  setAppUserModelId(id: string): void {
+    app.setAppUserModelId(id);
+    this.logger.debug("App user model id set", { id });
   }
 
   shouldUseDarkColors(): boolean {

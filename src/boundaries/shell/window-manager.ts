@@ -192,6 +192,17 @@ export class WindowManager {
   }
 
   /**
+   * Whether the window currently has OS focus.
+   *
+   * False when another app is in front, when minimized, and when the user has
+   * switched to another virtual desktop — i.e. whenever CodeHydra is in the
+   * background. Focus inside a workspace iframe still counts as focused.
+   */
+  isFocused(): boolean {
+    return this.windowLayer.isFocused(this.windowHandle);
+  }
+
+  /**
    * Returns the current resolved theme.
    */
   getTheme(): Theme {

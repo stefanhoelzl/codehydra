@@ -396,6 +396,7 @@ Electron APIs are abstracted behind testable interfaces in two domains. This ena
 │  │       ▼                         │  │   DialogBoundary                     │ │
 │  │  ViewBoundary ───► SessionBoundary    │  │   AppBoundary                        │ │
 │  │                                 │  │   MenuBoundary                       │ │
+│  │                                 │  │   OsNotificationBoundary             │ │
 │  └─────────────────────────────────┘  └───────────────────────────────────┘ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -423,12 +424,13 @@ Electron APIs are abstracted behind testable interfaces in two domains. This ena
 
 Layers return opaque handles instead of raw Electron objects:
 
-| Layer             | Returns         | Instead of        |
-| ----------------- | --------------- | ----------------- |
-| `WindowBoundary`  | `WindowHandle`  | `BaseWindow`      |
-| `ViewBoundary`    | `ViewHandle`    | `WebContentsView` |
-| `SessionBoundary` | `SessionHandle` | `Session`         |
-| `ImageBoundary`   | `ImageHandle`   | `NativeImage`     |
+| Layer                    | Returns                | Instead of        |
+| ------------------------ | ---------------------- | ----------------- |
+| `WindowBoundary`         | `WindowHandle`         | `BaseWindow`      |
+| `ViewBoundary`           | `ViewHandle`           | `WebContentsView` |
+| `SessionBoundary`        | `SessionHandle`        | `Session`         |
+| `ImageBoundary`          | `ImageHandle`          | `NativeImage`     |
+| `OsNotificationBoundary` | `OsNotificationHandle` | `Notification`    |
 
 This pattern:
 
@@ -440,16 +442,17 @@ This pattern:
 
 Each layer has boundary tests (`*.boundary.test.ts`) that verify behavior against real Electron APIs:
 
-| Layer             | Boundary Test              |
-| ----------------- | -------------------------- |
-| `IpcBoundary`     | `ipc.boundary.test.ts`     |
-| `DialogBoundary`  | `dialog.boundary.test.ts`  |
-| `ImageBoundary`   | `image.boundary.test.ts`   |
-| `AppBoundary`     | `app.boundary.test.ts`     |
-| `MenuBoundary`    | `menu.boundary.test.ts`    |
-| `WindowBoundary`  | `window.boundary.test.ts`  |
-| `ViewBoundary`    | `view.boundary.test.ts`    |
-| `SessionBoundary` | `session.boundary.test.ts` |
+| Layer                    | Boundary Test                      |
+| ------------------------ | ---------------------------------- |
+| `IpcBoundary`            | `ipc.boundary.test.ts`             |
+| `DialogBoundary`         | `dialog.boundary.test.ts`          |
+| `ImageBoundary`          | `image.boundary.test.ts`           |
+| `AppBoundary`            | `app.boundary.test.ts`             |
+| `MenuBoundary`           | `menu.boundary.test.ts`            |
+| `WindowBoundary`         | `window.boundary.test.ts`          |
+| `ViewBoundary`           | `view.boundary.test.ts`            |
+| `SessionBoundary`        | `session.boundary.test.ts`         |
+| `OsNotificationBoundary` | `os-notification.boundary.test.ts` |
 
 ### Platform Abstractions Overview
 

@@ -150,6 +150,20 @@ export interface WindowBoundary {
   focus(handle: WindowHandle): void;
 
   /**
+   * Whether the window currently has OS focus.
+   *
+   * False when another application is in front, when the window is minimized,
+   * and when it sits on a virtual desktop the user has switched away from —
+   * i.e. exactly the cases where the user cannot see what the window is showing.
+   * Focus inside a child view or iframe still counts as focused: the user is
+   * looking at CodeHydra.
+   *
+   * @param handle - Handle to the window
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  isFocused(handle: WindowHandle): boolean;
+
+  /**
    * Subscribe to window resize events.
    *
    * @param handle - Handle to the window
@@ -369,6 +383,11 @@ export class DefaultWindowBoundary implements WindowBoundary {
   focus(handle: WindowHandle): void {
     const state = this.getWindowState(handle);
     state.window.focus();
+  }
+
+  isFocused(handle: WindowHandle): boolean {
+    const state = this.getWindowState(handle);
+    return state.window.isFocused();
   }
 
   onResize(handle: WindowHandle, callback: () => void): Unsubscribe {
