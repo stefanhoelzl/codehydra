@@ -190,6 +190,78 @@ function readSetupError(): string | null {
   return null;
 }
 
+/**
+ * The app's own message for a fatal `app:start` failure logged since `since`.
+ *
+ * The timestamp filter is load-bearing: the logs directory outlives a single
+ * app, and resetDataState does not clear it, so an unfiltered scan reports a
+ * *previous* run's failure and fails the current spec for something that
+ * already happened.
+ */
+function readStartupError(since: number): string | null {
+  const logsDir = join(DATA_ROOT, "logs");
+  if (!existsSync(logsDir)) return null;
+
+  const files = readdirSync(logsDir).filter((f) => f.endsWith(".log") && f !== "electron.log");
+  for (const file of files) {
+    const contents = readFileSync(join(logsDir, file), "utf-8");
+    for (const line of contents.split("\n")) {
+      if (!line.includes('"Startup failed"') || !line.includes('"level":"error"')) continue;
+      try {
+        const entry = JSON.parse(line) as { timestamp?: string; context?: { error?: string } };
+        const at = entry.timestamp === undefined ? NaN : Date.parse(entry.timestamp);
+        if (!Number.isNaN(at) && at < since) continue;
+        return entry.context?.error ?? "unknown error";
+      } catch {
+        // Unparseable line: no timestamp to judge by, so leave it alone rather
+        // than fail the spec on a log entry that may predate it.
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Reject as soon as the app logs a fatal `app:start` failure.
+ *
+ * An app that dies during startup never shows its UI, so `launchApp` waits out
+ * its whole 120s and the spec then fails on a test timeout — with the teardown
+ * error on top of it, and no trace of the actual cause. Race this against
+ * `launchApp` and the failure arrives in seconds carrying the app's own message.
+ */
+export function failFastOnStartupFailure(): {
+  readonly promise: Promise<never>;
+  stop: () => void;
+} {
+  // Anchored here, not at launch: this is called immediately before launchApp,
+  // and anything logged earlier belongs to a previous run.
+  const since = Date.now();
+  let timer: NodeJS.Timeout | undefined;
+  let stopped = false;
+
+  const promise = new Promise<never>((_resolve, reject) => {
+    const poll = (): void => {
+      if (stopped) return;
+      const error = readStartupError(since);
+      if (error !== null) {
+        reject(new Error(`the app failed to start: ${error}`));
+        return;
+      }
+      timer = setTimeout(poll, 500);
+    };
+    poll();
+  });
+
+  return {
+    promise,
+    stop: () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
 /** Fail with the app's own error text if it tried to raise a native dialog. */
 export async function expectNoNativeDialogs(driver: AppDriver): Promise<void> {
   const dialogs = await driver.nativeDialogs();
