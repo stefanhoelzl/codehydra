@@ -315,6 +315,42 @@ mocked. No login, no API key, no network:
   run never touches `~/.claude`) and `DISABLE_NON_ESSENTIAL_MODEL_CALLS`, which keeps the
   background haiku calls out of the mock's journal.
 
+**Pinning Claude's hook contract (`claude/server-manager.boundary.test.ts`).** The same
+trick, one layer down and without Electron: a real `claude` against a mock model, driving
+the shipped chain into a real `ClaudeCodeServerManager`.
+
+- **Why it exists.** `server-manager.integration.test.ts` covers how the manager reacts to
+  hook payloads — with payloads we write ourselves. The premise underneath them (that Claude
+  still emits those hooks, with those shapes) was a pile of empirical findings that no test
+  touched, so a Claude release could invalidate it with the suite green.
+- **It asserts `AgentStatus`, never hook names or payload fields.** That is enough: rename
+  `background_tasks` and the running-shell `Stop` stops being suppressed, so "stays busy"
+  fails. The status is the drift detector, and a hook Claude adds that changes nothing
+  passes silently, as it should.
+- **Additive.** Nothing synthetic was retired. A synthetic failure says _our logic_ broke; a
+  failure here says _Claude_ changed, and you want to be told which.
+- **Requires a real `claude` on PATH and `pnpm build:wrappers`** (the shipped hook handler).
+  Both throw rather than skipping, so the coverage cannot be lost by accident. CI installs
+  the CLI, unpinned, in the `validate` and `canary` jobs.
+- One `describe` per scenario, one `claude` per `describe`, ~8s for the file. A recording tap
+  in front of the bridge is what correlates each hook with the status it produced — the
+  manager exposes status only through `onStatusChange`, and only the URL carries the name.
+- **Traps worth knowing**, all of them paid for once already:
+  - aimock's `ToolCall.arguments` is a JSON **string**. An object is not rejected; it reaches
+    Claude with no parameters and returns `InputValidationError`, which reads like Claude
+    misbehaving.
+  - `StopFailure` comes from `finishReason: "max_tokens"`. HTTP errors are _not_ a trigger —
+    429, 401, 500 and 529 are all retried silently, well past any sane timeout.
+  - The prompt goes in as a stream-json message on an **open stdin**. With `-p "prompt"`
+    Claude tears down the moment the turn ends and its hook subprocesses lose the race —
+    `StopFailure` is spawned, handed its payload, and killed mid-POST.
+  - The `ch-bg` scenario puts `resources/bin` on the agent's PATH. Without it the shell dies
+    instantly, `background_tasks` is empty, and the test goes idle _for the wrong reason_
+    while still passing.
+  - A background task finishing makes Claude re-invoke the agent with a fresh
+    `UserPromptSubmit`. A fixture that answers that with another background shell loops
+    forever, so the one-shot fixture in `bgcomplete` is load-bearing.
+
 ### Unit Tests (\*.test.ts) - DEPRECATED
 
 **Status**: Existing unit tests remain until migrated per-module.
