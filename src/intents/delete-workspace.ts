@@ -132,11 +132,14 @@ export const preflightResultSchema = z
 
 /**
  * Per-handler result for the "shutdown" hook point.
- * ViewModule provides wasActive; AgentModule may provide error.
+ * AgentModule may provide serverName and error.
+ *
+ * Whether the deleted workspace is the active one is deliberately NOT reported
+ * here. It is read by the operation immediately before this hook point — see
+ * runPipelineBody.
  */
 export const shutdownResultSchema = z
   .object({
-    wasActive: z.boolean().optional(),
     serverName: z.string().optional(),
     error: z.string().optional(),
   })
@@ -276,7 +279,6 @@ export type FlushHookInput = HookContext & z.infer<typeof flushEnrichmentSchema>
 // =============================================================================
 
 interface MergedShutdown {
-  readonly wasActive: boolean;
   readonly serverName: string | undefined;
   readonly errors: readonly string[];
 }
@@ -311,13 +313,11 @@ function mergeShutdown(
   results: readonly ShutdownHookResult[],
   collectErrors: readonly Error[]
 ): MergedShutdown {
-  let wasActive = false;
   let serverName: string | undefined;
   for (const r of results) {
-    if (r.wasActive) wasActive = true;
     if (r.serverName && !serverName) serverName = r.serverName;
   }
-  return { wasActive, serverName, errors: errorMessages(results, collectErrors) };
+  return { serverName, errors: errorMessages(results, collectErrors) };
 }
 
 function mergeErrors(
@@ -561,9 +561,26 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       "cleanup-workspace"
     );
 
-    // Dispatch workspace:switch(auto) if deleted workspace was the active one.
-    // Auto-select mode finds the best candidate via find-candidates hook.
-    if (shutdown.wasActive && !payload.skipSwitch) {
+    // Dispatch workspace:switch(auto) if the deleted workspace is the one on
+    // screen. Auto-select mode finds the best candidate via find-candidates.
+    //
+    // Asked here, where it is acted on, and not a step earlier. Everything
+    // before this point is slow and user-facing — the interactive confirm hook
+    // is a dialog the user sits in front of (12s in PostHog issue 019fb79f),
+    // and the shutdown hooks kill terminals and stop servers for seconds after
+    // it — and a user who switches during any of that has said where they want
+    // to be. An answer sampled earlier is only a claim about the past: reading
+    // it before the shutdown hooks still overruled a user who switched two
+    // seconds later.
+    //
+    // `get-active-workspace` reports what is on screen, which is the question
+    // being asked. It survives the teardown: only a workspace:switched event
+    // moves it, so with nobody switching it still names the workspace being
+    // deleted. (The `active` flag on workspace:resolve is a different field,
+    // and that one is cleared during shutdown.)
+    const activeNow = await this.activeWorkspacePath(ctx);
+
+    if (activeNow === payload.workspacePath && !payload.skipSwitch) {
       try {
         const switchIntent: SwitchWorkspaceIntent = {
           type: INTENT_SWITCH_WORKSPACE,
@@ -693,6 +710,26 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
    * If the user navigated to the workspace after the initial switch-away,
    * we must switch again before emitting workspace:deleted.
    */
+  /**
+   * The workspace currently on screen, or null when none is. Best-effort: a
+   * failure answers null, which reads as "nothing claimed the surface" — the
+   * same answer as an ordinary teardown, so a lookup failure never moves a
+   * user who had gone somewhere else.
+   */
+  private async activeWorkspacePath(
+    ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>
+  ): Promise<WorkspacePath | null> {
+    try {
+      const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
+        type: INTENT_GET_ACTIVE_WORKSPACE,
+        payload: {},
+      });
+      return activeRef?.path ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   private async autoSwitchIfBecameActive(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
     workspacePath: WorkspacePath

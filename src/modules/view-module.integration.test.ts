@@ -34,16 +34,6 @@ import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import type { IdeServerRestartedEvent, IdeServerSessionsStaleEvent } from "../intents/app-resume";
 import {
-  INTENT_DELETE_WORKSPACE,
-  DELETE_WORKSPACE_OPERATION_ID,
-  shutdownResultSchema,
-} from "../intents/delete-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  DeletePipelineHookInput,
-  ShutdownHookResult,
-} from "../intents/delete-workspace";
-import {
   INTENT_OPEN_PROJECT,
   OPEN_PROJECT_OPERATION_ID,
   selectFolderHookResultSchema,
@@ -52,8 +42,7 @@ import type { SelectFolderHookResult } from "../intents/open-project";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
-import type { WorkspaceName } from "../shared/api/types";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
+import { testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
@@ -74,40 +63,6 @@ function createMockShellLayers() {
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-const deleteOpSchemas = {
-  type: INTENT_DELETE_WORKSPACE,
-  payload: z.unknown(),
-  result: z.custom<ShutdownHookResult>(),
-  hooks: { shutdown: { result: shutdownResultSchema } },
-} satisfies OperationSchemas;
-
-/** Runs "shutdown" hook point only. */
-class MinimalDeleteOperation implements Operation<typeof deleteOpSchemas> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-  readonly schemas = deleteOpSchemas;
-  constructor(private readonly active: boolean = false) {}
-  async execute(
-    ctx: OperationContext<IntentOf<typeof deleteOpSchemas>, typeof deleteOpSchemas>
-  ): Promise<ShutdownHookResult> {
-    const payload = ctx.intent.payload as DeleteWorkspaceIntent["payload"];
-    const hookCtx: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectPath: projPath("/projects/test"),
-      workspacePath: payload.workspacePath,
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: this.active,
-    };
-    const { results, errors } = await ctx.hooks.collect("shutdown", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    const merged: ShutdownHookResult = {};
-    for (const r of results) {
-      if (r.wasActive !== undefined) (merged as Record<string, unknown>).wasActive = r.wasActive;
-      if (r.error !== undefined) (merged as Record<string, unknown>).error = r.error;
-    }
-    return merged;
-  }
-}
 
 const selectFolderOpSchemas = {
   type: INTENT_OPEN_PROJECT,
@@ -222,30 +177,6 @@ describe("ViewModule Integration", () => {
       await module.events![EVENT_IDE_SERVER_SESSIONS_STALE]!.handler(event);
 
       expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // delete-workspace/shutdown → clears active surface, returns wasActive
-  // -------------------------------------------------------------------------
-  describe("delete-workspace/shutdown", () => {
-    it("returns wasActive when the deleted workspace was active", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_DELETE_WORKSPACE,
-        operation: new MinimalDeleteOperation(true),
-      });
-
-      const result = await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: wsPath("/workspaces/ws1"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      });
-
-      expect(result).toEqual(expect.objectContaining({ wasActive: true }));
     });
   });
 
