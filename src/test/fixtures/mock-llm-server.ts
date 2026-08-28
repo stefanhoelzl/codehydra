@@ -1,8 +1,14 @@
 /**
  * Mock LLM Server for OpenCode boundary tests.
  *
- * Provides an OpenAI-compatible API endpoint that can be configured
- * to return different response types for testing various scenarios.
+ * A thin `MockLlmMode` façade over `@copilotkit/aimock`, which serves the actual
+ * OpenAI-compatible endpoints. It used to hand-roll the wire format; aimock
+ * speaks it (and the Anthropic one the e2e suite needs), keeps up with the real
+ * APIs through its own drift-detection CI, and is what `e2e/agent-mock.ts` uses
+ * — so there is one mock in the repo rather than two.
+ *
+ * The modes stay, because they are how the boundary tests name the scenario
+ * under test. Each one is a fixture set, swapped in on `setMode()`.
  *
  * @example
  * ```ts
@@ -17,7 +23,7 @@
  * ```
  */
 
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
+import { LLMock } from "@copilotkit/aimock";
 
 // ============================================================================
 // Types
@@ -29,50 +35,11 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
  * | Mode          | Response Behavior                   | Triggers                 |
  * | ------------- | ----------------------------------- | ------------------------ |
  * | `instant`     | Return completion immediately       | idle → busy → idle       |
- * | `slow-stream` | Stream with 100ms delays            | Extended busy state      |
+ * | `slow-stream` | Stream slowly enough to observe     | Extended busy state      |
  * | `tool-call`   | Return `bash` tool_call             | permission.updated event |
  * | `rate-limit`  | Return HTTP 429 with `Retry-After`  | retry status             |
- * | `sub-agent`   | Return `task` tool_call             | Child session creation   |
  */
-export type MockLlmMode = "instant" | "slow-stream" | "tool-call" | "rate-limit" | "sub-agent";
-
-/**
- * Chat completion response structure (OpenAI format).
- */
-export interface ChatCompletion {
-  id: string;
-  object: "chat.completion";
-  choices: Array<{
-    index: number;
-    message: {
-      role: "assistant";
-      content: string | null;
-      tool_calls?: ToolCall[];
-    };
-    finish_reason: "stop" | "tool_calls";
-  }>;
-}
-
-/**
- * Tool call structure.
- */
-export interface ToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-/**
- * Rate limit error response.
- */
-export interface RateLimitResponse {
-  status: 429;
-  headers: Record<string, string>;
-  body: string;
-}
+export type MockLlmMode = "instant" | "slow-stream" | "tool-call" | "rate-limit";
 
 /**
  * Mock LLM server handle.
@@ -89,219 +56,65 @@ export interface MockLlmServer {
 }
 
 // ============================================================================
-// Response Builders
+// Fixture sets
 // ============================================================================
 
 /**
- * Generate a random ID for completions.
+ * Install the fixtures for one mode. First match wins, so the order within each
+ * mode is part of its meaning.
  */
-function randomId(): string {
-  return Math.random().toString(36).substring(2, 15);
-}
+function applyMode(mock: LLMock, mode: MockLlmMode): void {
+  mock.clearFixtures();
 
-/**
- * Creates instant completion response.
- *
- * @param content - Text content to return
- * @returns ChatCompletion with the content
- */
-export function createInstantCompletion(content: string): ChatCompletion {
-  return {
-    id: `chatcmpl-${randomId()}`,
-    object: "chat.completion",
-    choices: [
-      {
-        index: 0,
-        message: { role: "assistant", content },
-        finish_reason: "stop",
-      },
-    ],
-  };
-}
+  switch (mode) {
+    case "slow-stream":
+      // Slow enough that a status read taken shortly after the prompt starts
+      // still lands mid-stream.
+      mock.on(
+        {},
+        { content: "This is a slow streamed response." },
+        {
+          streamingProfile: { ttft: 300, tps: 5 },
+        }
+      );
+      return;
 
-/**
- * Creates tool call completion (triggers permission request).
- *
- * IMPORTANT: For bash tool, args must include `command` AND `description`.
- * The description parameter is required by OpenCode's bash tool schema.
- *
- * @param toolName - Name of the tool to call
- * @param args - Arguments for the tool (e.g., { command: "ls", description: "List files" })
- * @returns ChatCompletion with tool_calls
- */
-export function createToolCallCompletion(
-  toolName: string,
-  args: Record<string, unknown>
-): ChatCompletion {
-  return {
-    id: `chatcmpl-${randomId()}`,
-    object: "chat.completion",
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content: null,
-          tool_calls: [
+    case "tool-call":
+      // Requests that advertise no tools (opencode's title-generation agent)
+      // must not consume the tool-call slot: they would leave the build agent
+      // with a plain completion and no permission flow.
+      mock.on({ predicate: (req) => (req.tools?.length ?? 0) === 0 }, { content: "ok" });
+      // The result of the bash call comes back on the same conversation.
+      mock.on({ hasToolResult: true }, { content: "Tool executed successfully." });
+      // The bash tool's schema requires `description` alongside `command`.
+      mock.on(
+        {},
+        {
+          toolCalls: [
             {
-              id: `call_${randomId()}`,
-              type: "function",
-              function: {
-                name: toolName,
-                arguments: JSON.stringify(args),
-              },
+              name: "bash",
+              arguments: { command: "echo hello", description: "Prints hello to stdout" },
             },
           ],
-        },
-        finish_reason: "tool_calls",
-      },
-    ],
-  };
-}
+        }
+      );
+      return;
 
-/**
- * Creates rate limit error response.
- *
- * @returns Rate limit response object with status, headers, and body
- */
-export function createRateLimitResponse(): RateLimitResponse {
-  return {
-    status: 429,
-    headers: {
-      "Retry-After": "5",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      error: {
-        message: "Rate limit exceeded",
-        type: "rate_limit_error",
-      },
-    }),
-  };
-}
+    case "rate-limit":
+      // Only the first request in this group is rate limited; the retry then
+      // falls through to the completion below.
+      mock.on(
+        { sequenceIndex: 0 },
+        { error: { message: "Rate limit exceeded", type: "rate_limit_error" }, status: 429 }
+      );
+      mock.on({}, { content: "Recovered from rate limit." });
+      return;
 
-// ============================================================================
-// Streaming Helpers
-// ============================================================================
-
-/**
- * Delay for streaming chunks in slow-stream mode.
- */
-const STREAM_CHUNK_DELAY_MS = 50;
-
-/**
- * Creates SSE stream chunks for a completion.
- */
-function createStreamChunks(content: string): string[] {
-  const words = content.split(" ");
-  const chunks: string[] = [];
-  const completionId = `chatcmpl-${randomId()}`;
-
-  for (const word of words) {
-    const chunk = {
-      id: completionId,
-      object: "chat.completion.chunk",
-      choices: [
-        {
-          index: 0,
-          delta: { content: word + " " },
-        },
-      ],
-    };
-    chunks.push(`data: ${JSON.stringify(chunk)}\n\n`);
+    case "instant":
+    default:
+      mock.on({}, { content: "Done." });
+      return;
   }
-
-  // Add final chunk with finish_reason to signal completion
-  const finalChunk = {
-    id: completionId,
-    object: "chat.completion.chunk",
-    choices: [
-      {
-        index: 0,
-        delta: {},
-        finish_reason: "stop",
-      },
-    ],
-  };
-  chunks.push(`data: ${JSON.stringify(finalChunk)}\n\n`);
-
-  // Add done signal
-  chunks.push("data: [DONE]\n\n");
-  return chunks;
-}
-
-/**
- * Creates SSE stream chunks for a tool call.
- * Streaming tool calls have a specific format with incremental arguments.
- */
-function createToolCallStreamChunks(toolName: string, args: Record<string, unknown>): string[] {
-  const chunks: string[] = [];
-  const callId = `call_${randomId()}`;
-  const argsString = JSON.stringify(args);
-
-  // First chunk: tool call start with function name
-  chunks.push(
-    `data: ${JSON.stringify({
-      id: `chatcmpl-${randomId()}`,
-      object: "chat.completion.chunk",
-      choices: [
-        {
-          index: 0,
-          delta: {
-            role: "assistant",
-            tool_calls: [
-              {
-                index: 0,
-                id: callId,
-                type: "function",
-                function: { name: toolName, arguments: "" },
-              },
-            ],
-          },
-        },
-      ],
-    })}\n\n`
-  );
-
-  // Second chunk: arguments
-  chunks.push(
-    `data: ${JSON.stringify({
-      id: `chatcmpl-${randomId()}`,
-      object: "chat.completion.chunk",
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                function: { arguments: argsString },
-              },
-            ],
-          },
-        },
-      ],
-    })}\n\n`
-  );
-
-  // Final chunk: finish_reason
-  chunks.push(
-    `data: ${JSON.stringify({
-      id: `chatcmpl-${randomId()}`,
-      object: "chat.completion.chunk",
-      choices: [
-        {
-          index: 0,
-          delta: {},
-          finish_reason: "tool_calls",
-        },
-      ],
-    })}\n\n`
-  );
-
-  // Done signal
-  chunks.push("data: [DONE]\n\n");
-  return chunks;
 }
 
 // ============================================================================
@@ -318,309 +131,37 @@ function createToolCallStreamChunks(toolName: string, args: Record<string, unkno
  * @returns MockLlmServer handle
  */
 export function createMockLlmServer(port = 0): MockLlmServer {
-  let server: Server | null = null;
-  let serverPort = port;
-  let currentMode: MockLlmMode = "instant";
-  let rateLimitRequestCount = 0; // Track requests to allow recovery after first rate limit
-  let toolCallRequestCount = 0; // Track requests to return completion after tool execution
-  let subAgentRequestCount = 0; // Track requests for sub-agent task tool flow
-
-  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    // Handle various OpenAI-compatible endpoints
-    // GET /v1/models - list available models
-    if (req.method === "GET" && (req.url === "/v1/models" || req.url === "/path")) {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          object: "list",
-          data: [{ id: "test", object: "model", created: Date.now(), owned_by: "mock" }],
-        })
-      );
-      return;
-    }
-
-    // Only handle POST /v1/chat/completions
-    if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
-      res.writeHead(404);
-      res.end(JSON.stringify({ error: "Not found" }));
-      return;
-    }
-
-    // Parse request body
-    const body = await new Promise<string>((resolve) => {
-      let data = "";
-      req.on("data", (chunk: Buffer) => (data += chunk.toString()));
-      req.on("end", () => resolve(data));
-    });
-
-    const request = JSON.parse(body) as { stream?: boolean; tools?: unknown[] };
-    const isStreaming = request.stream === true;
-    // Tool-driven modes (tool-call, sub-agent) must only fire on requests that
-    // actually advertise tools. Opencode's title-generation agent calls the LLM
-    // without tools and would otherwise consume the first response slot, leaving
-    // the build agent with a plain completion and no permission flow.
-    const hasTools = Array.isArray(request.tools) && request.tools.length > 0;
-
-    // Handle based on mode
-    switch (currentMode) {
-      case "rate-limit": {
-        // Return 429 only on first request, then recover with instant response
-        rateLimitRequestCount++;
-        if (rateLimitRequestCount === 1) {
-          const response = createRateLimitResponse();
-          res.writeHead(response.status, response.headers);
-          res.end(response.body);
-        } else {
-          // After first rate limit, return normal response
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-            const chunks = createStreamChunks("Recovered from rate limit.");
-            for (const chunk of chunks) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            const completion = createInstantCompletion("Recovered from rate limit.");
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(completion));
-          }
-        }
-        break;
-      }
-
-      case "slow-stream": {
-        // Force streaming mode for slow-stream
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        });
-
-        const chunks = createStreamChunks("This is a slow streamed response.");
-        for (const chunk of chunks) {
-          res.write(chunk);
-          await new Promise((resolve) => setTimeout(resolve, STREAM_CHUNK_DELAY_MS));
-        }
-        res.end();
-        break;
-      }
-
-      case "tool-call": {
-        // Return tool call only on first tool-bearing request, then return completion.
-        // Requests without tools (e.g. opencode's title-generation agent) get a
-        // plain completion and do not consume the tool-call slot.
-        if (!hasTools) {
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-            for (const chunk of createStreamChunks("ok")) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(createInstantCompletion("ok")));
-          }
-          break;
-        }
-        toolCallRequestCount++;
-        if (toolCallRequestCount === 1) {
-          if (isStreaming) {
-            // Stream tool call in SSE format
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-
-            const chunks = createToolCallStreamChunks("bash", {
-              command: "echo hello",
-              description: "Prints hello to stdout",
-            });
-            for (const chunk of chunks) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            const completion = createToolCallCompletion("bash", {
-              command: "echo hello",
-              description: "Prints hello to stdout",
-            });
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(completion));
-          }
-        } else {
-          // After tool execution, return a normal completion
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-            const chunks = createStreamChunks("Tool executed successfully.");
-            for (const chunk of chunks) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            const completion = createInstantCompletion("Tool executed successfully.");
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(completion));
-          }
-        }
-        break;
-      }
-
-      case "sub-agent": {
-        // Sub-agents are triggered via the `task` tool call, which creates a child session.
-        // Skip non-tool requests (e.g. title generation) so they don't consume the slot.
-        if (!hasTools) {
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-            for (const chunk of createStreamChunks("ok")) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(createInstantCompletion("ok")));
-          }
-          break;
-        }
-        subAgentRequestCount++;
-        if (subAgentRequestCount === 1) {
-          // First call: Return task tool call to create child session
-          const taskArgs = {
-            description: "Search TypeScript files",
-            prompt: "Please search for all TypeScript files in the project",
-          };
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-
-            const chunks = createToolCallStreamChunks("task", taskArgs);
-            for (const chunk of chunks) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            const completion = createToolCallCompletion("task", taskArgs);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(completion));
-          }
-        } else {
-          // Subsequent calls: Child session or parent follow-up - return completion
-          if (isStreaming) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            });
-            const chunks = createStreamChunks("Task completed.");
-            for (const chunk of chunks) {
-              res.write(chunk);
-            }
-            res.end();
-          } else {
-            const completion = createInstantCompletion("Task completed.");
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(completion));
-          }
-        }
-        break;
-      }
-
-      case "instant":
-      default: {
-        if (isStreaming) {
-          // Stream even for instant mode if requested
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-          });
-
-          const chunks = createStreamChunks("Done.");
-          for (const chunk of chunks) {
-            res.write(chunk);
-          }
-          res.end();
-        } else {
-          const completion = createInstantCompletion("Done.");
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(completion));
-        }
-        break;
-      }
-    }
-  };
+  // Deliberately NOT strict: these fixtures are catch-alls by design, and a
+  // boundary test's subject is opencode's behaviour, not the request shape.
+  const mock = new LLMock({ port, host: "127.0.0.1" });
+  applyMode(mock, "instant");
+  let started = false;
 
   return {
     get port(): number {
-      if (serverPort === 0) {
+      if (!started) {
         throw new Error("Server not started yet - port not assigned");
       }
-      return serverPort;
+      return mock.port;
     },
 
     async start(): Promise<void> {
-      if (server) return;
-
-      server = createServer((req, res) => {
-        handleRequest(req, res).catch((error) => {
-          console.error("Mock LLM server error:", error);
-          res.writeHead(500);
-          res.end(JSON.stringify({ error: "Internal server error" }));
-        });
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        // Bind to 127.0.0.1 explicitly (not "localhost") to avoid IPv4/IPv6 resolution
-        // issues on Windows where localhost might resolve to ::1 while URLs use 127.0.0.1
-        server!.listen(serverPort, "127.0.0.1", () => {
-          const addr = server!.address();
-          if (addr && typeof addr === "object") {
-            serverPort = addr.port;
-            resolve();
-          } else {
-            reject(new Error("Failed to get server address"));
-          }
-        });
-        server!.on("error", reject);
-      });
+      if (started) return;
+      await mock.start();
+      started = true;
     },
 
     async stop(): Promise<void> {
-      if (!server) return;
-
-      await new Promise<void>((resolve) => {
-        server!.close(() => {
-          server = null;
-          resolve();
-        });
-      });
+      if (!started) return;
+      await mock.stop();
+      started = false;
     },
 
     setMode(mode: MockLlmMode): void {
-      currentMode = mode;
-      // Reset request counters when switching modes
-      rateLimitRequestCount = 0;
-      toolCallRequestCount = 0;
-      subAgentRequestCount = 0;
+      applyMode(mock, mode);
+      // Sequence counts are per fixture group; a mode swap must not inherit the
+      // previous mode's counter.
+      mock.resetMatchCounts();
     },
   };
 }
