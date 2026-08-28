@@ -1101,7 +1101,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(Object.keys(settings.hooks)).not.toContain("WrapperEnd");
     });
 
-    it("quotes the interpreter and the handler so a path with spaces survives", async () => {
+    it("keeps a spaced handler path as one argument, unquoted", async () => {
       const spaced = new ClaudeCodeServerManager({
         portManager: mockPortManager,
         pathProvider: mockPathProvider,
@@ -1114,17 +1114,18 @@ describe("ClaudeCodeServerManager integration", () => {
       const settings = [...mockFileSystem.$.entries.entries()].find(([path]) =>
         path.includes("codehydra-hooks.json")
       )![1] as { content: string };
-      const command = (
+      const entry = (
         JSON.parse(settings.content) as {
-          hooks: Record<string, { hooks: { command: string }[] }[]>;
+          hooks: Record<string, { hooks: { command: string; args: string[] }[] }[]>;
         }
-      ).hooks.SessionStart![0]!.hooks[0]!.command;
+      ).hooks.SessionStart![0]!.hooks[0]!;
 
-      // Unquoted, the shell would split this into four arguments and the hook
-      // would never fire.
-      expect(command).toBe(
-        `"node" "${testPath("/mock dir/hook handler.js").toNative()}" SessionStart`
-      );
+      // Exec form, so the space is never handed to a shell to re-split.
+      // hook-command.boundary.test.ts spawns this for real to prove it.
+      expect(entry.args).toEqual([
+        testPath("/mock dir/hook handler.js").toNative(),
+        "SessionStart",
+      ]);
       await spaced.dispose();
     });
 
@@ -1139,18 +1140,13 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // The MCP entry always passed the interpreter explicitly; the hook command
       // used a bare `node`, which the bin directory does not ship.
-      expect(hookCommand("SessionStart")).toBe(
-        `"${testPath("/ide/node").toNative()}" ` +
-          `"${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
-      );
+      expect(hookCommand("SessionStart")).toBe(testPath("/ide/node").toNative());
     });
 
     it("falls back to PATH node before MCP config arrives, and says so", async () => {
       await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
-      expect(hookCommand("SessionStart")).toBe(
-        `"node" "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
-      );
+      expect(hookCommand("SessionStart")).toBe("node");
     });
 
     it("generates an MCP config that parses, with the launch command claude will spawn", async () => {

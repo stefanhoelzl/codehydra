@@ -40,10 +40,23 @@ function isServerNotRunning(error: Error): boolean {
   return (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING";
 }
 
-/** One `{ type: "command" }` entry in a Claude settings hook registration. */
+/**
+ * One hook registration, in Claude's *exec form*.
+ *
+ * `args` is what selects exec form: Claude spawns `command` directly with this
+ * argument vector and no shell at all. Shell form — a single command string —
+ * cannot be written portably here, because Claude picks the shell per platform:
+ * `sh` on macOS and Linux, Git Bash on Windows, PowerShell when Git Bash is
+ * absent. A quoted path works in the first two and PowerShell reads a leading
+ * quoted token as a string literal rather than a command, so it would need a
+ * `&` prefix that the others would then choke on. Exec form has no such
+ * problem: every element is one argument exactly as written, spaces and
+ * backslashes included.
+ */
 interface ClaudeHookCommand {
   readonly type: "command";
   readonly command: string;
+  readonly args: readonly string[];
 }
 
 /** One registration under a hook name, optionally scoped by matcher. */
@@ -79,9 +92,10 @@ export interface ClaudeMcpConfigFile {
 /**
  * Build Claude's settings file: one registration per hook we want sent.
  *
- * The handler path is quoted because the command is a shell string: an install
+ * Exec form, so a path is never handed to a shell to re-split. An install
  * directory containing a space (`C:\Users\Jane Doe\...`, `/home/jane doe/...`)
- * otherwise splits into two arguments and the hook silently never fires.
+ * used to break every hook silently; as an argv element it needs no quoting at
+ * all.
  *
  * Built here rather than substituted into a checked-in JSON template. A
  * template meant pasting values into already-serialized text, which is how a
@@ -99,7 +113,7 @@ export function buildSettingsFile(
     hooks[name] = [
       {
         ...(register.matcher !== undefined && { matcher: register.matcher }),
-        hooks: [{ type: "command", command: `"${interpreter}" "${hookHandlerPath}" ${name}` }],
+        hooks: [{ type: "command", command: interpreter, args: [hookHandlerPath, name] }],
       },
     ];
   }
