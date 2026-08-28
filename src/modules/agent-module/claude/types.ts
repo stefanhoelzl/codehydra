@@ -87,7 +87,30 @@ export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
 export type HookStatusChange = AgentStatus | null;
 
 /**
- * Mapping from hook name to the status change it causes.
+ * How a hook is registered in Claude's `--settings` file.
+ *
+ * `null` means it never is. The wrapper-synthesized hooks are triggered
+ * internally (see {@link WRAPPER_HOOK_NAMES}), so telling Claude to send them
+ * would only let a stray POST drive status out-of-band.
+ */
+export type HookRegistration = { readonly matcher?: "*" } | null;
+
+/** Everything the app needs to know about one Claude Code hook. */
+interface HookSpec {
+  /** The status change the hook causes, or null for no change. */
+  readonly status: HookStatusChange;
+  /** How the hook is registered with Claude, or null if it never is. */
+  readonly register: HookRegistration;
+}
+
+/**
+ * Every hook name, in one exhaustive map.
+ *
+ * Exhaustive on purpose: `Record<ClaudeCodeHookName, ...>` means adding a name
+ * to the union fails to compile until both questions about it are answered.
+ * The settings file used to be a checked-in JSON template listing 15 of these
+ * by hand, with nothing tying the two together — a new hook could be added to
+ * the union and silently never registered.
  *
  * Status reflects when user intervention is needed:
  * - none: No session active
@@ -98,56 +121,75 @@ export type HookStatusChange = AgentStatus | null;
  * while the workspace reads idle transitions it to busy (covers permission
  * resolution and bash-mode "!cmd" turns that never emit UserPromptSubmit).
  */
-const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
+const HOOK_SPEC: Readonly<Record<ClaudeCodeHookName, HookSpec>> = {
   // Wrapper started, Claude about to be spawned
-  WrapperStart: "idle",
+  WrapperStart: { status: "idle", register: null },
   // Wrapper exited, Claude has closed
-  WrapperEnd: "none",
+  WrapperEnd: { status: "none", register: null },
   // Session started, waiting for user prompt
-  SessionStart: "idle",
+  SessionStart: { status: "idle", register: {} },
   // Session ended
-  SessionEnd: "none",
+  SessionEnd: { status: "none", register: {} },
   // User submitted prompt, agent working
-  UserPromptSubmit: "busy",
+  UserPromptSubmit: { status: "busy", register: {} },
   // Waiting for user to answer permission
-  PermissionRequest: "idle",
+  PermissionRequest: { status: "idle", register: { matcher: "*" } },
   // Agent finished working, waiting for next prompt
-  Stop: "idle",
+  Stop: { status: "idle", register: {} },
   // Agent stopped due to API error (rate limit, auth failure), waiting for retry
-  StopFailure: "idle",
+  StopFailure: { status: "idle", register: {} },
   // Subagent done, main agent continues (no change)
-  SubagentStop: null,
+  SubagentStop: { status: null, register: {} },
   // Tool starting - handled specially: busy if workspace was idle (see server-manager.ts)
-  PreToolUse: null,
+  PreToolUse: { status: null, register: { matcher: "*" } },
   // Tool done, back to busy (handles return from PermissionRequest idle state)
-  PostToolUse: "busy",
+  PostToolUse: { status: "busy", register: { matcher: "*" } },
   // Tool failed, logged for analysis (no change)
-  PostToolUseFailure: null,
+  PostToolUseFailure: { status: null, register: {} },
   // Informational only (no change)
-  Notification: null,
+  Notification: { status: null, register: {} },
   // Compacting context, agent working
-  PreCompact: "busy",
+  PreCompact: { status: "busy", register: {} },
   // Subagent spawned, logged for analysis (no change)
-  SubagentStart: null,
+  SubagentStart: { status: null, register: {} },
   // Agent team teammate going idle, logged for analysis (no change)
-  TeammateIdle: null,
+  TeammateIdle: { status: null, register: {} },
   // Task marked completed, logged for analysis (no change)
-  TaskCompleted: null,
+  TaskCompleted: { status: null, register: {} },
 };
+
+/** Every hook name, in declaration order. */
+export const ALL_HOOK_NAMES = Object.keys(HOOK_SPEC) as readonly ClaudeCodeHookName[];
 
 /**
  * Get the status change for a given hook name.
  * Returns null if the hook doesn't cause a status change.
  */
 export function getStatusChangeForHook(hookName: ClaudeCodeHookName): HookStatusChange {
-  return HOOK_STATUS_MAP[hookName];
+  return HOOK_SPEC[hookName].status;
+}
+
+/**
+ * The hooks Claude is told to send, paired with their registration options.
+ *
+ * Derived from {@link HOOK_SPEC} rather than listed, so the settings file and
+ * the bridge's reject-list cannot disagree about which hooks exist.
+ */
+export function registeredHooks(): readonly (readonly [
+  ClaudeCodeHookName,
+  NonNullable<HookRegistration>,
+])[] {
+  return ALL_HOOK_NAMES.flatMap((name) => {
+    const register = HOOK_SPEC[name].register;
+    return register === null ? [] : [[name, register] as const];
+  });
 }
 
 /**
  * Check if a string is a valid Claude Code hook name.
  */
 export function isValidHookName(name: string): name is ClaudeCodeHookName {
-  return name in HOOK_STATUS_MAP;
+  return name in HOOK_SPEC;
 }
 
 /**
@@ -198,8 +240,10 @@ export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
  * triggered internally via ClaudeCodeServerManager.triggerWrapperLifecycle()
  * (driven by the sidekick's agent:lifecycle event). The bridge HTTP server
  * rejects them so a stray POST can't drive status out-of-band.
+ *
+ * Derived from {@link HOOK_SPEC}: a hook Claude is never told to send is
+ * exactly a hook the bridge must not accept, so the two cannot drift.
  */
-export const WRAPPER_HOOK_NAMES: ReadonlySet<ClaudeCodeHookName> = new Set([
-  "WrapperStart",
-  "WrapperEnd",
-]);
+export const WRAPPER_HOOK_NAMES: ReadonlySet<ClaudeCodeHookName> = new Set(
+  ALL_HOOK_NAMES.filter((name) => HOOK_SPEC[name].register === null)
+);
