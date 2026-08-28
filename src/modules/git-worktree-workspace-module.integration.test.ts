@@ -32,7 +32,7 @@ import type { DiscoverHookResult } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../intents/close-project";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
-import type { CreateHookResult } from "../intents/open-workspace";
+import type { CreateHookResult, FinalizeHookResult } from "../intents/open-workspace";
 import {
   GET_PROJECT_BASES_OPERATION_ID,
   INTENT_GET_PROJECT_BASES,
@@ -99,6 +99,7 @@ function createMockGitWorktreeProvider() {
     ensureWorkspaceRegistered: vi.fn(),
     listUnmanagedWorktrees: vi.fn().mockResolvedValue([]),
     adoptWorktree: vi.fn().mockResolvedValue(undefined),
+    getMetadata: vi.fn().mockResolvedValue({}),
   };
 }
 
@@ -140,6 +141,26 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
       intent: ctx.intent,
       projectPath: (ctx.intent.payload as { projectPath?: ProjectPath }).projectPath ?? "",
     }),
+  }
+);
+
+/**
+ * Runs open-workspace's `finalize` hook point. Registered on a dispatcher of its
+ * own: only one operation may claim an intent type, and `openWorkspaceOperation`
+ * already claims this one for `create`.
+ */
+const openWorkspaceFinalizeOperation = createMinimalOperation<FinalizeHookResult>(
+  OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
+  "finalize",
+  {
+    hookContext: (ctx) => ({
+      intent: ctx.intent,
+      workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
+      envVars: {},
+      agentType: null,
+    }),
+    defaultResult: {},
   }
 );
 
@@ -1208,6 +1229,68 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   // ---------------------------------------------------------------------------
   // get-project-bases -> list
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // open-workspace -> finalize
+  // ---------------------------------------------------------------------------
+
+  describe("open-workspace -> finalize", () => {
+    /**
+     * A dispatcher whose `workspace:open` operation runs the finalize hook.
+     * `createTestSetup` wires the same intent to the create hook, and an intent
+     * type admits only one operation.
+     */
+    function finalizeSetup() {
+      const provider = createMockGitWorktreeProvider();
+      const pathProvider = createMockPathProvider({
+        getProjectWorkspacesDir: () => new Path("/workspaces"),
+      });
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerOperation(openWorkspaceFinalizeOperation);
+      const { ui } = createMockUi();
+      dispatcher.registerModule(
+        createGitWorktreeWorkspaceModule(
+          provider as unknown as GitWorktreeProvider,
+          pathProvider,
+          SILENT_LOGGER,
+          ui
+        )
+      );
+      return { dispatcher, provider };
+    }
+
+    const finalize = async (dispatcher: Dispatcher, workspacePath: string) =>
+      (await dispatcher.dispatch({
+        type: INTENT_OPEN_WORKSPACE,
+        payload: { workspacePath },
+      } as unknown as Intent)) as FinalizeHookResult;
+
+    it("re-reads metadata so a write made during creation is not lost", async () => {
+      // What an agent acting on its own workspace mid-creation produces: the
+      // title is in git config, but it was never a hook result, so the `create`
+      // snapshot the operation is holding knows nothing about it.
+      const { dispatcher, provider } = finalizeSetup();
+      provider.getMetadata.mockResolvedValue({ base: "main", title: "renamed by agent" });
+
+      const result = await finalize(dispatcher, "/workspaces/new-feature");
+
+      expect(provider.getMetadata).toHaveBeenCalledWith(new Path("/workspaces/new-feature"));
+      // Folded last by open-workspace, so this supersedes the stale snapshot and
+      // reaches both workspace:created and the returned Workspace.
+      expect(result.metadata).toEqual({ base: "main", title: "renamed by agent" });
+    });
+
+    it("still opens the workspace when the metadata cannot be read", async () => {
+      const { dispatcher, provider } = finalizeSetup();
+      provider.getMetadata.mockRejectedValue(new Error("not a git directory"));
+
+      const result = await finalize(dispatcher, "/workspaces/new-feature");
+
+      // Best-effort: no metadata contributed, and no thrown error to fail the
+      // creation over a label.
+      expect(result.metadata).toBeUndefined();
+    });
+  });
 
   describe("get-project-bases -> list", () => {
     it("returns bases and defaultBaseBranch from provider", async () => {

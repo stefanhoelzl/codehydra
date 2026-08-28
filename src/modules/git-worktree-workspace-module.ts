@@ -29,6 +29,8 @@ import type {
   OpenWorkspaceIntent,
   CreateHookInput,
   CreateHookResult,
+  FinalizeHookInput,
+  FinalizeHookResult,
 } from "../intents/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import type {
@@ -664,6 +666,45 @@ export function createGitWorktreeWorkspaceModule(
                 resolvedBase: base,
               },
             };
+          },
+        },
+
+        finalize: {
+          /**
+           * Re-read the workspace's metadata so `workspace:created` (and the
+           * Workspace this operation returns) carry what git config actually
+           * holds when creation completes.
+           *
+           * The `create` snapshot plus the metadata hook handlers *report* is
+           * only as complete as its reporters. An agent that acts on its own
+           * workspace during creation — OpenCode sends its initial prompt from
+           * the setup hook, and `codehydra_workspace_set_title` is one MCP call
+           * away — writes through `workspace:set-metadata`, which is not a hook
+           * result and so is invisible to that fold. Its `metadata:changed`
+           * event then lands on a row the presenter is about to overwrite with
+           * the stale snapshot, and the change vanishes until a restart re-reads
+           * git config.
+           *
+           * Reading here fixes it for every writer rather than for the ones that
+           * remember to report, and keeps the presenter's "install the
+           * authoritative snapshot" semantics correct by making it authoritative.
+           * Merged last (open-workspace.ts folds finalize results after setup's),
+           * so it supersedes both.
+           */
+          handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
+            const { workspacePath } = ctx as FinalizeHookInput;
+            try {
+              const metadata = await gitWorktreeProvider.getMetadata(new Path(workspacePath));
+              return { result: { metadata } };
+            } catch (error: unknown) {
+              // Best-effort: a workspace whose metadata cannot be read still
+              // opens, carrying the snapshot it already had.
+              logger.warn("Failed to re-read workspace metadata on finalize", {
+                workspacePath,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return { result: {} };
+            }
           },
         },
       },

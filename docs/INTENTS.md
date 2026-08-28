@@ -490,7 +490,9 @@ The `open-workspace` operation uses these hook modules:
 
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces)
 - **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
-- **finalize**: IdeServerModule (creates .code-workspace file)
+- **finalize**: IdeServerModule (creates .code-workspace file), WorktreeModule (re-reads the workspace's `codehydra.*` metadata)
+
+The metadata a `workspace:open` reports is the `create` snapshot plus whatever setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads git config. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what git config actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
 
 The `delete-workspace` operation uses these hook modules:
 
