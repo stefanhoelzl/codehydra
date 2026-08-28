@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { isBackgroundWrapped, taskKeepsBusy } from "./types";
+import {
+  ALL_HOOK_NAMES,
+  isBackgroundWrapped,
+  registeredHooks,
+  taskKeepsBusy,
+  WRAPPER_HOOK_NAMES,
+} from "./types";
 
 describe("isBackgroundWrapped", () => {
   it("matches the ch bg subcommand form", () => {
@@ -84,5 +90,28 @@ describe("taskKeepsBusy", () => {
 
   it("a shell without a command keeps busy (unwrapped by definition)", () => {
     expect(taskKeepsBusy({ id: "t1", type: "shell", status: "running" })).toBe(true);
+  });
+});
+
+describe("hook registration", () => {
+  it("registers every hook except the wrapper-synthesized ones", () => {
+    const registered = new Set(registeredHooks().map(([name]) => name));
+
+    for (const name of WRAPPER_HOOK_NAMES) {
+      expect(registered.has(name)).toBe(false);
+    }
+    // Both derive from the same map, so a hook is registered exactly when the
+    // bridge accepts it — there is no third state to fall into.
+    expect(registered.size + WRAPPER_HOOK_NAMES.size).toBe(ALL_HOOK_NAMES.length);
+  });
+
+  it("scopes only the tool-ish hooks with a matcher", () => {
+    const withMatcher = registeredHooks()
+      .filter(([, register]) => register.matcher !== undefined)
+      .map(([name]) => name);
+
+    expect(new Set(withMatcher)).toEqual(
+      new Set(["PermissionRequest", "PreToolUse", "PostToolUse"])
+    );
   });
 });

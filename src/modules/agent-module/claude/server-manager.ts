@@ -32,35 +32,97 @@ import {
   getStatusChangeForHook,
   taskKeepsBusy,
   WRAPPER_HOOK_NAMES,
+  registeredHooks,
 } from "./types";
-import hooksConfigTemplate from "./hooks.template.json";
-import mcpConfigTemplate from "./mcp.template.json";
 
 /** Node reports ERR_SERVER_NOT_RUNNING when close() is called on a server that is already down. */
 function isServerNotRunning(error: Error): boolean {
   return (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING";
 }
 
+/** One `{ type: "command" }` entry in a Claude settings hook registration. */
+interface ClaudeHookCommand {
+  readonly type: "command";
+  readonly command: string;
+}
+
+/** One registration under a hook name, optionally scoped by matcher. */
+interface ClaudeHookMatcher {
+  readonly matcher?: string;
+  readonly hooks: readonly ClaudeHookCommand[];
+}
+
 /**
- * Replace `${VAR}` placeholders in every string leaf of a JSON template.
- *
- * Works on the parsed structure rather than the serialized text so the caller
- * can hand us raw OS values — native paths, tokens — and let `JSON.stringify`
- * do the escaping.
+ * The file handed to `claude --settings`. Claude merges it with the user's own
+ * settings, so it carries only what CodeHydra needs.
  */
-function substituteVariables(node: unknown, variables: Record<string, string>): unknown {
-  if (typeof node === "string") {
-    return node.replace(/\$\{(\w+)\}/g, (match, key: string) => variables[key] ?? match);
+export interface ClaudeSettingsFile {
+  readonly hooks: Readonly<Record<string, readonly ClaudeHookMatcher[]>>;
+}
+
+/** One stdio MCP server entry. */
+interface ClaudeMcpServer {
+  readonly type: "stdio";
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+}
+
+/**
+ * The file handed to `claude --mcp-config`. Merged with the user's own, like
+ * the settings file.
+ */
+export interface ClaudeMcpConfigFile {
+  readonly mcpServers: Readonly<Record<string, ClaudeMcpServer>>;
+}
+
+/**
+ * Build Claude's settings file: one registration per hook we want sent.
+ *
+ * Built here rather than substituted into a checked-in JSON template. A
+ * template meant pasting values into already-serialized text, which is how a
+ * native Windows path put an invalid `\U` escape inside a JSON string and made
+ * the file unparseable. Returning an object and letting `JSON.stringify` see
+ * the real values makes escaping structural instead of something each value has
+ * to be safe for.
+ */
+export function buildSettingsFile(hookHandlerPath: string): ClaudeSettingsFile {
+  const hooks: Record<string, ClaudeHookMatcher[]> = {};
+  for (const [name, register] of registeredHooks()) {
+    hooks[name] = [
+      {
+        ...(register.matcher !== undefined && { matcher: register.matcher }),
+        hooks: [{ type: "command", command: `node ${hookHandlerPath} ${name}` }],
+      },
+    ];
   }
-  if (Array.isArray(node)) {
-    return node.map((item) => substituteVariables(item, variables));
-  }
-  if (node !== null && typeof node === "object") {
-    return Object.fromEntries(
-      Object.entries(node).map(([key, value]) => [key, substituteVariables(value, variables)])
-    );
-  }
-  return node;
+  return { hooks };
+}
+
+/**
+ * Build Claude's MCP config: the one stdio server that reaches CodeHydra.
+ *
+ * `ch mcp` is given everything explicitly at launch — interpreter, bundle, port
+ * and token — so the shim reads no state file and needs nothing on PATH.
+ */
+export function buildMcpConfigFile(
+  workspacePath: string,
+  mcpConfig: McpConfig | null
+): ClaudeMcpConfigFile {
+  return {
+    mcpServers: {
+      codehydra: {
+        type: "stdio",
+        command: mcpConfig?.nodePath ?? "",
+        args: [mcpConfig?.cliPath ?? "", "mcp"],
+        env: {
+          _CH_WORKSPACE_PATH: workspacePath,
+          _CH_PLUGIN_PORT: String(mcpConfig?.port ?? 0),
+          _CH_PLUGIN_TOKEN: mcpConfig?.token ?? "",
+        },
+      },
+    },
+  };
 }
 
 /**
@@ -946,29 +1008,15 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Ensure config directory exists
     await this.fileSystem.mkdir(workspaceConfigDir);
 
-    // Variables for template substitution.
-    //
-    // The MCP entry launches `ch mcp` directly — interpreter, bundle and
-    // credentials all passed explicitly — rather than pointing at an HTTP
-    // endpoint inside the app. That is what lets the shim read no state file and
-    // need nothing on PATH.
-    const variables: Record<string, string> = {
-      HOOK_HANDLER_PATH: this.hookHandlerPath,
-      BRIDGE_PORT: String(this.port),
-      WORKSPACE_PATH: workspacePath,
-      NODE_PATH: this.mcpConfig?.nodePath ?? "",
-      CLI_PATH: this.mcpConfig?.cliPath ?? "",
-      PLUGIN_PORT: String(this.mcpConfig?.port ?? 0),
-      PLUGIN_TOKEN: this.mcpConfig?.token ?? "",
-    };
-
-    // Generate hooks config
-    const hooksConfigPath = new Path(workspaceConfigDir, "codehydra-hooks.json");
-    await this.generateConfigFromTemplate(hooksConfigTemplate, hooksConfigPath, variables);
-
-    // Generate MCP config
-    const mcpConfigPath = new Path(workspaceConfigDir, "codehydra-mcp.json");
-    await this.generateConfigFromTemplate(mcpConfigTemplate, mcpConfigPath, variables);
+    // Generate the two files Claude is launched with.
+    await this.writeJsonFile(
+      new Path(workspaceConfigDir, "codehydra-hooks.json"),
+      buildSettingsFile(this.hookHandlerPath)
+    );
+    await this.writeJsonFile(
+      new Path(workspaceConfigDir, "codehydra-mcp.json"),
+      buildMcpConfigFile(workspacePath, this.mcpConfig ?? null)
+    );
 
     this.logger.debug("Config files generated", {
       workspacePath,
@@ -998,23 +1046,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
-   * Generate a config file from a JSON template with variable substitution.
+   * Write one generated config file.
    *
-   * Substitution happens on the template's string *leaves*, before the result
-   * is serialized — never on the serialized text. A native Windows path
-   * (`C:\Users\...\ch.cjs`) pasted into already-quoted JSON produces `\U`,
-   * an invalid escape, and the file the agent is handed will not parse. Letting
-   * `JSON.stringify` see the real value is what escapes it, and it covers every
-   * other byte a path or token can carry (quotes, newlines) for free.
+   * The single place these objects are serialized, so the guarantee the agent
+   * depends on — that a native path or a token survives into valid JSON — has
+   * one home rather than one per call site.
    */
-  private async generateConfigFromTemplate(
-    template: unknown,
-    targetPath: Path,
-    variables: Record<string, string>
-  ): Promise<void> {
-    const content = JSON.stringify(substituteVariables(template, variables), null, 2);
-
-    await this.fileSystem.writeFile(targetPath, content);
+  private async writeJsonFile(targetPath: Path, value: unknown): Promise<void> {
+    await this.fileSystem.writeFile(targetPath, JSON.stringify(value, null, 2));
   }
 
   /**
