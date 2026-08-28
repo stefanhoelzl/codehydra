@@ -118,7 +118,7 @@ test("caps the log directory and keeps this launch's own log", async () => {
   // If `generateSessionFilename()` ever stops matching the rule's pattern, every
   // real log ranks "oldest" and this launch's own file is swept along with the
   // seeded ones — leaving nothing to debug the app with.
-  const sessionLogs = remaining.filter((name) => /^\d{4}-\d{2}-\d{2}T/.test(name) && name !== "");
+  const sessionLogs = remaining.filter((name) => /^\d{4}-\d{2}-\d{2}t/i.test(name) && name !== "");
   expect(
     sessionLogs.some((name) => !name.includes("-seeded.")),
     `no real session log survived the sweep; remaining: ${remaining.join(", ")}`
