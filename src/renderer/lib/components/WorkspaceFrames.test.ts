@@ -130,6 +130,123 @@ describe("WorkspaceFrames", () => {
   });
 
   // ===========================================================================
+  // Focus repair
+  //
+  // A hidden frame can still take focus from the visible one: window.focus()
+  // is frame-level, so Chromium honours it even for a display:none iframe, and
+  // VS Code's webview bootstrap makes that call. Focus then sits where nothing
+  // is focusable and keystrokes vanish (PostHog issue 019fc47f). The frame that
+  // lost it reports __chBlurred and the active frame is focused again.
+  // ===========================================================================
+
+  describe("focus repair", () => {
+    /** happy-dom leaves contentWindow null, so give each frame a spyable one. */
+    function giveWindows(container: HTMLElement): Map<string, { focus: ReturnType<typeof vi.fn> }> {
+      const windows = new Map<string, { focus: ReturnType<typeof vi.fn> }>();
+      for (const el of frames(container)) {
+        const win = { focus: vi.fn(), postMessage: vi.fn() };
+        Object.defineProperty(el, "contentWindow", { configurable: true, value: win });
+        windows.set(el.dataset.key!, win);
+      }
+      return windows;
+    }
+
+    /** Report, as `source`, that focus left that frame. */
+    function reportBlur(source: object): void {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { __chBlurred: true },
+          source: source as MessageEventSource,
+        })
+      );
+      vi.advanceTimersByTime(50);
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      window.api = createMockApi();
+      vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    /** Render with the active frame settled, so only repairs are observed. */
+    function setup(mode: "workspace" | "hover" | "shortcut" | "dialog" = "workspace") {
+      const rendered = render(WorkspaceFrames, {
+        props: { frames: FRAMES, activeKey: FRAMES[0]!.key, mode },
+      });
+      const windows = giveWindows(rendered.container);
+      vi.advanceTimersByTime(50);
+      for (const win of windows.values()) win.focus.mockClear();
+      return { ...rendered, windows };
+    }
+
+    it("focuses the active frame again after another frame takes focus", () => {
+      const { windows } = setup();
+
+      reportBlur(windows.get(FRAMES[0]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).toHaveBeenCalled();
+    });
+
+    it("ignores a blur reported by a frame that is not the active one", () => {
+      const { windows } = setup();
+
+      reportBlur(windows.get(FRAMES[1]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).not.toHaveBeenCalled();
+    });
+
+    it("repairs while the sidebar is hovered", () => {
+      // The pointer resting over the sidebar says nothing about where the user
+      // is typing, so hover must not switch the protection off.
+      const { windows } = setup("hover");
+
+      reportBlur(windows.get(FRAMES[0]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).toHaveBeenCalled();
+    });
+
+    it("leaves focus alone in shortcut mode, which blurs the frame on purpose", () => {
+      const { windows } = setup("shortcut");
+
+      reportBlur(windows.get(FRAMES[0]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).not.toHaveBeenCalled();
+    });
+
+    it("leaves focus alone while a dialog owns it", () => {
+      const { windows } = setup("dialog");
+
+      reportBlur(windows.get(FRAMES[0]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).not.toHaveBeenCalled();
+    });
+
+    it("does not reclaim focus the whole window has lost", () => {
+      const { windows } = setup();
+      vi.mocked(document.hasFocus).mockReturnValue(false);
+
+      reportBlur(windows.get(FRAMES[0]!.key)!);
+
+      expect(windows.get(FRAMES[0]!.key)!.focus).not.toHaveBeenCalled();
+    });
+
+    it("gives up on a frame that keeps stealing, rather than fighting it", () => {
+      const { windows } = setup();
+      const active = windows.get(FRAMES[0]!.key)!;
+
+      for (let i = 0; i < 6; i++) reportBlur(active);
+
+      // Bounded: the caret is left where it is rather than ping-ponging.
+      expect(active.focus.mock.calls.length).toBeLessThan(6);
+    });
+  });
+
+  // ===========================================================================
   // Liveness
   //
   // Showing a frame pings it; a frame that does not answer is logged, and
