@@ -1,15 +1,26 @@
 /**
  * Tests for mock LLM server.
+ *
+ * The wire format is aimock's problem now; what is ours is the fixture set
+ * behind each mode. A typo in one of those would otherwise surface only as a
+ * confusing failure in a slow opencode boundary test, so assert them here over
+ * real HTTP — the same way opencode reaches the server.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  createMockLlmServer,
-  type MockLlmServer,
-  createInstantCompletion,
-  createToolCallCompletion,
-  createRateLimitResponse,
-} from "./mock-llm-server";
+import { createMockLlmServer, type MockLlmServer } from "./mock-llm-server";
+
+interface Completion {
+  readonly choices: readonly {
+    readonly message: {
+      readonly content: string | null;
+      readonly tool_calls?: readonly {
+        readonly function: { readonly name: string; readonly arguments: string };
+      }[];
+    };
+    readonly finish_reason: string;
+  }[];
+}
 
 describe("createMockLlmServer", () => {
   let server: MockLlmServer;
@@ -23,199 +34,107 @@ describe("createMockLlmServer", () => {
     await server.stop();
   });
 
+  /** POST a chat completion the way the openai-compatible provider would. */
+  async function complete(
+    body: Record<string, unknown>
+  ): Promise<{ status: number; json: Completion }> {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "test", ...body }),
+    });
+    const json = response.status === 200 ? ((await response.json()) as Completion) : ({} as never);
+    return { status: response.status, json };
+  }
+
   it("returns instant completion in instant mode", async () => {
     server.setMode("instant");
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "test",
-        messages: [{ role: "user", content: "Hello" }],
-      }),
-    });
+    const { status, json } = await complete({ messages: [{ role: "user", content: "Hello" }] });
 
-    expect(response.status).toBe(200);
-    const data = (await response.json()) as {
-      id: string;
-      choices: { message: { content: string } }[];
-    };
-    expect(data.id).toMatch(/^chatcmpl-/);
-    expect(data.choices).toHaveLength(1);
-    expect(data.choices[0]!.message.content).toBe("Done.");
+    expect(status).toBe(200);
+    expect(json.choices[0]?.message.content).toBe("Done.");
+    expect(json.choices[0]?.finish_reason).toBe("stop");
   });
 
-  it("returns tool call in tool-call mode", async () => {
+  it("returns a bash tool call in tool-call mode", async () => {
     server.setMode("tool-call");
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "test",
-        messages: [{ role: "user", content: "Run echo hello" }],
-        tools: [{ type: "function", function: { name: "bash" } }],
-      }),
+    const { json } = await complete({
+      messages: [{ role: "user", content: "Run something" }],
+      tools: [{ type: "function", function: { name: "bash" } }],
     });
 
-    expect(response.status).toBe(200);
-    const data = (await response.json()) as {
-      choices: {
-        message: { tool_calls: { function: { name: string } }[] };
-        finish_reason: string;
-      }[];
-    };
-    expect(data.choices).toHaveLength(1);
-    const choice = data.choices[0]!;
-    expect(choice.message.tool_calls).toBeDefined();
-    expect(choice.message.tool_calls[0]!.function.name).toBe("bash");
-    expect(choice.finish_reason).toBe("tool_calls");
+    const call = json.choices[0]?.message.tool_calls?.[0];
+    expect(call?.function.name).toBe("bash");
+    // opencode's bash schema requires both; a call missing `description` is
+    // rejected before any permission event is emitted.
+    expect(JSON.parse(call?.function.arguments ?? "{}")).toEqual({
+      command: "echo hello",
+      description: "Prints hello to stdout",
+    });
   });
 
-  it("returns 429 in rate-limit mode", async () => {
+  it("does not spend the tool-call slot on a request that carries no tools", async () => {
+    server.setMode("tool-call");
+
+    // opencode's title-generation agent prompts without tools.
+    const titling = await complete({ messages: [{ role: "user", content: "Title this" }] });
+    expect(titling.json.choices[0]?.message.content).toBe("ok");
+
+    const build = await complete({
+      messages: [{ role: "user", content: "Run something" }],
+      tools: [{ type: "function", function: { name: "bash" } }],
+    });
+    expect(build.json.choices[0]?.message.tool_calls?.[0]?.function.name).toBe("bash");
+  });
+
+  it("answers with text once the tool result comes back", async () => {
+    server.setMode("tool-call");
+
+    const { json } = await complete({
+      messages: [
+        { role: "user", content: "Run something" },
+        { role: "assistant", content: null, tool_calls: [] },
+        { role: "tool", tool_call_id: "call_1", content: "hello" },
+      ],
+      tools: [{ type: "function", function: { name: "bash" } }],
+    });
+
+    expect(json.choices[0]?.message.content).toBe("Tool executed successfully.");
+  });
+
+  it("returns 429 once in rate-limit mode, then recovers", async () => {
     server.setMode("rate-limit");
 
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "test",
-        messages: [{ role: "user", content: "Hello" }],
-      }),
-    });
+    const first = await complete({ messages: [{ role: "user", content: "Hi" }] });
+    expect(first.status).toBe(429);
 
-    expect(response.status).toBe(429);
-    expect(response.headers.get("Retry-After")).toBe("5");
-    const data = (await response.json()) as { error: { message: string } };
-    expect(data.error.message).toBe("Rate limit exceeded");
+    const retry = await complete({ messages: [{ role: "user", content: "Hi" }] });
+    expect(retry.status).toBe(200);
+    expect(retry.json.choices[0]?.message.content).toBe("Recovered from rate limit.");
   });
 
-  it("returns task tool call in sub-agent mode", async () => {
-    server.setMode("sub-agent");
-
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "test",
-        messages: [{ role: "user", content: "Search files" }],
-        tools: [{ type: "function", function: { name: "task" } }],
-      }),
-    });
-
-    expect(response.status).toBe(200);
-    const data = (await response.json()) as {
-      choices: {
-        message: { tool_calls: { function: { name: string; arguments: string } }[] };
-        finish_reason: string;
-      }[];
-    };
-    expect(data.choices).toHaveLength(1);
-    const choice = data.choices[0]!;
-    expect(choice.message.tool_calls).toBeDefined();
-    expect(choice.message.tool_calls[0]!.function.name).toBe("task");
-    expect(choice.finish_reason).toBe("tool_calls");
-
-    // Verify task tool arguments contain description and prompt
-    const args = JSON.parse(choice.message.tool_calls[0]!.function.arguments) as {
-      description: string;
-      prompt: string;
-    };
-    expect(args.description).toBeDefined();
-    expect(args.prompt).toBeDefined();
-  });
-
-  it("streams response with delays in slow-stream mode", async () => {
+  it("streams slowly enough to observe a busy window in slow-stream mode", async () => {
     server.setMode("slow-stream");
 
-    const startTime = Date.now();
+    const started = Date.now();
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "test",
-        messages: [{ role: "user", content: "Hello" }],
         stream: true,
+        messages: [{ role: "user", content: "Stream this slowly" }],
       }),
     });
+    const body = await response.text();
+    const elapsed = Date.now() - started;
 
-    expect(response.status).toBe(200);
-
-    // Read the stream
-    const reader = response.body!.getReader();
-    const chunks: string[] = [];
-    let done = false;
-
-    while (!done) {
-      const { value, done: readerDone } = await reader.read();
-      done = readerDone;
-      if (value) {
-        chunks.push(new TextDecoder().decode(value));
-      }
-    }
-
-    const elapsed = Date.now() - startTime;
-
-    // Should have multiple chunks with delays
-    expect(chunks.length).toBeGreaterThan(1);
-    // Should take at least some time due to streaming delays
-    expect(elapsed).toBeGreaterThan(50);
-  });
-});
-
-describe("response builders", () => {
-  it("createInstantCompletion creates valid response", () => {
-    const completion = createInstantCompletion("Test content");
-    const choice = completion.choices[0];
-
-    expect(completion.id).toMatch(/^chatcmpl-/);
-    expect(completion.object).toBe("chat.completion");
-    expect(choice?.message.content).toBe("Test content");
-    expect(choice?.finish_reason).toBe("stop");
-  });
-
-  it("createToolCallCompletion creates valid tool call", () => {
-    // Note: For bash tool, OpenCode requires both 'command' and 'description' parameters
-    const completion = createToolCallCompletion("bash", {
-      command: "echo hello",
-      description: "Prints hello",
-    });
-    const choice = completion.choices[0];
-    const toolCall = choice?.message.tool_calls?.[0];
-
-    expect(choice?.message.content).toBeNull();
-    expect(choice?.message.tool_calls).toHaveLength(1);
-    expect(toolCall?.function.name).toBe("bash");
-    expect(JSON.parse(toolCall?.function.arguments ?? "{}")).toEqual({
-      command: "echo hello",
-      description: "Prints hello",
-    });
-    expect(choice?.finish_reason).toBe("tool_calls");
-  });
-
-  it("createToolCallCompletion creates task tool call for sub-agents", () => {
-    const completion = createToolCallCompletion("task", {
-      description: "Search for files",
-      prompt: "Find all TypeScript files",
-    });
-    const choice = completion.choices[0];
-    const toolCall = choice?.message.tool_calls?.[0];
-
-    expect(choice?.message.content).toBeNull();
-    expect(choice?.message.tool_calls).toHaveLength(1);
-    expect(toolCall?.function.name).toBe("task");
-    expect(JSON.parse(toolCall?.function.arguments ?? "{}")).toEqual({
-      description: "Search for files",
-      prompt: "Find all TypeScript files",
-    });
-    expect(choice?.finish_reason).toBe("tool_calls");
-  });
-
-  it("createRateLimitResponse creates 429 response", () => {
-    const response = createRateLimitResponse();
-
-    expect(response.status).toBe(429);
-    expect(response.headers["Retry-After"]).toBe("5");
-    expect(JSON.parse(response.body).error.type).toBe("rate_limit_error");
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(body).toContain("data: ");
+    // The point of the mode: the stream is still open long enough for a status
+    // read taken during it to see "busy".
+    expect(elapsed).toBeGreaterThan(300);
   });
 });
