@@ -108,6 +108,18 @@ jobs:
         shell: bash
         run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e" >> "$GITHUB_ENV"
 
+      # agent-turn.e2e.ts launches Claude for real. CodeHydra never downloads it
+      # (version.claude defaults to null, so resolveBinary() returns null) and the
+      # wrapper resolves `claude` on PATH alone — the same system install the
+      # postinstall script tells a developer to make. No login is needed: the spec
+      # points it at a local mock.
+      #
+      # Deliberately unpinned. The fixtures gate on the request Claude sends, so a
+      # release that changes it should turn CI red here rather than go unnoticed.
+      - name: Install the Claude CLI
+        shell: bash
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Download packaged artifact
         uses: actions/download-artifact@v8
         with:

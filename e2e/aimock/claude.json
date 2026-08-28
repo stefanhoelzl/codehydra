@@ -1,0 +1,59 @@
+{
+  "fixtures": [
+    {
+      "_comment": "Claude names the session before it does anything else, in a separate call carrying neither CodeHydra's system prompt nor any tools. DISABLE_NON_ESSENTIAL_MODEL_CALLS does not suppress it (checked on 2.1.250). Strict mode would 503 it and kill the turn, so it gets a fixture of its own \u2014 gated on the titling agent's own system prompt so it cannot absorb the real turn.",
+      "match": {
+        "systemMessage": "You are naming a coding session"
+      },
+      "response": {
+        "content": "Rename workspace"
+      }
+    },
+    {
+      "_comment": "Turn 3. The set-title result is back, so the turn ends. Matched on the id this file gave the call, which is the only thing that separates it from turn 2 \u2014 both carry the tool AND a tool result (turn 2's is WaitForMcpServers'). Must precede turn 2: first match wins.",
+      "match": {
+        "systemMessage": "You are running inside CodeHydra.",
+        "toolCallId": "call_ch_set_title"
+      },
+      "response": {
+        "content": "Renamed the workspace."
+      }
+    },
+    {
+      "_comment": "Turn 2. CodeHydra's MCP tool is now advertised, so call it. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the plugin token, and served its tool list.",
+      "match": {
+        "systemMessage": "You are running inside CodeHydra.",
+        "toolName": "mcp__codehydra__workspace_set_title"
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "id": "call_ch_set_title",
+            "name": "mcp__codehydra__workspace_set_title",
+            "arguments": {
+              "title": "renamed by agent"
+            }
+          }
+        ],
+        "reasoning": "Renaming the workspace through CodeHydra's MCP server."
+      },
+      "_thinking": "Claude Code runs with extended thinking on, and Anthropic rejects a tool-loop continuation whose assistant turn does not begin with a thinking block. aimock replays `reasoning` as exactly that block, so every tool-call fixture needs one."
+    },
+    {
+      "_comment": "Turn 1. Claude submits the initial prompt before its MCP servers have finished connecting, so this first request carries only built-ins \u2014 no mcp__* at all \u2014 plus WaitForMcpServers for exactly this situation. Answering with it is what makes the MCP tool appear on the next request. Last, so it only catches requests the tool-bearing fixtures above did not.",
+      "match": {
+        "systemMessage": "You are running inside CodeHydra."
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "WaitForMcpServers",
+            "arguments": {}
+          }
+        ],
+        "reasoning": "Waiting for the MCP servers to finish connecting."
+      },
+      "_thinking": "Claude Code runs with extended thinking on, and Anthropic rejects a tool-loop continuation whose assistant turn does not begin with a thinking block. aimock replays `reasoning` as exactly that block, so every tool-call fixture needs one."
+    }
+  ]
+}
