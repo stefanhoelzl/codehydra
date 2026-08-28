@@ -114,7 +114,9 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
     // The UI is up before the IDE server starts (show-ui runs two hook points
     // earlier), so the dialog arrives after launchApp has already resolved.
     try {
-      await expect(ui.getByText("Port already in use")).toBeVisible({ timeout: 30_000 });
+      // Must exceed PROCESS_SCAN_TIMEOUT_MS (30s on Windows): the dialog
+      // cannot appear until the scan that populates it has finished.
+      await expect(ui.getByText("Port already in use")).toBeVisible({ timeout: 60_000 });
     } catch (error) {
       // No dialog means the platform scan reported nobody on the port, and the
       // scan's own log lines are the only thing that says why. Without them a

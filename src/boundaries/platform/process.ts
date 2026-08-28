@@ -152,8 +152,18 @@ export interface ListeningProcess {
   readonly commandLine: string;
 }
 
-/** How long an OS-level process scan may take before it is abandoned. */
-export const PROCESS_SCAN_TIMEOUT_MS = 5000;
+/**
+ * How long an OS-level process scan may take before it is abandoned.
+ *
+ * Windows gets far longer than POSIX because the tools differ in kind, not
+ * degree: `lsof` is a single fast binary, while the Windows query pays Windows
+ * PowerShell 5.1 startup and then a first `Get-CimInstance` that initializes
+ * WMI. On a loaded CI runner that overran a 5s budget outright, and the scan
+ * timing out is indistinguishable from a free port at the call site — so the
+ * budget being too tight silently disables the whole feature. The neighbouring
+ * detectors allow 8s and 45s for their own PowerShell scans.
+ */
+export const PROCESS_SCAN_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
 
 /**
  * Interface for running external processes.
