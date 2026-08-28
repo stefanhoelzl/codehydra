@@ -150,6 +150,19 @@ export interface WindowBoundary {
   focus(handle: WindowHandle): void;
 
   /**
+   * Bring a window in front of the user: un-minimize it, show it, and focus it.
+   *
+   * `focus()` alone is not enough for a window the user has minimized or whose
+   * OS window is hidden, which is exactly the state it tends to be in when a
+   * second launch asks the running instance to come forward. One method rather
+   * than three primitives so the correct ordering lives in one place.
+   *
+   * @param handle - Handle to the window
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  present(handle: WindowHandle): void;
+
+  /**
    * Whether the window currently has OS focus.
    *
    * False when another application is in front, when the window is minimized,
@@ -382,6 +395,15 @@ export class DefaultWindowBoundary implements WindowBoundary {
 
   focus(handle: WindowHandle): void {
     const state = this.getWindowState(handle);
+    state.window.focus();
+  }
+
+  present(handle: WindowHandle): void {
+    const state = this.getWindowState(handle);
+    if (state.window.isMinimized()) {
+      state.window.restore();
+    }
+    state.window.show();
     state.window.focus();
   }
 

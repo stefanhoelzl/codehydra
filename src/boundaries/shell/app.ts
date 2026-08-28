@@ -86,6 +86,42 @@ export interface AppBoundary {
   relaunch(): void;
 
   /**
+   * Claim this machine's single-instance lock, or terminate the process.
+   *
+   * Electron keys the lock on the `userData` directory, which
+   * electron-lifecycle relocates to `<dataRoot>/electron/userData` — so the
+   * lock is per data root for free: a packaged install, an e2e run under
+   * `_CH_ROOT_DIR`, and each `pnpm dev` worktree all contend separately, which
+   * is exactly the granularity we want.
+   *
+   * Exits with code 0 when another instance already holds it: nothing failed,
+   * the user asked for CodeHydra and CodeHydra is now in front of them. The
+   * exit is hard (`app.exit`, not `app.quit`) so it skips `before-quit` →
+   * `app:shutdown`. A second instance never started anything, and running the
+   * stop hooks would have it withdraw the *running* instance's `plugin.port`
+   * and `plugin.token` from the shared `state.json`, breaking `ch` there.
+   *
+   * @returns `true` when this process is the primary instance. In production it
+   *   never returns otherwise; the boolean exists so a mock can drive the same
+   *   branch the real exit takes, and callers must bail on `false`.
+   */
+  ensureSingleInstance(): boolean;
+
+  /**
+   * Subscribe to another launch asking us to come forward.
+   *
+   * Covers both spellings of that request — Electron's `second-instance`
+   * (Windows/Linux) and `activate` (macOS, where re-launching the bundle
+   * activates the running app rather than spawning a second process). One
+   * subscription for both so a platform cannot be wired while the other is
+   * forgotten.
+   *
+   * @param callback - Called when the app should present itself
+   * @returns Unsubscribe function
+   */
+  onReactivate(callback: () => void): Unsubscribe;
+
+  /**
    * Set the Application User Model ID (Windows).
    *
    * Windows keys toasts to the AUMID of the shortcut that launched the app. Our
@@ -176,6 +212,31 @@ export class DefaultAppBoundary implements AppBoundary {
     this.logger.info("Relaunching app");
     app.relaunch();
     app.quit();
+  }
+
+  ensureSingleInstance(): boolean {
+    if (app.requestSingleInstanceLock()) {
+      return true;
+    }
+    this.logger.info("Another instance already holds the single-instance lock; exiting");
+    // Hard exit: `app.quit()` would fire `before-quit` → `app:shutdown`, whose
+    // stop hooks would tear down state this process never set up.
+    app.exit(0);
+    return false;
+  }
+
+  onReactivate(callback: () => void): Unsubscribe {
+    // Electron passes arguments to both events; we deliberately take none —
+    // presenting the window is all either one means to us.
+    const listener = (): void => {
+      callback();
+    };
+    app.on("second-instance", listener);
+    app.on("activate", listener);
+    return () => {
+      app.off("second-instance", listener);
+      app.off("activate", listener);
+    };
   }
 
   setAppUserModelId(id: string): void {

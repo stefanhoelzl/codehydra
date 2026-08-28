@@ -11,6 +11,7 @@
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod/v4";
 import { Dispatcher } from "../intents/lib/dispatcher";
@@ -332,6 +333,110 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Reactivation: another launch (or a macOS dock activation) asks the running
+  // instance to come forward.
+  // -------------------------------------------------------------------------
+  describe("reactivation", () => {
+    function createWindowManager() {
+      return {
+        create: vi.fn(),
+        maximizeAsync: vi.fn().mockResolvedValue(undefined),
+        focus: vi.fn(),
+        present: vi.fn(),
+      };
+    }
+
+    it("presents the window when another launch asks it to come forward", async () => {
+      const dispatcher = createMockDispatcher();
+      const viewManager = createMockViewManager();
+      const windowManager = createWindowManager();
+      const appLayer = createAppBoundaryMock();
+
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+        })
+      );
+      dispatcher.registerModule(
+        createViewModule({
+          viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+          logger: SILENT_LOGGER,
+          viewLayer: null,
+          windowLayer: null,
+          sessionLayer: null,
+          windowManager,
+          appLayer,
+        })
+      );
+
+      await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
+
+      // present(), not focus(): the window is typically minimized or buried
+      // when a second launch arrives, and focus() alone would not surface it.
+      expect(windowManager.present).not.toHaveBeenCalled();
+      appLayer.$.triggerReactivate();
+      expect(windowManager.present).toHaveBeenCalledTimes(1);
+    });
+
+    it("ignores a reactivation that arrives before the window exists", async () => {
+      // The lock is claimed in before-ready but the window is only created in
+      // init, so a launch landing in that gap has nothing to present.
+      const windowManager = createWindowManager();
+      const appLayer = createAppBoundaryMock();
+
+      createViewModule({
+        viewManager: createMockViewManager() as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        windowManager,
+        appLayer,
+      });
+
+      expect(() => {
+        appLayer.$.triggerReactivate();
+      }).not.toThrow();
+      expect(windowManager.present).not.toHaveBeenCalled();
+    });
+
+    it("stops presenting once the app has shut down", async () => {
+      const dispatcher = createMockDispatcher();
+      const viewManager = createMockViewManager();
+      const windowManager = createWindowManager();
+      const appLayer = createAppBoundaryMock();
+
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+        })
+      );
+      dispatcher.registerOperation(new AppShutdownOperation());
+      dispatcher.registerModule(
+        createViewModule({
+          viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+          logger: SILENT_LOGGER,
+          viewLayer: null,
+          windowLayer: null,
+          sessionLayer: null,
+          windowManager,
+          appLayer,
+        })
+      );
+      dispatcher.registerModule({
+        name: "test",
+        hooks: { [APP_SHUTDOWN_OPERATION_ID]: { quit: { handler: async () => {} } } },
+      });
+
+      await dispatcher.dispatch<AppStartIntent>({ type: INTENT_APP_START, payload: {} });
+      await dispatcher.dispatch<AppShutdownIntent>({ type: INTENT_APP_SHUTDOWN, payload: {} });
+
+      appLayer.$.triggerReactivate();
+      expect(windowManager.present).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Test 17: app-start/init → creates window/views, maximizes, loads UI, focuses
   // -------------------------------------------------------------------------
   describe("app-start/init", () => {
@@ -351,6 +456,7 @@ describe("ViewModule Integration", () => {
         create: vi.fn(),
         maximizeAsync: vi.fn().mockResolvedValue(undefined),
         focus: vi.fn(),
+        present: vi.fn(),
       };
       const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],

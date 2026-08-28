@@ -497,6 +497,7 @@ const viewModule = createViewModule({
   dialogLayer,
   menuLayer,
   windowManager,
+  appLayer,
   uiHtmlPath,
   uiPreloadPath,
 });

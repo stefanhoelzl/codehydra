@@ -326,6 +326,80 @@ describe("ElectronLifecycleModule Integration", () => {
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("no-proxy-server");
     });
 
+    it("claims the single-instance lock only after userData has been redirected", async () => {
+      // Electron keys the lock on `userData`. Claiming it before the redirect
+      // would key it on the system default, so every data root — dev
+      // worktrees, e2e runs under _CH_ROOT_DIR — would contend with the
+      // installed app instead of getting its own lock.
+      const order: string[] = [];
+      const mockApp = createMockApp();
+      vi.mocked(mockApp.setPath).mockImplementation((name: string) => {
+        order.push(`setPath:${name}`);
+      });
+      const appLayer = createAppBoundaryMock();
+      const claim = appLayer.ensureSingleInstance.bind(appLayer);
+      appLayer.ensureSingleInstance = () => {
+        order.push("lock");
+        return claim();
+      };
+
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerModule(
+        createElectronLifecycleModule(createDeps({ app: mockApp, appLayer }))
+      );
+
+      await dispatcher.dispatch<AppStartIntent>({
+        type: INTENT_APP_START,
+        payload: {},
+      });
+
+      expect(order.indexOf("lock")).toBeGreaterThan(order.indexOf("setPath:userData"));
+    });
+
+    it("abandons before-ready when another instance already holds the lock", async () => {
+      // The real boundary has already exited the process by the time
+      // ensureSingleInstance() reports false. Everything after the claim must
+      // be skipped, or a second launch would keep configuring an app that is
+      // on its way out — and touch state the running instance owns.
+      const mockApp = createMockApp();
+      const appLayer = createAppBoundaryMock({ primaryInstance: false });
+
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerModule(
+        createElectronLifecycleModule(createDeps({ app: mockApp, appLayer }))
+      );
+
+      await dispatcher.dispatch<AppStartIntent>({
+        type: INTENT_APP_START,
+        payload: {},
+      });
+
+      expect(appLayer).toHaveExitedWithCode(0);
+      expect(appLayer).toHaveAppUserModelId(null);
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
+    });
+
+    it("carries on through before-ready when it is the primary instance", async () => {
+      const mockApp = createMockApp();
+      const appLayer = createAppBoundaryMock();
+
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerModule(
+        createElectronLifecycleModule(createDeps({ app: mockApp, appLayer }))
+      );
+
+      await dispatcher.dispatch<AppStartIntent>({
+        type: INTENT_APP_START,
+        payload: {},
+      });
+
+      expect(appLayer).toHaveExitedWithCode(null);
+      expect(appLayer).toHaveAppUserModelId("com.codehydra.app");
+    });
+
     it("sets the Windows app user model id to match electron-builder's appId", async () => {
       // Windows keys toasts to the launching shortcut's AUMID. If Electron's
       // runtime id disagrees with the one NSIS stamped, notifications can

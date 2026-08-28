@@ -39,10 +39,22 @@ class AppBoundaryMockStateImpl implements MockState {
   relaunchCount = 0;
   /** Last id passed to setAppUserModelId(), or null when never called. */
   appUserModelId: string | null = null;
+  /** Whether ensureSingleInstance() reports this process as the primary one. */
+  isPrimaryInstance = true;
+  /** Number of times ensureSingleInstance() was called. */
+  singleInstanceChecks = 0;
+  /** Exit code the process terminated with, or null while still running. */
+  exitCode: number | null = null;
   readonly themeUpdatedCallbacks = new CallbackSet();
+  readonly reactivateCallbacks = new CallbackSet();
 
   triggerThemeUpdated(): void {
     this.themeUpdatedCallbacks.trigger();
+  }
+
+  /** Simulate another launch asking this instance to come forward. */
+  triggerReactivate(): void {
+    this.reactivateCallbacks.trigger();
   }
 
   snapshot(): Snapshot {
@@ -61,6 +73,9 @@ class AppBoundaryMockStateImpl implements MockState {
 export interface AppBoundaryMockState extends MockState {
   snapshot(): Snapshot;
   toString(): string;
+
+  /** Simulate another launch asking this instance to come forward. */
+  triggerReactivate(): void;
 }
 
 // =============================================================================
@@ -89,6 +104,14 @@ export interface MockAppBoundaryOptions {
    * @default true
    */
   shouldUseDarkColors?: boolean;
+
+  /**
+   * Whether ensureSingleInstance() reports this process as the primary one.
+   * Set false to drive the branch where another instance already holds the
+   * lock — the mock records the exit instead of terminating the test runner.
+   * @default true
+   */
+  primaryInstance?: boolean;
 }
 
 /**
@@ -115,10 +138,11 @@ export interface MockAppBoundaryOptions {
  * ```
  */
 export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): MockAppBoundary {
-  const { platform = "darwin", shouldUseDarkColors = true } = options;
+  const { platform = "darwin", shouldUseDarkColors = true, primaryInstance = true } = options;
 
   const state = new AppBoundaryMockStateImpl();
   state.shouldUseDarkColors = shouldUseDarkColors;
+  state.isPrimaryInstance = primaryInstance;
 
   // Create dock only for macOS
   const dock: AppDock | undefined =
@@ -154,6 +178,22 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
 
     relaunch(): void {
       state.relaunchCount += 1;
+    },
+
+    ensureSingleInstance(): boolean {
+      state.singleInstanceChecks += 1;
+      if (state.isPrimaryInstance) {
+        return true;
+      }
+      // The real boundary calls app.exit(0) here and never returns. A mock
+      // cannot terminate the process, so it records the exit and returns false
+      // — callers bail on false, taking the same branch production takes.
+      state.exitCode = 0;
+      return false;
+    },
+
+    onReactivate(callback: () => void) {
+      return state.reactivateCallbacks.add(callback);
     },
 
     setAppUserModelId(id: string): void {
@@ -208,6 +248,12 @@ export interface AppBoundaryMatchers {
    * @param id - Expected id, or null when it should never have been set
    */
   toHaveAppUserModelId(id: string | null): void;
+
+  /**
+   * Assert the code the process exited with via ensureSingleInstance().
+   * @param code - Expected exit code, or null when it should still be running
+   */
+  toHaveExitedWithCode(code: number | null): void;
 }
 
 // Extend vitest's assertion interface
@@ -265,6 +311,18 @@ const appBoundaryMatchers: MatcherImplementationsFor<
         pass
           ? `Expected app user model id NOT to be ${JSON.stringify(id)}`
           : `Expected app user model id to be ${JSON.stringify(id)}, but got ${JSON.stringify(actual)}`,
+    };
+  },
+
+  toHaveExitedWithCode(received, code) {
+    const actual = received.$.exitCode;
+    const pass = actual === code;
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected process NOT to have exited with code ${JSON.stringify(code)}`
+          : `Expected process to have exited with code ${JSON.stringify(code)}, but got ${JSON.stringify(actual)}`,
     };
   },
 };

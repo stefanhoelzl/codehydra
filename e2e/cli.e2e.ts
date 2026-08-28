@@ -18,7 +18,14 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import { DATA_ROOT, createWorkspace, openProject, useApp, workspacesDir } from "./fixtures";
+import {
+  DATA_ROOT,
+  createWorkspace,
+  openProject,
+  useApp,
+  waitForConnectionDetails,
+  workspacesDir,
+} from "./fixtures";
 
 const isWindows = process.platform === "win32";
 const BIN_DIR = join(DATA_ROOT, "bin");
@@ -64,30 +71,6 @@ function json(run: Run): unknown {
     `expected success.\n  spawn error: ${run.error ?? "none"}\n  stderr: ${run.stderr}\n  stdout: ${run.stdout}`
   ).toBe(0);
   return JSON.parse(run.stdout) as unknown;
-}
-
-/**
- * Wait until the app has published its connection details.
- *
- * `launchApp` returns once the UI is visible, and the UI is shown at the
- * `show-ui` hook point — two points before `start`, where the plugin server
- * binds and the port and token are written. So a `ch` invocation immediately
- * after launch legitimately races startup and reports the app as not running.
- */
-async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void> {
-  const statePath = join(DATA_ROOT, "state.json");
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    try {
-      const state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
-      if (typeof state["plugin.port"] === "number" && state["plugin.port"] > 0) return;
-    } catch {
-      // Not written yet, or written but not yet complete.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`CodeHydra did not publish connection details within ${timeoutMs}ms`);
 }
 
 let repo: { path: string; cleanup: () => Promise<void> };

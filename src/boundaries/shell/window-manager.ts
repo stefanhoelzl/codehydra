@@ -192,6 +192,17 @@ export class WindowManager {
   }
 
   /**
+   * Brings the window in front of the user: un-minimizes, shows, and focuses.
+   *
+   * Used when a second launch asks the running instance to come forward, where
+   * the window is typically minimized or buried and `focus()` alone would not
+   * surface it.
+   */
+  present(): void {
+    this.windowLayer.present(this.windowHandle);
+  }
+
+  /**
    * Whether the window currently has OS focus.
    *
    * False when another app is in front, when minimized, and when the user has

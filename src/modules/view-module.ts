@@ -23,6 +23,7 @@ import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
+import type { AppBoundary } from "../boundaries/shell/app";
 import type { WebPreferences } from "../boundaries/shell/types";
 import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -59,7 +60,10 @@ export interface ViewModuleDeps {
     create(webPreferences?: WebPreferences): void;
     maximizeAsync(): Promise<void>;
     focus(): void;
+    present(): void;
   } | null;
+  /** App layer, for the "another launch wants us in front" subscription. */
+  readonly appLayer?: Pick<AppBoundary, "onReactivate"> | null;
   readonly uiHtmlPath?: string | null;
   /** Preload script for the UI page hosted directly by the window. */
   readonly uiPreloadPath?: string | null;
@@ -75,6 +79,9 @@ export interface ViewModuleDeps {
  */
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager } = deps;
+
+  /** Set once the window exists; released on shutdown. */
+  let unsubscribeReactivate: (() => void) | null = null;
 
   const module: IntentModule = {
     name: "view",
@@ -126,6 +133,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             // Focus UI
             viewManager.focus();
 
+            // A second launch (or a macOS dock activation) asks the running
+            // instance to come forward. Subscribed here, after the window
+            // exists — the lock is claimed in before-ready, so a launch landing
+            // in that gap finds no window to present and is simply dropped.
+            if (deps.appLayer && deps.windowManager) {
+              const windowManager = deps.windowManager;
+              unsubscribeReactivate = deps.appLayer.onReactivate(() => {
+                deps.logger.info("Another launch asked us to come forward");
+                windowManager.present();
+              });
+            }
+
             return { provides: { "ui-ready": true } };
           },
         },
@@ -176,6 +195,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
+            unsubscribeReactivate?.();
+            unsubscribeReactivate = null;
+
             // Destroy the UI view before disposing layers (uses viewLayer internally)
             viewManager.destroy();
 

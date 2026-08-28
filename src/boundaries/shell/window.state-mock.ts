@@ -412,6 +412,13 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
       window.isFocused = true;
     },
 
+    present(handle: WindowHandle): void {
+      const window = getWindow(handle);
+      // The real boundary un-minimizes, shows, and focuses. The mock models
+      // only focus — the observable outcome all three exist to produce.
+      window.isFocused = true;
+    },
+
     isFocused(handle: WindowHandle): boolean {
       return getWindow(handle).isFocused;
     },
