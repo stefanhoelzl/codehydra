@@ -128,21 +128,29 @@ function hookInterpreter(mcpConfig: McpConfig | null, logger: Logger): string {
  *
  * `ch mcp` is given everything explicitly at launch — interpreter, bundle, port
  * and token — so the shim reads no state file and needs nothing on PATH.
+ *
+ * With no config the server is omitted rather than written with empty strings:
+ * the template used to emit `command: ""`, so an agent started before the
+ * plugin server bound was handed an MCP server whose launch command was the
+ * empty string. The file itself is still written — the wrapper refuses to
+ * launch without `_CH_CLAUDE_MCP_CONFIG` pointing at one — and Claude merges an
+ * empty `mcpServers` harmlessly.
  */
 export function buildMcpConfigFile(
   workspacePath: string,
   mcpConfig: McpConfig | null
 ): ClaudeMcpConfigFile {
+  if (mcpConfig === null) return { mcpServers: {} };
   return {
     mcpServers: {
       codehydra: {
         type: "stdio",
-        command: mcpConfig?.nodePath ?? "",
-        args: [mcpConfig?.cliPath ?? "", "mcp"],
+        command: mcpConfig.nodePath,
+        args: [mcpConfig.cliPath, "mcp"],
         env: {
           _CH_WORKSPACE_PATH: workspacePath,
-          _CH_PLUGIN_PORT: String(mcpConfig?.port ?? 0),
-          _CH_PLUGIN_TOKEN: mcpConfig?.token ?? "",
+          _CH_PLUGIN_PORT: String(mcpConfig.port),
+          _CH_PLUGIN_TOKEN: mcpConfig.token,
         },
       },
     },
