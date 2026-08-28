@@ -176,6 +176,7 @@ import { createElectronLifecycleModule } from "./modules/electron-lifecycle-modu
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
 import { createTempDirModule } from "./modules/temp-dir-module";
+import { createCleanupModule } from "./modules/cleanup-module";
 import { createErrorReportModule } from "./modules/error-report-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
@@ -793,6 +794,42 @@ const tempDirModule = createTempDirModule({
   pathProvider,
 });
 
+// Sweeps of the data root that nothing waits on. Order matters: `claude/configs`
+// is retired before the `claude` bundle rule sweeps its parent, so the retired
+// directory is never mistaken for a version. The temp root is deliberately absent
+// — clearing it is order-critical and stays in tempDirModule, awaited in "init".
+const cleanupModule = createCleanupModule({
+  fileSystem: fileSystemLayer,
+  pathProvider,
+  logger: loggingService.createLogger("cleanup"),
+  isPackagedBuild: !buildInfo.isDevelopment,
+  rules: [
+    // Agent hook/MCP configs. They bake in this launch's ports and plugin token,
+    // so they were never data: they now live under the temp root.
+    { kind: "retire", path: "claude/configs" },
+    // The IDE server we shipped before VSCodium. Nothing has read it since the
+    // `code-server.port` -> `ide-server.port` rename.
+    { kind: "retire", path: "code-server" },
+    // OpenCode's config is passed inline via OPENCODE_CONFIG_CONTENT; this file
+    // is what the old on-disk approach left behind.
+    { kind: "retire", path: "opencode/opencode.codehydra.json" },
+    // One log file per launch, and electron-log only ever rotates the current
+    // one, so nothing bounded the directory's growth.
+    { kind: "keepRecent", path: "logs", keep: 20 },
+    // Hibernation screenshots are deleted on wake and on workspace delete; the
+    // per-project directory is what outlives the project.
+    { kind: "pruneEmpty", path: "screenshots" },
+    { kind: "bundle", path: "claude", live: () => claudeVersionConfig.get(), packagedOnly: true },
+    {
+      kind: "bundle",
+      path: "opencode",
+      live: () => opencodeVersionConfig.get(),
+      packagedOnly: true,
+    },
+    { kind: "bundle", path: "vscodium", live: () => ideServerModule.version(), packagedOnly: true },
+  ],
+});
+
 const shortcutModule = createShortcutModule({
   viewManager,
   windowLayer,
@@ -979,6 +1016,7 @@ dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
+dispatcher.registerModule(cleanupModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
