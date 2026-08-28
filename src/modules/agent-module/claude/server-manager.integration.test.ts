@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ClaudeCodeServerManager } from "./server-manager";
+import { registeredHooks } from "./types";
 import {
   createPortManagerMock,
   type MockPortManager,
@@ -1076,22 +1077,31 @@ describe("ClaudeCodeServerManager integration", () => {
       return JSON.parse(typeof content === "string" ? content : content.toString());
     }
 
-    it("generates a hooks config that parses, naming the hook handler", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
-
-      const hooks = readGeneratedConfig("codehydra-hooks.json") as {
+    /** The command registered for one hook in the generated settings file. */
+    function hookCommand(name: string): string {
+      const settings = readGeneratedConfig("codehydra-hooks.json") as {
         hooks: Record<string, { hooks: { command: string }[] }[]>;
       };
+      return settings.hooks[name]![0]!.hooks[0]!.command;
+    }
 
-      expect(Object.keys(hooks.hooks)).toEqual(
-        expect.arrayContaining(["SessionStart", "UserPromptSubmit"])
+    it("registers every hook Claude is meant to send, and no wrapper hook", async () => {
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+
+      const settings = readGeneratedConfig("codehydra-hooks.json") as {
+        hooks: Record<string, unknown>;
+      };
+
+      // Derived from the hook-name union, so this is the whole registered set —
+      // not a sample. A name added to the union shows up here or fails to build.
+      expect(new Set(Object.keys(settings.hooks))).toEqual(
+        new Set(registeredHooks().map(([name]) => name))
       );
-      expect(hooks.hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-        `"node" "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
-      );
+      expect(Object.keys(settings.hooks)).not.toContain("WrapperStart");
+      expect(Object.keys(settings.hooks)).not.toContain("WrapperEnd");
     });
 
-    it("quotes the handler so a path with spaces survives the shell", async () => {
+    it("quotes the interpreter and the handler so a path with spaces survives", async () => {
       const spaced = new ClaudeCodeServerManager({
         portManager: mockPortManager,
         pathProvider: mockPathProvider,
@@ -1111,7 +1121,7 @@ describe("ClaudeCodeServerManager integration", () => {
       ).hooks.SessionStart![0]!.hooks[0]!.command;
 
       // Unquoted, the shell would split this into four arguments and the hook
-      // would never fire. hook-command.boundary.test.ts proves that in a real shell.
+      // would never fire.
       expect(command).toBe(
         `"node" "${testPath("/mock dir/hook handler.js").toNative()}" SessionStart`
       );
@@ -1127,15 +1137,19 @@ describe("ClaudeCodeServerManager integration", () => {
       });
       await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
-      const settings = readGeneratedConfig("codehydra-hooks.json") as {
-        hooks: Record<string, { hooks: { command: string }[] }[]>;
-      };
-
       // The MCP entry always passed the interpreter explicitly; the hook command
-      // used a bare `node`, which CodeHydra's bin directory does not ship.
-      expect(settings.hooks.SessionStart![0]!.hooks[0]!.command).toBe(
+      // used a bare `node`, which the bin directory does not ship.
+      expect(hookCommand("SessionStart")).toBe(
         `"${testPath("/ide/node").toNative()}" ` +
           `"${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
+      );
+    });
+
+    it("falls back to PATH node before MCP config arrives, and says so", async () => {
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+
+      expect(hookCommand("SessionStart")).toBe(
+        `"node" "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
       );
     });
 
@@ -1166,6 +1180,20 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(env._CH_WORKSPACE_PATH).toBe(testPath("/workspace/feature-a").toString());
       expect(env._CH_PLUGIN_PORT).toBe("9999");
       expect(env._CH_PLUGIN_TOKEN).toBe("test-token");
+    });
+
+    it("omits the MCP server entirely when there is no config to give it", async () => {
+      // Never called setMcpConfig: the plugin server has not bound yet.
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+
+      const mcp = readGeneratedConfig("codehydra-mcp.json") as {
+        mcpServers: Record<string, unknown>;
+      };
+
+      // The file still exists — the wrapper refuses to launch without one — but
+      // it advertises nothing. This used to emit `command: ""`, handing Claude a
+      // server whose launch command was the empty string.
+      expect(mcp.mcpServers).toEqual({});
     });
 
     it("escapes a value that would otherwise break the JSON", async () => {
