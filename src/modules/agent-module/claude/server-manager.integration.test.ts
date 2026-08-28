@@ -1087,7 +1087,7 @@ describe("ClaudeCodeServerManager integration", () => {
         expect.arrayContaining(["SessionStart", "UserPromptSubmit"])
       );
       expect(hooks.hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-        `node "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
+        `"node" "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
       );
     });
 
@@ -1113,9 +1113,30 @@ describe("ClaudeCodeServerManager integration", () => {
       // Unquoted, the shell would split this into four arguments and the hook
       // would never fire. hook-command.boundary.test.ts proves that in a real shell.
       expect(command).toBe(
-        `node "${testPath("/mock dir/hook handler.js").toNative()}" SessionStart`
+        `"node" "${testPath("/mock dir/hook handler.js").toNative()}" SessionStart`
       );
       await spaced.dispose();
+    });
+
+    it("runs hooks under the bundled interpreter once MCP config is known", async () => {
+      serverManager.setMcpConfig({
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
+        port: 9999,
+        token: "test-token",
+      });
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+
+      const settings = readGeneratedConfig("codehydra-hooks.json") as {
+        hooks: Record<string, { hooks: { command: string }[] }[]>;
+      };
+
+      // The MCP entry always passed the interpreter explicitly; the hook command
+      // used a bare `node`, which CodeHydra's bin directory does not ship.
+      expect(settings.hooks.SessionStart![0]!.hooks[0]!.command).toBe(
+        `"${testPath("/ide/node").toNative()}" ` +
+          `"${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
+      );
     });
 
     it("generates an MCP config that parses, with the launch command claude will spawn", async () => {

@@ -7,7 +7,7 @@
  * answered is a real shell, on a real path, on each platform CI runs.
  *
  * What this pins down, and what unit assertions cannot:
- *  - a handler path containing a space stays one argument
+ *  - an interpreter or handler path containing a space stays one argument
  *  - a native Windows path's backslashes survive (they are safe *because* the
  *    path is quoted; unquoted, `cmd` would still split on the space)
  *  - the hook name arrives as the handler's first argument
@@ -56,14 +56,16 @@ function runInShell(command: string): Promise<{ stdout: string; status: number |
 }
 
 /** The command the settings file registers for one hook. */
-function commandFor(hookName: string): string {
-  const settings = buildSettingsFile(handlerPath);
+function commandFor(hookName: string, interpreter: string): string {
+  const settings = buildSettingsFile(handlerPath, interpreter);
   return settings.hooks[hookName]![0]!.hooks[0]!.command;
 }
 
 describe("generated hook command (boundary)", () => {
   it("survives a spaced path when run through the platform shell", async () => {
-    const { stdout, status } = await runInShell(commandFor("SessionStart"));
+    // process.execPath is this machine's real node — an absolute path, and on
+    // Windows a native one with backslashes.
+    const { stdout, status } = await runInShell(commandFor("SessionStart", process.execPath));
 
     expect(status).toBe(0);
     // One argument, not four: the handler saw only the hook name.
@@ -72,14 +74,14 @@ describe("generated hook command (boundary)", () => {
 
   it("passes each hook name through as the single argument", async () => {
     for (const hook of ["PreToolUse", "Stop", "UserPromptSubmit"]) {
-      const { stdout } = await runInShell(commandFor(hook));
+      const { stdout } = await runInShell(commandFor(hook, process.execPath));
       expect(stdout).toBe(`ARGV:${hook}`);
     }
   });
 
   it("would break unquoted — the reason the quotes are there", async () => {
     // The shape this test exists to prevent regressing to.
-    const unquoted = `node ${handlerPath} SessionStart`;
+    const unquoted = `${process.execPath} ${handlerPath} SessionStart`;
     const { stdout, status } = await runInShell(unquoted);
 
     expect({ stdout, status }).not.toEqual({ stdout: "ARGV:SessionStart", status: 0 });

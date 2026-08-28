@@ -90,17 +90,37 @@ export interface ClaudeMcpConfigFile {
  * the real values makes escaping structural instead of something each value has
  * to be safe for.
  */
-export function buildSettingsFile(hookHandlerPath: string): ClaudeSettingsFile {
+export function buildSettingsFile(
+  hookHandlerPath: string,
+  interpreter: string
+): ClaudeSettingsFile {
   const hooks: Record<string, ClaudeHookMatcher[]> = {};
   for (const [name, register] of registeredHooks()) {
     hooks[name] = [
       {
         ...(register.matcher !== undefined && { matcher: register.matcher }),
-        hooks: [{ type: "command", command: `node "${hookHandlerPath}" ${name}` }],
+        hooks: [{ type: "command", command: `"${interpreter}" "${hookHandlerPath}" ${name}` }],
       },
     ];
   }
   return { hooks };
+}
+
+/**
+ * The interpreter the hook command runs under.
+ *
+ * The MCP entry passes the bundled interpreter explicitly so `ch mcp` "needs
+ * nothing on PATH" — but the hook command used a bare `node`, and the bin
+ * directory ships no node, so hooks quietly depended on the user having one
+ * installed. Same generated file, opposite assumptions. Prefer the bundled
+ * interpreter and fall back only when there is none to offer.
+ */
+function hookInterpreter(mcpConfig: McpConfig | null, logger: Logger): string {
+  if (mcpConfig !== null) return mcpConfig.nodePath;
+  logger.warn(
+    "No MCP config yet; hook commands will use `node` from PATH, which CodeHydra does not ship"
+  );
+  return "node";
 }
 
 /**
@@ -1016,7 +1036,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Generate the two files Claude is launched with.
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-hooks.json"),
-      buildSettingsFile(this.hookHandlerPath)
+      buildSettingsFile(this.hookHandlerPath, hookInterpreter(this.mcpConfig ?? null, this.logger))
     );
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-mcp.json"),
