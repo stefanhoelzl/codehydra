@@ -138,6 +138,24 @@ export interface SpawnedProcess {
 }
 
 /**
+ * A process holding a listening socket, as reported by an OS-level scan.
+ *
+ * Deliberately its own type rather than the `BlockingProcess` the deletion
+ * dialog uses: that one carries `files` and `cwd`, which mean nothing for a
+ * port, and it lives in the intents layer, which a boundary must not depend on.
+ */
+export interface ListeningProcess {
+  readonly pid: number;
+  /** Executable name, e.g. "node" or "codehydra.exe". */
+  readonly name: string;
+  /** Full command line, or the bare name when the OS did not report one. */
+  readonly commandLine: string;
+}
+
+/** How long an OS-level process scan may take before it is abandoned. */
+export const PROCESS_SCAN_TIMEOUT_MS = 5000;
+
+/**
  * Interface for running external processes.
  * Returns a SpawnedProcess handle for full process control.
  * Allows dependency injection for testing.
@@ -178,6 +196,26 @@ export interface ProcessRunner {
    * @param killTimeout - Wait after SIGKILL (ms). undefined = return immediately.
    */
   kill(pid: number, termTimeout?: number, killTimeout?: number): Promise<KillResult>;
+
+  /**
+   * Processes holding a LISTEN socket on `port`.
+   *
+   * Process inspection keyed by a port, which is why it lives here rather than
+   * on `PortManager`: the work is shelling out to `lsof` / `Get-NetTCPConnection`,
+   * exactly like every other process scan in this codebase, and `PortManager`
+   * would have to reach across into the process boundary to do it.
+   *
+   * Normally one entry — Node marks sockets close-on-exec, so a server's
+   * children do not inherit its listener — but a list because `lsof` can
+   * legitimately report several (fork-inherited descriptors, `SO_REUSEPORT`).
+   *
+   * Best-effort: returns an empty array when the scan fails, times out, or the
+   * platform tool is missing. A caller must treat "nothing found" as "could not
+   * tell", never as "the port is free".
+   *
+   * @param port - TCP port to look up on localhost.
+   */
+  findListeningProcesses(port: number): Promise<ListeningProcess[]>;
 }
 
 /**
@@ -584,6 +622,96 @@ class ExecaSpawnedProcess implements SpawnedProcess {
  * Process runner implementation using execa.
  * Returns a SpawnedProcess handle for controlling the spawned process.
  */
+
+// ============================================================================
+// Listening-process scan
+// ============================================================================
+
+/**
+ * Extract PIDs from `lsof -F p` output.
+ *
+ * `-F` prints one field per line, each prefixed by its type: `p` is a PID.
+ * lsof reports no command line, only a command *name*, so callers pair this
+ * with `ps` to get something the user can actually recognize.
+ */
+export function parseLsofPids(stdout: string): number[] {
+  const pids: number[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line[0] !== "p") continue;
+    const pid = Number(line.slice(1));
+    if (Number.isInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
+  }
+  return pids;
+}
+
+/**
+ * Parse `ps -o pid=,comm=,args=` output into ListeningProcess entries.
+ *
+ * Fields are whitespace-separated with `args` running to end of line, so this
+ * splits twice and keeps the remainder verbatim — a command line contains
+ * spaces and must survive intact for the user to recognize it.
+ */
+export function parsePsOutput(stdout: string): ListeningProcess[] {
+  const processes: ListeningProcess[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    const match = /^(\d+)\s+(\S+)\s*(.*)$/.exec(trimmed);
+    if (!match) continue;
+    const [, rawPid, name, args] = match;
+    const pid = Number(rawPid);
+    if (!Number.isInteger(pid)) continue;
+    processes.push({ pid, name: name!, commandLine: args!.trim() === "" ? name! : args!.trim() });
+  }
+  return processes;
+}
+
+/** Parse the JSON emitted by the Windows listener query. */
+export function parseWindowsListeners(stdout: string): ListeningProcess[] {
+  const trimmed = stdout.trim();
+  if (trimmed === "") return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+
+  // ConvertTo-Json emits a bare object for a single result unless -AsArray is
+  // honored; tolerate both rather than depend on the PowerShell version.
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  const processes: ListeningProcess[] = [];
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const record = item as Record<string, unknown>;
+    const pid = record["ProcessId"];
+    if (typeof pid !== "number" || !Number.isInteger(pid)) continue;
+    const name = typeof record["Name"] === "string" ? record["Name"] : "unknown";
+    const commandLine = typeof record["CommandLine"] === "string" ? record["CommandLine"] : name;
+    processes.push({ pid, name, commandLine });
+  }
+  return processes;
+}
+
+/**
+ * PowerShell that maps a listening port to the processes behind it.
+ *
+ * `Get-NetTCPConnection` reports only an OwningProcess id, so it is joined to
+ * Win32_Process for the name and command line. SilentlyContinue because "no
+ * listener" is an error there, not an empty result.
+ */
+function windowsListenerQuery(port: number): string {
+  return (
+    `$ErrorActionPreference='SilentlyContinue';` +
+    `$p = Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
+    `Select-Object -ExpandProperty OwningProcess -Unique; ` +
+    `if (-not $p) { '[]'; exit 0 }; ` +
+    `$p | ForEach-Object { Get-CimInstance Win32_Process -Filter "ProcessId=$_" } | ` +
+    `Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -AsArray`
+  );
+}
+
 export class ExecaProcessRunner implements ProcessRunner {
   constructor(private readonly logger: Logger) {}
 
@@ -671,5 +799,68 @@ export class ExecaProcessRunner implements ProcessRunner {
       this.logger.warn("Foreign process survived termination", { pid, timeout: killTimeout });
     }
     return { success: false };
+  }
+
+  async findListeningProcesses(port: number): Promise<ListeningProcess[]> {
+    try {
+      const processes =
+        process.platform === "win32"
+          ? await this.findListenersWindows(port)
+          : await this.findListenersPosix(port);
+      this.logger.debug("Scanned port for listeners", { port, count: processes.length });
+      return processes;
+    } catch (error) {
+      // Best-effort by contract: a caller must not read "none found" as "port
+      // free", so a failed scan is indistinguishable from an empty one.
+      this.logger.warn("Port listener scan failed", {
+        port,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
+  /** Run a scan command, returning its stdout or "" if it failed or hung. */
+  private async scan(command: string, args: readonly string[]): Promise<string> {
+    const proc = this.run(command, args);
+    const result = await proc.wait(PROCESS_SCAN_TIMEOUT_MS);
+    if (result.running) {
+      await proc.kill(1000, 1000);
+      this.logger.warn("Port listener scan timed out", { command });
+      return "";
+    }
+    return result.stdout;
+  }
+
+  private async findListenersPosix(port: number): Promise<ListeningProcess[]> {
+    // -n/-P: no DNS or port-name lookups, which are slow and can hang.
+    // Exit code 1 means "nothing found", which parses to an empty list anyway.
+    const pids = parseLsofPids(
+      await this.scan("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"])
+    );
+    if (pids.length === 0) return [];
+
+    // lsof knows the command name but never the full command line; ps does.
+    const details = parsePsOutput(
+      await this.scan("ps", ["-o", "pid=,comm=,args=", "-p", pids.join(",")])
+    );
+    if (details.length > 0) return details;
+
+    // ps failed but we still know who holds the port — better to offer the pid
+    // than to pretend the scan found nothing.
+    return pids.map((pid) => ({ pid, name: "unknown", commandLine: "unknown" }));
+  }
+
+  private async findListenersWindows(port: number): Promise<ListeningProcess[]> {
+    return parseWindowsListeners(
+      await this.scan("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        windowsListenerQuery(port),
+      ])
+    );
   }
 }

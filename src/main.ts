@@ -516,6 +516,7 @@ const ideServerModule = createIdeServerModule({
   logger: apiLogger,
   archiveExtractor,
   configService,
+  ui: presentationModule,
   resolveOpencodeBundleDir: (): string =>
     getOpencodeBundleDir(pathProvider, opencodeVersionConfig.get()).toNative(),
 });

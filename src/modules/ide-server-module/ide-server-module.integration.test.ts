@@ -85,6 +85,8 @@ import {
 } from "../../boundaries/platform/process.state-mock";
 import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import type { DialogConfig } from "../../shared/dialog-types";
+import type { UiPresenter } from "../presentation/presentation-module";
 import { Path } from "../../utils/path/path";
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
@@ -1416,6 +1418,201 @@ describe("IdeServerModule", () => {
       expect(env._CH_IDE_NODE).toContain("vscodium");
       expect(env._CH_IDE_NODE).toMatch(/\/node$/);
       expect(env._CH_OPENCODE_DIR).toContain("opencode");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Port conflict recovery
+  //
+  // Reaching the port check at all means no CodeHydra on this data root is
+  // running — the single-instance lock refuses a second launch long before
+  // startup gets here. So the holder is a crashed session's leftover, an
+  // unrelated app, or a CodeHydra on another data root, and the user judges.
+  // ---------------------------------------------------------------------------
+
+  describe("port conflict", () => {
+    const PORT = 25448;
+    const HOLDER = {
+      pid: 4321,
+      name: "node",
+      commandLine: "/opt/codehydra/runtime/codium-server --port 25448",
+    };
+
+    /**
+     * A presenter stand-in that answers the port-conflict dialog.
+     *
+     * Each answer is pressed on a macrotask after the dialog is shown or
+     * updated, which is after `nextAction` has subscribed — the module opens
+     * the dialog and subscribes in the same synchronous run.
+     */
+    function createDialogUi(answers: readonly string[]) {
+      const shown: DialogConfig[] = [];
+      let onEventHandler: ((event: { actionId: string }) => void) | null = null;
+      let onDismissHandler: (() => void) | null = null;
+      let closed = false;
+      let next = 0;
+
+      const answer = (): void => {
+        const action = answers[next++];
+        setTimeout(() => {
+          if (action === undefined || action === "dismiss") onDismissHandler?.();
+          else onEventHandler?.({ actionId: action });
+        }, 0);
+      };
+
+      const handle = {
+        id: "port-conflict",
+        update: (config: DialogConfig): void => {
+          shown.push(config);
+          answer();
+        },
+        close: (): void => {
+          closed = true;
+        },
+        onEvent: (handler: (event: { actionId: string }) => void) => {
+          onEventHandler = handler;
+          return () => {
+            onEventHandler = null;
+          };
+        },
+        onChange: () => () => {},
+        onDismiss: (handler: () => void) => {
+          onDismissHandler = handler;
+          return () => {
+            onDismissHandler = null;
+          };
+        },
+      };
+
+      return {
+        ui: {
+          dialog: (config: DialogConfig) => {
+            shown.push(config);
+            answer();
+            return handle as unknown as ReturnType<UiPresenter["dialog"]>;
+          },
+        },
+        shown,
+        isClosed: () => closed,
+      };
+    }
+
+    /** Deps whose port frees up once its holder is killed. */
+    function createConflictDeps(options: {
+      answers: readonly string[];
+      onKill?: (pid: number) => { success: boolean } | void;
+      listeners?: Record<number, readonly (typeof HOLDER)[]>;
+      withUi?: boolean;
+    }) {
+      let portFree = false;
+      const dialogUi = createDialogUi(options.answers);
+      const processRunner = createMockProcessRunner({
+        onSpawn: () => defaultSpawnConfig(),
+        listeners: options.listeners ?? { [PORT]: [HOLDER] },
+        onKill: (pid) => {
+          const result = options.onKill?.(pid);
+          if (result === undefined || result.success) portFree = true;
+          return result as never;
+        },
+      });
+      const deps = createMockDeps({
+        processRunner,
+        portManager: { isPortAvailable: vi.fn(async () => portFree) },
+        ...(options.withUi === false ? {} : { ui: dialogUi.ui }),
+      });
+      return { deps, processRunner, dialogUi };
+    }
+
+    it("offers to terminate the holder, then starts once the port is free", async () => {
+      const { deps, processRunner, dialogUi } = createConflictDeps({ answers: ["terminate"] });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).resolves.not.toThrow();
+
+      expect(processRunner.$.killedPids).toContain(HOLDER.pid);
+      expect(dialogUi.isClosed()).toBe(true);
+    });
+
+    it("shows the pid, name and command line so the user can judge what it is", async () => {
+      const { deps, dialogUi } = createConflictDeps({ answers: ["terminate"] });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const table = dialogUi.shown[0]?.sections.find(
+        (section: DialogConfig["sections"][number]) => section.type === "table"
+      );
+      expect(JSON.stringify(table)).toContain(String(HOLDER.pid));
+      expect(JSON.stringify(table)).toContain(HOLDER.name);
+      expect(JSON.stringify(table)).toContain("codium-server");
+    });
+
+    it("fails with the ordinary busy-port error when the user quits", async () => {
+      const { deps, processRunner } = createConflictDeps({ answers: ["quit"] });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
+      expect(processRunner.$.killedPids).not.toContain(HOLDER.pid);
+    });
+
+    it("treats Escape as quitting", async () => {
+      const { deps } = createConflictDeps({ answers: ["dismiss"] });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
+    });
+
+    it("reports a failed termination inline and lets the user try again", async () => {
+      let attempts = 0;
+      const { deps, dialogUi } = createConflictDeps({
+        answers: ["terminate", "terminate"],
+        onKill: () => (attempts++ === 0 ? { success: false } : undefined),
+      });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).resolves.not.toThrow();
+
+      // The dialog was re-rendered carrying the failure, rather than the app
+      // giving up on the first refusal.
+      const warning = dialogUi.shown
+        .flatMap((config) => config.sections)
+        .find(
+          (section: DialogConfig["sections"][number]) =>
+            section.type === "text" && section.style === "warning"
+        );
+      expect(JSON.stringify(warning)).toContain("Could not terminate");
+    });
+
+    it("keeps the plain error when the scan cannot say who holds the port", async () => {
+      // An empty scan means "could not tell", not "free" — there is nothing to
+      // offer, so this must not become a dialog with an empty table.
+      const { deps, dialogUi } = createConflictDeps({ answers: [], listeners: {} });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
+      expect(dialogUi.shown).toHaveLength(0);
+    });
+
+    it("keeps the plain error when there is no presenter to ask with", async () => {
+      const { deps } = createConflictDeps({ answers: [], withUi: false });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
     });
   });
 

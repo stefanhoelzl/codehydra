@@ -325,8 +325,20 @@ export function createDriver() {
     if (electronApp) {
       const app = electronApp;
       electronApp = null;
-      const proc = app.process();
-      const appPid = proc.pid!;
+
+      // The app may already be gone — it quit on a fatal startup error, or it
+      // crashed. Playwright's handle then throws from process(), and that
+      // TypeError surfaces as the spec's failure, hiding whatever actually went
+      // wrong. Nothing to tear down in that case.
+      let proc: ReturnType<typeof app.process> | undefined;
+      try {
+        proc = app.process();
+      } catch {
+        proc = undefined;
+      }
+      if (proc?.pid === undefined) return;
+
+      const appPid = proc.pid;
 
       // Snapshot the tree while the parent still owns it.
       const descendants = descendantPids(appPid);

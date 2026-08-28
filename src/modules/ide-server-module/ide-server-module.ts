@@ -19,7 +19,11 @@ import type { IntentModule } from "../../intents/lib/module";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
-import type { ProcessRunner, SpawnedProcess } from "../../boundaries/platform/process";
+import type {
+  ListeningProcess,
+  ProcessRunner,
+  SpawnedProcess,
+} from "../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
@@ -68,6 +72,9 @@ import { waitForHealthy } from "../../utils/health-check";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
 import { applyBundlePatches } from "./bundle-patches";
 import type { IdeServer } from "./types";
+import type { UiPresenter } from "../presentation/presentation-module";
+import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
+import type { DialogHandle } from "../presentation/sessions";
 
 // =============================================================================
 // Internal Types
@@ -107,6 +114,14 @@ const IDE_SERVER_PORT = 25448;
  * distribution we serve, not about how frames are rendered.
  */
 const IDE_RECONNECTION_GRACE_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * How long to wait for a port to actually free after its holders are gone.
+ *
+ * `kill` resolves once the process has exited, but the OS releasing its socket
+ * is a separate step, so the retry polls rather than assuming.
+ */
+const PORT_RELEASE_TIMEOUT_MS = 3000;
 
 /**
  * Determine the IDE server port from build info.
@@ -156,7 +171,7 @@ function derivePortFromString(input: string): number {
  * All dependencies for IdeServerModule.
  */
 export interface IdeServerModuleDeps {
-  readonly processRunner: Pick<ProcessRunner, "run">;
+  readonly processRunner: Pick<ProcessRunner, "run" | "kill" | "findListeningProcesses">;
   readonly httpClient: Pick<HttpClient, "fetch">;
   readonly portManager: Pick<PortManager, "isPortAvailable">;
   readonly fileSystemLayer: Pick<
@@ -195,6 +210,15 @@ export interface IdeServerModuleDeps {
    * OpenCode layer so the IDE server doesn't reach into agent-owned config.
    */
   readonly resolveOpencodeBundleDir: () => string;
+  /**
+   * Presenter for the port-conflict dialog.
+   *
+   * Optional: without it a busy port fails the way it always did. The IDE
+   * server starts at the `start` hook point, two after `show-ui`, so in the
+   * real app the UI is always up by then — this is for constructions that have
+   * no presenter at all.
+   */
+  readonly ui?: Pick<UiPresenter, "dialog"> | null;
 }
 
 // =============================================================================
@@ -462,16 +486,189 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Port conflict recovery
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The failure a busy port produces when it cannot be recovered from.
+   *
+   * Kept as one function so the message the user sees when they decline is the
+   * same one they would have seen before any of this existed.
+   */
+  function portConflictError(port: number): IdeServerError {
+    return new IdeServerError(
+      `Port ${port} is already in use. Another IDE server or application may be running on this port.`
+    );
+  }
+
+  /** Resolve the next button press (or Escape) on a dialog. */
+  function nextAction(handle: DialogHandle): Promise<string> {
+    return new Promise<string>((resolve) => {
+      let offEvent = (): void => {};
+      let offDismiss = (): void => {};
+      const settle = (action: string): void => {
+        offEvent();
+        offDismiss();
+        resolve(action);
+      };
+      offEvent = handle.onEvent((event) => {
+        settle(event.actionId);
+      });
+      // Escape means the same as Quit: we are not starting.
+      offDismiss = handle.onDismiss(() => {
+        settle("quit");
+      });
+    });
+  }
+
+  function portConflictDialog(
+    port: number,
+    holders: readonly ListeningProcess[],
+    error?: string
+  ): DialogConfig {
+    const sections: DialogSection[] = [
+      { type: "text", content: "Port already in use", style: "heading" },
+      {
+        type: "text",
+        content: `CodeHydra needs port ${port} for its editor server.`,
+        style: "subtitle",
+      },
+      {
+        type: "table",
+        header:
+          holders.length === 1
+            ? `Using port ${port}`
+            : `Using port ${port} (${holders.length} processes)`,
+        headerIcon: "warning",
+        columns: [
+          { key: "name", label: "Process" },
+          { key: "pid", label: "PID" },
+          { key: "command", label: "Command" },
+        ],
+        rows: holders.map((holder) => ({
+          name: holder.name,
+          pid: String(holder.pid),
+          command: truncateCommand(holder.commandLine),
+        })),
+      },
+    ];
+
+    if (error !== undefined) {
+      sections.push({ type: "text", content: error, style: "warning" });
+    }
+
+    sections.push({
+      type: "group",
+      items: [
+        { type: "button", id: "terminate", label: "Terminate and Continue", variant: "primary" },
+        { type: "button", id: "quit", label: "Quit", variant: "secondary", role: "cancel" },
+      ],
+    });
+
+    return { sections };
+  }
+
+  /** Keep a command line readable in a table cell without losing its identity. */
+  function truncateCommand(command: string): string {
+    const MAX = 80;
+    return command.length <= MAX ? command : `${command.slice(0, MAX - 1)}\u2026`;
+  }
+
+  /**
+   * Terminate everything holding `port`, and report why the port is still busy.
+   *
+   * @returns null once the port is free, otherwise a message for the dialog.
+   */
+  async function terminateHolders(
+    port: number,
+    holders: readonly ListeningProcess[]
+  ): Promise<string | null> {
+    const survivors: number[] = [];
+    for (const holder of holders) {
+      const result = await deps.processRunner.kill(
+        holder.pid,
+        PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
+        PROCESS_KILL_FORCE_TIMEOUT_MS
+      );
+      if (!result.success) survivors.push(holder.pid);
+      else logger.info("Terminated port holder", { pid: holder.pid, port });
+    }
+
+    if (survivors.length > 0) {
+      return `Could not terminate ${survivors.length === 1 ? "process" : "processes"} ${survivors.join(", ")}. You may need to stop it yourself.`;
+    }
+
+    // A killed process is gone before kill() resolves, but the OS releasing the
+    // socket is a separate step — poll rather than assume.
+    try {
+      await waitForHealthy({
+        checkFn: () => deps.portManager.isPortAvailable(port),
+        timeoutMs: PORT_RELEASE_TIMEOUT_MS,
+        intervalMs: 100,
+        errorMessage: "port still bound",
+      });
+      return null;
+    } catch {
+      return `Port ${port} is still in use after terminating. Something else may have taken it.`;
+    }
+  }
+
+  /**
+   * Offer to clear whatever holds the IDE server's port, and return once it is
+   * free. Throws the ordinary busy-port error if it is not.
+   *
+   * Reaching here means no CodeHydra sharing this data root is running — the
+   * single-instance lock refuses a second launch long before startup gets this
+   * far. So the holder is a leftover from a crashed session, an unrelated
+   * application, or (rarely) a CodeHydra running on a different data root. We
+   * show what we found and let the user judge rather than guess at ownership.
+   */
+  async function resolvePortConflict(port: number): Promise<void> {
+    const ui = deps.ui;
+    if (!ui) throw portConflictError(port);
+
+    let holders = await deps.processRunner.findListeningProcesses(port);
+    // The scan is best-effort, and an empty result means "could not tell", not
+    // "free" — with nothing to show there is no offer worth making.
+    if (holders.length === 0) throw portConflictError(port);
+
+    logger.warn("Port in use; offering to terminate", {
+      port,
+      pids: holders.map((holder) => holder.pid).join(","),
+    });
+
+    const handle = ui.dialog(portConflictDialog(port, holders));
+    try {
+      for (;;) {
+        if ((await nextAction(handle)) !== "terminate") {
+          throw portConflictError(port);
+        }
+
+        const failure = await terminateHolders(port, holders);
+        if (failure === null) return;
+
+        // Re-scan: the survivors are what the next attempt acts on, and the
+        // port may have changed hands entirely.
+        holders = await deps.processRunner.findListeningProcesses(port);
+        if (holders.length === 0) {
+          if (await deps.portManager.isPortAvailable(port)) return;
+          throw portConflictError(port);
+        }
+        handle.update(portConflictDialog(port, holders, failure));
+      }
+    } finally {
+      handle.close();
+    }
+  }
+
   async function doStart(): Promise<number> {
     logger.info("Starting IDE server");
 
     const port = getPort();
 
-    const portAvailable = await deps.portManager.isPortAvailable(port);
-    if (!portAvailable) {
-      throw new IdeServerError(
-        `Port ${port} is already in use. Another IDE server or application may be running on this port.`
-      );
+    if (!(await deps.portManager.isPortAvailable(port))) {
+      await resolvePortConflict(port);
     }
 
     currentPort = port;

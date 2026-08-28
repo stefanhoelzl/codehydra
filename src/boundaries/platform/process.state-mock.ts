@@ -2,7 +2,13 @@
  * State mock for ProcessRunner following the State Mock Pattern.
  * Provides behavioral simulation with state tracking and custom matchers.
  */
-import type { ProcessRunner, SpawnedProcess, ProcessResult, KillResult } from "./process";
+import type {
+  ProcessRunner,
+  SpawnedProcess,
+  ProcessResult,
+  KillResult,
+  ListeningProcess,
+} from "./process";
 import type {
   MockState,
   MockWithState,
@@ -264,6 +270,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   private readonly defaultKillResult: KillResult;
   private readonly onSpawn: OnSpawnCallback | undefined;
   private readonly onKill: ((pid: number) => KillResult | void) | undefined;
+  private readonly listeners: Map<number, ListeningProcess[]>;
 
   constructor(options?: MockProcessRunnerOptions) {
     this.defaultResult = {
@@ -277,11 +284,29 @@ class MockProcessRunnerImpl implements MockProcessRunner {
     };
     this.onSpawn = options?.onSpawn;
     this.onKill = options?.onKill;
+    this.listeners = new Map(
+      Object.entries(options?.listeners ?? {}).map(([port, procs]) => [Number(port), [...procs]])
+    );
+  }
+
+  async findListeningProcesses(port: number): Promise<ListeningProcess[]> {
+    return [...(this.listeners.get(port) ?? [])];
   }
 
   async kill(pid: number, _termTimeout?: number, _killTimeout?: number): Promise<KillResult> {
     this.state.addKilledPid(pid);
-    return this.onKill?.(pid) ?? this.defaultKillResult;
+    const result = this.onKill?.(pid) ?? this.defaultKillResult;
+    // Behavioral: a killed process stops holding its port, so a re-scan after a
+    // successful kill reports the port clean. A process that refused to die
+    // keeps holding it.
+    if (result.success) {
+      for (const [port, procs] of this.listeners) {
+        const remaining = procs.filter((proc) => proc.pid !== pid);
+        if (remaining.length === 0) this.listeners.delete(port);
+        else this.listeners.set(port, remaining);
+      }
+    }
+    return result;
   }
 
   get $(): ProcessRunnerMockState {
@@ -379,6 +404,15 @@ export interface MockProcessRunnerOptions {
    * or undefined means it terminated.
    */
   onKill?: (pid: number) => KillResult | void;
+
+  /**
+   * Processes reported by findListeningProcesses(port), keyed by port.
+   *
+   * A port with no entry scans clean. Entries are dropped as their pids are
+   * killed, so a caller that kills and re-scans sees the port free — which is
+   * the loop the IDE server's port-conflict recovery runs.
+   */
+  listeners?: Readonly<Record<number, readonly ListeningProcess[]>>;
 }
 
 /**
