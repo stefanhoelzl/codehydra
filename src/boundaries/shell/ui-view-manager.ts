@@ -42,6 +42,20 @@ export const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
  * re-focuses it whenever the iframe's window receives focus (which the
  * renderer triggers via `iframe.contentWindow.focus()` when showing).
  *
+ * It also reports a blur that took focus out of the frame entirely, so the
+ * host can put it back. A hidden workspace frame is not rendered, so nothing
+ * inside it can be focused — but `window.focus()` is a *frame*-level call that
+ * Chromium honours regardless of layout, and VS Code's webview bootstrap makes
+ * exactly that call. The focused frame then moves into a subtree where no
+ * element can hold the caret, every frame reports `document.hasFocus() ===
+ * false`, and the user's keystrokes go nowhere while the host still believes
+ * the visible frame has focus (PostHog issue 019fc47f). Nothing can deny a
+ * same-origin child that call — `inert` does not reach into a frame's
+ * document, and the `focus-without-user-activation` permissions policy is
+ * unshipped and, because activation propagates across same-origin siblings,
+ * would not cover a user who is actively typing. So the frame that lost focus
+ * says so, and WorkspaceFrames restores it.
+ *
  * Runs inside the iframe's same-origin page context — bypasses cross-origin
  * focus restrictions that would block any host-side equivalent.
  */
@@ -55,6 +69,20 @@ const CHILD_FRAME_FOCUS_TRACKER = `
       if (last && document.contains(last)) {
         try { last.focus(); } catch(e) {}
       }
+    });
+    // Only direct children of the UI page report: a nested webview's parent is
+    // the workspace frame, which cannot act on it.
+    if (window.parent === window || window.parent !== window.top) return;
+    window.addEventListener('blur', function(){
+      // Settle first: activeElement is only meaningful once focus has landed.
+      setTimeout(function(){
+        // Focus moved deeper into this frame's own tree (into a webview, say).
+        // The frame still owns it, so this is not a loss.
+        if (document.hasFocus()) return;
+        var active = document.activeElement;
+        if (active && active.tagName === 'IFRAME') return;
+        try { window.parent.postMessage({ __chBlurred: true }, '*'); } catch(e) {}
+      }, 0);
     });
   })();
 `;

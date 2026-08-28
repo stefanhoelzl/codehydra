@@ -23,6 +23,15 @@
   are only focused while in "workspace" mode; entering shortcut mode blurs
   the frame so navigation keys don't reach VS Code.
 
+  Focus repair: a hidden frame can still take focus away from the visible one
+  (`window.focus()` is frame-level, so Chromium honours it even for a
+  display:none iframe — VS Code's webview bootstrap makes that call). Focus
+  then sits in a subtree where nothing is focusable and keystrokes vanish. The
+  frame that lost it says so (`__chBlurred`, from the injected tracker) and the
+  active frame is focused again. Unlike the mode routing above this runs in
+  "hover" too: hovering the sidebar is a mouse position, not a decision to give
+  up the caret.
+
   Liveness: showing a frame pings it, and it answers via the probe responder
   the UiViewManager injects alongside the focus tracker. All workspace iframes
   are same-origin, so Chromium hosts them in one shared renderer process; when
@@ -178,13 +187,52 @@
     return undefined;
   }
 
+  /**
+   * Modes in which a frame losing focus is a defect rather than the point.
+   * "shortcut" blurs the frame deliberately (below) and "dialog" hands focus
+   * to a modal, so neither is repaired. "hover" is — the sidebar being under
+   * the pointer says nothing about where the user is typing.
+   */
+  function repairableMode(current: UIMode): boolean {
+    return current === "workspace" || current === "hover";
+  }
+
+  /**
+   * Restore focus to the active frame after another frame took it. Bounded, so
+   * a frame that steals in a loop cannot start a focus fight the user is caught
+   * in the middle of: past the budget the caret is left where it is.
+   */
+  const REPAIR_WINDOW_MS = 2000;
+  const REPAIR_LIMIT = 3;
+  let repairTimes: number[] = [];
+
+  function repairFocus(blurredKey: string): void {
+    if (blurredKey !== activeKey) return;
+    if (!repairableMode(mode)) return;
+    // The whole window lost focus (alt-tab, another app): not ours to reclaim.
+    if (!document.hasFocus()) return;
+
+    const now = Date.now();
+    repairTimes = repairTimes.filter((at) => now - at < REPAIR_WINDOW_MS);
+    if (repairTimes.length >= REPAIR_LIMIT) {
+      logger.warn("Active frame keeps losing focus; leaving it alone", { key: blurredKey });
+      return;
+    }
+    repairTimes.push(now);
+    focusActiveFrame();
+  }
+
   function handleFrameMessage(event: MessageEvent): void {
     const data: unknown = event.data;
-    const alive =
-      typeof data === "object" &&
-      data !== null &&
-      (data as { __chAlive?: unknown }).__chAlive === true;
-    if (!alive) return;
+    if (typeof data !== "object" || data === null) return;
+
+    if ((data as { __chBlurred?: unknown }).__chBlurred === true) {
+      const blurredKey = keyForSource(event.source);
+      if (blurredKey !== undefined) repairFocus(blurredKey);
+      return;
+    }
+
+    if ((data as { __chAlive?: unknown }).__chAlive !== true) return;
     const key = keyForSource(event.source);
     if (key === undefined) return;
     everAnswered.add(key);
