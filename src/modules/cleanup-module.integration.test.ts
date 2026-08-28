@@ -17,6 +17,7 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent } from "../intents/app-start";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
+import { testPath } from "../shared/test-fixtures";
 import {
   createFileSystemMock,
   directory,
@@ -25,7 +26,6 @@ import {
 } from "../boundaries/platform/filesystem.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import type { Logger } from "../boundaries/platform/logging";
-import { Path } from "../utils/path/path";
 import { createCleanupModule, type CleanupRule } from "./cleanup-module";
 
 // =============================================================================
@@ -82,10 +82,12 @@ function data(subpath: string): string {
 }
 
 function exists(fileSystem: MockFileSystemBoundary, path: string): boolean {
-  // Through `Path`, not the raw literal: it lowercases on Windows, so a name
-  // holding an uppercase letter (every `...T07-35-51...` log) is stored under a
-  // key the literal never matches.
-  return fileSystem.$.entries.has(new Path(path).toString());
+  // Through `testPath`, not the raw literal. It normalizes the way the mock's
+  // own accessors do — lowercasing on Windows, so a name holding an uppercase
+  // letter (every `...T07-35-51...` log) is still found — and roots the path
+  // under the fixture directory, which `$.entries` does not do for us because
+  // it is the raw map rather than a normalizing accessor.
+  return fileSystem.$.entries.has(testPath(path).toString());
 }
 
 // =============================================================================
