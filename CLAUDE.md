@@ -377,21 +377,22 @@ CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 
 ### Logger Names
 
-| Logger              | Module                               |
-| ------------------- | ------------------------------------ |
-| `[process]`         | Process spawning                     |
-| `[network]`         | HTTP requests, ports                 |
-| `[fs]`              | Filesystem operations                |
-| `[git]`             | Git operations                       |
-| `[opencode]`        | OpenCode SDK                         |
-| `[opencode-server]` | OpenCode server manager              |
-| `[keepfiles]`       | .keepfiles copying                   |
-| `[api]`             | IPC handlers                         |
-| `[window]`          | WindowManager                        |
-| `[view]`            | ViewManager                          |
-| `[badge]`           | BadgeManager                         |
-| `[power]`           | Sleep prevention                     |
-| `[app]`             | Application lifecycle                |
-| `[state]`           | StateService (state.json)            |
-| `[ui]`              | Renderer UI components               |
-| `[presenter]`       | PresentationModule (ui:event intake) |
+| Logger              | Module                                 |
+| ------------------- | -------------------------------------- |
+| `[process]`         | Process spawning                       |
+| `[network]`         | HTTP requests, ports                   |
+| `[fs]`              | Filesystem operations                  |
+| `[git]`             | Git operations                         |
+| `[opencode]`        | OpenCode SDK                           |
+| `[opencode-server]` | OpenCode server manager                |
+| `[keepfiles]`       | .keepfiles copying                     |
+| `[api]`             | IPC handlers                           |
+| `[window]`          | WindowManager                          |
+| `[view]`            | ViewManager                            |
+| `[badge]`           | BadgeManager                           |
+| `[power]`           | Sleep prevention                       |
+| `[app]`             | Application lifecycle                  |
+| `[state]`           | StateService (state.json)              |
+| `[ui]`              | Renderer UI components                 |
+| `[presenter]`       | PresentationModule (ui:event intake)   |
+| `[cleanup]`         | CleanupModule (stale data-root sweeps) |

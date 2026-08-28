@@ -65,7 +65,8 @@ export type LoggerName =
   | "power" // AppBoundary.allowPowerSaving - sleep prevention
   | "error-report" // ErrorReportModule - crash + manual bug report
   | "auto-tagging" // AutoTaggingModule - "new" tag on background workspaces
-  | "notification"; // OsNotificationModule + OsNotificationBoundary - OS toasts
+  | "notification" // OsNotificationModule + OsNotificationBoundary - OS toasts
+  | "cleanup"; // CleanupModule - stale data-root sweeps
 
 /**
  * Context data for log entries.

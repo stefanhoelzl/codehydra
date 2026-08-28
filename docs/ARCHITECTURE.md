@@ -285,6 +285,25 @@ The UI shows a scrollable list of blocking processes (with files and CWD) and of
 - Re-checks worktree registration before each deletion (TOCTOU protection)
 - Concurrency guard prevents multiple cleanups running simultaneously
 
+### Data Root Cleanup
+
+`CleanupModule` (`src/modules/cleanup-module.ts`) sweeps the data root of things nothing uses any more. It runs on the `app:start` "start" hook, **fire-and-forget**: reclaiming gigabytes can take seconds and nothing waits on the result. That is safe because every path a rule touches is one nothing else writes — retired directories no code references, log files older than the current session, bundle versions other than the live one. The one sweep that _is_ order-critical, clearing the temp root before a workspace writes its agent config into it, stays in `TempDirModule`, awaited in the earlier "init" hook.
+
+Rules are declared by the composition root (`src/main.ts`) and run in order, so a rule that retires a path can precede one that sweeps its parent — `claude/configs` is retired before the `claude` bundle rule, so the retired directory is never mistaken for a version to keep.
+
+| Rule kind    | Behaviour                                                               |
+| ------------ | ----------------------------------------------------------------------- |
+| `retire`     | Delete a path we no longer use, whole (file or tree)                    |
+| `keepRecent` | Keep the newest N entries **by name**                                   |
+| `pruneEmpty` | Delete childless directories directly under a path                      |
+| `bundle`     | Keep only the live version of a downloaded bundle; packaged builds only |
+
+`keepRecent` sorts by name, not timestamp: session logs are named for the launch that wrote them (`2026-08-28T07-35-51-<id>.log`), so lexicographic order is already chronological and no `stat` is needed. Names that are not session logs rank **oldest**, so a stray file in the log directory is the first thing swept.
+
+`bundle` reads its live version when it runs, not when it is declared, so it reflects resolved configuration. It is skipped in development builds: dev shares its data root with binaries `pnpm install` and the test helpers download, pinned to versions the running app does not resolve. A null live version (Claude ships its binary rather than downloading one) means no version directory is expected, so every one is a leftover.
+
+Every rule is best-effort and isolated: a failure is logged at warn and the remaining rules still run. An **absent** target is silent (the normal case); an **unreadable** one is reported, so cleanup never quietly behaves as though there were nothing to clean. One info line summarises what was removed.
+
 ### Workspace Session Model
 
 All workspaces share a single global Electron session to enable extension storage (globalState, secrets) to be shared across workspaces.

@@ -218,6 +218,8 @@ export interface IdeServerModuleHandle {
   readonly module: IntentModule;
   /** Absolute path to the IDE server's bundled node interpreter. */
   nodePath(): string;
+  /** The IDE bundle version this launch resolved (config override or built-in). */
+  version(): string;
 }
 
 export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModuleHandle {
@@ -1067,5 +1069,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       const { ideServerDir } = resolveIdeServerPaths();
       return getIdeServer().nodeBinary(ideServerDir, deps.platform);
     },
+    // Read at call time, like nodePath: the version only settles once config
+    // has loaded.
+    version: () => vscodiumVersionConfig.get(),
   };
 }
