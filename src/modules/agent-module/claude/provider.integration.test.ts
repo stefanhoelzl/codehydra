@@ -60,9 +60,9 @@ describe("ClaudeCodeProvider integration", () => {
     mockPathProvider = createMockPathProvider();
     mockFileSystem = createFileSystemMock({
       entries: {
-        "/app-data": directory(),
-        "/app-data/claude": directory(),
-        "/app-data/claude/configs": directory(),
+        "/test/temp": directory(),
+        "/test/temp/claude": directory(),
+        "/test/temp/claude/configs": directory(),
       },
     });
 

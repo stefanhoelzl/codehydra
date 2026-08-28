@@ -909,9 +909,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Creates both hooks.json and mcp.json in the workspace's config directory.
    */
   private async generateConfigFiles(workspacePath: string): Promise<void> {
-    // Config directory is in the app data, not in the workspace
+    // Config directory is in the app temp dir, not in the workspace.
+    // Temp, not data: the generated files bake in this launch's bridge port,
+    // plugin port and plugin token, so a file that outlives the launch is not
+    // just garbage but actively wrong. temp-dir-module clears the temp root on
+    // every app:start, which is exactly the lifetime these files want.
     // Using a hash of workspace path to make it unique
-    const configDir = this.pathProvider.dataPath("claude/configs");
+    const configDir = this.pathProvider.tempPath("claude/configs");
 
     // Generate a safe directory name from workspace path
     const safeWorkspaceName = this.getConfigDirName(workspacePath);
@@ -996,7 +1000,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private configFilePath(workspacePath: string, filename: string): Path {
     const normalizedPath = new Path(workspacePath).toString();
     const safeWorkspaceName = this.getConfigDirName(normalizedPath);
-    return new Path(this.pathProvider.dataPath("claude/configs"), safeWorkspaceName, filename);
+    return new Path(this.pathProvider.tempPath("claude/configs"), safeWorkspaceName, filename);
   }
 
   /**

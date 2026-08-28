@@ -63,9 +63,9 @@ describe("ClaudeCodeServerManager integration", () => {
     mockPathProvider = createMockPathProvider();
     mockFileSystem = createFileSystemMock({
       entries: {
-        "/app-data": directory(),
-        "/app-data/claude": directory(),
-        "/app-data/claude/configs": directory(),
+        "/test/temp": directory(),
+        "/test/temp/claude": directory(),
+        "/test/temp/claude/configs": directory(),
       },
     });
 
@@ -974,6 +974,22 @@ describe("ClaudeCodeServerManager integration", () => {
       const pathB = serverManager.getHooksConfigPath("/workspace/feature-b");
 
       expect(pathA.toString()).not.toBe(pathB.toString());
+    });
+
+    it("generates configs under the temp root, not app data", async () => {
+      // The generated files bake in this launch's bridge port, plugin port and
+      // plugin token, so one that outlives the launch is wrong, not merely
+      // stale. temp-dir-module clears the temp root on every app:start; app
+      // data is never cleared, which is how these accumulated forever.
+      await serverManager.startServer("/workspace/feature-a");
+
+      const hooksPath = serverManager.getHooksConfigPath("/workspace/feature-a");
+      const mcpPath = serverManager.getMcpConfigPath("/workspace/feature-a");
+
+      expect(hooksPath.toString()).toContain("/test/temp/claude/configs/");
+      expect(mcpPath.toString()).toContain("/test/temp/claude/configs/");
+      expect(hooksPath.toString()).not.toContain("/test/app-data/");
+      expect(mcpPath.toString()).not.toContain("/test/app-data/");
     });
 
     it("resolves the system prompt from the runtime dir, shared by all workspaces", () => {
