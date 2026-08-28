@@ -286,6 +286,34 @@ true so the wizard stays away). `workers: 1`, `retries: 0`.
   branch config and relaunches, which is the same state startup discovery reads.
 - `extraArgs` accepts a thunk, resolved at launch. A spec whose flags name temp paths needs
   it: `useApp()` is called at module scope, before its own `beforeAll` has created them.
+  `env` is the same shape, for the same reason.
+
+**Driving a real agent turn (`agent-turn.e2e.ts`).** The agent is real; only the model is
+mocked. No login, no API key, no network:
+
+- `useAgentMock()` starts an `@copilotkit/aimock` server and returns the environment that
+  points this project's agent at it. **Call it before `useApp()`** — both register
+  `beforeAll`, Playwright runs them in registration order, and the launch environment is
+  built from the mock's port.
+- Nothing in the app knows about this. It hands `{...process.env}` to the IDE server (whose
+  terminals run `ch claude`) and to the OpenCode server it spawns, so `ANTHROPIC_BASE_URL`
+  reaches Claude and `OPENCODE_CONFIG` reaches OpenCode by inheritance alone. OpenCode's
+  config survives because the app's `OPENCODE_CONFIG_CONTENT` — which wins over everything
+  — sets only `instructions` and `mcp`.
+- **The fixtures are half the assertion.** Each one in `e2e/aimock/<agent>.json` matches
+  only when the request carries CodeHydra's system prompt _and_ advertises its MCP tool,
+  and the server runs with `strict: true`. A launch that stopped injecting either matches
+  nothing, gets a 503, and fails the turn — so there is deliberately **no catch-all**. An
+  unanticipated call is a finding: read it out of `server.getRequests()` and give it a
+  narrow fixture of its own.
+- Grant the agent permission, or it parks on a prompt nobody answers — and `PermissionRequest`
+  maps to _idle_, so the workspace would look finished. Claude takes
+  `--permission-mode bypassPermissions` on `ch ws create`; OpenCode has no such flag, so its
+  grant is `permission: { "*": "allow" }` in the config the mock writes.
+- Claude gets `ANTHROPIC_AUTH_TOKEN`, not `ANTHROPIC_API_KEY`: an API key makes it ask the
+  user to approve it once. Plus its own `CLAUDE_CONFIG_DIR` (seeded past onboarding, so the
+  run never touches `~/.claude`) and `DISABLE_NON_ESSENTIAL_MODEL_CALLS`, which keeps the
+  background haiku calls out of the mock's journal.
 
 ### Unit Tests (\*.test.ts) - DEPRECATED
 

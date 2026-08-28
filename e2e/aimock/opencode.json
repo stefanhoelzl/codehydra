@@ -1,0 +1,31 @@
+{
+  "fixtures": [
+    {
+      "_comment": "OpenCode titles the session in a separate call carrying neither CodeHydra's system prompt nor any tools, and repeats it. Strict mode would 503 it, so it gets a fixture of its own — gated on the title generator's own system prompt so it cannot absorb the real turn. (The pre-aimock mock guarded the same agent by checking for an empty tools list.)",
+      "match": { "systemMessage": "You are a title generator" },
+      "response": { "content": "Rename workspace" }
+    },
+    {
+      "_comment": "Turn 2. The set-title result is back, so the turn ends.",
+      "match": { "systemMessage": "You are running inside CodeHydra.", "hasToolResult": true },
+      "response": { "content": "Renamed the workspace." }
+    },
+    {
+      "_comment": "Turn 1. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the plugin token, and served its tool list. OpenCode namespaces MCP tools as <server>_<tool>, and configures them at server start — so unlike Claude there is no wait-for-servers step.",
+      "match": {
+        "systemMessage": "You are running inside CodeHydra.",
+        "toolName": "codehydra_workspace_set_title",
+        "hasToolResult": false
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "id": "call_ch_set_title",
+            "name": "codehydra_workspace_set_title",
+            "arguments": { "title": "renamed by agent" }
+          }
+        ]
+      }
+    }
+  ]
+}

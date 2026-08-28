@@ -8,16 +8,16 @@
  * connection details a separate process can find, and that a real socket
  * connection authenticates and answers.
  *
- * Deliberately invoked the way a user or a script would — by absolute path, with
- * none of CodeHydra's environment — because that is the case with no other
- * coverage. Inside a workspace terminal `ch` inherits `_CH_IDE_NODE` and its
- * cwd; here it must resolve both on its own.
+ * `e2e/ch.ts` runs the CLI the way a user or a script would — by absolute path,
+ * with none of CodeHydra's environment — which is the case with no other
+ * coverage.
  */
 import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
+import { BIN_DIR, CH, ch, json } from "./ch.ts";
 import {
   DATA_ROOT,
   createWorkspace,
@@ -28,50 +28,6 @@ import {
 } from "./fixtures";
 
 const isWindows = process.platform === "win32";
-const BIN_DIR = join(DATA_ROOT, "bin");
-const CH = join(BIN_DIR, isWindows ? "ch.cmd" : "ch");
-
-interface Run {
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly status: number;
-  /** Set when the process could not be spawned at all, e.g. a missing cwd. */
-  readonly error?: string;
-}
-
-/**
- * Run `ch` with a deliberately bare environment.
- *
- * PATH is kept because the shell needs one; every `_CH_*` variable is dropped so
- * the CLI has to find its instance and its interpreter the way it would from a
- * terminal CodeHydra never touched.
- */
-function ch(args: readonly string[], cwd: string = DATA_ROOT): Run {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("_CH_")) env[key] = value;
-  }
-
-  const result = isWindows
-    ? spawnSync("cmd", ["/c", CH, ...args], { cwd, env, encoding: "utf-8" })
-    : spawnSync(CH, [...args], { cwd, env, encoding: "utf-8" });
-
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status ?? -1,
-    ...(result.error && { error: result.error.message }),
-  };
-}
-
-/** Parse a JSON result. stdout is JSON because spawnSync gives no TTY. */
-function json(run: Run): unknown {
-  expect(
-    run.status,
-    `expected success.\n  spawn error: ${run.error ?? "none"}\n  stderr: ${run.stderr}\n  stdout: ${run.stdout}`
-  ).toBe(0);
-  return JSON.parse(run.stdout) as unknown;
-}
 
 let repo: { path: string; cleanup: () => Promise<void> };
 

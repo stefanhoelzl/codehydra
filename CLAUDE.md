@@ -266,13 +266,14 @@ cd /path/to/main && git merge --ff-only <branch>  # Fast-forward only
 
 ### Testing
 
-| Code Change           | Required Tests                       |
-| --------------------- | ------------------------------------ |
-| New feature/module    | Integration tests (behavioral mocks) |
-| Pure utility function | Focused tests (input/output)         |
-| External interface    | Boundary tests                       |
-| Bug fix               | Test covering the fix                |
-| Packaging / startup   | e2e spec (`e2e/*.e2e.ts`)            |
+| Code Change           | Required Tests                                                                                                              |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| New feature/module    | Integration tests (behavioral mocks)                                                                                        |
+| Pure utility function | Focused tests (input/output)                                                                                                |
+| External interface    | Boundary tests                                                                                                              |
+| Bug fix               | Test covering the fix                                                                                                       |
+| Packaging / startup   | e2e spec (`e2e/*.e2e.ts`)                                                                                                   |
+| Agent launch / MCP    | `e2e/agent-turn.e2e.ts` — a real agent, a mock model (`useAgentMock()`, `@copilotkit/aimock`). No login, no key, no network |
 
 **Note**: Unit tests deprecated. Use integration tests with behavioral mocks.
 
