@@ -9,7 +9,6 @@
  * bookkeeping moved to workspace-lifecycle-module, which owns the transient
  * per-workspace facts contributed to workspace:resolve. What remains here:
  * - app-start `init` hook (window + UI view creation, HTML load, focus)
- * - delete-workspace `shutdown` (reports wasActive, driving the auto-switch)
  * - open-project `select-folder` (native folder picker)
  * - app-shutdown/stop (UI view + layer disposal)
  *
@@ -17,7 +16,7 @@
 
 import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
@@ -27,11 +26,9 @@ import type { AppBoundary } from "../boundaries/shell/app";
 import type { WebPreferences } from "../boundaries/shell/types";
 import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import type { ShutdownHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import { projectPathSchema } from "../intents/contract";
 
@@ -146,21 +143,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             }
 
             return { provides: { "ui-ready": true } };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // delete-workspace → shutdown: report whether the deleted workspace was
-      // the active one, which drives the post-delete auto-switch. The active
-      // bookkeeping itself belongs to workspace-lifecycle-module; the iframe
-      // unmounts in the renderer off the presenter snapshot.
-      // -------------------------------------------------------------------
-      [DELETE_WORKSPACE_OPERATION_ID]: {
-        shutdown: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { active } = ctx as DeletePipelineHookInput;
-            return { result: { ...(active && { wasActive: true }) } };
           },
         },
       },

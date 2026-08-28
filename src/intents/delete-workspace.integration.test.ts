@@ -432,23 +432,18 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspacePath, active: isActive } = ctx as DeletePipelineHookInput;
+            const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
               await viewManager.destroyWorkspaceView(workspacePath);
-              return { result: { ...(isActive && { wasActive: true }) } };
+              return { result: {} };
             } catch (error) {
               if (payload.force) {
                 logger.warn("ViewModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return {
-                  result: {
-                    ...(isActive && { wasActive: true }),
-                    error: getErrorMessage(error),
-                  },
-                };
+                return { result: { error: getErrorMessage(error) } };
               }
               throw error;
             }
@@ -1329,7 +1324,7 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
     });
 
     // Simulate user navigating to workspace A during the delete hook
-    // (after the initial shutdown switch-away already ran, finding wasActive=false)
+    // (after the pre-shutdown active check already found it inactive)
     harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = vi
       .fn()
       .mockImplementation(async () => {
@@ -1342,6 +1337,91 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
 
     // autoSwitchIfBecameActive should have detected the change and switched back to B
     expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_B);
+  });
+
+  it("leaves the user on the workspace they moved to while the delete was running", async () => {
+    // The active workspace is read at the start of the operation, but the
+    // switch decision happens after the interactive confirm (a dialog the user
+    // sits in front of) and the teardown. A user who moves away in that window
+    // has said where they want to be (PostHog issue 019fb79f).
+    const WORKSPACE_PATH_C = wsPath("/test/project/workspaces/feature-c");
+    const harness = createTestHarness({
+      activeWorkspacePath: WORKSPACE_PATH,
+      initialProjects: [
+        {
+          path: PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: WORKSPACE_PATH, branch: "feature-a", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_B, branch: "feature-b", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_C, branch: "feature-c", metadata: { base: "main" } },
+          ],
+        },
+      ],
+    });
+
+    // The user switches to C before the teardown starts. Auto-select would pick
+    // B (the nearest candidate to the deleted A), so the two outcomes differ.
+    harness.dispatcher.registerModule({
+      name: "test-user-moves-away",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          preflight: {
+            handler: async (): Promise<HookOutput<PreflightHookResult>> => {
+              harness.activeWorkspace.path = WORKSPACE_PATH_C;
+              return { result: {} };
+            },
+          },
+        },
+      },
+    });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_C);
+  });
+
+  it("leaves the user on the workspace they moved to during the teardown", async () => {
+    // The teardown between the active read and the switch decision takes
+    // seconds — killing terminals and stopping servers — and the user can
+    // switch inside it. Deleting test-0 and moving to test-2 mid-teardown used
+    // to land the user on test-1 two seconds later (reported against 718304f0).
+    const WORKSPACE_PATH_C = wsPath("/test/project/workspaces/feature-c");
+    const harness = createTestHarness({
+      activeWorkspacePath: WORKSPACE_PATH,
+      initialProjects: [
+        {
+          path: PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: WORKSPACE_PATH, branch: "feature-a", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_B, branch: "feature-b", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_C, branch: "feature-c", metadata: { base: "main" } },
+          ],
+        },
+      ],
+    });
+
+    // The switch lands during shutdown — after the active workspace was read,
+    // before the switch decision. Auto-select would pick B, so the two
+    // outcomes differ.
+    harness.dispatcher.registerModule({
+      name: "test-user-switches-mid-teardown",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          shutdown: {
+            handler: async (): Promise<HookOutput<ShutdownHookResult>> => {
+              harness.activeWorkspace.path = WORKSPACE_PATH_C;
+              return { result: {} };
+            },
+          },
+        },
+      },
+    });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_C);
   });
 
   it("test 14: deleting last workspace sets active to null", async () => {
@@ -1628,7 +1708,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
       hooks: {
         async collect(hookPointId: string) {
           if (hookPointId === "shutdown") {
-            return { results: [{ wasActive: false }], errors: [] };
+            return { results: [{}], errors: [] };
           }
           if (hookPointId === "release") {
             // Simulate unexpected infrastructure-level failure
