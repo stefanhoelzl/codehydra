@@ -16,7 +16,7 @@
 import { expect, test } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
-import { freePort, resetDataState, type Agent } from "./env";
+import { freePort, type Agent } from "./env";
 import { failFastOnStartupFailure, launchApp, useApp } from "./fixtures";
 
 /** A process that holds `port` and nothing else, for the app to find and kill. */
@@ -66,9 +66,9 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
     await waitUntilListening(port);
     expect(holder.pid, "the port holder should have a pid to show").toBeDefined();
 
-    // Warm start, but on a port that is already taken.
-    resetDataState({ keepConfig: true });
-
+    // No resetDataState: this spec creates nothing that needs clearing, and on
+    // Windows it fails with EPERM when the previous spec's app has not yet
+    // released the projects directory.
     // Without the offer, the app dies on a native "Startup Failed" box and
     // never shows a UI — launchApp would then wait out its whole 120s and the
     // spec would fail on a bare test timeout. Racing surfaces the app's own

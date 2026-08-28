@@ -678,8 +678,9 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
     return [];
   }
 
-  // ConvertTo-Json emits a bare object for a single result unless -AsArray is
-  // honored; tolerate both rather than depend on the PowerShell version.
+  // ConvertTo-Json emits a bare object for a single result and an array for
+  // several. Windows PowerShell 5.1 has no -AsArray to normalize that, so both
+  // shapes have to be accepted — and one listener is the common case.
   const items = Array.isArray(parsed) ? parsed : [parsed];
   const processes: ListeningProcess[] = [];
   for (const item of items) {
@@ -700,15 +701,27 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
  * `Get-NetTCPConnection` reports only an OwningProcess id, so it is joined to
  * Win32_Process for the name and command line. SilentlyContinue because "no
  * listener" is an error there, not an empty result.
+ *
+ * Two constraints shape how this is written, both learned the hard way:
+ *
+ * - **No double quotes anywhere.** This is passed as a single `-Command`
+ *   argument, and Node escapes an embedded `"` as `\"`, which the Windows
+ *   command line does not put back together — the same hazard `ProcessOptions.shell`
+ *   documents for `cmd /c`. Hence `('ProcessId=' + $_)` rather than
+ *   `"ProcessId=$_"`.
+ * - **Windows PowerShell 5.1 only.** `powershell.exe` is 5.1, not pwsh, so
+ *   `ConvertTo-Json -AsArray` (6+) is unavailable and would fail the whole
+ *   command. Without it a single result serializes as a bare object, which
+ *   `parseWindowsListeners` accepts.
  */
 function windowsListenerQuery(port: number): string {
   return (
-    `$ErrorActionPreference='SilentlyContinue';` +
+    `$ErrorActionPreference='SilentlyContinue'; ` +
     `$p = Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
     `Select-Object -ExpandProperty OwningProcess -Unique; ` +
-    `if (-not $p) { '[]'; exit 0 }; ` +
-    `$p | ForEach-Object { Get-CimInstance Win32_Process -Filter "ProcessId=$_" } | ` +
-    `Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -AsArray`
+    `if (-not $p) { exit 0 }; ` +
+    `$p | ForEach-Object { Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_) } | ` +
+    `Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress`
   );
 }
 
@@ -828,6 +841,15 @@ export class ExecaProcessRunner implements ProcessRunner {
       await proc.kill(1000, 1000);
       this.logger.warn("Port listener scan timed out", { command });
       return "";
+    }
+    // A scan that produces nothing is indistinguishable from a free port at the
+    // call site, so say why here — a broken platform query is otherwise silent.
+    if (result.stdout.trim() === "") {
+      this.logger.debug("Port listener scan produced no output", {
+        command,
+        exitCode: result.exitCode ?? -1,
+        stderr: result.stderr.slice(0, 500),
+      });
     }
     return result.stdout;
   }
