@@ -1087,8 +1087,35 @@ describe("ClaudeCodeServerManager integration", () => {
         expect.arrayContaining(["SessionStart", "UserPromptSubmit"])
       );
       expect(hooks.hooks.SessionStart![0]!.hooks[0]!.command).toBe(
-        `node ${testPath("/mock/hook-handler.js").toNative()} SessionStart`
+        `node "${testPath("/mock/hook-handler.js").toNative()}" SessionStart`
       );
+    });
+
+    it("quotes the handler so a path with spaces survives the shell", async () => {
+      const spaced = new ClaudeCodeServerManager({
+        portManager: mockPortManager,
+        pathProvider: mockPathProvider,
+        fileSystem: mockFileSystem,
+        logger: SILENT_LOGGER,
+        config: { hookHandlerPath: testPath("/mock dir/hook handler.js").toNative() },
+      });
+      await spaced.startServer(testPath("/workspace/feature-a").toNative());
+
+      const settings = [...mockFileSystem.$.entries.entries()].find(([path]) =>
+        path.includes("codehydra-hooks.json")
+      )![1] as { content: string };
+      const command = (
+        JSON.parse(settings.content) as {
+          hooks: Record<string, { hooks: { command: string }[] }[]>;
+        }
+      ).hooks.SessionStart![0]!.hooks[0]!.command;
+
+      // Unquoted, the shell would split this into four arguments and the hook
+      // would never fire. hook-command.boundary.test.ts proves that in a real shell.
+      expect(command).toBe(
+        `node "${testPath("/mock dir/hook handler.js").toNative()}" SessionStart`
+      );
+      await spaced.dispose();
     });
 
     it("generates an MCP config that parses, with the launch command claude will spawn", async () => {

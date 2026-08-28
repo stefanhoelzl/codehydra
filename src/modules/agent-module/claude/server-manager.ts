@@ -79,6 +79,10 @@ export interface ClaudeMcpConfigFile {
 /**
  * Build Claude's settings file: one registration per hook we want sent.
  *
+ * The handler path is quoted because the command is a shell string: an install
+ * directory containing a space (`C:\Users\Jane Doe\...`, `/home/jane doe/...`)
+ * otherwise splits into two arguments and the hook silently never fires.
+ *
  * Built here rather than substituted into a checked-in JSON template. A
  * template meant pasting values into already-serialized text, which is how a
  * native Windows path put an invalid `\U` escape inside a JSON string and made
@@ -92,7 +96,7 @@ export function buildSettingsFile(hookHandlerPath: string): ClaudeSettingsFile {
     hooks[name] = [
       {
         ...(register.matcher !== undefined && { matcher: register.matcher }),
-        hooks: [{ type: "command", command: `node ${hookHandlerPath} ${name}` }],
+        hooks: [{ type: "command", command: `node "${hookHandlerPath}" ${name}` }],
       },
     ];
   }
@@ -227,11 +231,12 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.fileSystem = deps.fileSystem;
     this.logger = deps.logger;
 
-    // Default hook handler path uses runtime dir (outside ASAR in production)
-    // Use toString() for POSIX-style paths - works on all platforms including Windows
+    // Default hook handler path uses runtime dir (outside ASAR in production).
+    // Native, not POSIX: the command that carries it is quoted, so backslashes
+    // are safe, and the shell is handed the path the OS actually uses.
     this.hookHandlerPath =
       deps.config?.hookHandlerPath ??
-      this.pathProvider.runtimePath("bin/claude-code-hook-handler.cjs").toString();
+      this.pathProvider.runtimePath("bin/claude-code-hook-handler.cjs").toNative();
   }
 
   /**
