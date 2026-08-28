@@ -42,6 +42,28 @@ function isServerNotRunning(error: Error): boolean {
 }
 
 /**
+ * Replace `${VAR}` placeholders in every string leaf of a JSON template.
+ *
+ * Works on the parsed structure rather than the serialized text so the caller
+ * can hand us raw OS values — native paths, tokens — and let `JSON.stringify`
+ * do the escaping.
+ */
+function substituteVariables(node: unknown, variables: Record<string, string>): unknown {
+  if (typeof node === "string") {
+    return node.replace(/\$\{(\w+)\}/g, (match, key: string) => variables[key] ?? match);
+  }
+  if (Array.isArray(node)) {
+    return node.map((item) => substituteVariables(item, variables));
+  }
+  if (node !== null && typeof node === "object") {
+    return Object.fromEntries(
+      Object.entries(node).map(([key, value]) => [key, substituteVariables(value, variables)])
+    );
+  }
+  return node;
+}
+
+/**
  * Per-workspace state tracked by the server manager.
  */
 export interface WorkspaceState {
@@ -977,19 +999,20 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
   /**
    * Generate a config file from a JSON template with variable substitution.
+   *
+   * Substitution happens on the template's string *leaves*, before the result
+   * is serialized — never on the serialized text. A native Windows path
+   * (`C:\Users\...\ch.cjs`) pasted into already-quoted JSON produces `\U`,
+   * an invalid escape, and the file the agent is handed will not parse. Letting
+   * `JSON.stringify` see the real value is what escapes it, and it covers every
+   * other byte a path or token can carry (quotes, newlines) for free.
    */
   private async generateConfigFromTemplate(
     template: unknown,
     targetPath: Path,
     variables: Record<string, string>
   ): Promise<void> {
-    let content = JSON.stringify(template, null, 2);
-
-    // Substitute variables
-    for (const [key, value] of Object.entries(variables)) {
-      const pattern = new RegExp(`\\$\\{${key}\\}`, "g");
-      content = content.replace(pattern, value);
-    }
+    const content = JSON.stringify(substituteVariables(template, variables), null, 2);
 
     await this.fileSystem.writeFile(targetPath, content);
   }
