@@ -339,7 +339,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: testPath("/test/workspace").toNative() },
+          payload: { workspacePath: testPath("/test/workspace").toString() },
         })
       );
     });
@@ -393,7 +393,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_AGENT_SESSION,
-          payload: { workspacePath: testPath("/test/workspace").toNative() },
+          payload: { workspacePath: testPath("/test/workspace").toString() },
         })
       );
     });
@@ -466,7 +466,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_SET_METADATA,
           payload: {
-            workspacePath: testPath("/test/workspace").toNative(),
+            workspacePath: testPath("/test/workspace").toString(),
             key: "note",
             value: "my note",
           },
@@ -492,7 +492,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: testPath("/test/workspace").toNative(), event: "open" },
+            payload: { workspacePath: testPath("/test/workspace").toString(), event: "open" },
           })
         )
       );
@@ -515,7 +515,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: testPath("/test/workspace").toNative(), event: "close" },
+            payload: { workspacePath: testPath("/test/workspace").toString(), event: "close" },
           })
         )
       );
@@ -573,7 +573,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: testPath("/my/special/workspace").toNative() },
+          payload: { workspacePath: testPath("/my/special/workspace").toString() },
         })
       );
     });
@@ -696,7 +696,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_VSCODE_COMMAND,
           payload: expect.objectContaining({
-            workspacePath: testPath("/test/workspace").toNative(),
+            workspacePath: testPath("/test/workspace").toString(),
             command: "test.command",
           }),
         })
@@ -797,7 +797,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_DELETE_WORKSPACE,
           payload: expect.objectContaining({
-            workspacePath: testPath("/test/workspace").toNative(),
+            workspacePath: testPath("/test/workspace").toString(),
             keepBranch: true,
             force: false,
             removeWorktree: true,
