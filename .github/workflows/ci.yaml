@@ -46,9 +46,22 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
 
-      # wrapper.boundary.test.ts executes dist/bin/*.cjs and throws without it.
+      # wrapper.boundary.test.ts executes dist/bin/*.cjs and throws without it,
+      # and server-manager.boundary.test.ts runs the hook handler built there.
       # Binaries are downloaded by the root postinstall during `pnpm install`.
       - run: pnpm build:wrappers
+
+      # server-manager.boundary.test.ts launches Claude for real, against a local
+      # mock model — no login, no key, no network. It throws rather than skipping
+      # when `claude` is absent, so a missing install fails the job instead of
+      # silently dropping the coverage.
+      #
+      # Deliberately unpinned, like the e2e job: a release that changes which
+      # hooks Claude emits should turn CI red here rather than go unnoticed.
+      - name: Install the Claude CLI
+        shell: bash
+        run: npm install -g @anthropic-ai/claude-code
+
       - run: pnpm check
       - run: pnpm test
       - run: git diff --exit-code
@@ -70,6 +83,13 @@ jobs:
       - uses: ./.github/actions/setup
 
       - run: pnpm build:wrappers
+
+      # Same requirement as the `validate` job: the Claude boundary tests throw
+      # without a real `claude` on PATH.
+      - name: Install the Claude CLI
+        shell: bash
+        run: npm install -g @anthropic-ai/claude-code
+
       - run: pnpm test:canary
 
   build:
