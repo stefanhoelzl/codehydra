@@ -1138,6 +1138,56 @@ describe("Sidebar component", () => {
       expect(container.querySelector(".ws-secondary-line")).not.toBeInTheDocument();
       expect(container.querySelector(".ws-tag")).not.toBeInTheDocument();
     });
+
+    it("shows a tag's label in place of its name", () => {
+      const ws = makeUiWorkspaceRow("ws1", {
+        tags: [{ name: "review", label: "🔍" }],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
+      });
+
+      const tag = container.querySelector(".ws-tag");
+      expect(tag?.textContent?.trim()).toBe("🔍");
+      expect(tag?.textContent).not.toContain("review");
+    });
+
+    it("wears pill chrome only when the tag has a color", () => {
+      const ws = makeUiWorkspaceRow("ws1", {
+        tags: [{ name: "wip" }, { name: "bugfix", color: "#ff0" }],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
+      });
+
+      const [bare, pill] = Array.from(container.querySelectorAll(".ws-tag"));
+      expect(bare).not.toHaveClass("colored");
+      expect(pill).toHaveClass("colored");
+    });
+
+    it("titles a tag only when the tooltip adds something the pill does not show", () => {
+      const ws = makeUiWorkspaceRow("ws1", {
+        tags: [
+          // Nothing to add: displayed text already is the name.
+          { name: "wip" },
+          // An emoji hides the name, so the name becomes the tooltip.
+          { name: "review", label: "🔍" },
+          // An explicit description wins over the name.
+          { name: "blocked", label: "🚧", description: "waiting on CI" },
+        ],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
+      });
+
+      const [plain, emoji, described] = Array.from(container.querySelectorAll(".ws-tag"));
+      expect(plain).not.toHaveAttribute("title");
+      expect(emoji).toHaveAttribute("title", "review");
+      expect(described).toHaveAttribute("title", "waiting on CI");
+    });
   });
 
   describe("workspace title", () => {

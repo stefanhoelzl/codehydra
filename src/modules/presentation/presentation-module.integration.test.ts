@@ -1026,6 +1026,36 @@ describe("PresentationModule - ui:state snapshots", () => {
     ]);
   });
 
+  it("carries a tag's label and description through the metadata patch path", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    const change = (key: string, value: string | null): Promise<void> =>
+      emit(module, EVENT_METADATA_CHANGED, {
+        projectId: PROJECT_ID,
+        workspaceName: workspace.name,
+        workspacePath: workspace.path,
+        key,
+        value,
+      });
+
+    await change("tags.review", '{"color":"#4b6de8","label":"🔍","description":"waiting"}');
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.tags).toEqual([
+      { name: "review", color: "#4b6de8", label: "🔍", description: "waiting" },
+    ]);
+
+    // Overwriting the same key replaces the tag rather than appending a second one,
+    // and a full-replace write drops the fields it omits.
+    await change("tags.review", '{"label":"✅"}');
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.tags).toEqual([
+      { name: "review", label: "✅" },
+    ]);
+  });
+
   it("reads the title metadata into the row, and clears it when emptied", async () => {
     const deps = createDeps();
     const module = await startModule(deps);

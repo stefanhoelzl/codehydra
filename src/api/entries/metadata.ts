@@ -129,18 +129,42 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     name: "workspace.tag.set",
     kind: "command",
     description: "Add or update a tag on a workspace.",
+    instructions:
+      "Replaces the tag entirely — any field you omit is cleared, so re-pass the ones you " +
+      "want to keep.",
     input: z.object({
       workspacePath: targetWorkspace,
       name: z.string().min(1).describe("Tag name"),
-      color: z.string().min(1).optional().describe("Hex color, e.g. '#8b949e'"),
+      color: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Hex color, e.g. '#8b949e'. Without one the tag renders as bare text, not a pill"
+        ),
+      label: z
+        .string()
+        .optional()
+        .describe("Shown instead of the tag name — any UTF-8, e.g. an emoji. Trimmed"),
+      description: z
+        .string()
+        .optional()
+        .describe("Hover text, shown instead of the tag name in the tooltip. Trimmed"),
     }),
     requiresWorkspace: true,
-    handler: async (ctx, input) =>
-      write(
+    handler: async (ctx, input) => {
+      // Full replace: what is stored is exactly what this call passed. No
+      // read-before-write, so a tag is always exactly what its last setter said.
+      const tag: { color?: string; label?: string; description?: string } = {};
+      if (input.color !== undefined) tag.color = input.color;
+      if (input.label !== undefined) tag.label = input.label.trim();
+      if (input.description !== undefined) tag.description = input.description.trim();
+      return write(
         targetOf(ctx, input.workspacePath),
         `${TAG_PREFIX}${input.name}`,
-        JSON.stringify(input.color !== undefined ? { color: input.color } : {})
-      ),
+        JSON.stringify(tag)
+      );
+    },
   });
 
   const tagRemove = defineEntry({

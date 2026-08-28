@@ -97,13 +97,16 @@ const METADATA = `=== METADATA ===
   metadata:
     title: "{{ summary }}"           sidebar display title
     tags:
-      review: { color: "#4b6de8" }   a colored tag named "review"
+      review: { color: "#4b6de8", label: "🔍" }
     <any-key>: "<any value>"         passed through as-is
 
 - title sets the sidebar display title; when unset the row falls back
   to the branch name (template.name).
-- each tags.<name> becomes a workspace tag; its { color } object is
-  JSON-encoded for the tag system. Omit color for an uncolored tag.
+- each tags.<name> becomes a workspace tag; its object is JSON-encoded
+  for the tag system. color, label and description are all optional:
+    color        renders the tag as a pill; without one it is bare text
+    label        shown instead of the name (any UTF-8, e.g. an emoji)
+    description  hover text, shown instead of the name in the tooltip
 
 Three different "names", easy to confuse:
   name (document)          the source id — unique, prefixes its state keys

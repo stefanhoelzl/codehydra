@@ -60,7 +60,7 @@ All methods operate on the **connected workspace**.
 | `getMetadata`        | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)                         |
 | `setMetadata`        | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                                          |
 | `getTags`            | `() => Promise<readonly WorkspaceTag[]>`                                               | Get all tags (metadata entries with the `tags.` prefix)               |
-| `setTag`             | `(name: string, options?: { color?: string }) => Promise<void>`                        | Set or update a tag                                                   |
+| `setTag`             | `(name: string, options?: TagOptions) => Promise<void>`                                | Set or update a tag (full replace — an omitted option is cleared)     |
 | `deleteTag`          | `(name: string) => Promise<void>`                                                      | Delete a tag                                                          |
 | `executeCommand`     | `(command: string, args?: readonly unknown[]) => Promise<unknown>`                     | Execute a VS Code command (10-second timeout)                         |
 | `create`             | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project                            |
@@ -346,8 +346,15 @@ interface AgentSession {
 
 interface WorkspaceTag {
   readonly name: string;
+  /** Renders the tag as a pill; without one it is bare text. */
   readonly color?: string;
+  /** Shown instead of the name — any UTF-8, typically an emoji. */
+  readonly label?: string;
+  /** Sidebar hover text, shown instead of the name in the tooltip. */
+  readonly description?: string;
 }
+
+type TagOptions = { color?: string; label?: string; description?: string };
 
 interface WorkspaceApi {
   getStatus(options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
@@ -356,7 +363,7 @@ interface WorkspaceApi {
   getMetadata(): Promise<Readonly<Record<string, string>>>;
   setMetadata(key: string, value: string | null): Promise<void>;
   getTags(): Promise<readonly WorkspaceTag[]>;
-  setTag(name: string, options?: { color?: string }): Promise<void>;
+  setTag(name: string, options?: TagOptions): Promise<void>;
   deleteTag(name: string): Promise<void>;
   executeCommand(command: string, args?: readonly unknown[]): Promise<unknown>;
   create(name: string, base: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
@@ -473,7 +480,7 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:workspace:wake`               | None                                   | `PluginResult<Workspace>`                  |
 | `api:workspace:setTitle`           | `{ title: string \| null }`            | `PluginResult<void>`                       |
 | `api:workspace:listTags`           | None                                   | `PluginResult<WorkspaceTag[]>`             |
-| `api:workspace:setTag`             | `{ name: string; color?: string }`     | `PluginResult<void>`                       |
+| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `PluginResult<void>`                       |
 | `api:workspace:removeTag`          | `{ name: string }`                     | `PluginResult<void>`                       |
 | `api:workspace:openAgent`          | None                                   | `PluginResult<unknown>`                    |
 | `api:workspace:closeAgent`         | None                                   | `PluginResult<{ closed: boolean }>`        |

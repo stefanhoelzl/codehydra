@@ -102,16 +102,35 @@ export const TAGS_METADATA_KEY_PREFIX = "tags.";
 
 /**
  * A tag attached to a workspace.
+ *
+ * `name` is the identity — it is the metadata key's suffix, so it obeys
+ * `isValidMetadataKey`. The rest is presentation and carries no identity:
+ * `label` is displayed in place of the name (any UTF-8, typically an emoji),
+ * `color` turns the bare label into a pill, and `description` is the hover text.
  */
 export interface WorkspaceTag {
   readonly name: string;
   readonly color?: string;
+  readonly label?: string;
+  readonly description?: string;
+}
+
+/**
+ * Read one string field out of a parsed tag object.
+ *
+ * Anything that is not a string is ignored rather than coerced: a tag written by
+ * hand into git config should cost the one field it got wrong, never the tag.
+ */
+function readTagField(parsed: unknown, field: string): string | undefined {
+  if (typeof parsed !== "object" || parsed === null || !(field in parsed)) return undefined;
+  const candidate = (parsed as Record<string, unknown>)[field];
+  return typeof candidate === "string" ? candidate : undefined;
 }
 
 /**
  * Extract tags from a metadata record by filtering keys with "tags." prefix.
- * Parses JSON values and extracts optional color field.
- * Invalid JSON values produce tags with just the name (no color).
+ * Parses JSON values and extracts the optional color, label and description fields.
+ * Invalid JSON values produce tags with just the name.
  *
  * @param metadata Metadata record from workspace
  * @returns Array of workspace tags
@@ -123,24 +142,24 @@ export function extractTags(metadata: Readonly<Record<string, string>>): Workspa
     const name = key.slice(TAGS_METADATA_KEY_PREFIX.length);
     if (name.length === 0) continue;
 
-    let color: string | undefined;
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null && "color" in parsed) {
-        const candidate = (parsed as { color: unknown }).color;
-        if (typeof candidate === "string") {
-          color = candidate;
-        }
-      }
+      parsed = JSON.parse(value);
     } catch {
       // Invalid JSON — tag with just name
+      parsed = undefined;
     }
 
-    if (color !== undefined) {
-      tags.push({ name, color });
-    } else {
-      tags.push({ name });
-    }
+    const color = readTagField(parsed, "color");
+    const label = readTagField(parsed, "label");
+    const description = readTagField(parsed, "description");
+
+    tags.push({
+      name,
+      ...(color !== undefined ? { color } : {}),
+      ...(label !== undefined ? { label } : {}),
+      ...(description !== undefined ? { description } : {}),
+    });
   }
   return tags;
 }
