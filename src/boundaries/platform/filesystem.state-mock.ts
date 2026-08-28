@@ -22,6 +22,7 @@ import { expect } from "vitest";
 import type { FileSystemErrorCode, FileSystemBoundary, PathLike, DirEntry } from "./filesystem";
 import { FileSystemError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
+import { testPath } from "../../shared/test-fixtures";
 import type {
   MockState,
   MockWithState,
@@ -223,21 +224,44 @@ export function createDirEntry(
  * Normalize a path for use as a map key.
  */
 function normalizePath(pathLike: PathLike): string {
-  if (pathLike instanceof Path) {
-    return pathLike.toString();
-  }
-  return new Path(pathLike).toString();
+  // Every key and every lookup passes through here, so rooting fixtures at this
+  // one point keeps seeds, reads and assertions spelling the same path — and
+  // means a test can seed `"/app"` without having to remember `testPath`.
+  // Idempotent, so an explicitly rooted path is untouched.
+  return testPath(pathLike instanceof Path ? pathLike.toString() : String(pathLike)).toString();
 }
 
 /**
- * Get parent path of a normalized path.
+ * The root a normalized path hangs off: `"/"` on POSIX, `"c:/"` for a Windows
+ * drive (`Path` lowercases and forward-slashes those).
+ *
+ * Without this the mock walks a drive path as if the segments started at `/`,
+ * so `mkdir("c:/a/b")` creates `/c:/a/b` and the following `writeFile` cannot
+ * find its parent — the mock, not the code under test, is what fails.
+ */
+function rootOf(normalizedPath: string): string {
+  const drive = /^[a-z]:\//.exec(normalizedPath);
+  return drive ? drive[0] : "/";
+}
+
+/**
+ * Get parent path of a normalized path. Returns null at the root.
  */
 function getParentPath(normalizedPath: string): string | null {
+  const root = rootOf(normalizedPath);
+  if (normalizedPath === root) {
+    return null;
+  }
   const lastSlash = normalizedPath.lastIndexOf("/");
-  if (lastSlash <= 0) {
-    return normalizedPath === "/" ? null : "/";
+  if (lastSlash < root.length) {
+    return root;
   }
   return normalizedPath.substring(0, lastSlash);
+}
+
+/** Prefix that every child of `normalizedPath` starts with. */
+function childPrefix(normalizedPath: string): string {
+  return normalizedPath.endsWith("/") ? normalizedPath : normalizedPath + "/";
 }
 
 class FileSystemMockStateImpl implements FileSystemMockState {
@@ -465,11 +489,13 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
         throw new FileSystemError("EEXIST", path, `File exists at path: ${path}`);
       }
 
-      // Create all parent directories
-      const segments = path.split("/").filter(Boolean);
-      let current = "";
+      // Create all parent directories, starting from the path's own root so a
+      // drive path is not rebuilt as if it were rooted at "/".
+      const root = rootOf(path);
+      const segments = path.slice(root.length).split("/").filter(Boolean);
+      let current = root;
       for (const segment of segments) {
-        current = current + "/" + segment;
+        current = childPrefix(current) + segment;
         const entry = state.entries.get(current);
         if (!entry) {
           state.setEntry(current, directory());
@@ -494,7 +520,7 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       }
 
       // Find all direct children
-      const prefix = path === "/" ? "/" : path + "/";
+      const prefix = childPrefix(path);
       const children: {
         name: string;
         isDirectory: boolean;
@@ -548,7 +574,7 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
 
       if (entry.type === "directory") {
         // Check if directory is empty
-        const prefix = path === "/" ? "/" : path + "/";
+        const prefix = childPrefix(path);
         const hasChildren = [...state.entries.keys()].some((k) => k.startsWith(prefix));
 
         if (hasChildren && !recursive) {
@@ -592,11 +618,11 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
         // Directory - copy recursively
         state.setEntry(destPath, directory());
 
-        const prefix = srcPath === "/" ? "/" : srcPath + "/";
+        const prefix = childPrefix(srcPath);
         for (const [entryPath, e] of state.entries) {
           if (entryPath.startsWith(prefix)) {
             const relativePath = entryPath.substring(prefix.length);
-            const newPath = destPath + "/" + relativePath;
+            const newPath = childPrefix(destPath) + relativePath;
             if (e.type === "directory") {
               state.setEntry(newPath, directory());
             } else if (e.type === "file") {
@@ -669,13 +695,13 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
 
       // For directories, move all children too
       if (entry.type === "directory") {
-        const prefix = srcPath === "/" ? "/" : srcPath + "/";
+        const prefix = childPrefix(srcPath);
         const toMove: [string, Entry][] = [];
 
         for (const [entryPath, e] of state.entries) {
           if (entryPath.startsWith(prefix)) {
             const relativePath = entryPath.substring(prefix.length);
-            toMove.push([destPath + "/" + relativePath, e]);
+            toMove.push([childPrefix(destPath) + relativePath, e]);
           }
         }
 

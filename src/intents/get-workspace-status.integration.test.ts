@@ -32,7 +32,7 @@ import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { Path } from "../utils/path/path";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "./contract";
 
 // =============================================================================
@@ -296,7 +296,9 @@ describe("GetWorkspaceStatus Operation", () => {
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("Workspace not found: /nonexistent/path");
+      expect((error as Error).message).toContain(
+        `Workspace not found: ${testPath("/nonexistent/path").toString()}`
+      );
     });
   });
 

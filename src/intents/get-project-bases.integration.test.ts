@@ -37,7 +37,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
-import { projPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
@@ -298,7 +298,7 @@ describe("GetProjectBases Operation", () => {
       const setup = createTestSetup({ unknownProject: true });
 
       await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
-        "Project not found for path: /project"
+        `Project not found for path: ${testPath("/project").toString()}`
       );
     });
 
@@ -307,7 +307,9 @@ describe("GetProjectBases Operation", () => {
 
       await expect(
         setup.dispatcher.dispatch(createIntent(projPath("/nonexistent/project")))
-      ).rejects.toThrow("Project not found for path: /nonexistent/project");
+      ).rejects.toThrow(
+        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
+      );
     });
   });
 });

@@ -41,13 +41,15 @@ import { createMockDialogHandle } from "./presentation/dialog-manager.state-mock
 import type { DialogConfig } from "../shared/dialog-types";
 import type { SerializedError } from "../intents/contract";
 import { toSerializedError } from "../shared/error-utils";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
 function defaultReadFile(path: string): Promise<string> {
-  if (path === "/logs/test-session.log") return Promise.resolve("test log content\nline 2");
+  if (path === testPath("/logs/test-session.log").toNative())
+    return Promise.resolve("test log content\nline 2");
   return Promise.reject(new Error("ENOENT"));
 }
 
@@ -76,7 +78,7 @@ function setup(overrides?: SetupOverrides) {
     } as unknown as ErrorReportModuleDeps["ui"],
     fileSystem: { readFile: vi.fn().mockImplementation(defaultReadFile) },
     loggingService: {
-      getLogFilePath: vi.fn().mockReturnValue("/logs/test-session.log"),
+      getLogFilePath: vi.fn().mockReturnValue(testPath("/logs/test-session.log").toNative()),
     },
     dispatcher: {
       dispatch: vi.fn(overrides?.dispatch ?? (async () => {})),
@@ -271,8 +273,9 @@ describe("ErrorReportModule — bug-report:submitted capture", () => {
   it("includes the rotated archive log alongside the current log", async () => {
     const { module, boundary, deps } = setup();
     (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
-      if (path === "/logs/test-session.log") return Promise.resolve("CURRENT");
-      if (path === "/logs/test-session.old.log") return Promise.resolve("ARCHIVE\n");
+      if (path === testPath("/logs/test-session.log").toNative()) return Promise.resolve("CURRENT");
+      if (path === testPath("/logs/test-session.old.log").toNative())
+        return Promise.resolve("ARCHIVE\n");
       return Promise.reject(new Error("ENOENT"));
     });
 

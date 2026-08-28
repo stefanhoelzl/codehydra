@@ -21,6 +21,8 @@ import type { ResolveHookResult } from "../intents/resolve-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
+import { testPath } from "../shared/test-fixtures";
+import { Path } from "../utils/path/path";
 
 // =============================================================================
 // Test Helpers
@@ -94,12 +96,18 @@ describe("DebugModule Integration", () => {
   });
 
   describe("blocking PIDs (active)", () => {
+    /**
+     * The context the delete pipeline hands its hooks: paths already normalized
+     * (every producer of one does `new Path(...).toString()`), and the name taken
+     * from that canonical form rather than from whatever the caller typed.
+     */
     function makeDeleteCtx(workspacePath: string, projectPath: string): HookContext {
+      const normalizedWorkspace = new Path(workspacePath).toString();
       return {
         intent: { type: "workspace:delete", payload: {} },
-        projectPath,
-        workspacePath,
-        workspaceName: workspacePath.split("/").pop(),
+        projectPath: new Path(projectPath).toString(),
+        workspacePath: normalizedWorkspace,
+        workspaceName: normalizedWorkspace.split("/").pop(),
       } as unknown as HookContext;
     }
 
@@ -110,7 +118,10 @@ describe("DebugModule Integration", () => {
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
       const result = (
         (await hook.handler(
-          makeDeleteCtx("/projects/my-app/workspaces/test-1", "/projects/my-app")
+          makeDeleteCtx(
+            testPath("/projects/my-app/workspaces/test-1").toNative(),
+            testPath("/projects/my-app").toNative()
+          )
         )) as HookOutput<DeleteHookResult>
       ).result!;
       expect(result.error).toBe("Debug: simulated file lock");
@@ -141,19 +152,23 @@ describe("DebugModule Integration", () => {
       // Run delete hook to capture workspace identity
       const deleteHook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
       await deleteHook.handler(
-        makeDeleteCtx("/projects/my-app/workspaces/test-1", "/projects/my-app")
+        makeDeleteCtx(
+          testPath("/projects/my-app/workspaces/test-1").toNative(),
+          testPath("/projects/my-app").toNative()
+        )
       );
 
       // Resolve hook should return the cached data
       const resolveHook = getHook(module, RESOLVE_WORKSPACE_OPERATION_ID, "resolve");
       const resolveCtx = {
         intent: { type: "workspace:resolve", payload: {} },
-        workspacePath: "/projects/my-app/workspaces/test-1",
+        // Normalized, as the resolve pipeline always hands it over.
+        workspacePath: testPath("/projects/my-app/workspaces/test-1").toString(),
       } as unknown as HookContext;
       const result = ((await resolveHook.handler(resolveCtx)) as HookOutput<ResolveHookResult>)
         .result!;
       expect(result).toEqual({
-        projectPath: "/projects/my-app",
+        projectPath: testPath("/projects/my-app").toString(),
         workspaceName: "test-1",
       });
     });
@@ -165,7 +180,7 @@ describe("DebugModule Integration", () => {
       const resolveHook = getHook(module, RESOLVE_WORKSPACE_OPERATION_ID, "resolve");
       const ctx = {
         intent: { type: "workspace:resolve", payload: {} },
-        workspacePath: "/unknown/path",
+        workspacePath: testPath("/unknown/path").toNative(),
       } as unknown as HookContext;
       const result = ((await resolveHook.handler(ctx)) as HookOutput<ResolveHookResult>).result!;
       expect(result).toEqual({});

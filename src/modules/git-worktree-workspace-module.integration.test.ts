@@ -75,7 +75,7 @@ import { createMockNotificationManager } from "./presentation/notification-manag
 import type { MockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, WorkspaceClosing } from "../intents/contract";
 
 // =============================================================================
@@ -442,7 +442,7 @@ function createMockUi(): {
 function createTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
   const pathProvider = createMockPathProvider({
-    getProjectWorkspacesDir: () => new Path("/workspaces"),
+    getProjectWorkspacesDir: () => testPath("/workspaces"),
   });
 
   const dispatcher = createMockDispatcher();
@@ -494,7 +494,7 @@ function createTestSetup(): TestSetup {
 function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   const provider = createMockGitWorktreeProvider();
   const pathProvider = createMockPathProvider({
-    getProjectWorkspacesDir: () => new Path("/workspaces"),
+    getProjectWorkspacesDir: () => testPath("/workspaces"),
   });
 
   const dispatcher = createMockDispatcher();
@@ -673,7 +673,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       expect(provider.registerProject).toHaveBeenCalledWith(
         new Path(projectPath),
-        new Path("/workspaces")
+        testPath("/workspaces")
       );
       expect(provider.discover).toHaveBeenCalledWith(new Path(projectPath));
       expect(result.workspaces).toHaveLength(2);
@@ -686,7 +686,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       await dispatchOpenProject(dispatcher, projPath("/projects/my-app"));
 
-      expect(provider.cleanupOrphanedWorkspaces).toHaveBeenCalledWith(new Path("/projects/my-app"));
+      expect(provider.cleanupOrphanedWorkspaces).toHaveBeenCalledWith(testPath("/projects/my-app"));
     });
 
     it("caches the default base from discover and surfaces it via list-workspaces", async () => {
@@ -771,7 +771,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         // Mock createWorkspace
         const createdWs: Workspace = {
           name: "new-feature",
-          path: new Path("/workspaces/new-feature"),
+          path: testPath("/workspaces/new-feature"),
           branch: "new-feature",
           metadata: { base: "origin/main" },
         };
@@ -794,7 +794,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           "origin/main",
           undefined
         );
-        expect(result.workspacePath).toBe("/workspaces/new-feature");
+        expect(result.workspacePath).toBe(testPath("/workspaces/new-feature").toString());
         expect(result.branch).toBe("new-feature");
 
         // Verify state was updated (resolve should find it)
@@ -833,7 +833,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const result = await dispatchCreateWorkspace(dispatcher, createIntent);
 
         expect(provider.createWorkspace).not.toHaveBeenCalled();
-        expect(result.workspacePath).toBe("/workspaces/existing-ws");
+        expect(result.workspacePath).toBe(testPath("/workspaces/existing-ws").toString());
         expect(result.branch).toBe("existing-ws");
 
         // Verify state was updated
@@ -857,7 +857,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
         const createdWs: Workspace = {
           name: "auto-base",
-          path: new Path("/workspaces/auto-base"),
+          path: testPath("/workspaces/auto-base"),
           branch: "auto-base",
           metadata: { base: "origin/main" },
         };
@@ -939,7 +939,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
         const createdWs: Workspace = {
           name: "explicit-base",
-          path: new Path("/workspaces/explicit-base"),
+          path: testPath("/workspaces/explicit-base"),
           branch: "explicit-base",
           metadata: { base: "develop" },
         };
@@ -1440,7 +1440,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       await dispatchPreflight(preflightSetup.dispatcher, workspacePath);
 
       expect(preflightSetup.provider.updateBases).toHaveBeenCalledWith(
-        new Path("/projects/my-app")
+        testPath("/projects/my-app")
       );
     });
 
@@ -1795,7 +1795,7 @@ describe("Add-project worktree picker", () => {
     const provider = createMockGitWorktreeProvider();
     provider.listUnmanagedWorktrees.mockResolvedValue(unmanaged);
     const pathProvider = createMockPathProvider({
-      getProjectWorkspacesDir: () => new Path("/workspaces"),
+      getProjectWorkspacesDir: () => testPath("/workspaces"),
     });
     const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(prepareOperation);

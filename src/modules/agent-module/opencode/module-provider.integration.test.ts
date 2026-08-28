@@ -21,6 +21,7 @@ import {
   createVersionConfig,
 } from "../module-provider.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
+import { wsPath, testPath } from "../../../shared/test-fixtures";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -102,8 +103,10 @@ vi.mock("./provider", () => ({
 // Helpers
 // =============================================================================
 
-const WS_PATH = "/workspace/feature-a" as WorkspacePath;
-const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
+// Minted the way production does — normalized — because the provider registry is
+// keyed on `new Path(...).toString()`, so a raw native path would never match.
+const WS_PATH = wsPath("/workspace/feature-a");
+const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
 
 type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
 type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
@@ -247,14 +250,14 @@ describe("OpenCode module provider", () => {
 
     it("sets MCP config when provided", () => {
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 5555,
         token: "test-token",
       });
       expect(serverManager.setMcpConfig).toHaveBeenCalledWith({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 5555,
         token: "test-token",
       });

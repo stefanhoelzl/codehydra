@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createBehavioralDialogBoundary, type BehavioralDialogBoundary } from "./dialog.test-utils";
+import { testPath } from "../../shared/test-fixtures";
 
 describe("DialogBoundary (behavioral mock)", () => {
   let dialogLayer: BehavioralDialogBoundary;
@@ -26,27 +27,27 @@ describe("DialogBoundary (behavioral mock)", () => {
     it("returns configured response when set", async () => {
       dialogLayer._setNextOpenDialogResponse({
         canceled: false,
-        filePaths: ["/path/to/folder"],
+        filePaths: [testPath("/path/to/folder").toNative()],
       });
 
       const result = await dialogLayer.showDialog({ properties: ["openDirectory"] });
 
       expect(result.canceled).toBe(false);
       expect(result.filePaths).toHaveLength(1);
-      expect(result.filePaths[0]?.toString()).toBe("/path/to/folder");
+      expect(result.filePaths[0]?.toString()).toBe(testPath("/path/to/folder").toString());
     });
 
     it("returns Path objects for file paths", async () => {
       dialogLayer._setNextOpenDialogResponse({
         canceled: false,
-        filePaths: ["/home/user/documents"],
+        filePaths: [testPath("/home/user/documents").toNative()],
       });
 
       const result = await dialogLayer.showDialog({ properties: ["openDirectory"] });
 
       // Verify it's a Path object with expected methods
       const path = result.filePaths[0];
-      expect(path?.toString()).toBe("/home/user/documents");
+      expect(path?.toString()).toBe(testPath("/home/user/documents").toString());
       expect(path?.basename).toBe("documents");
     });
 
@@ -66,7 +67,7 @@ describe("DialogBoundary (behavioral mock)", () => {
     it("configured response is used once then resets", async () => {
       dialogLayer._setNextOpenDialogResponse({
         canceled: false,
-        filePaths: ["/first/path"],
+        filePaths: [testPath("/first/path").toNative()],
       });
 
       const first = await dialogLayer.showDialog({ properties: ["openFile"] });
@@ -79,19 +80,27 @@ describe("DialogBoundary (behavioral mock)", () => {
     it("supports multiple file paths", async () => {
       dialogLayer._setNextOpenDialogResponse({
         canceled: false,
-        filePaths: ["/path/a", "/path/b", "/path/c"],
+        filePaths: [
+          testPath("/path/a").toNative(),
+          testPath("/path/b").toNative(),
+          testPath("/path/c").toNative(),
+        ],
       });
 
       const result = await dialogLayer.showDialog({ properties: ["multiSelections"] });
 
       expect(result.filePaths).toHaveLength(3);
-      expect(result.filePaths.map((p) => p.toString())).toEqual(["/path/a", "/path/b", "/path/c"]);
+      expect(result.filePaths.map((p) => p.toString())).toEqual([
+        testPath("/path/a").toString(),
+        testPath("/path/b").toString(),
+        testPath("/path/c").toString(),
+      ]);
     });
 
     it("records the save mode and returns the chosen path", async () => {
       dialogLayer._setNextOpenDialogResponse({
         canceled: false,
-        filePaths: ["/new/template.liquid"],
+        filePaths: [testPath("/new/template.liquid").toNative()],
       });
 
       const options = {
@@ -102,7 +111,7 @@ describe("DialogBoundary (behavioral mock)", () => {
 
       expect(result.canceled).toBe(false);
       expect(result.filePaths).toHaveLength(1);
-      expect(result.filePaths[0]?.toString()).toBe("/new/template.liquid");
+      expect(result.filePaths[0]?.toString()).toBe(testPath("/new/template.liquid").toString());
       expect(dialogLayer._getState().calls[0]).toEqual({ method: "showDialog", options });
     });
   });
@@ -198,7 +207,10 @@ describe("DialogBoundary (behavioral mock)", () => {
 
   describe("_reset", () => {
     it("clears all state", async () => {
-      dialogLayer._setNextOpenDialogResponse({ canceled: false, filePaths: ["/path"] });
+      dialogLayer._setNextOpenDialogResponse({
+        canceled: false,
+        filePaths: [testPath("/path").toNative()],
+      });
       await dialogLayer.showDialog({ properties: ["openFile"] });
       dialogLayer.showErrorBox("Error", "Details");
 
@@ -211,7 +223,10 @@ describe("DialogBoundary (behavioral mock)", () => {
     });
 
     it("clears pending responses", async () => {
-      dialogLayer._setNextOpenDialogResponse({ canceled: false, filePaths: ["/path"] });
+      dialogLayer._setNextOpenDialogResponse({
+        canceled: false,
+        filePaths: [testPath("/path").toNative()],
+      });
       dialogLayer._reset();
 
       const result = await dialogLayer.showDialog({ properties: ["openFile"] });

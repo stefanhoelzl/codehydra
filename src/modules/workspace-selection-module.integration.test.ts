@@ -43,9 +43,11 @@ import type { WorkspacePath } from "../intents/contract";
 
 const PROJECT_PATH = projPath("/projects/app");
 const PROJECT_NAME = "app";
-const WS_A = "/projects/app/workspaces/alpha";
-const WS_B = "/projects/app/workspaces/beta";
-const WS_C = "/projects/app/workspaces/gamma";
+// Branded at the boundary, as production mints them: this module is only ever
+// handed a normalized path, never the raw native one.
+const WS_A = wsPath("/projects/app/workspaces/alpha");
+const WS_B = wsPath("/projects/app/workspaces/beta");
+const WS_C = wsPath("/projects/app/workspaces/gamma");
 
 function candidate(workspacePath: WorkspacePath): WorkspaceCandidate {
   return {
@@ -135,12 +137,12 @@ describe("WorkspaceSelectionModule", () => {
   describe("selects nearest candidate (#1)", () => {
     it("picks the next workspace in alphabetical order", async () => {
       const setup = createTestSetup({
-        candidates: [candidate(wsPath(WS_A)), candidate(wsPath(WS_B)), candidate(wsPath(WS_C))],
+        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
       });
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: wsPath(WS_A) },
+        payload: { auto: true, currentPath: WS_A },
       };
       await setup.dispatcher.dispatch(autoIntent);
 
@@ -151,7 +153,7 @@ describe("WorkspaceSelectionModule", () => {
   describe("prefers idle over busy (#2)", () => {
     it("selects idle workspace even when busy workspace is closer", async () => {
       const setup = createTestSetup({
-        candidates: [candidate(wsPath(WS_A)), candidate(wsPath(WS_B)), candidate(wsPath(WS_C))],
+        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
       });
 
       // Populate the module's internal status cache via its event handler
@@ -179,7 +181,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: wsPath(WS_A) },
+        payload: { auto: true, currentPath: WS_A },
       };
       await setup.dispatcher.dispatch(autoIntent);
 

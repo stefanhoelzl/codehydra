@@ -11,7 +11,14 @@
       "@shared/*": ["src/shared/*"]
     }
   },
-  "include": ["../env.d.ts", "./**/*", "../shared/**/*", "../intents/contract.ts", "../test/**/*"],
+  "include": [
+    "../env.d.ts",
+    "./**/*",
+    "../shared/**/*",
+    "../intents/contract.ts",
+    "../utils/path/path.ts",
+    "../test/**/*"
+  ],
   "exclude": [
     "../../node_modules",
     "../../app-data",

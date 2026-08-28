@@ -181,7 +181,10 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/ws/alpha"), { status: "busy", counts: { idle: 0, busy: 2 } })
+        updateStatusIntent(wsPath("/ws/alpha"), {
+          status: "busy",
+          counts: { idle: 0, busy: 2 },
+        })
       );
       await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), MIXED));
 
@@ -201,7 +204,10 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/ws/alpha"), { status: "idle", counts: { idle: 2, busy: 0 } })
+        updateStatusIntent(wsPath("/ws/alpha"), {
+          status: "idle",
+          counts: { idle: 2, busy: 0 },
+        })
       );
       await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
 

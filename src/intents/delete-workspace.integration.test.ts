@@ -89,7 +89,7 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath } from "./contract";
 
 // =============================================================================
@@ -1542,7 +1542,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
 
     // Resolve hook returns empty -> shared resolve operation throws
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      "Workspace not found: /test/project/workspaces/feature-a"
+      `Workspace not found: ${testPath("/test/project/workspaces/feature-a").toString()}`
     );
   });
 
@@ -1593,7 +1593,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
 
     // Normal mode: shared resolve operation should throw when workspace not found
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      "Workspace not found: /unknown/workspace"
+      `Workspace not found: ${testPath("/unknown/workspace").toString()}`
     );
   });
 });

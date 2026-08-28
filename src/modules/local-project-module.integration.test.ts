@@ -59,7 +59,7 @@ import { createFileSystemMock, directory } from "../boundaries/platform/filesyst
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { projectDirName } from "../boundaries/platform/paths";
 import nodePath from "path";
-import { projPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
@@ -67,8 +67,10 @@ import type { ProjectPath } from "../intents/contract";
 // =============================================================================
 
 const PROJECT_PATH = projPath("/test/local-project");
-const PROJECT_ID = "local-project-40b89393" as ProjectId;
-const PROJECTS_DIR = "/test/app-data/projects";
+// Derived, not pinned: the id is a hash of the project path, so a literal here
+// would only ever be right for one platform's spelling of that path.
+const PROJECT_ID = projectDirName(PROJECT_PATH) as ProjectId;
+const PROJECTS_DIR = testPath("/test/app-data/projects").toNative();
 
 // =============================================================================
 // Mock Factories
@@ -619,8 +621,8 @@ describe("LocalProjectModule Integration", () => {
 
   describe("app:ready load-projects", () => {
     it("returns all project paths including remote (#11)", async () => {
-      const localPath = "/projects/alpha";
-      const remotePath = "/remotes/repo";
+      const localPath = testPath("/projects/alpha").toNative();
+      const remotePath = testPath("/remotes/repo").toNative();
       const setup = createTestSetup();
 
       // Pre-populate configs

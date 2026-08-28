@@ -17,6 +17,7 @@ import type { AnyOperationEntry } from "../types";
 import { workspacePathSchema } from "../../intents/contract";
 import { createRegistry } from "../entries";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { testPath } from "../../shared/test-fixtures";
 
 /** The real registry, for the tests that assert on the real mappings. */
 function realRegistry() {
@@ -30,7 +31,7 @@ function realRegistry() {
   );
 }
 
-const WS = workspacePathSchema.parse("/repo/wt/feature");
+const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
 
 /** A socket that records handlers so a test can emit into them directly. */
 function fakeSocket() {

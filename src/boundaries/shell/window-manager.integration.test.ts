@@ -9,6 +9,7 @@ import { createImageBoundaryMock } from "./image.state-mock";
 import { createWindowBoundaryMock, type MockWindowBoundary } from "./window.state-mock";
 import { createAppBoundaryMock, type MockAppBoundary } from "./app.state-mock";
 import type { ImageHandle } from "./image-types";
+import { testPath } from "../../shared/test-fixtures";
 
 /**
  * Creates WindowManager deps with behavioral mocks.
@@ -96,9 +97,15 @@ describe("WindowManager", () => {
       };
       const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
 
-      createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png");
+      createWindowManager(
+        depsWithMockImage,
+        "CodeHydra",
+        testPath("/app/resources/icon.png").toNative()
+      );
 
-      expect(mockImageBoundary.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
+      expect(mockImageBoundary.createFromPath).toHaveBeenCalledWith(
+        testPath("/app/resources/icon.png").toNative()
+      );
       expect(mockImageBoundary.release).toHaveBeenCalled();
     });
 
@@ -114,7 +121,11 @@ describe("WindowManager", () => {
 
       // Should not throw
       expect(() =>
-        createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
+        createWindowManager(
+          depsWithMockImage,
+          "CodeHydra",
+          testPath("/app/resources/icon.png").toNative()
+        )
       ).not.toThrow();
     });
 
@@ -130,7 +141,11 @@ describe("WindowManager", () => {
 
       // Should not throw
       expect(() =>
-        createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png")
+        createWindowManager(
+          depsWithMockImage,
+          "CodeHydra",
+          testPath("/app/resources/icon.png").toNative()
+        )
       ).not.toThrow();
     });
 

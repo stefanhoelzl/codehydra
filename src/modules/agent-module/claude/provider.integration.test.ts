@@ -25,6 +25,7 @@ import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem.state-mock";
 import type { AgentStatus } from "../types";
+import { testPath } from "../../../shared/test-fixtures";
 
 /**
  * Send a hook to the bridge server.
@@ -51,7 +52,7 @@ describe("ClaudeCodeProvider integration", () => {
   let mockPathProvider: PathProvider;
   let mockFileSystem: MockFileSystemBoundary;
 
-  const workspacePath = "/workspace/feature-a";
+  const workspacePath = testPath("/workspace/feature-a").toNative();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,14 +73,14 @@ describe("ClaudeCodeProvider integration", () => {
       fileSystem: mockFileSystem,
       logger: SILENT_LOGGER,
       config: {
-        hookHandlerPath: "/mock/hook-handler.js",
+        hookHandlerPath: testPath("/mock/hook-handler.js").toNative(),
       },
     });
 
     // Set MCP config for environment variables
     serverManager.setMcpConfig({
-      nodePath: "/ide/node",
-      cliPath: "/data/bin/ch.cjs",
+      nodePath: testPath("/ide/node").toNative(),
+      cliPath: testPath("/data/bin/ch.cjs").toNative(),
       port: 9999,
       token: "test-token",
     });
@@ -284,7 +285,7 @@ describe("ClaudeCodeProvider integration", () => {
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,
         logger: SILENT_LOGGER,
-        config: { hookHandlerPath: "/mock/hook-handler.js" },
+        config: { hookHandlerPath: testPath("/mock/hook-handler.js").toNative() },
       });
 
       const providerNoMcp = new ClaudeCodeProvider({

@@ -60,7 +60,7 @@ import type { TestViewManager } from "./operations.test-utils";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -678,7 +678,7 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     expect(closeFailed).toHaveLength(1);
     expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
-      projectPath: "/nonexistent/project",
+      projectPath: testPath("/nonexistent/project").toString(),
     });
   });
 

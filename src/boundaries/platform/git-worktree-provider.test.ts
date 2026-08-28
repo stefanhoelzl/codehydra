@@ -15,7 +15,7 @@ import {
 } from "./filesystem.state-mock";
 import { FileSystemError } from "../../shared/errors/service-errors";
 import { createMockLogger } from "./logging.test-utils";
-import { delay } from "@shared/test-fixtures";
+import { delay, testPath } from "@shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import { createMockGitClient } from "./git-client.state-mock";
 import type { IGitClient } from "./git-client";
@@ -78,8 +78,8 @@ describe("parseBranchConfigs", () => {
 });
 
 describe("GitWorktreeProvider error injection", () => {
-  const PROJECT_ROOT = new Path("/home/user/projects/my-repo");
-  const WORKSPACES_DIR = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces");
+  const PROJECT_ROOT = testPath("/home/user/projects/my-repo");
+  const WORKSPACES_DIR = testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces");
   const mockFs = createFileSystemMock();
   const mockLogger = createMockLogger();
 
@@ -108,7 +108,9 @@ describe("GitWorktreeProvider error injection", () => {
             worktrees: [
               {
                 name: "feature-x",
-                path: "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x",
+                path: testPath(
+                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+                ).toNative(),
                 branch: "feature-x",
               },
             ],
@@ -357,7 +359,7 @@ describe("GitWorktreeProvider error injection", () => {
   describe("removeWorkspace", () => {
     it("falls back to rm + prune when git worktree remove fails", async () => {
       const worktreePath = new Path(
-        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const mockClient = createMockGitClient({
         repositories: {
@@ -402,7 +404,7 @@ describe("GitWorktreeProvider error injection", () => {
 
     it("throws original error when fallback also fails", async () => {
       const worktreePath = new Path(
-        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const mockClient = createMockGitClient({
         repositories: {
@@ -435,7 +437,7 @@ describe("GitWorktreeProvider error injection", () => {
 
     it("throws branch error when worktree succeeds but branch deletion fails", async () => {
       const worktreePath = new Path(
-        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const mockClient = createMockGitClient({
         repositories: {
@@ -465,7 +467,7 @@ describe("GitWorktreeProvider error injection", () => {
 
     it("rejects with original git error when fallback rm times out", async () => {
       const worktreePath = new Path(
-        "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const mockClient = createMockGitClient({
         repositories: {

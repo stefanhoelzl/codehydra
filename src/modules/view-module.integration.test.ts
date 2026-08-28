@@ -53,7 +53,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { WorkspaceName } from "../shared/api/types";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
 
 // =============================================================================
@@ -528,7 +528,7 @@ describe("ViewModule Integration", () => {
       const mockDialogBoundary = {
         showDialog: vi.fn().mockResolvedValue({
           canceled: false,
-          filePaths: [{ toString: () => "/selected/project" }],
+          filePaths: [{ toString: () => testPath("/selected/project").toNative() }],
         }),
       };
 
@@ -542,7 +542,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       })) as SelectFolderHookResult;
 
-      expect(result.folderPath).toBe("/selected/project");
+      expect(result.folderPath).toBe(testPath("/selected/project").toNative());
       expect(mockDialogBoundary.showDialog).toHaveBeenCalledWith({
         properties: ["openDirectory"],
       });

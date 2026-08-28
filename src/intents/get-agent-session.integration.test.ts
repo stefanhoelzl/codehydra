@@ -25,7 +25,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "./contract";
 
 // =============================================================================
@@ -147,7 +147,7 @@ describe("GetAgentSession Operation", () => {
 
       await expect(
         setup.dispatcher.dispatch(sessionIntent(wsPath("/nonexistent/path")))
-      ).rejects.toThrow("Workspace not found: /nonexistent/path");
+      ).rejects.toThrow(`Workspace not found: ${testPath("/nonexistent/path").toString()}`);
     });
   });
 

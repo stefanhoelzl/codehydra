@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import type { HookContext } from "./operation";
 import type { Intent } from "./types";
 import { createMinimalOperation } from "./operation.test-utils";
+import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
@@ -141,7 +142,7 @@ describe("createMinimalOperation", () => {
       {
         hookContext: (ctx) => ({
           intent: ctx.intent,
-          workspacePath: "/test/workspace",
+          workspacePath: testPath("/test/workspace").toNative(),
         }),
       }
     );
@@ -149,7 +150,9 @@ describe("createMinimalOperation", () => {
 
     await dispatcher.dispatch(testIntent());
 
-    expect((receivedContext as CustomContext).workspacePath).toBe("/test/workspace");
+    expect((receivedContext as CustomContext).workspacePath).toBe(
+      testPath("/test/workspace").toNative()
+    );
   });
 
   it("uses default { intent } context when no hookContext provided", async () => {

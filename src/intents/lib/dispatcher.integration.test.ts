@@ -22,6 +22,7 @@ import type {
 } from "./operation";
 import { ANY_VALUE } from "./operation";
 import type { Logger } from "../../boundaries/platform/logging-types";
+import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -1463,13 +1464,13 @@ describe("Dispatcher", () => {
       const result = await collectWithModules(
         [
           { handler: async () => undefined },
-          { handler: async () => ({ result: { projectPath: "/selected" } }) },
+          { handler: async () => ({ result: { projectPath: testPath("/selected").toNative() } }) },
           { handler: async () => undefined },
         ],
         { intent: { type: "test:noop", payload: {} } }
       );
 
-      expect(result.results).toEqual([{ projectPath: "/selected" }]);
+      expect(result.results).toEqual([{ projectPath: testPath("/selected").toNative() }]);
       expect(result.errors).toEqual([]);
     });
 

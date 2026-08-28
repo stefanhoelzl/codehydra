@@ -9,14 +9,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Path } from "../../utils/path/path";
 import { SILENT_LOGGER } from "./logging";
 import { createFileSystemMock, file, directory } from "./filesystem.state-mock";
 import { DefaultStateService } from "./state-service";
 import type { StateServiceDeps } from "./state-service";
 import { storeString } from "./store-definition";
+import { testPath } from "../../shared/test-fixtures";
 
-const STATE_PATH = new Path("/app/state.json");
+const STATE_PATH = testPath("/app/state.json");
 
 function createService(
   entries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>>

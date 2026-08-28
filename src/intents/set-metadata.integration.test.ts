@@ -35,14 +35,14 @@ import type { IntentModule } from "./lib/module";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspacePath } from "./contract";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = new Path("/project");
-const WORKSPACES_DIR = new Path("/workspaces");
+const PROJECT_ROOT = testPath("/project");
+const WORKSPACES_DIR = testPath("/workspaces");
 
 // =============================================================================
 // Test Setup Helper
@@ -239,7 +239,7 @@ describe("SetMetadata Operation", () => {
 
       await expect(
         dispatcher.dispatch(setMetadataIntent(wsPath("/nonexistent/path"), "key", "value"))
-      ).rejects.toThrow("Workspace not found: /nonexistent/path");
+      ).rejects.toThrow(`Workspace not found: ${testPath("/nonexistent/path").toString()}`);
     });
 
     // The code has to survive the nested workspace:resolve dispatch this

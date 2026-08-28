@@ -8,7 +8,6 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
 import { z } from "zod/v4";
@@ -34,6 +33,7 @@ import {
 } from "./electron-lifecycle-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Minimal Test Operations
@@ -89,7 +89,9 @@ function createDeps(overrides?: Partial<ElectronLifecycleModuleDeps>): ElectronL
     appLayer: createAppBoundaryMock(),
     logger: SILENT_LOGGER,
     buildInfo: { isPackaged: true },
-    pathProvider: { dataPath: (subpath: string) => new Path(`/data/${subpath}`) },
+    pathProvider: {
+      dataPath: (subpath: string) => testPath(`/data/${subpath}`),
+    },
     asyncWatcher: { check: vi.fn() },
     powerMonitor: { on: vi.fn() },
     dispatcher: { dispatch: vi.fn().mockResolvedValue(undefined) },
@@ -213,7 +215,7 @@ describe("ElectronLifecycleModule Integration", () => {
       dispatcher.registerOperation(new MinimalBeforeReadyOperation());
 
       const mockPathProvider = {
-        dataPath: (subpath: string) => new Path(`/data/${subpath}`),
+        dataPath: (subpath: string) => testPath(`/data/${subpath}`),
       };
 
       const module = createElectronLifecycleModule(
@@ -232,19 +234,19 @@ describe("ElectronLifecycleModule Integration", () => {
 
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "userData",
-        new Path("/data/electron/userData").toNative()
+        testPath("/data/electron/userData").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "sessionData",
-        new Path("/data/electron/sessionData").toNative()
+        testPath("/data/electron/sessionData").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "logs",
-        new Path("/data/electron/logs").toNative()
+        testPath("/data/electron/logs").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "crashDumps",
-        new Path("/data/electron/crashDumps").toNative()
+        testPath("/data/electron/crashDumps").toNative()
       );
     });
 

@@ -30,6 +30,7 @@ import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./git-types";
 import { GitError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
+import { testPath } from "../../shared/test-fixtures";
 import type {
   MockState,
   MockWithState,
@@ -184,10 +185,9 @@ export type MockGitClient = IGitClient & MockWithState<GitClientMockState>;
  * Normalize a path for use as a map key.
  */
 function normalizePath(path: Path | string): string {
-  if (path instanceof Path) {
-    return path.toString();
-  }
-  return new Path(path).toString();
+  // Same funnel-rooting as the filesystem mock: repository keys and lookups
+  // agree, and a fixture can be seeded with the plain path it means.
+  return testPath(path instanceof Path ? path.toString() : path).toString();
 }
 
 // =============================================================================

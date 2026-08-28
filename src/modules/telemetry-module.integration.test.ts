@@ -40,7 +40,7 @@ import { createMockState, type MockStateService } from "../boundaries/platform/s
 import { createStateMigrationRegistry } from "./state-module";
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Helpers
@@ -95,7 +95,12 @@ function createTestSetup(overrides?: {
   startHookPoint?: "before-ready" | "start";
 }): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
-  const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
+  const buildInfo = {
+    version: "1.0.0",
+    isDevelopment: true,
+    isPackaged: false,
+    appPath: testPath("/app").toNative(),
+  };
   const logger = createBehavioralLogger();
   const boundary = createMockPostHogBoundary();
 
@@ -158,7 +163,7 @@ const shutdownIntent = (): AppShutdownIntent => ({
 const openWorkspaceIntent = (): OpenWorkspaceIntent =>
   ({
     type: INTENT_OPEN_WORKSPACE,
-    payload: { workspaceName: "ws-1", projectPath: "/proj" },
+    payload: { workspaceName: "ws-1", projectPath: testPath("/proj").toNative() },
   }) as OpenWorkspaceIntent;
 const appResumeIntent = (): AppResumeIntent => ({
   type: INTENT_APP_RESUME,
