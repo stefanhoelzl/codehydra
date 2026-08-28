@@ -210,10 +210,16 @@ export interface WorkspaceStatus {
 
 /**
  * A tag attached to a workspace.
+ *
+ * `name` is the identity. The rest is presentation: `label` is displayed in place
+ * of the name (any UTF-8, typically an emoji), `color` turns the bare label into a
+ * pill, and `description` is the sidebar hover text.
  */
 export interface WorkspaceTag {
   readonly name: string;
   readonly color?: string;
+  readonly label?: string;
+  readonly description?: string;
 }
 
 /**
@@ -334,8 +340,12 @@ export interface WorkspaceApi {
    * Set or update a tag on this workspace.
    * Tags are stored as metadata entries with the "tags." prefix.
    *
+   * Replaces the tag entirely: an option you omit is cleared, so re-pass the ones
+   * you want to keep. Without a color the tag renders as bare text rather than a
+   * pill; `label` is shown in place of the name, and `description` is its tooltip.
+   *
    * @param name - Tag name (letters, digits, hyphens, dots)
-   * @param options - Optional tag properties (e.g., color)
+   * @param options - Optional tag presentation (color, label, description)
    * @throws Error if not connected or request fails
    *
    * @example
@@ -343,11 +353,20 @@ export interface WorkspaceApi {
    * // Tag with color
    * await api.workspace.setTag('bugfix', { color: '#ff0000' });
    *
+   * // Emoji tag, explained on hover
+   * await api.workspace.setTag('review', {
+   *   label: '🔍',
+   *   description: 'waiting on review',
+   * });
+   *
    * // Tag without color
    * await api.workspace.setTag('wip');
    * ```
    */
-  setTag(name: string, options?: { color?: string }): Promise<void>;
+  setTag(
+    name: string,
+    options?: { color?: string; label?: string; description?: string }
+  ): Promise<void>;
 
   /**
    * Delete a tag from this workspace.

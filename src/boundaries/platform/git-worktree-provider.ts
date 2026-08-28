@@ -92,9 +92,16 @@ export const EXTERNAL_TAG_METADATA_KEY = `tags.${EXTERNAL_TAG_NAME}`;
 
 /**
  * Tag value: a neutral grey, quieter than CodeHydra's blue `new` tag — this marks a
- * permanent property of the workspace, not a call to action.
+ * permanent property of the workspace, not a call to action. The description is the
+ * sidebar tooltip, saying what "external" means without spending row width on it.
+ *
+ * Written once, at adoption. Worktrees adopted before a change here keep whatever
+ * value they were adopted with; nothing backfills them.
  */
-export const EXTERNAL_TAG_VALUE = JSON.stringify({ color: "#8b949e" });
+export const EXTERNAL_TAG_VALUE = JSON.stringify({
+  color: "#8b949e",
+  description: "Adopted worktree — created outside CodeHydra",
+});
 
 /**
  * Global provider managing git worktree operations across all projects.

@@ -27,44 +27,10 @@ import {
   reconstructVscodeObjects,
   type VscodeFactories,
 } from "../../../src/shared/vscode-serialization";
-import { isValidMetadataKey } from "../../../src/shared/api/types";
+import { extractTags, isValidMetadataKey } from "../../../src/shared/api/types";
+import type { WorkspaceTag } from "../../../src/shared/api/types";
 
-const TAGS_PREFIX = "tags.";
 const SYSTEM_METADATA_KEYS = new Set(["base"]);
-
-interface WorkspaceTag {
-  readonly name: string;
-  readonly color?: string;
-}
-
-function extractTagsFromMetadata(metadata: Record<string, string>): WorkspaceTag[] {
-  const tags: WorkspaceTag[] = [];
-  for (const [key, value] of Object.entries(metadata)) {
-    if (!key.startsWith(TAGS_PREFIX)) continue;
-    const name = key.slice(TAGS_PREFIX.length);
-    if (name.length === 0) continue;
-
-    let color: string | undefined;
-    try {
-      const parsed: unknown = JSON.parse(value);
-      if (typeof parsed === "object" && parsed !== null && "color" in parsed) {
-        const candidate = (parsed as { color: unknown }).color;
-        if (typeof candidate === "string") {
-          color = candidate;
-        }
-      }
-    } catch {
-      // Invalid JSON — tag with just name
-    }
-
-    if (color !== undefined) {
-      tags.push({ name, color });
-    } else {
-      tags.push({ name });
-    }
-  }
-  return tags;
-}
 
 function validateMetadataKeyInput(v: string): string | null {
   if (!v) return "Key is required";
@@ -427,11 +393,20 @@ const codehydraApi = {
 
     async getTags(): Promise<readonly WorkspaceTag[]> {
       const metadata = await emitApiCall<Record<string, string>>("api:workspace:getMetadata");
-      return extractTagsFromMetadata(metadata);
+      return extractTags(metadata);
     },
 
-    async setTag(name: string, options?: { color?: string }): Promise<void> {
-      const value = options?.color !== undefined ? JSON.stringify({ color: options.color }) : "{}";
+    async setTag(
+      name: string,
+      options?: { color?: string; label?: string; description?: string }
+    ): Promise<void> {
+      // Full replace, matching workspace.tag.set: the stored object is exactly the
+      // options this call passed, so an omitted field clears whatever was there.
+      const tag: { color?: string; label?: string; description?: string } = {};
+      if (options?.color !== undefined) tag.color = options.color;
+      if (options?.label !== undefined) tag.label = options.label.trim();
+      if (options?.description !== undefined) tag.description = options.description.trim();
+      const value = JSON.stringify(tag);
       await emitApiCall<void>("api:workspace:setMetadata", { key: `tags.${name}`, value });
     },
 
@@ -963,7 +938,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
       "codehydra.getTags",
       async (): Promise<readonly { name: string; color?: string }[]> => {
         const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-        const tags = extractTagsFromMetadata(metadata);
+        const tags = extractTags(metadata);
         if (tags.length === 0) {
           await vscode.window.showInformationMessage("No tags on this workspace");
         } else {
@@ -984,13 +959,24 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "codehydra.setTag",
-      async (arg?: { name: string; color?: string }): Promise<void> => {
+      async (arg?: {
+        name: string;
+        color?: string;
+        label?: string;
+        description?: string;
+      }): Promise<void> => {
         let name: string;
         let color: string | undefined;
+        // Only the programmatic form carries these; the interactive flow prompts
+        // for name and color alone rather than growing two more steps.
+        let label: string | undefined;
+        let description: string | undefined;
 
         if (arg && typeof arg.name === "string") {
           name = arg.name;
           color = typeof arg.color === "string" ? arg.color : undefined;
+          label = typeof arg.label === "string" ? arg.label.trim() : undefined;
+          description = typeof arg.description === "string" ? arg.description.trim() : undefined;
         } else {
           const nameInput = await vscode.window.showInputBox({
             title: "Tag Name",
@@ -1019,8 +1005,11 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
           }
         }
 
-        const value = color !== undefined ? JSON.stringify({ color }) : "{}";
-        await codehydraApi.workspace.setMetadata(`tags.${name}`, value);
+        const tag: { color?: string; label?: string; description?: string } = {};
+        if (color !== undefined) tag.color = color;
+        if (label !== undefined) tag.label = label;
+        if (description !== undefined) tag.description = description;
+        await codehydraApi.workspace.setMetadata(`tags.${name}`, JSON.stringify(tag));
       }
     )
   );
@@ -1033,7 +1022,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
         name = arg;
       } else {
         const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-        const tags = extractTagsFromMetadata(metadata);
+        const tags = extractTags(metadata);
         if (tags.length === 0) {
           await vscode.window.showInformationMessage("No tags to delete");
           return;

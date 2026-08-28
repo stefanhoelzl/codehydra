@@ -246,4 +246,42 @@ describe("extractTags", () => {
     const metadata = { "tags.": "{}" };
     expect(extractTags(metadata)).toEqual([]);
   });
+
+  it("should extract label and description alongside color", () => {
+    const metadata = {
+      "tags.review": '{"color":"#4b6de8","label":"\u{1F50D}","description":"waiting on review"}',
+    };
+    expect(extractTags(metadata)).toEqual([
+      {
+        name: "review",
+        color: "#4b6de8",
+        label: "\u{1F50D}",
+        description: "waiting on review",
+      },
+    ]);
+  });
+
+  it("should extract a label with no color (a bare emoji tag)", () => {
+    const metadata = { "tags.review": '{"label":"\u{1F50D}"}' };
+    expect(extractTags(metadata)).toEqual([{ name: "review", label: "\u{1F50D}" }]);
+  });
+
+  it("should keep an empty-string label rather than dropping it", () => {
+    // A blank label is stored, not normalized away — the tag then renders as
+    // nothing (a bare color chip when colored). Deliberately unlike `title`.
+    const metadata = { "tags.chip": '{"color":"#4b6de8","label":""}' };
+    expect(extractTags(metadata)).toEqual([{ name: "chip", color: "#4b6de8", label: "" }]);
+  });
+
+  it("should ignore non-string label and description values", () => {
+    const metadata = {
+      "tags.bad": '{"color":"#f00","label":123,"description":null}',
+    };
+    expect(extractTags(metadata)).toEqual([{ name: "bad", color: "#f00" }]);
+  });
+
+  it("should cost only the malformed field, never the whole tag", () => {
+    const metadata = { "tags.mixed": '{"color":123,"label":"ok"}' };
+    expect(extractTags(metadata)).toEqual([{ name: "mixed", label: "ok" }]);
+  });
 });
