@@ -9,7 +9,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 // Explicit .ts extension so `scripts/record-demo.ts` can import these fixtures
 // under bare node (which requires extensions in relative ESM specifiers).
-import { createDriver, type AppDriver } from "../scripts/appctrl.ts";
+import { DEV_ELECTRON, DRIVER_APP_ARGS, createDriver, type AppDriver } from "../scripts/appctrl.ts";
 import {
   DATA_ROOT,
   REPO_ROOT,
@@ -81,6 +81,32 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
  * logs directory outlives a single app).
  */
 let launchedAt = 0;
+
+/**
+ * The exact command the driver would use to start the app.
+ *
+ * For a caller that has to launch CodeHydra *itself* rather than through the
+ * driver — see `single-instance.e2e.ts`, which needs a second process the
+ * driver knows nothing about. Built from the same `appFlags()` and the same
+ * `DRIVER_APP_ARGS` that `launchApp` goes through, so the two cannot drift:
+ * a flag added for the driven app is added here for free.
+ */
+export async function launchCommand(options: LaunchAppOptions = {}): Promise<{
+  exe: string;
+  argv: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}> {
+  // Same rule launchApp applies below: a packaged build resolves its own app
+  // path, a dev launch needs the repo as argv[1].
+  const packaged = mode() === "packaged";
+  return {
+    exe: packaged ? packagedExecutable() : DEV_ELECTRON,
+    argv: [...(packaged ? [] : [REPO_ROOT]), ...DRIVER_APP_ARGS, ...(await appFlags(options))],
+    cwd: REPO_ROOT,
+    env: { ...process.env, _CH_ROOT_DIR: ROOT_DIR },
+  };
+}
 
 export async function launchApp(driver: AppDriver, options: LaunchAppOptions = {}): Promise<void> {
   const args = await appFlags(options);
@@ -302,6 +328,30 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
   });
 
   return () => driver;
+}
+
+/**
+ * Wait until the app has published its connection details.
+ *
+ * `launchApp` returns once the UI is visible, and the UI is shown at the
+ * `show-ui` hook point — two points before `start`, where the plugin server
+ * binds and the port and token are written. So anything that reads them
+ * immediately after launch legitimately races startup.
+ */
+export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void> {
+  const statePath = join(DATA_ROOT, "state.json");
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
+      if (typeof state["plugin.port"] === "number" && state["plugin.port"] > 0) return;
+    } catch {
+      // Not written yet, or written but not yet complete.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(`CodeHydra did not publish connection details within ${timeoutMs}ms`);
 }
 
 /** Cold start: an empty root, so the wizard and the downloads both run for real. */

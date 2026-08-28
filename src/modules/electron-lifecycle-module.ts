@@ -144,7 +144,7 @@ export interface ElectronLifecycleModuleDeps {
     commandLine: { appendSwitch(key: string, value?: string): void };
     setPath(name: string, path: string): void;
   };
-  readonly appLayer: Pick<AppBoundary, "setAppUserModelId">;
+  readonly appLayer: Pick<AppBoundary, "setAppUserModelId" | "ensureSingleInstance">;
   readonly buildInfo: { isPackaged: boolean };
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly asyncWatcher: Pick<AsyncWatcher, "check">;
@@ -239,6 +239,16 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             // Redirect data paths to isolate from system defaults
             for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
               deps.app.setPath(name, deps.pathProvider.dataPath(`electron/${name}`).toNative());
+            }
+            // Strictly after the setPath loop above: Electron keys the
+            // single-instance lock on `userData`, so claiming it before the
+            // redirect would key it on the system default and make every data
+            // root — dev worktrees, e2e runs under `_CH_ROOT_DIR` — contend
+            // with the installed app. Returns false only when another instance
+            // holds the lock, and then the process is already exiting; bail so
+            // nothing below touches state that instance owns.
+            if (!deps.appLayer.ensureSingleInstance()) {
+              return { result: {} };
             }
             // Windows keys toasts to the launching shortcut's AUMID; ours is
             // stamped by the NSIS installer from electron-builder's appId, so

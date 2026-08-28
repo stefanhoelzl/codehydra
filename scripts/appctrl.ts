@@ -35,6 +35,18 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** The Electron binary used for unpackaged (dev) launches. */
 export const DEV_ELECTRON = join(REPO_ROOT, "node_modules/electron/dist/electron");
 
+/**
+ * Flags the driver prepends to every launch it makes.
+ *
+ * Never chime or toast at whoever is driving the app — a driven app is
+ * unfocused by definition, which is exactly when notifications fire. Prepended,
+ * not appended, so an explicit caller value wins (parseCliArgs: last wins).
+ *
+ * Exported so a caller that has to start the app *itself*, outside the driver,
+ * can present the same app to the OS (see e2e/fixtures.ts `launchCommand`).
+ */
+export const DRIVER_APP_ARGS = ["--silent=true", "--notification=disabled"] as const;
+
 // =============================================================================
 // Shared types & pure helpers
 // =============================================================================
@@ -265,11 +277,7 @@ export function createDriver() {
       }
     }
 
-    // Never chime or toast at whoever is driving the app — a driven app is
-    // unfocused by definition, which is exactly when notifications fire.
-    // Prepended, not appended, so an explicit caller value wins (parseCliArgs:
-    // last wins).
-    const appArgs = ["--silent=true", "--notification=disabled", ...args];
+    const appArgs = [...DRIVER_APP_ARGS, ...args];
 
     if (appPath !== null) {
       try {
