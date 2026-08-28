@@ -29,7 +29,7 @@
  * and without that its hooks lose a race against its own teardown.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { existsSync, writeFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
@@ -458,11 +458,58 @@ interface SpawnAgentOptions {
   readonly pathPrefix: readonly string[];
 }
 
+/**
+ * Quote an argument for cmd.exe, the way `wrapper.ts` does.
+ *
+ * Node's `shell: true` joins the file and args with single spaces and wraps the
+ * whole line in ONE outer pair of quotes — it does not quote them individually,
+ * so any arg containing a space (every temp path here) is re-split by cmd.exe.
+ */
+function quoteForCmd(arg: string): string {
+  return `"${arg.replace(/"/g, '""')}"`;
+}
+
+/**
+ * How `claude` has to be spawned here.
+ *
+ * A global npm install puts `claude.cmd` on PATH on Windows, and Node has
+ * refused to execute a `.cmd` directly since CVE-2024-27980 — it needs a shell,
+ * and therefore the hand-quoting above. Mirrors `findSystemClaude()` in
+ * `wrapper.ts`, which resolves the very same binary in production.
+ */
+function resolveClaudeCommand(): { command: string; useShell: boolean } {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          { command: "claude.exe", useShell: false },
+          { command: "claude.cmd", useShell: true },
+        ]
+      : [{ command: "claude", useShell: false }];
+
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate.command, ["--version"], {
+        stdio: "ignore",
+        shell: candidate.useShell,
+      });
+      return candidate;
+    } catch {
+      // Try the next spelling.
+    }
+  }
+  throw new Error(
+    `No working \`claude\` on PATH (tried ${candidates.map((c) => c.command).join(", ")}).\n` +
+      `These tests drive the real CLI: \`npm install -g @anthropic-ai/claude-code\`.`
+  );
+}
+
 /** Spawn the real `claude`, pointed at the mock and at the recording tap. */
 function spawnAgent(options: SpawnAgentOptions): ChildProcess {
   const path = [...options.pathPrefix, process.env.PATH ?? ""].join(delimiter);
+  const { command, useShell } = resolveClaudeCommand();
+  const quote = (value: string): string => (useShell ? quoteForCmd(value) : value);
   return spawn(
-    "claude",
+    quote(command),
     [
       "-p",
       // The prompt arrives on stdin, not argv — see `--input-format` below.
@@ -477,9 +524,10 @@ function spawnAgent(options: SpawnAgentOptions): ChildProcess {
       // nobody a way to answer.
       "--permission-mode",
       "bypassPermissions",
-    ],
+    ].map(quote),
     {
       cwd: options.cwd,
+      shell: useShell,
       env: {
         ...process.env,
         PATH: path,
@@ -524,8 +572,20 @@ async function waitForRecording(
   let exited = false;
   child.on("exit", () => (exited = true));
 
+  // Without this a failed spawn is invisible: no "exit" fires, so the loop below
+  // would sit out the full timeout and report "timed out" for what is really
+  // "the binary could not be started".
+  let spawnError: Error | undefined;
+  child.on("error", (error: Error) => {
+    spawnError = error;
+    exited = true;
+  });
+
   while (Date.now() < deadline) {
     if (until(records)) return;
+    if (spawnError !== undefined) {
+      throw new Error(`could not start claude: ${spawnError.message}`);
+    }
     if (exited) {
       // A hook is a separate process Claude spawns, so the last few can still be
       // in flight — or not yet started — when Claude itself has gone. `Stop` and
