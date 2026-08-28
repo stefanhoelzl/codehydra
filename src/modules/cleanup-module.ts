@@ -114,8 +114,16 @@ export interface CleanupModuleDeps {
 // Helpers
 // =============================================================================
 
-/** A session log file, named for the launch that wrote it. */
-const SESSION_LOG_NAME = /^\d{4}-\d{2}-\d{2}T/;
+/**
+ * A session log file, named for the launch that wrote it.
+ *
+ * Case-insensitive on purpose. `Path` lowercases on Windows (it models a
+ * case-insensitive filesystem), so a name that reached us through one arrives
+ * as `2026-08-28t07-...`. Anchoring on an uppercase `T` would mean no session
+ * log matches there — every entry would rank equal, `electron.log` would sort
+ * first on `'e' > '2'` and survive, and the real logs would be swept instead.
+ */
+const SESSION_LOG_NAME = /^\d{4}-\d{2}-\d{2}t/i;
 
 /**
  * Order entries newest-first for `keepRecent`. Session logs sort by name

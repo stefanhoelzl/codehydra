@@ -25,6 +25,7 @@ import {
 } from "../boundaries/platform/filesystem.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import type { Logger } from "../boundaries/platform/logging";
+import { Path } from "../utils/path/path";
 import { createCleanupModule, type CleanupRule } from "./cleanup-module";
 
 // =============================================================================
@@ -81,7 +82,10 @@ function data(subpath: string): string {
 }
 
 function exists(fileSystem: MockFileSystemBoundary, path: string): boolean {
-  return fileSystem.$.entries.has(path);
+  // Through `Path`, not the raw literal: it lowercases on Windows, so a name
+  // holding an uppercase letter (every `...T07-35-51...` log) is stored under a
+  // key the literal never matches.
+  return fileSystem.$.entries.has(new Path(path).toString());
 }
 
 // =============================================================================
@@ -186,6 +190,31 @@ describe("CleanupModule Integration", () => {
       });
       expect(exists(fileSystem, data("logs/2026-08-28T07-35-51-bbbb.log"))).toBe(true);
       expect(exists(fileSystem, data("logs/2026-08-27T14-09-13-aaaa.log"))).toBe(true);
+    });
+
+    it("still recognises session logs when their names arrived lowercased", async () => {
+      // What Windows looks like: `Path` lowercases there (it models a
+      // case-insensitive filesystem), so names reach the rule as
+      // `2026-08-28t07-...`. When the pattern anchored on an uppercase `T`,
+      // nothing matched, every entry ranked equal, and `electron.log` won the
+      // name sort on "e" > "2" — surviving while the real logs were swept.
+      const { run, fileSystem } = createTestSetup({
+        entries: {
+          [data("logs")]: directory(),
+          [data("logs/electron.log")]: file("chromium"),
+          [data("logs/2026-08-27t14-09-13-aaaa.log")]: file("older"),
+          [data("logs/2026-08-28t07-35-51-bbbb.log")]: file("current"),
+        },
+        rules: [{ kind: "keepRecent", path: "logs", keep: 2 }],
+      });
+
+      await run();
+
+      await vi.waitFor(() => {
+        expect(exists(fileSystem, data("logs/electron.log"))).toBe(false);
+      });
+      expect(exists(fileSystem, data("logs/2026-08-28t07-35-51-bbbb.log"))).toBe(true);
+      expect(exists(fileSystem, data("logs/2026-08-27t14-09-13-aaaa.log"))).toBe(true);
     });
 
     it("keeps everything when the directory holds fewer than the limit", async () => {
