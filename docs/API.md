@@ -721,6 +721,7 @@ it from an ordinary shell.
 ```console
 $ ch ws status                       # the workspace containing the current directory
 $ ch ws create feature-x main --prompt "add the export button"
+$ ch ws create review-x --agent claude --permission-mode plan --agent-name reviewer
 $ ch ws switch feature-x             # by name, from anywhere
 $ ch ws delete --keep-branch
 $ ch project open .                  # a path, or a git URL to clone

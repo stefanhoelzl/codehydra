@@ -12,7 +12,12 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import {
+  workspacePathSchema,
+  type AgentSpec,
+  type PromptModel,
+  type WorkspacePath,
+} from "../../intents/contract";
 import type { DeletionProgress, Workspace } from "../../shared/api/types";
 
 import { INTENT_GET_WORKSPACE_STATUS } from "../../intents/get-workspace-status";
@@ -49,6 +54,93 @@ function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): W
     throw new ApiError("no-workspace", "No workspace to act on.");
   }
   return target;
+}
+
+/** The agent options `workspace.create` accepts, as the caller typed them. */
+interface AgentInput {
+  readonly prompt?: string | undefined;
+  readonly agent?: string | undefined;
+  readonly model?: string | undefined;
+  readonly permissionMode?: string | undefined;
+  readonly agentName?: string | undefined;
+}
+
+/**
+ * Split a `provider/model` reference into the contract's `PromptModel`.
+ *
+ * The command line wants one token, the contract wants two fields. Split on the
+ * FIRST slash so a model id that contains slashes (`anthropic/claude-x/beta`)
+ * keeps them. Claude reads only `modelID` (server-manager projects the spec onto
+ * `--model`), so a bare id is accepted there and the provider is a placeholder;
+ * OpenCode addresses models as `provider/model` and cannot guess one.
+ */
+function parseModel(model: string, backend: "claude" | "opencode"): PromptModel {
+  const slash = model.indexOf("/");
+  if (slash > 0 && slash < model.length - 1) {
+    return { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) };
+  }
+  if (backend === "opencode") {
+    throw new ApiError(
+      "usage",
+      `Invalid model "${model}" for opencode: use 'provider/model', e.g. 'anthropic/claude-sonnet-4-5'.`
+    );
+  }
+  return { providerID: "anthropic", modelID: model };
+}
+
+/**
+ * Build the typed AgentSpec arm from the create input.
+ *
+ * The creation panel emits a backend-specific arm carrying prompt, model,
+ * permission mode and named agent; this is the same projection for callers that
+ * come in through the CLI, MCP or the plugin, so the two surfaces offer the same
+ * options. Only with no backend named at all do we fall back to the option-less
+ * "default" arm — which is why an option that needs a backend is a usage error
+ * rather than a silent drop.
+ */
+function buildAgentSpec(input: AgentInput): AgentSpec | undefined {
+  const { prompt, agent, model, permissionMode, agentName } = input;
+
+  if (agent === undefined) {
+    const needsBackend = [
+      ["model", model],
+      ["permissionMode", permissionMode],
+      ["agentName", agentName],
+    ].find(([, value]) => value !== undefined);
+    if (needsBackend) {
+      throw new ApiError(
+        "usage",
+        `${needsBackend[0]} needs an agent backend — pass agent=claude or agent=opencode.`
+      );
+    }
+    return prompt === undefined ? undefined : { type: "default", prompt };
+  }
+
+  if (agent !== "claude" && agent !== "opencode") {
+    throw new ApiError("usage", `Unknown agent "${agent}", expected "claude" or "opencode".`);
+  }
+
+  const parsed = model === undefined ? undefined : parseModel(model, agent);
+
+  if (agent === "opencode") {
+    if (permissionMode !== undefined) {
+      throw new ApiError("usage", "permissionMode is a Claude option; opencode does not take one.");
+    }
+    return {
+      type: "opencode",
+      ...(prompt !== undefined && { prompt }),
+      ...(parsed !== undefined && { model: parsed }),
+      ...(agentName !== undefined && { agentName }),
+    };
+  }
+
+  return {
+    type: "claude",
+    ...(prompt !== undefined && { prompt }),
+    ...(parsed !== undefined && { model: parsed }),
+    ...(permissionMode !== undefined && { permissionMode }),
+    ...(agentName !== undefined && { agentName }),
+  };
 }
 
 /** Build a human-readable failure from a terminal deletion-progress event. */
@@ -192,8 +284,25 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
         .describe("Remote branch to check out, e.g. 'origin/feature-login'."),
       prompt: z.string().min(1).optional().describe("Initial prompt to send once created."),
       // Divergence 5: the rich shape is the definition; MCP now sees it too.
-      agent: z.string().min(1).optional().describe("Agent backend to launch."),
-      model: z.string().min(1).optional().describe("Model for the initial prompt."),
+      agent: z.string().min(1).optional().describe("Agent backend to launch: claude or opencode."),
+      model: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Model for the initial prompt: 'provider/model' (opencode requires the provider; " +
+            "claude accepts a bare model id)."
+        ),
+      permissionMode: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Claude permission mode to start in, e.g. 'plan'. Requires agent=claude."),
+      agentName: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Named agent (persona) to launch. Requires an agent backend."),
       stealFocus: z.boolean().optional().default(false).describe("Switch to the new workspace."),
     }),
     requiresWorkspace: false,
@@ -218,13 +327,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
         project = resolved.projectPath;
       }
 
-      const agentSpec =
-        input.prompt !== undefined || input.agent !== undefined || input.model !== undefined
-          ? {
-              type: "default" as const,
-              ...(input.prompt !== undefined && { prompt: input.prompt }),
-            }
-          : undefined;
+      const agentSpec = buildAgentSpec(input);
 
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
