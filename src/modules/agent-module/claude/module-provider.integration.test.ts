@@ -26,6 +26,7 @@ import {
 } from "../module-provider.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 import { createMockProcessRunner } from "../../../boundaries/platform/process.state-mock";
+import { testPath } from "../../../shared/test-fixtures";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
@@ -67,8 +68,8 @@ function createMockServerManager(): ClaudeCodeServerManager {
   }) as unknown as ClaudeCodeServerManager;
 }
 
-const WS_PATH = "/workspace/feature-a" as WorkspacePath;
-const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
+const WS_PATH = testPath("/workspace/feature-a").toNative() as WorkspacePath;
+const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
 
 // =============================================================================
 // Tests
@@ -195,8 +196,8 @@ describe("createClaudeModuleProvider", () => {
       const provider = createProvider();
 
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -204,8 +205,8 @@ describe("createClaudeModuleProvider", () => {
       expect(mockServerManager.onServerStarted).toHaveBeenCalled();
       expect(mockServerManager.onServerStopped).toHaveBeenCalled();
       expect(mockServerManager.setMcpConfig).toHaveBeenCalledWith({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -230,8 +231,8 @@ describe("createClaudeModuleProvider", () => {
     it("creates provider on server started, connects it, and emits initial status", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -257,8 +258,8 @@ describe("createClaudeModuleProvider", () => {
     it("reconnects existing provider on restart (server started again)", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -285,8 +286,8 @@ describe("createClaudeModuleProvider", () => {
     it("disconnects provider on restart (isRestart=true)", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -311,8 +312,8 @@ describe("createClaudeModuleProvider", () => {
     it("removes provider on full stop (isRestart=false)", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -349,8 +350,8 @@ describe("createClaudeModuleProvider", () => {
     it("forwards status changes from provider to registered callbacks", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -377,8 +378,8 @@ describe("createClaudeModuleProvider", () => {
     it("deduplicates status changes - same status not emitted twice", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -403,8 +404,8 @@ describe("createClaudeModuleProvider", () => {
     it("emits when status changes from idle to busy", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -428,8 +429,8 @@ describe("createClaudeModuleProvider", () => {
     it("unsubscribe removes the callback", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -464,8 +465,8 @@ describe("createClaudeModuleProvider", () => {
     it("returns cached status after provider emits", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -494,8 +495,8 @@ describe("createClaudeModuleProvider", () => {
     it("delegates to provider.getSession() when provider exists", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -518,8 +519,8 @@ describe("createClaudeModuleProvider", () => {
     it("starts server and returns environment variables", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -541,8 +542,8 @@ describe("createClaudeModuleProvider", () => {
     it("calls setInitialPrompt when initialPrompt option is provided", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -563,8 +564,8 @@ describe("createClaudeModuleProvider", () => {
     it("calls setNoSessionMarker when isNewWorkspace option is true", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -584,8 +585,8 @@ describe("createClaudeModuleProvider", () => {
     it("does not call setInitialPrompt or setNoSessionMarker without options", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -606,8 +607,8 @@ describe("createClaudeModuleProvider", () => {
     it("returns empty envVars when provider does not exist", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -647,8 +648,8 @@ describe("createClaudeModuleProvider", () => {
     it("cleans up server callbacks, disposes server manager, and all providers", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -681,8 +682,8 @@ describe("createClaudeModuleProvider", () => {
     it("can be called multiple times safely", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });
@@ -703,8 +704,8 @@ describe("createClaudeModuleProvider", () => {
     it("tracks status independently per workspace", async () => {
       const provider = createProvider();
       provider.initialize({
-        nodePath: "/ide/node",
-        cliPath: "/data/bin/ch.cjs",
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
         port: 9999,
         token: "test-token",
       });

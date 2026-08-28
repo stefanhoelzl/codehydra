@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
 import { IntentHandle } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
-import { delay, projPath, wsPath } from "../shared/test-fixtures";
+import { delay, projPath, testPath, wsPath } from "../shared/test-fixtures";
 import {
   createTestClient,
   createPluginServerEnv,
@@ -69,7 +69,7 @@ function createDeleteShutdownOperation(
             projectId: "test-12345678" as ProjectId,
             workspaceName: "ws" as WorkspaceName,
             workspacePath,
-            projectPath: "/projects/test",
+            projectPath: testPath("/projects/test").toNative(),
             worktreeRemoved: true,
           },
         });
@@ -245,7 +245,11 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
   describe("multiple clients", () => {
     it("handles multiple workspace connections simultaneously", async () => {
-      const workspaces = ["/workspace/a", "/workspace/b", "/workspace/c"];
+      const workspaces = [
+        testPath("/workspace/a").toNative(),
+        testPath("/workspace/b").toNative(),
+        testPath("/workspace/c").toNative(),
+      ];
       const clientsToTest = workspaces.map((ws) => createClient(wsPath(ws)));
 
       // Connect all clients
@@ -335,7 +339,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: "/test/workspace" },
+          payload: { workspacePath: testPath("/test/workspace").toNative() },
         })
       );
     });
@@ -389,7 +393,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_AGENT_SESSION,
-          payload: { workspacePath: "/test/workspace" },
+          payload: { workspacePath: testPath("/test/workspace").toNative() },
         })
       );
     });
@@ -461,7 +465,11 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_SET_METADATA,
-          payload: { workspacePath: "/test/workspace", key: "note", value: "my note" },
+          payload: {
+            workspacePath: testPath("/test/workspace").toNative(),
+            key: "note",
+            value: "my note",
+          },
         })
       );
     });
@@ -484,7 +492,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: "/test/workspace", event: "open" },
+            payload: { workspacePath: testPath("/test/workspace").toNative(), event: "open" },
           })
         )
       );
@@ -507,7 +515,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: "/test/workspace", event: "close" },
+            payload: { workspacePath: testPath("/test/workspace").toNative(), event: "close" },
           })
         )
       );
@@ -565,7 +573,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: "/my/special/workspace" },
+          payload: { workspacePath: testPath("/my/special/workspace").toNative() },
         })
       );
     });
@@ -688,7 +696,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_VSCODE_COMMAND,
           payload: expect.objectContaining({
-            workspacePath: "/test/workspace",
+            workspacePath: testPath("/test/workspace").toNative(),
             command: "test.command",
           }),
         })
@@ -789,7 +797,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_DELETE_WORKSPACE,
           payload: expect.objectContaining({
-            workspacePath: "/test/workspace",
+            workspacePath: testPath("/test/workspace").toNative(),
             keepBranch: true,
             force: false,
             removeWorktree: true,
@@ -829,9 +837,12 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         name: "my-ws",
         branch: "my-ws",
         metadata: {},
-        path: "/workspaces/my-ws",
+        path: testPath("/workspaces/my-ws").toNative(),
       };
-      const resolvedProject = { projectPath: "/project/path", workspaceName: "caller-ws" };
+      const resolvedProject = {
+        projectPath: testPath("/project/path").toNative(),
+        workspaceName: "caller-ws",
+      };
       env.mockDispatch.mockImplementation((intent: Intent) => {
         const handle = new IntentHandle();
         handle.signalAccepted(true);
@@ -871,7 +882,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_OPEN_WORKSPACE,
           payload: expect.objectContaining({
-            projectPath: "/project/path",
+            projectPath: testPath("/project/path").toNative(),
             workspaceName: "my-ws",
             base: "main",
             agent: { type: "default", prompt: "Do something" },
@@ -1019,13 +1030,13 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("handles concurrent workspace connections independently", async () => {
       await env.setWorkspaceConfig(
         wsPath("/workspace/one"),
-        { WORKSPACE: "/workspace/one" },
+        { WORKSPACE: testPath("/workspace/one").toNative() },
         "opencode",
         true
       );
       await env.setWorkspaceConfig(
         wsPath("/workspace/two"),
-        { WORKSPACE: "/workspace/two" },
+        { WORKSPACE: testPath("/workspace/two").toNative() },
         "opencode",
         true
       );
@@ -1043,8 +1054,8 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await Promise.all([waitForConnect(client1), waitForConnect(client2)]);
       const [config1, config2] = await Promise.all([config1Promise, config2Promise]);
 
-      expect(config1.env).toEqual({ WORKSPACE: "/workspace/one" });
-      expect(config2.env).toEqual({ WORKSPACE: "/workspace/two" });
+      expect(config1.env).toEqual({ WORKSPACE: testPath("/workspace/one").toNative() });
+      expect(config2.env).toEqual({ WORKSPACE: testPath("/workspace/two").toNative() });
     });
   });
 
@@ -1195,7 +1206,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   // open an agent terminal — a live process inside the worktree about to be removed.
   // On Windows that handle makes `git worktree remove` fail.
   describe("connections during deletion", () => {
-    const WS = "/test/workspace";
+    const WS = testPath("/test/workspace").toNative();
 
     async function startDeleting(
       ends?: typeof EVENT_WORKSPACE_DELETED | typeof EVENT_WORKSPACE_DELETE_FAILED

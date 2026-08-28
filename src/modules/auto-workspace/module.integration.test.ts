@@ -21,6 +21,7 @@ import type {
   HookContext,
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
+import type { WorkspacePath } from "../../intents/contract";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -61,7 +62,7 @@ import { createMockProcessRunner } from "../../boundaries/platform/process.state
 import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -103,7 +104,8 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
     this.dispatched.push(ctx.intent);
     const git = ctx.intent.payload.git;
     if (git !== undefined && this.failFor.has(git)) throw new Error(`clone failed for ${git}`);
-    const pathStr = ctx.intent.payload.path?.toString() ?? "/home/user/projects/repo";
+    const pathStr =
+      ctx.intent.payload.path?.toString() ?? testPath("/home/user/projects/repo").toNative();
     return { id: "project-1" as ProjectId, name: "repo", path: projPath(pathStr), workspaces: [] };
   }
 }
@@ -179,7 +181,12 @@ class SetMetaOp implements Operation<typeof setMetaSchemas> {
 }
 
 /** The path OpenProjectOp resolves a `git:` template to. */
-const PROJECT_PATH = "/home/user/projects/repo";
+const PROJECT_PATH = testPath("/home/user/projects/repo").toNative();
+
+/** The branded path a workspace of this project gets — normalized, as production mints it. */
+function workspacePathOf(name: string): WorkspacePath {
+  return wsPath(`${PROJECT_PATH}/${name}`);
+}
 
 function workspaceNamed(name: string, metadata: Record<string, string> = {}): Workspace {
   return {
@@ -187,7 +194,7 @@ function workspaceNamed(name: string, metadata: Record<string, string> = {}): Wo
     name: name as WorkspaceName,
     branch: name,
     metadata: { base: "main", ...metadata },
-    path: wsPath(`${PROJECT_PATH}/${name}`),
+    path: workspacePathOf(name),
   };
 }
 
@@ -332,7 +339,9 @@ function createSetup(options?: {
     "/data": directory(),
   };
   if (options?.legacyStateFileContent !== undefined) {
-    fsEntries["/data/auto-workspaces.json"] = file(options.legacyStateFileContent);
+    fsEntries[testPath("/data/auto-workspaces.json").toNative()] = file(
+      options.legacyStateFileContent
+    );
   }
   const fs = createFileSystemMock({ entries: fsEntries });
 
@@ -372,7 +381,7 @@ function createSetup(options?: {
   const module = createAutoWorkspaceModule({
     fs,
     logger,
-    legacyStateFilePath: "/data/auto-workspaces.json",
+    legacyStateFilePath: testPath("/data/auto-workspaces.json").toNative(),
     dispatcher,
     processRunner,
     configService: mockConfig,
@@ -693,7 +702,7 @@ ${sourceYaml("good")}`,
 
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(wakeOp.dispatched).toHaveLength(1);
-      expect(wakeOp.dispatched[0]!.payload.workspacePath).toBe(`${PROJECT_PATH}/ws-1`);
+      expect(wakeOp.dispatched[0]!.payload.workspacePath).toBe(workspacePathOf("ws-1"));
       expect(wakeOp.dispatched[0]!.payload.stealFocus).toBe(false);
       // The metadata is the whole signal — no prompt reaches an existing agent.
       expect(
@@ -731,7 +740,7 @@ ${sourceYaml("good")}`,
 
       expect(switchOp.dispatched).toHaveLength(1);
       expect(switchOp.dispatched[0]!.payload).toEqual({
-        workspacePath: `${PROJECT_PATH}/ws-1`,
+        workspacePath: workspacePathOf("ws-1"),
         focus: true,
       });
     });

@@ -18,6 +18,7 @@ import { createMockGitClient } from "./git-client.state-mock";
 import { projectDirName } from "./paths";
 import { Path } from "../../utils/path/path";
 import path from "path";
+import { testPath } from "../../shared/test-fixtures";
 
 /** Construct a provider the way production does: new + validateRepository + registerProject. */
 async function createProvider(
@@ -279,14 +280,14 @@ describe("Services Integration", () => {
         },
       });
       const provider = await createProvider(
-        new Path("/mock/repo"),
+        testPath("/mock/repo"),
         mockGitClient,
-        new Path("/mock/workspaces"),
+        testPath("/mock/workspaces"),
         mockFileSystemBoundary,
         SILENT_LOGGER
       );
 
-      const projectRoot = new Path("/mock/repo");
+      const projectRoot = testPath("/mock/repo");
 
       // Should work with the mock
       const workspaces = await provider.discover(projectRoot);

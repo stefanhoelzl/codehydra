@@ -15,6 +15,7 @@ import type { AppStartIntent } from "../intents/app-start";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { createTempDirModule, type TempDirModuleDeps } from "./temp-dir-module";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Mock FileSystemBoundary
@@ -87,7 +88,7 @@ describe("TempDirModule Integration", () => {
       });
 
       const mkdirPath = fileSystem.mkdir.mock.calls[0]![0];
-      expect(mkdirPath.toString()).toBe("/test/app-data/temp");
+      expect(mkdirPath.toString()).toBe(testPath("/test/app-data/temp").toString());
     });
   });
 });

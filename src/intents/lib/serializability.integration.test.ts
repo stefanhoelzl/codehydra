@@ -30,12 +30,19 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import type { Operation, OperationSchemas, HookOutput } from "./operation";
 import { hookCtxSchema, workspacePathSchema, serializedErrorSchema } from "../contract";
 import { toSerializedError } from "../../shared/error-utils";
+import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Values that must never cross a carrier
 // =============================================================================
 
-class Path {
+/**
+ * Any class instance at all, standing in for the `z.instanceof(...)` escape the
+ * docstring above describes. Deliberately not `Path`, and deliberately holding
+ * nothing path-shaped: what the carrier rejects is the *class*, and naming it
+ * after a real one invites the next reader to think the payload matters.
+ */
+class ClassInstance {
   constructor(private readonly value: string) {}
   toString(): string {
     return this.value;
@@ -43,8 +50,8 @@ class Path {
 }
 
 const NON_SERIALIZABLE: ReadonlyArray<readonly [string, unknown]> = [
-  ["a class instance", new Path("/ws/a")],
-  ["a function", () => "/ws/a"],
+  ["a class instance", new ClassInstance("not a plain object")],
+  ["a function", () => "not a plain object"],
 ];
 
 // =============================================================================
@@ -125,7 +132,7 @@ function createDispatcher(controls?: ProbeControls): Dispatcher {
   return dispatcher;
 }
 
-const GOOD_PATH = workspacePathSchema.parse("/ws/a");
+const GOOD_PATH = workspacePathSchema.parse(testPath("/ws/a").toNative());
 
 // =============================================================================
 // Tests
@@ -166,7 +173,7 @@ describe("the dispatcher's carriers reject non-serializable values", () => {
 
     it("rejects an undeclared enrichment field (strict)", async () => {
       const dispatcher = createDispatcher({
-        enrichment: { workspacePath: GOOD_PATH, smuggled: new Path("/ws/b") },
+        enrichment: { workspacePath: GOOD_PATH, smuggled: new ClassInstance("not a plain object") },
       });
       dispatcher.registerModule({
         name: "probe-handler",

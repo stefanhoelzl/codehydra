@@ -67,7 +67,7 @@ import {
 import type { TestViewManager } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import type { DiscoveredWorkspace, ProjectPath, WorkspacePath } from "./contract";
 
 // =============================================================================
@@ -351,7 +351,7 @@ function createTestHarness(options?: {
               return { result: { projectPath: existing, remoteUrl } };
             }
 
-            const gitPath = new Path("/test/cloned", "repo");
+            const gitPath = testPath("/test/cloned", "repo");
             await gitClient.clone(remoteUrl, gitPath);
             await projectStore.saveProject(gitPath.toString(), {
               remoteUrl,
@@ -884,7 +884,9 @@ describe("OpenProjectOperation", () => {
   it("test 7: rejects invalid git path", async () => {
     const harness = createTestHarness({ validateThrows: true });
 
-    const intent = buildOpenIntent({ path: projPath(new Path("/invalid/path").toString()) });
+    const intent = buildOpenIntent({
+      path: projPath("/invalid/path"),
+    });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Not a valid git repository");
   });
@@ -972,7 +974,9 @@ describe("OpenProjectOperation", () => {
           "select-folder": {
             handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
               selectFolderSpy();
-              return { result: { folderPath: projPath("/should-not-be-used") } };
+              return {
+                result: { folderPath: projPath("/should-not-be-used") },
+              };
             },
           },
         },
@@ -999,7 +1003,9 @@ describe("OpenProjectOperation", () => {
       failedEvents.push(event);
     });
 
-    const intent = buildOpenIntent({ path: projPath(new Path("/invalid/path").toString()) });
+    const intent = buildOpenIntent({
+      path: projPath("/invalid/path"),
+    });
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Not a valid git repository");
 
     expect(failedEvents).toHaveLength(1);

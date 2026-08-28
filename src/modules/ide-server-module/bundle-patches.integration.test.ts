@@ -18,9 +18,10 @@ import {
 import { createMockLogger, type MockLogger } from "../../boundaries/platform/logging";
 import type { SupportedPlatform } from "../../boundaries/platform/platform-info";
 import { applyBundlePatches, applyTextPatch, type TextPatch } from "./bundle-patches";
+import { testPath } from "../../shared/test-fixtures";
 
-const WRAPPER = "/bundle/node_modules/@parcel/watcher/wrapper.js";
-const WORKBENCH = "/bundle/out/vs/code/browser/workbench/workbench.js";
+const WRAPPER = testPath("/bundle/node_modules/@parcel/watcher/wrapper.js").toNative();
+const WORKBENCH = testPath("/bundle/out/vs/code/browser/workbench/workbench.js").toNative();
 
 /** The clipboard-addon wiring exactly as the shipped bundle minifies it. */
 const REAL_WIRING =
@@ -76,7 +77,7 @@ describe("OSC 52 clipboard patch", () => {
   it("drops the clipboard type from the write path so it reaches navigator.clipboard", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFileContaining(
       WORKBENCH,
@@ -87,7 +88,7 @@ describe("OSC 52 clipboard patch", () => {
   it("leaves the read path alone (OSC 52 reads must not reach the real clipboard)", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFileContaining(
       WORKBENCH,
@@ -98,7 +99,7 @@ describe("OSC 52 clipboard patch", () => {
   it("preserves the primary-selection branch", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFileContaining(WORKBENCH, '?"selection":void 0');
   });
@@ -108,7 +109,7 @@ describe("OSC 52 clipboard patch", () => {
       'async writeText($a,$b){return Z.writeText($b,$a==="p"?"selection":"clipboard")}'
     );
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFile(
       WORKBENCH,
@@ -120,7 +121,7 @@ describe("OSC 52 clipboard patch", () => {
     for (const platform of ["linux", "darwin", "win32"] as const) {
       const fsLayer = bundle();
 
-      await applyBundlePatches(deps(fsLayer, platform), "/bundle");
+      await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, '?"selection":void 0');
     }
@@ -135,7 +136,7 @@ describe("secret storage persistence patch", () => {
   it("installs the storage provider unconditionally, so secrets survive a reload", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     // Without this, the provider is `void 0` under reh-web (which always sets a
     // remoteAuthority) and every secret lives only in the iframe's heap.
@@ -146,7 +147,7 @@ describe("secret storage persistence patch", () => {
   it("keeps the crypto the bootstrap already built", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     // `n` is the cookie-less bootstrap's transparent crypto — secrets persist as
     // plaintext in localStorage, shared across every same-origin workspace.
@@ -156,7 +157,7 @@ describe("secret storage persistence patch", () => {
   it("matches regardless of the minifier's identifiers", async () => {
     const fsLayer = bundle("secretStorageProvider:$c.remoteAuthority&&!$k?void 0:new $P($x)})");
 
-    await applyBundlePatches(deps(fsLayer), "/bundle");
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFile(WORKBENCH, "secretStorageProvider:new $P($x)})");
   });
@@ -165,7 +166,7 @@ describe("secret storage persistence patch", () => {
     for (const platform of ["linux", "darwin", "win32"] as const) {
       const fsLayer = bundle();
 
-      await applyBundlePatches(deps(fsLayer, platform), "/bundle");
+      await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, "secretStorageProvider:new Qns(n)");
     }
@@ -189,7 +190,7 @@ describe("applyTextPatch", () => {
 
   function seed(content: string): MockFileSystemBoundary {
     const fsLayer = createFileSystemMock();
-    fsLayer.$.setEntry("/bundle/out/app.js", file(content));
+    fsLayer.$.setEntry(testPath("/bundle/out/app.js").toNative(), file(content));
     return fsLayer;
   }
 
@@ -200,19 +201,28 @@ describe("applyTextPatch", () => {
   it("rewrites every occurrence and reports applied", async () => {
     const fsLayer = seed('const a="hello";const b="hello";');
 
-    expect(await applyTextPatch(patchDeps(fsLayer), "/bundle", GREETING)).toBe("applied");
+    expect(await applyTextPatch(patchDeps(fsLayer), testPath("/bundle").toNative(), GREETING)).toBe(
+      "applied"
+    );
 
-    expect(fsLayer).toHaveFile("/bundle/out/app.js", 'const a="goodbye";const b="goodbye";');
+    expect(fsLayer).toHaveFile(
+      testPath("/bundle/out/app.js").toNative(),
+      'const a="goodbye";const b="goodbye";'
+    );
   });
 
   it("is idempotent: a second pass detects the patched form and rewrites nothing", async () => {
     const fsLayer = seed('const a="hello";');
 
-    expect(await applyTextPatch(patchDeps(fsLayer), "/bundle", GREETING)).toBe("applied");
-    const patched = await fsLayer.readFile("/bundle/out/app.js");
+    expect(await applyTextPatch(patchDeps(fsLayer), testPath("/bundle").toNative(), GREETING)).toBe(
+      "applied"
+    );
+    const patched = await fsLayer.readFile(testPath("/bundle/out/app.js").toNative());
 
-    expect(await applyTextPatch(patchDeps(fsLayer), "/bundle", GREETING)).toBe("already-applied");
-    expect(await fsLayer.readFile("/bundle/out/app.js")).toBe(patched);
+    expect(await applyTextPatch(patchDeps(fsLayer), testPath("/bundle").toNative(), GREETING)).toBe(
+      "already-applied"
+    );
+    expect(await fsLayer.readFile(testPath("/bundle/out/app.js").toNative())).toBe(patched);
   });
 
   it("errors with the consequence and leaves the file untouched when neither shape is found", async () => {
@@ -222,9 +232,11 @@ describe("applyTextPatch", () => {
     const fsLayer = seed(source);
     const logger = createMockLogger();
 
-    expect(await applyTextPatch(patchDeps(fsLayer, logger), "/bundle", GREETING)).toBe("not-found");
+    expect(
+      await applyTextPatch(patchDeps(fsLayer, logger), testPath("/bundle").toNative(), GREETING)
+    ).toBe("not-found");
 
-    expect(fsLayer).toHaveFile("/bundle/out/app.js", source);
+    expect(fsLayer).toHaveFile(testPath("/bundle/out/app.js").toNative(), source);
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("the greeting stays wrong"),
       expect.anything()
@@ -235,9 +247,9 @@ describe("applyTextPatch", () => {
     const fsLayer = seed('const a="goodbye";');
     const logger = createMockLogger();
 
-    expect(await applyTextPatch(patchDeps(fsLayer, logger), "/bundle", GREETING)).toBe(
-      "already-applied"
-    );
+    expect(
+      await applyTextPatch(patchDeps(fsLayer, logger), testPath("/bundle").toNative(), GREETING)
+    ).toBe("already-applied");
 
     expect(logger.error).not.toHaveBeenCalled();
   });
@@ -246,7 +258,9 @@ describe("applyTextPatch", () => {
     const fsLayer = createFileSystemMock();
     const logger = createMockLogger();
 
-    expect(await applyTextPatch(patchDeps(fsLayer, logger), "/bundle", GREETING)).toBe("not-found");
+    expect(
+      await applyTextPatch(patchDeps(fsLayer, logger), testPath("/bundle").toNative(), GREETING)
+    ).toBe("not-found");
 
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining("unreadable"),
@@ -257,12 +271,14 @@ describe("applyTextPatch", () => {
   it("stages the rewrite in a temp file and renames it into place", async () => {
     const fsLayer = seed('const a="hello";');
 
-    await applyTextPatch(patchDeps(fsLayer), "/bundle", GREETING);
+    await applyTextPatch(patchDeps(fsLayer), testPath("/bundle").toNative(), GREETING);
 
     // The rename consumed the staging file — a crash mid-write can never leave a
     // truncated bundle file behind.
-    await expect(fsLayer.readFile("/bundle/out/app.js.ch-tmp")).rejects.toThrow();
-    expect(fsLayer).toHaveFile("/bundle/out/app.js", 'const a="goodbye";');
+    await expect(
+      fsLayer.readFile(testPath("/bundle/out/app.js.ch-tmp").toNative())
+    ).rejects.toThrow();
+    expect(fsLayer).toHaveFile(testPath("/bundle/out/app.js").toNative(), 'const a="goodbye";');
   });
 });
 
@@ -273,7 +289,7 @@ describe("applyTextPatch", () => {
 describe("applyBundlePatches", () => {
   it("normalizes the watcher's ignore separators on Windows only", async () => {
     const windows = bundle();
-    await applyBundlePatches(deps(windows, "win32"), "/bundle");
+    await applyBundlePatches(deps(windows, "win32"), testPath("/bundle").toNative());
     // The loop now normalizes each entry before picomatch/path.resolve sees it.
     expect(windows).toHaveFileContaining(WRAPPER, "const chRawValue of ignore");
     expect(windows).toHaveFileContaining(WRAPPER, 'chRawValue.replace(/\\\\/g, "/")');
@@ -281,18 +297,18 @@ describe("applyBundlePatches", () => {
     // On POSIX a backslash is a legal filename character and picomatch's escape
     // character, so rewriting it there could change what a glob means.
     const linux = bundle();
-    await applyBundlePatches(deps(linux, "linux"), "/bundle");
+    await applyBundlePatches(deps(linux, "linux"), testPath("/bundle").toNative());
     expect(linux).toHaveFile(WRAPPER, REAL_WRAPPER_LOOP);
   });
 
   it("is idempotent across startups: a second pass changes nothing", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
+    await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
     const workbench = await fsLayer.readFile(WORKBENCH);
     const wrapper = await fsLayer.readFile(WRAPPER);
 
-    await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
+    await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
 
     expect(await fsLayer.readFile(WORKBENCH)).toBe(workbench);
     expect(await fsLayer.readFile(WRAPPER)).toBe(wrapper);
@@ -303,7 +319,7 @@ describe("applyBundlePatches", () => {
     const fsLayer = createFileSystemMock();
     fsLayer.$.setEntry(WORKBENCH, file(REAL_WORKBENCH));
 
-    await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
+    await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
 
     expect(fsLayer).toHaveFileContaining(WORKBENCH, '?"selection":void 0');
   });
@@ -311,23 +327,29 @@ describe("applyBundlePatches", () => {
   it("never throws when the bundle is missing entirely", async () => {
     const fsLayer = createFileSystemMock();
 
-    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(false);
+    await expect(
+      applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative())
+    ).resolves.toBe(false);
   });
 
   it("reports a rewrite, so the caller knows the caches are now stale", async () => {
     const fsLayer = bundle();
 
     // The bundle on disk no longer matches what the IDE server may have served.
-    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(true);
+    await expect(
+      applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative())
+    ).resolves.toBe(true);
   });
 
   it("reports no rewrite once every patch is already applied", async () => {
     const fsLayer = bundle();
 
-    await applyBundlePatches(deps(fsLayer, "win32"), "/bundle");
+    await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
 
     // Steady state: nothing changed, so nothing needs invalidating.
-    await expect(applyBundlePatches(deps(fsLayer, "win32"), "/bundle")).resolves.toBe(false);
+    await expect(
+      applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative())
+    ).resolves.toBe(false);
   });
 
   it("reports no rewrite when a patch merely drifted", async () => {
@@ -336,7 +358,9 @@ describe("applyBundlePatches", () => {
     const fsLayer = createFileSystemMock();
     fsLayer.$.setEntry(WORKBENCH, file("async writeText(y,w){return g.setClipboard(w,y)}"));
 
-    await expect(applyBundlePatches(deps(fsLayer, "linux"), "/bundle")).resolves.toBe(false);
+    await expect(
+      applyBundlePatches(deps(fsLayer, "linux"), testPath("/bundle").toNative())
+    ).resolves.toBe(false);
   });
 });
 
@@ -364,7 +388,7 @@ describe("when a patch no longer matches the bundle", () => {
           platform: "linux",
           isPackaged: false,
         },
-        "/bundle"
+        testPath("/bundle").toNative()
       )
     ).rejects.toThrow(/osc52-clipboard/);
   });
@@ -383,7 +407,7 @@ describe("when a patch no longer matches the bundle", () => {
           platform: "win32",
           isPackaged: false,
         },
-        "/bundle"
+        testPath("/bundle").toNative()
       )
     ).rejects.toThrow(/osc52-clipboard, secret-storage-persistence, watcher-ignore-separators/);
   });
@@ -395,7 +419,7 @@ describe("when a patch no longer matches the bundle", () => {
     await expect(
       applyBundlePatches(
         { fileSystemLayer: fsLayer, logger, platform: "linux", isPackaged: true },
-        "/bundle"
+        testPath("/bundle").toNative()
       )
     ).resolves.toBe(false);
 
@@ -414,8 +438,8 @@ describe("when a patch no longer matches the bundle", () => {
       isPackaged: false,
     };
 
-    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBe(true);
+    await expect(applyBundlePatches(devDeps, testPath("/bundle").toNative())).resolves.toBe(true);
     // Second startup: everything is already applied, still no throw.
-    await expect(applyBundlePatches(devDeps, "/bundle")).resolves.toBe(false);
+    await expect(applyBundlePatches(devDeps, testPath("/bundle").toNative())).resolves.toBe(false);
   });
 });

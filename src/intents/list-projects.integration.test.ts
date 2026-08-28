@@ -276,7 +276,9 @@ describe("ListProjects Operation", () => {
           },
         }),
         async () => ({
-          result: { entries: [{ projectPath: projPath("/repos/unknown"), workspaces: [ws] }] },
+          result: {
+            entries: [{ projectPath: projPath("/repos/unknown"), workspaces: [ws] }],
+          },
         })
       );
     });

@@ -12,6 +12,7 @@ import { Dispatcher } from "./dispatcher";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext, OperationSchemas } from "./operation";
+import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -106,15 +107,24 @@ describe("createIdempotencyModule", () => {
     dispatcher.registerOperation(noopOperation("delete-op", "test:delete"));
 
     // First dispatch for /a succeeds
-    const h1 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
+    const h1 = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative() },
+    });
     expect(await h1.accepted).toBe(true);
 
     // Duplicate /a blocked
-    const h2 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
+    const h2 = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative() },
+    });
     expect(await h2.accepted).toBe(false);
 
     // Different key /b succeeds
-    const h3 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/b" } });
+    const h3 = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/b").toNative() },
+    });
     expect(await h3.accepted).toBe(true);
   });
 
@@ -138,26 +148,44 @@ describe("createIdempotencyModule", () => {
     );
 
     // Dispatch /a and /b
-    await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
-    await dispatcher.dispatch({ type: "test:delete", payload: { path: "/b" } });
+    await dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative() },
+    });
+    await dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/b").toNative() },
+    });
 
     // Both blocked now
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/a").toNative() },
+      }).accepted
     ).toBe(false);
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/b" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/b").toNative() },
+      }).accepted
     ).toBe(false);
 
     // Reset /a via event
-    await emitFn!({ type: "test:deleted", payload: { path: "/a" } });
+    await emitFn!({ type: "test:deleted", payload: { path: testPath("/a").toNative() } });
 
     // /a unblocked, /b still blocked
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/a").toNative() },
+      }).accepted
     ).toBe(true);
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/b" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/b").toNative() },
+      }).accepted
     ).toBe(false);
   });
 
@@ -172,14 +200,23 @@ describe("createIdempotencyModule", () => {
     dispatcher.registerOperation(noopOperation("delete-op", "test:delete"));
 
     // First dispatch for /a
-    await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a", force: false } });
+    await dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative(), force: false },
+    });
 
     // Duplicate /a blocked (no force)
-    const h2 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/a", force: false } });
+    const h2 = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative(), force: false },
+    });
     expect(await h2.accepted).toBe(false);
 
     // Force bypasses
-    const h3 = dispatcher.dispatch({ type: "test:delete", payload: { path: "/a", force: true } });
+    const h3 = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative(), force: true },
+    });
     expect(await h3.accepted).toBe(true);
   });
 
@@ -201,11 +238,17 @@ describe("createIdempotencyModule", () => {
     expect(await h2.accepted).toBe(true);
 
     // Payload with path → key tracked normally
-    const h3 = dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    const h3 = dispatcher.dispatch({
+      type: "test:open",
+      payload: { path: testPath("/a").toNative() },
+    });
     expect(await h3.accepted).toBe(true);
 
     // Duplicate path blocked
-    const h4 = dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    const h4 = dispatcher.dispatch({
+      type: "test:open",
+      payload: { path: testPath("/a").toNative() },
+    });
     expect(await h4.accepted).toBe(false);
   });
 
@@ -229,25 +272,29 @@ describe("createIdempotencyModule", () => {
     );
 
     // Dispatch /a → tracked
-    await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
-    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
-      false
-    );
+    await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } });
+    expect(
+      await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } })
+        .accepted
+    ).toBe(false);
 
     // Reset /a via the first event type
-    await emitFn!({ type: "test:opened", payload: { path: "/a" } });
-    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
-      true
-    );
+    await emitFn!({ type: "test:opened", payload: { path: testPath("/a").toNative() } });
+    expect(
+      await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } })
+        .accepted
+    ).toBe(true);
 
     // Block again, then reset via the second event type
-    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
-      false
-    );
-    await emitFn!({ type: "test:open-failed", payload: { path: "/a" } });
-    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
-      true
-    );
+    expect(
+      await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } })
+        .accepted
+    ).toBe(false);
+    await emitFn!({ type: "test:open-failed", payload: { path: testPath("/a").toNative() } });
+    expect(
+      await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } })
+        .accepted
+    ).toBe(true);
   });
 
   it("per-key reset: event with undefined key is ignored", async () => {
@@ -270,15 +317,16 @@ describe("createIdempotencyModule", () => {
     );
 
     // Track /a
-    await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } });
 
     // Reset event with no path → getKey returns undefined → no keys cleared
     await emitFn!({ type: "test:open-failed", payload: {} });
 
     // /a still blocked
-    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
-      false
-    );
+    expect(
+      await dispatcher.dispatch({ type: "test:open", payload: { path: testPath("/a").toNative() } })
+        .accepted
+    ).toBe(false);
   });
 
   it("multiple rules: handles different intent types independently", async () => {
@@ -297,12 +345,18 @@ describe("createIdempotencyModule", () => {
     expect(await dispatcher.dispatch({ type: "test:shutdown", payload: {} }).accepted).toBe(false);
 
     // Delete still works independently
-    const h = dispatcher.dispatch({ type: "test:delete", payload: { path: "/x" } });
+    const h = dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/x").toNative() },
+    });
     expect(await h.accepted).toBe(true);
 
     // But duplicate delete key is blocked
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/x" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/x").toNative() },
+      }).accepted
     ).toBe(false);
   });
 
@@ -326,19 +380,28 @@ describe("createIdempotencyModule", () => {
     );
 
     // Dispatch /a (tracked)
-    await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
+    await dispatcher.dispatch({
+      type: "test:delete",
+      payload: { path: testPath("/a").toNative() },
+    });
 
     // Blocked
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/a").toNative() },
+      }).accepted
     ).toBe(false);
 
     // Reset via second event type (delete-failed)
-    await emitFn!({ type: "test:delete-failed", payload: { path: "/a" } });
+    await emitFn!({ type: "test:delete-failed", payload: { path: testPath("/a").toNative() } });
 
     // Now unblocked
     expect(
-      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+      await dispatcher.dispatch({
+        type: "test:delete",
+        payload: { path: testPath("/a").toNative() },
+      }).accepted
     ).toBe(true);
   });
 });

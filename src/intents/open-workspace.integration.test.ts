@@ -74,7 +74,7 @@ import { registerTestInfrastructure } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import type { WorkspaceRef } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
@@ -654,7 +654,7 @@ describe("OpenWorkspace Operation", () => {
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        "Project not found for path: /nonexistent/project"
+        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
       );
     });
   });
@@ -851,14 +851,16 @@ describe("OpenWorkspace Operation", () => {
 
       expect(result).toBeDefined();
       const workspace = result as Workspace;
-      expect(workspace.path).toBe("/existing/workspace/feature-y");
+      expect(workspace.path).toBe(testPath("/existing/workspace/feature-y").toString());
       expect(workspace.branch).toBe("feature-y");
       expect(workspace.metadata).toEqual({ base: "main" });
 
       // Event emitted with existing workspace data
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.workspacePath).toBe("/existing/workspace/feature-y");
+      expect(event.payload.workspacePath).toBe(
+        testPath("/existing/workspace/feature-y").toString()
+      );
       expect(event.payload.projectPath).toBe(PROJECT_ROOT);
     });
   });
@@ -866,7 +868,9 @@ describe("OpenWorkspace Operation", () => {
   describe("existingWorkspace uses projectPath directly (#16)", () => {
     it("populates context without projectId resolution", async () => {
       const setup = createTestSetup();
-      const customProjectPath = "/custom/project/path";
+      // Branded like PROJECT_ROOT: the resolver is asked with the normalized
+      // path, so a raw native one would never be found in the known set.
+      const customProjectPath = projPath("/custom/project/path");
       setup.knownProjectPaths.add(customProjectPath);
 
       const existingWorkspace: ExistingWorkspaceData = {
@@ -977,7 +981,7 @@ describe("OpenWorkspace Operation", () => {
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        "Project not found for path: /nonexistent/project"
+        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
       );
     });
   });

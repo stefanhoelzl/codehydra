@@ -43,7 +43,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath } from "./contract";
 
 // =============================================================================
@@ -343,7 +343,9 @@ describe("SwitchWorkspace Operation", () => {
 
       await expect(
         dispatcher.dispatch(switchIntent(wsPath("/projects/my-app/workspaces/nonexistent")))
-      ).rejects.toThrow("Workspace not found: /projects/my-app/workspaces/nonexistent");
+      ).rejects.toThrow(
+        `Workspace not found: ${testPath("/projects/my-app/workspaces/nonexistent").toString()}`
+      );
 
       expect(getActivePath()).toBeNull();
     });
@@ -354,7 +356,9 @@ describe("SwitchWorkspace Operation", () => {
 
       await expect(
         dispatcher.dispatch(switchIntent(wsPath("/nonexistent/workspaces/feature-login")))
-      ).rejects.toThrow("Workspace not found: /nonexistent/workspaces/feature-login");
+      ).rejects.toThrow(
+        `Workspace not found: ${testPath("/nonexistent/workspaces/feature-login").toString()}`
+      );
 
       expect(getActivePath()).toBeNull();
     });
@@ -519,7 +523,11 @@ describe("SwitchWorkspace Operation", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: wsPath("/nonexistent"), focus: true },
+        payload: {
+          auto: true,
+          currentPath: wsPath("/nonexistent"),
+          focus: true,
+        },
       };
       await dispatcher.dispatch(autoIntent);
 
@@ -540,7 +548,11 @@ describe("SwitchWorkspace Operation", () => {
       // currentPath doesn't match any candidate (workspace already de-registered)
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: wsPath("/nonexistent"), focus: true },
+        payload: {
+          auto: true,
+          currentPath: wsPath("/nonexistent"),
+          focus: true,
+        },
       };
       await dispatcher.dispatch(autoIntent);
 

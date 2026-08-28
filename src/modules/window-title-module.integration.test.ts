@@ -20,7 +20,7 @@ import type { MetadataChangedEvent } from "../intents/set-metadata";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { Intent } from "../intents/lib/types";
-import { projPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -178,7 +178,7 @@ const ACTIVE: MinimalSwitchPayload = {
   projectId: "test-project" as ProjectId,
   projectName: "MyProject",
   workspaceName: "feature-branch" as WorkspaceName,
-  path: "/workspaces/feature-branch",
+  path: testPath("/workspaces/feature-branch").toNative(),
 };
 
 // =============================================================================
@@ -238,7 +238,7 @@ describe("WindowTitleModule Integration", () => {
       switchIntent({
         ...ACTIVE,
         workspaceName: "other-branch" as WorkspaceName,
-        path: "/workspaces/other-branch",
+        path: testPath("/workspaces/other-branch").toNative(),
       })
     );
 

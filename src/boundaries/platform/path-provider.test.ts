@@ -8,6 +8,7 @@ import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../utils/path/path";
+import { testPath } from "../../shared/test-fixtures";
 import { VSCODIUM_VERSION } from "../../modules/ide-server-module/vscodium";
 import { OPENCODE_VERSION } from "../../modules/agent-module/opencode/setup-info";
 
@@ -16,33 +17,49 @@ describe("createMockPathProvider", () => {
     const pp = createMockPathProvider();
 
     expect(pp.dataPath("projects")).toBeInstanceOf(Path);
-    expect(pp.dataPath("projects").toString()).toBe("/test/app-data/projects");
-    expect(pp.dataPath("remotes").toString()).toBe("/test/app-data/remotes");
-    expect(pp.dataPath("vscode").toString()).toBe("/test/app-data/vscode");
-    expect(pp.dataPath("vscode/extensions").toString()).toBe("/test/app-data/vscode/extensions");
-    expect(pp.dataPath("vscode/user-data").toString()).toBe("/test/app-data/vscode/user-data");
-    expect(pp.dataPath("electron").toString()).toBe("/test/app-data/electron");
-    expect(pp.dataPath("bin").toString()).toBe("/test/app-data/bin");
-    expect(pp.dataPath("config.json").toString()).toBe("/test/app-data/config.json");
-    expect(pp.appIconPath.toString()).toBe("/test/resources/icon.png");
+    expect(pp.dataPath("projects").toString()).toBe(testPath("/test/app-data/projects").toString());
+    expect(pp.dataPath("remotes").toString()).toBe(testPath("/test/app-data/remotes").toString());
+    expect(pp.dataPath("vscode").toString()).toBe(testPath("/test/app-data/vscode").toString());
+    expect(pp.dataPath("vscode/extensions").toString()).toBe(
+      testPath("/test/app-data/vscode/extensions").toString()
+    );
+    expect(pp.dataPath("vscode/user-data").toString()).toBe(
+      testPath("/test/app-data/vscode/user-data").toString()
+    );
+    expect(pp.dataPath("electron").toString()).toBe(testPath("/test/app-data/electron").toString());
+    expect(pp.dataPath("bin").toString()).toBe(testPath("/test/app-data/bin").toString());
+    expect(pp.dataPath("config.json").toString()).toBe(
+      testPath("/test/app-data/config.json").toString()
+    );
+    expect(pp.appIconPath.toString()).toBe(testPath("/test/resources/icon.png").toString());
   });
 
   it("bundlePath returns correct paths", () => {
     const pp = createMockPathProvider();
 
-    expect(pp.bundlePath("vscodium").toString()).toBe("/test/bundles/vscodium");
-    expect(pp.bundlePath("opencode").toString()).toBe("/test/bundles/opencode");
-    expect(pp.bundlePath("claude").toString()).toBe("/test/bundles/claude");
-    expect(pp.bundlePath("vscodium/4.107.0").toString()).toBe("/test/bundles/vscodium/4.107.0");
-    expect(pp.bundlePath("opencode/1.0.223").toString()).toBe("/test/bundles/opencode/1.0.223");
+    expect(pp.bundlePath("vscodium").toString()).toBe(
+      testPath("/test/bundles/vscodium").toString()
+    );
+    expect(pp.bundlePath("opencode").toString()).toBe(
+      testPath("/test/bundles/opencode").toString()
+    );
+    expect(pp.bundlePath("claude").toString()).toBe(testPath("/test/bundles/claude").toString());
+    expect(pp.bundlePath("vscodium/4.107.0").toString()).toBe(
+      testPath("/test/bundles/vscodium/4.107.0").toString()
+    );
+    expect(pp.bundlePath("opencode/1.0.223").toString()).toBe(
+      testPath("/test/bundles/opencode/1.0.223").toString()
+    );
   });
 
   it("tempPath returns correct paths", () => {
     const pp = createMockPathProvider();
 
     expect(pp.tempPath("some-dir")).toBeInstanceOf(Path);
-    expect(pp.tempPath("some-dir").toString()).toBe("/test/temp/some-dir");
-    expect(pp.tempPath("nested/sub/dir").toString()).toBe("/test/temp/nested/sub/dir");
+    expect(pp.tempPath("some-dir").toString()).toBe(testPath("/test/temp/some-dir").toString());
+    expect(pp.tempPath("nested/sub/dir").toString()).toBe(
+      testPath("/test/temp/nested/sub/dir").toString()
+    );
   });
 
   it("tempPath accepts override for root dir", () => {
@@ -55,11 +72,15 @@ describe("createMockPathProvider", () => {
     const pp = createMockPathProvider();
 
     expect(pp.runtimePath("bin/claude-code-hook-handler.cjs").toString()).toBe(
-      "/mock/runtime/bin/claude-code-hook-handler.cjs"
+      testPath("/mock/runtime/bin/claude-code-hook-handler.cjs").toString()
     );
-    expect(pp.runtimePath("extensions").toString()).toBe("/mock/runtime/extensions");
-    expect(pp.assetPath("manifest.json").toString()).toBe("/mock/assets/manifest.json");
-    expect(pp.assetPath("bin").toString()).toBe("/mock/assets/bin");
+    expect(pp.runtimePath("extensions").toString()).toBe(
+      testPath("/mock/runtime/extensions").toString()
+    );
+    expect(pp.assetPath("manifest.json").toString()).toBe(
+      testPath("/mock/assets/manifest.json").toString()
+    );
+    expect(pp.assetPath("bin").toString()).toBe(testPath("/mock/assets/bin").toString());
   });
 
   it("accepts override for root dirs", () => {
@@ -87,24 +108,26 @@ describe("createMockPathProvider", () => {
   it("cmd option appends .cmd on win32", () => {
     const pp = createMockPathProvider({ platform: "win32" });
     expect(pp.dataPath("bin/ch-claude", { cmd: true }).toString()).toBe(
-      "/test/app-data/bin/ch-claude.cmd"
+      testPath("/test/app-data/bin/ch-claude.cmd").toString()
     );
 
     const ppLinux = createMockPathProvider({ platform: "linux" });
     expect(ppLinux.dataPath("bin/ch-claude", { cmd: true }).toString()).toBe(
-      "/test/app-data/bin/ch-claude"
+      testPath("/test/app-data/bin/ch-claude").toString()
     );
   });
 
   it("getProjectWorkspacesDir returns Path with project hash", () => {
     const pp = createMockPathProvider();
 
-    const result = pp.getProjectWorkspacesDir("/home/user/myproject");
+    const result = pp.getProjectWorkspacesDir(testPath("/home/user/myproject").toNative());
 
     expect(result).toBeInstanceOf(Path);
     expect(result.toString()).toContain("myproject-");
     expect(result.toString()).toContain("/workspaces");
-    expect(result.toString().startsWith("/test/app-data/projects/")).toBe(true);
+    expect(result.toString().startsWith(`${testPath("/test/app-data/projects").toString()}/`)).toBe(
+      true
+    );
   });
 
   it("getProjectWorkspacesDir can be overridden", () => {

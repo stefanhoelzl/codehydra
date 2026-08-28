@@ -38,7 +38,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -70,8 +70,8 @@ function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>)
     payload: {
       projectId: "proj-1",
       workspaceName: "feature-1",
-      workspacePath: "/workspaces/feature-1",
-      projectPath: "/projects/my-app",
+      workspacePath: testPath("/workspaces/feature-1").toNative(),
+      projectPath: testPath("/projects/my-app").toNative(),
       keepBranch: true,
       force: false,
       removeWorktree: true,
@@ -91,7 +91,7 @@ const releaseOperation = createMinimalOperation<ReleaseHookResult>(
   {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: "/projects/my-app",
+      projectPath: testPath("/projects/my-app").toNative(),
       workspacePath:
         ((ctx.intent as DeleteWorkspaceIntent).payload as { workspacePath?: string })
           .workspacePath ?? "",
@@ -106,7 +106,7 @@ const detectOperation = createMinimalOperation<DetectHookResult>(
   {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: "/projects/my-app",
+      projectPath: testPath("/projects/my-app").toNative(),
       workspacePath:
         ((ctx.intent as DeleteWorkspaceIntent).payload as { workspacePath?: string })
           .workspacePath ?? "",
@@ -150,7 +150,7 @@ class FlushOperation implements Operation<typeof flushOpSchemas> {
 // Test Setup Helpers
 // =============================================================================
 
-const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
+const SCRIPT_PATH = testPath("/scripts/blocking-processes.ps1").toNative();
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher({
@@ -426,7 +426,7 @@ describe("WindowsFileLockModule Integration", () => {
       {
         hookContext: (ctx) => ({
           intent: ctx.intent,
-          projectPath: "/projects/my-app",
+          projectPath: testPath("/projects/my-app").toNative(),
           workspacePath:
             (ctx.intent as { payload: { workspacePath?: string } }).payload.workspacePath ?? "",
           projectId: "proj-1",
@@ -454,7 +454,7 @@ describe("WindowsFileLockModule Integration", () => {
     function makeHibernateIntent(): Intent {
       return {
         type: "workspace:hibernate",
-        payload: { workspacePath: "/workspaces/feature-1" },
+        payload: { workspacePath: testPath("/workspaces/feature-1").toNative() },
       } as unknown as Intent;
     }
 
@@ -466,7 +466,12 @@ describe("WindowsFileLockModule Integration", () => {
           if (callIndex === 1) {
             return {
               stdout: createDetectJson([
-                { pid: 1234, name: "node.exe", commandLine: "node", cwd: "/workspaces/feature-1" },
+                {
+                  pid: 1234,
+                  name: "node.exe",
+                  commandLine: "node",
+                  cwd: testPath("/workspaces/feature-1").toNative(),
+                },
               ]),
               exitCode: 0,
             };

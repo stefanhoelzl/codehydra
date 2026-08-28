@@ -71,7 +71,7 @@ import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
 import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import { createPresentationModule, type UiPresenter } from "./presentation-module";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test setup helpers
@@ -885,7 +885,13 @@ describe("PresentationModule - ui:state snapshots", () => {
       completed: true,
       hasErrors: true,
       blockingProcesses: [
-        { pid: 4242, name: "node", commandLine: "node x", files: ["/w/a"], cwd: "/w" },
+        {
+          pid: 4242,
+          name: "node",
+          commandLine: "node x",
+          files: "/w/a",
+          cwd: testPath("/w").toNative(),
+        },
       ],
     });
     await flush();
@@ -1105,17 +1111,25 @@ describe("PresentationModule - ui:state snapshots", () => {
       url: "http://127.0.0.1:1/b",
     };
     await emit(module, EVENT_PROJECT_OPENED, {
-      project: { id: otherId, name: "beta", path: "/projects/beta", workspaces: [workspaceB] },
+      project: {
+        id: otherId,
+        name: "beta",
+        path: testPath("/projects/beta").toNative(),
+        workspaces: [workspaceB],
+      },
     });
     await emit(module, EVENT_WORKSPACE_SWITCHED, {
       projectId: otherId,
       projectName: "beta",
-      projectPath: "/projects/beta",
+      projectPath: testPath("/projects/beta").toNative(),
       workspaceName: workspaceB.name,
       path: workspaceB.path,
     });
 
-    await emit(module, EVENT_PROJECT_CLOSED, { projectId: otherId, projectPath: "/projects/beta" });
+    await emit(module, EVENT_PROJECT_CLOSED, {
+      projectId: otherId,
+      projectPath: testPath("/projects/beta").toNative(),
+    });
     await flush();
 
     const snapshot = lastSnapshot(deps);

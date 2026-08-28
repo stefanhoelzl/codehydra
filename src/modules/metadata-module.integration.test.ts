@@ -25,15 +25,15 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "../intents/contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = new Path("/project");
-const WORKSPACES_DIR = new Path("/workspaces");
+const PROJECT_ROOT = testPath("/project");
+const WORKSPACES_DIR = testPath("/workspaces");
 
 // =============================================================================
 // Test Setup

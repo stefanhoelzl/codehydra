@@ -18,7 +18,7 @@ import { registerTestInfrastructure, updateStatusIntent } from "./operations.tes
 import type { DomainEvent } from "./lib/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Setup
@@ -66,7 +66,7 @@ describe("UpdateAgentStatus Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.type).toBe(EVENT_AGENT_STATUS_UPDATED);
-      expect(event.payload.workspace.path).toBe("/workspace/test");
+      expect(event.payload.workspace.path).toBe(testPath("/workspace/test").toString());
       expect(event.payload.workspace.projectId).toBe(TEST_PROJECT_ID);
       expect(event.payload.workspace.name).toBe(TEST_WORKSPACE_NAME);
       expect(event.payload.workspace.active).toBe(false);
@@ -85,7 +85,7 @@ describe("UpdateAgentStatus Operation", () => {
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
-      expect(event.payload.workspace.path).toBe("/workspace/idle-test");
+      expect(event.payload.workspace.path).toBe(testPath("/workspace/idle-test").toString());
       expect(event.payload.status).toEqual(status);
     });
 

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createImageBoundaryMock, type MockImageBoundary } from "./image.state-mock";
 import { createImageHandle } from "./image-types";
 import { PlatformError } from "../../shared/errors/platform-errors";
+import { testPath } from "../../shared/test-fixtures";
 
 describe("ImageBoundary (behavioral mock)", () => {
   let imageLayer: MockImageBoundary;
@@ -19,18 +20,20 @@ describe("ImageBoundary (behavioral mock)", () => {
 
   describe("createFromPath", () => {
     it("creates an image handle", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       expect(handle.id).toBe("image-1");
       expect(handle.__brand).toBe("ImageHandle");
     });
 
     it("stores the path in state", () => {
-      imageLayer.createFromPath("/test/icon.png");
-      expect(imageLayer).toHaveImage("image-1", { fromPath: "/test/icon.png" });
+      imageLayer.createFromPath(testPath("/test/icon.png").toNative());
+      expect(imageLayer).toHaveImage("image-1", {
+        fromPath: testPath("/test/icon.png").toNative(),
+      });
     });
 
     it("creates non-empty images", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       expect(imageLayer.isEmpty(handle)).toBe(false);
     });
   });
@@ -46,7 +49,7 @@ describe("ImageBoundary (behavioral mock)", () => {
 
   describe("isEmpty", () => {
     it("returns false for images created from path", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       expect(imageLayer.isEmpty(handle)).toBe(false);
     });
 
@@ -58,7 +61,7 @@ describe("ImageBoundary (behavioral mock)", () => {
 
   describe("release", () => {
     it("removes the image from state", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       expect(imageLayer).toHaveImages([{ id: "image-1" }]);
 
       imageLayer.release(handle);
@@ -66,7 +69,7 @@ describe("ImageBoundary (behavioral mock)", () => {
     });
 
     it("subsequent operations on released handle throw", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       imageLayer.release(handle);
 
       expect(() => imageLayer.isEmpty(handle)).toThrow(PlatformError);
@@ -75,15 +78,15 @@ describe("ImageBoundary (behavioral mock)", () => {
 
   describe("getNativeImage", () => {
     it("returns null in behavioral mock", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
+      const handle = imageLayer.createFromPath(testPath("/test/icon.png").toNative());
       expect(imageLayer.getNativeImage(handle)).toBeNull();
     });
   });
 
   describe("sequential IDs", () => {
     it("assigns sequential IDs to images", () => {
-      const h1 = imageLayer.createFromPath("/a.png");
-      const h2 = imageLayer.createFromPath("/b.png");
+      const h1 = imageLayer.createFromPath(testPath("/a.png").toNative());
+      const h2 = imageLayer.createFromPath(testPath("/b.png").toNative());
       const h3 = imageLayer.createFromBitmap(Buffer.alloc(8 * 8 * 4), 8, 8);
 
       expect(h1.id).toBe("image-1");

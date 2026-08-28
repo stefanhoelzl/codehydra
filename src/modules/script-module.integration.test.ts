@@ -16,6 +16,7 @@ import type { RequiredScript } from "../intents/app-start";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import { FileSystemError } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Doubles
@@ -45,12 +46,18 @@ interface FakeFsOptions {
  * against a call count.
  */
 function createFakeFileSystem(options?: FakeFsOptions) {
-  const files = new Map(Object.entries(options?.files ?? {}));
+  // Keyed the way every accessor below looks up — `Path.toString()` — so fixtures
+  // can be written in the OS-native form the module is actually handed.
+  const files = new Map(
+    Object.entries(options?.files ?? {}).map(([path, content]) => [
+      testPath(path).toString(),
+      content,
+    ])
+  );
+  const binPrefix = `${testPath("/app-data/bin").toString()}/`;
   const binEntries =
     options?.binEntries ??
-    [...files.keys()]
-      .filter((p) => p.startsWith("/app-data/bin/"))
-      .map((p) => p.slice("/app-data/bin/".length));
+    [...files.keys()].filter((p) => p.startsWith(binPrefix)).map((p) => p.slice(binPrefix.length));
 
   return {
     files,
@@ -96,9 +103,9 @@ function createHarness(
   // app.asar, unreadable via original-fs in the packaged app). If this regresses
   // to assetPath, the /runtime assertions below fail.
   const pathProvider = createMockPathProvider({
-    dataRootDir: "/app-data",
-    runtimeRootDir: "/runtime",
-    assetsRootDir: "/assets",
+    dataRootDir: testPath("/app-data").toNative(),
+    runtimeRootDir: testPath("/runtime").toNative(),
+    assetsRootDir: testPath("/assets").toNative(),
   });
 
   const dispatcher = createMockDispatcher();
@@ -108,7 +115,7 @@ function createHarness(
       fileSystem: fileSystem as never,
       pathProvider: pathProvider as never,
       logger: logger as never,
-      templateVariables: () => ({ ideNode: "/ide/node" }),
+      templateVariables: () => ({ ideNode: testPath("/ide/node").toNative() }),
     })
   );
 
@@ -135,29 +142,29 @@ describe("ScriptModule Integration", () => {
     const fileSystem = createFakeFileSystem({ files: { ...BUNDLED } });
     await createHarness(SCRIPTS, fileSystem).dispatch();
 
-    expect(fileSystem.mkdir).toHaveBeenCalledWith(new Path("/app-data/bin"));
+    expect(fileSystem.mkdir).toHaveBeenCalledWith(testPath("/app-data/bin"));
 
     // Written by content rather than copied, so a templated script can be
     // rendered on the way. The source is still runtimePath — see createHarness.
     expect(fileSystem.writeFile).toHaveBeenCalledTimes(4);
     expect(fileSystem.writeFile).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-claude"),
+      testPath("/app-data/bin/ch-claude"),
       "claude-sh"
     );
     expect(fileSystem.writeFile).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-claude.cjs"),
+      testPath("/app-data/bin/ch-claude.cjs"),
       "claude-js"
     );
     expect(fileSystem.writeFile).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-claude.cmd"),
+      testPath("/app-data/bin/ch-claude.cmd"),
       "claude-cmd"
     );
-    expect(fileSystem.writeFile).toHaveBeenCalledWith(new Path("/app-data/bin/code"), "code-sh");
+    expect(fileSystem.writeFile).toHaveBeenCalledWith(testPath("/app-data/bin/code"), "code-sh");
 
     // Should make non-.cmd, non-.cjs files executable
     expect(fileSystem.makeExecutable).toHaveBeenCalledTimes(2);
-    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(new Path("/app-data/bin/ch-claude"));
-    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(new Path("/app-data/bin/code"));
+    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(testPath("/app-data/bin/ch-claude"));
+    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(testPath("/app-data/bin/code"));
   });
 
   it("writes nothing when every script is already up to date", async () => {
@@ -195,10 +202,12 @@ describe("ScriptModule Integration", () => {
 
     expect(fileSystem.writeFile).toHaveBeenCalledTimes(1);
     expect(fileSystem.writeFile).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-claude.cjs"),
+      testPath("/app-data/bin/ch-claude.cjs"),
       "claude-js"
     );
-    expect(fileSystem.files.get("/app-data/bin/ch-claude.cjs")).toBe("claude-js");
+    expect(fileSystem.files.get(testPath("/app-data/bin/ch-claude.cjs").toString())).toBe(
+      "claude-js"
+    );
   });
 
   describe("templated scripts", () => {
@@ -206,13 +215,15 @@ describe("ScriptModule Integration", () => {
       // The `ch` wrapper carries the bundled interpreter's path so the CLI runs
       // in a shell that inherited none of CodeHydra's environment.
       const fileSystem = createFakeFileSystem({
-        files: { "/runtime/bin/ch": 'NODE="{{ ideNode }}"\nexec "$NODE" ch.cjs' },
+        files: {
+          "/runtime/bin/ch": 'NODE="{{ ideNode }}"\nexec "$NODE" ch.cjs',
+        },
       });
 
       await createHarness([{ name: "ch", template: true }], fileSystem).dispatch();
 
-      expect(fileSystem.files.get("/app-data/bin/ch")).toBe(
-        'NODE="/ide/node"\nexec "$NODE" ch.cjs'
+      expect(fileSystem.files.get(testPath("/app-data/bin/ch").toString())).toBe(
+        `NODE="${testPath("/ide/node").toNative()}"\nexec "$NODE" ch.cjs`
       );
     });
 
@@ -220,12 +231,14 @@ describe("ScriptModule Integration", () => {
       // Shell scripts contain real ${...} expansions; only declared templates
       // are rendered, so an undeclared one is never touched.
       const fileSystem = createFakeFileSystem({
-        files: { "/runtime/bin/code": 'exec "$_CH_IDE_REMOTE_CLI" ${ARGS} "$@"' },
+        files: {
+          "/runtime/bin/code": 'exec "$_CH_IDE_REMOTE_CLI" ${ARGS} "$@"',
+        },
       });
 
       await createHarness(["code"], fileSystem).dispatch();
 
-      expect(fileSystem.files.get("/app-data/bin/code")).toBe(
+      expect(fileSystem.files.get(testPath("/app-data/bin/code").toString())).toBe(
         'exec "$_CH_IDE_REMOTE_CLI" ${ARGS} "$@"'
       );
     });
@@ -242,14 +255,16 @@ describe("ScriptModule Integration", () => {
 
       await createHarness([{ name: "ch", template: true }], fileSystem).dispatch();
 
-      expect(fileSystem.files.get("/app-data/bin/ch")).toBe('NODE="/ide/node"');
+      expect(fileSystem.files.get(testPath("/app-data/bin/ch").toString())).toBe(
+        `NODE="${testPath("/ide/node").toNative()}"`
+      );
     });
 
     it("leaves a template alone when its rendered content is unchanged", async () => {
       const fileSystem = createFakeFileSystem({
         files: {
           "/runtime/bin/ch": 'NODE="{{ ideNode }}"',
-          "/app-data/bin/ch": 'NODE="/ide/node"',
+          "/app-data/bin/ch": `NODE="${testPath("/ide/node").toNative()}"`,
         },
       });
 
@@ -277,11 +292,11 @@ describe("ScriptModule Integration", () => {
 
     expect(fileSystem.rm).toHaveBeenCalledTimes(2);
     expect(fileSystem.rm).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-opencode"),
+      testPath("/app-data/bin/ch-opencode"),
       expect.objectContaining({ force: true })
     );
     expect(fileSystem.rm).toHaveBeenCalledWith(
-      new Path("/app-data/bin/ch-opencode.cmd"),
+      testPath("/app-data/bin/ch-opencode.cmd"),
       expect.objectContaining({ force: true })
     );
     expect(fileSystem.copyTree).not.toHaveBeenCalled();
@@ -299,7 +314,11 @@ describe("ScriptModule Integration", () => {
       },
     });
     fileSystem.rm.mockRejectedValue(
-      new FileSystemError("EPERM", "/app-data/bin/ch-opencode.cmd", "EPERM: not permitted")
+      new FileSystemError(
+        "EPERM",
+        testPath("/app-data/bin/ch-opencode.cmd").toNative(),
+        "EPERM: not permitted"
+      )
     );
 
     // Nothing requires the stale wrapper, so an undeletable one is only a warning.
@@ -316,7 +335,11 @@ describe("ScriptModule Integration", () => {
       const realWriteFile = fileSystem.writeFile.getMockImplementation()!;
       fileSystem.writeFile
         .mockRejectedValueOnce(
-          new FileSystemError("EPERM", "/app-data/bin/ch-claude", "EPERM: not permitted")
+          new FileSystemError(
+            "EPERM",
+            testPath("/app-data/bin/ch-claude").toNative(),
+            "EPERM: not permitted"
+          )
         )
         .mockImplementation(realWriteFile);
 
@@ -325,7 +348,9 @@ describe("ScriptModule Integration", () => {
 
       await expect(pending).resolves.toBeUndefined();
       expect(fileSystem.writeFile).toHaveBeenCalledTimes(2);
-      expect(fileSystem.files.get("/app-data/bin/ch-claude")).toBe("claude-sh");
+      expect(fileSystem.files.get(testPath("/app-data/bin/ch-claude").toString())).toBe(
+        "claude-sh"
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -339,7 +364,11 @@ describe("ScriptModule Integration", () => {
         binEntries: ["ch-claude"],
       });
       fileSystem.writeFile.mockRejectedValue(
-        new FileSystemError("EPERM", "/app-data/bin/ch-claude", "EPERM: not permitted")
+        new FileSystemError(
+          "EPERM",
+          testPath("/app-data/bin/ch-claude").toNative(),
+          "EPERM: not permitted"
+        )
       );
 
       const pending = createHarness(["ch-claude"], fileSystem).dispatch();

@@ -88,7 +88,7 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Path } from "../../utils/path/path";
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
-import { wsPath, projPath } from "../../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Minimal Test Operations
@@ -269,7 +269,7 @@ class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
   ): Promise<string | undefined> {
     const { errors, results } = await ctx.hooks.collect("finalize", {
       intent: ctx.intent,
-      workspacePath: "/test/project/.worktrees/feature-1",
+      workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
       envVars: { OPENCODE_PORT: "8080" },
       agentType: "opencode" as const,
       ...this.hookInput,
@@ -345,10 +345,10 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     sessionPartition: "persist:test",
     pathProvider: {
       bundlePath: vi.fn().mockImplementation((subpath: string) => {
-        return new Path(`/bundles/${subpath}`);
+        return testPath(`/bundles/${subpath}`);
       }),
       dataPath: vi.fn().mockImplementation((subpath: string) => {
-        return new Path(`/test/app-data/${subpath}`);
+        return testPath(`/test/app-data/${subpath}`);
       }),
     },
     buildInfo: { isPackaged: true },
@@ -357,7 +357,7 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
-    resolveOpencodeBundleDir: () => "/bundles/opencode/1.0.223",
+    resolveOpencodeBundleDir: () => testPath("/bundles/opencode/1.0.223").toNative(),
     ...overrides,
   };
 }
@@ -431,7 +431,7 @@ describe("IdeServerModule", () => {
       const deps = createMockDeps();
       // isBinaryInstalled calls readdir(destDir) - throw ENOENT to simulate not installed
       (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new FileSystemError("ENOENT", "/bundles/vscodium", "not found")
+        new FileSystemError("ENOENT", testPath("/bundles/vscodium").toNative(), "not found")
       );
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalCheckDepsOperation());
@@ -479,8 +479,8 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       const requirements: ExtensionRequirement[] = [
-        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
-        { id: "ext.two", version: "2.0.0", vsixPath: "/path/ext-two.vsix" },
+        { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
+        { id: "ext.two", version: "2.0.0", vsixPath: testPath("/path/ext-two.vsix").toNative() },
       ];
       dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
@@ -490,8 +490,8 @@ describe("IdeServerModule", () => {
       })) as CheckDepsResult;
 
       expect(result.extensionInstallPlan).toEqual([
-        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
-        { id: "ext.two", vsixPath: "/path/ext-two.vsix" },
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
+        { id: "ext.two", vsixPath: testPath("/path/ext-two.vsix").toNative() },
       ]);
     });
 
@@ -506,7 +506,7 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       const requirements: ExtensionRequirement[] = [
-        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
       dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
@@ -516,7 +516,7 @@ describe("IdeServerModule", () => {
       })) as CheckDepsResult;
 
       expect(result.extensionInstallPlan).toEqual([
-        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ]);
     });
 
@@ -531,7 +531,7 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       const requirements: ExtensionRequirement[] = [
-        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
       dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
 
@@ -593,7 +593,9 @@ describe("IdeServerModule", () => {
       expect(asset?.headers?.["cache-control"]).toBe("no-cache");
       expect(deps.fileSystemLayer.readFileBuffer).toHaveBeenCalledWith(
         new Path(
-          "/bundles/vscodium/1.126.04524/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"
+          testPath(
+            "/bundles/vscodium/1.126.04524/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"
+          ).toNative()
         )
       );
     });
@@ -990,7 +992,7 @@ describe("IdeServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       const installPlan: ExtensionInstallEntry[] = [
-        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
@@ -1004,7 +1006,7 @@ describe("IdeServerModule", () => {
           args: expect.arrayContaining([
             expect.stringMatching(/out[\\/]server-main\.js$/),
             "--install-extension",
-            "/path/ext-one.vsix",
+            testPath("/path/ext-one.vsix").toNative(),
           ]) as unknown as string[],
         },
       ]);
@@ -1023,7 +1025,7 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       const installPlan: ExtensionInstallEntry[] = [
-        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
@@ -1064,7 +1066,7 @@ describe("IdeServerModule", () => {
       });
       const { dispatcher } = createTestSetup(deps);
       const installPlan: ExtensionInstallEntry[] = [
-        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
       const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
@@ -1120,13 +1122,15 @@ describe("IdeServerModule", () => {
       expect(workspaceUrl).toContain("25448");
       expect(workspaceUrl).toContain("workspace=");
       expect(deps.fileSystemLayer.writeFile).toHaveBeenCalledWith(
-        new Path("/test/project/.worktrees/feature-1.code-workspace"),
+        testPath("/test/project/.worktrees/feature-1.code-workspace"),
         expect.stringContaining('"claudeCode.useTerminal":')
       );
       const writeCall = vi
         .mocked(deps.fileSystemLayer.writeFile)
         .mock.calls.find(
-          ([p]) => p.toString() === "/test/project/.worktrees/feature-1.code-workspace"
+          ([p]) =>
+            p.toString() ===
+            testPath("/test/project/.worktrees/feature-1.code-workspace").toString()
         );
       expect(writeCall).toBeDefined();
       const written = writeCall![1] as string;
@@ -1201,7 +1205,7 @@ describe("IdeServerModule", () => {
       });
 
       expect(deps.fileSystemLayer.rm).toHaveBeenCalledWith(
-        new Path("/test/project/.worktrees/feature-1.code-workspace"),
+        testPath("/test/project/.worktrees/feature-1.code-workspace"),
         { force: true }
       );
     });
@@ -1320,7 +1324,7 @@ describe("IdeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const binDir = new Path("/test/app-data/bin").toNative();
+      const binDir = testPath("/test/app-data/bin").toNative();
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
       expect(env.PATH).toBe(`${binDir}${delimiter}/usr/bin:/usr/local/bin`);
@@ -1333,7 +1337,7 @@ describe("IdeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const binDir = new Path("/test/app-data/bin").toNative();
+      const binDir = testPath("/test/app-data/bin").toNative();
       const isWindows = process.platform === "win32";
       const expectedCodeCmd = isWindows ? `"${join(binDir, "code.cmd")}"` : join(binDir, "code");
       const expectedEditor = `${expectedCodeCmd} --wait --reuse-window`;
@@ -1359,7 +1363,7 @@ describe("IdeServerModule", () => {
     it("removes VSCODE_* environment variables", async () => {
       process.env.VSCODE_IPC_HOOK = "/some/ipc/hook";
       process.env.VSCODE_NLS_CONFIG = "{}";
-      process.env.VSCODE_CODE_CACHE_PATH = "/some/cache";
+      process.env.VSCODE_CODE_CACHE_PATH = testPath("/some/cache").toNative();
 
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);

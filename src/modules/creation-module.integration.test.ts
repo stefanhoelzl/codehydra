@@ -34,7 +34,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Fixtures
@@ -1366,7 +1366,10 @@ describe("validateCloneUrl", () => {
     expect(validateCloneUrl(url)).toBeNull();
   });
 
-  it.each(["not a url", "just-words", "/absolute/path"])("rejects %j", (url) => {
-    expect(validateCloneUrl(url)).not.toBeNull();
-  });
+  it.each(["not a url", "just-words", testPath("/absolute/path").toNative()])(
+    "rejects %j",
+    (url) => {
+      expect(validateCloneUrl(url)).not.toBeNull();
+    }
+  );
 });

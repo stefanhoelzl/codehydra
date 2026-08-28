@@ -31,6 +31,7 @@ import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
 import type { DialogConfig } from "../shared/dialog-types";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Helpers
@@ -51,8 +52,8 @@ function cancelRoleButtonId(config: DialogConfig): string | undefined {
 // Test Constants
 // =============================================================================
 
-const WS_PATH_A = "/projects/workspace-a" as WorkspacePath;
-const WS_PATH_B = "/projects/workspace-b" as WorkspacePath;
+const WS_PATH_A = testPath("/projects/workspace-a").toNative() as WorkspacePath;
+const WS_PATH_B = testPath("/projects/workspace-b").toNative() as WorkspacePath;
 const WS_NAME_A = "workspace-a" as WorkspaceName;
 const WS_NAME_B = "workspace-b" as WorkspaceName;
 const PROJECT_ID = "test-project-12345678" as ProjectId;
@@ -520,7 +521,7 @@ describe("DeletionDialogModule - remove confirm", () => {
             interactive: true,
           },
         },
-        projectPath: "/projects",
+        projectPath: testPath("/projects").toNative(),
         workspacePath: WS_PATH_A,
         workspaceName: WS_NAME_A,
         active: true,

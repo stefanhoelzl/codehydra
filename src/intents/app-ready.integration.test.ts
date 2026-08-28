@@ -9,7 +9,7 @@
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { projPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -28,6 +28,7 @@ import type { Project } from "../shared/api/types";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import { projectSchema } from "./contract";
+import { Path } from "../utils/path/path";
 
 // =============================================================================
 // Test Helpers
@@ -68,6 +69,7 @@ const openProjectStubSchemas = {
 
 function createProjectOpenStub(
   state: TestState,
+  /** Matched against the *normalized* payload path the operation receives. */
   options?: { failForPath?: string }
 ): Operation<typeof openProjectStubSchemas> {
   return {
@@ -124,36 +126,53 @@ describe("AppReady Operation", () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
-        [createProjectModule(["/project-a", "/project-b"])],
+        [
+          createProjectModule([
+            testPath("/project-a").toNative(),
+            testPath("/project-b").toNative(),
+          ]),
+        ],
         stub
       );
 
       await dispatcher.dispatch(appReadyIntent());
 
-      expect(state.openedProjectPaths).toEqual(["/project-a", "/project-b"]);
+      expect(state.openedProjectPaths).toEqual([
+        testPath("/project-a").toString(),
+        testPath("/project-b").toString(),
+      ]);
     });
 
     it("merges paths from multiple modules", async () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
-        [createProjectModule(["/project-a"]), createProjectModule(["/project-b"])],
+        [
+          createProjectModule([testPath("/project-a").toNative()]),
+          createProjectModule([testPath("/project-b").toNative()]),
+        ],
         stub
       );
 
       await dispatcher.dispatch(appReadyIntent());
 
-      expect(state.openedProjectPaths).toEqual(["/project-a", "/project-b"]);
+      expect(state.openedProjectPaths).toEqual([
+        testPath("/project-a").toString(),
+        testPath("/project-b").toString(),
+      ]);
     });
 
     it("skips invalid projects without aborting", async () => {
       const state = createTestState();
-      const stub = createProjectOpenStub(state, { failForPath: "/invalid" });
-      const { dispatcher } = createTestSetup([createProjectModule(["/invalid", "/valid"])], stub);
+      const stub = createProjectOpenStub(state, { failForPath: testPath("/invalid").toString() });
+      const { dispatcher } = createTestSetup(
+        [createProjectModule([testPath("/invalid").toNative(), testPath("/valid").toNative()])],
+        stub
+      );
 
       await dispatcher.dispatch(appReadyIntent());
 
-      expect(state.openedProjectPaths).toEqual(["/valid"]);
+      expect(state.openedProjectPaths).toEqual([testPath("/valid").toString()]);
     });
 
     it("handles empty project paths", async () => {
@@ -182,7 +201,13 @@ describe("AppReady Operation", () => {
       // Each stub execute blocks on a shared latch until all have started.
       // If dispatch were sequential, only one would ever start and the test
       // would deadlock (the latch resolves only after all N start).
-      const paths = ["/p1", "/p2", "/p3", "/p4", "/p5"];
+      const paths = [
+        testPath("/p1").toNative(),
+        testPath("/p2").toNative(),
+        testPath("/p3").toNative(),
+        testPath("/p4").toNative(),
+        testPath("/p5").toNative(),
+      ];
       const started: string[] = [];
       let resolveLatch!: () => void;
       const latch = new Promise<void>((r) => {
@@ -210,7 +235,8 @@ describe("AppReady Operation", () => {
       await dispatcher.dispatch(appReadyIntent());
 
       expect(started).toHaveLength(paths.length);
-      expect(new Set(started)).toEqual(new Set(paths));
+      // `started` records the normalized payload path, not the native input.
+      expect(new Set(started)).toEqual(new Set(paths.map((p) => new Path(p).toString())));
     });
   });
 
@@ -219,7 +245,12 @@ describe("AppReady Operation", () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
-        [createProjectModule(["/project-a", "/project-b"])],
+        [
+          createProjectModule([
+            testPath("/project-a").toNative(),
+            testPath("/project-b").toNative(),
+          ]),
+        ],
         stub
       );
 
@@ -230,8 +261,8 @@ describe("AppReady Operation", () => {
       await dispatcher.dispatch(appReadyIntent());
 
       expect(state.executionOrder).toEqual([
-        "project-open:/project-a",
-        "project-open:/project-b",
+        `project-open:${testPath("/project-a").toString()}`,
+        `project-open:${testPath("/project-b").toString()}`,
         "app:started",
       ]);
     });

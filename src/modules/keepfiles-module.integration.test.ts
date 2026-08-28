@@ -25,6 +25,7 @@ import {
   file,
   directory,
 } from "../boundaries/platform/filesystem.state-mock";
+import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Setup
@@ -95,10 +96,13 @@ describe("KeepFilesModule Integration", () => {
 
       await dispatcher.dispatch({
         type: "workspace:open",
-        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+        payload: {
+          projectPath: testPath("/projects/my-app").toNative(),
+          workspacePath: testPath("/workspaces/feature-1").toNative(),
+        },
       } as Intent);
 
-      expect(mockFs).toHaveFile("/workspaces/feature-1/.env", "SECRET=value");
+      expect(mockFs).toHaveFile(testPath("/workspaces/feature-1/.env").toNative(), "SECRET=value");
     });
 
     it("logs error and succeeds when filesystem throws", async () => {
@@ -142,7 +146,10 @@ describe("KeepFilesModule Integration", () => {
 
       const result = await dispatcher.dispatch({
         type: "workspace:open",
-        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+        payload: {
+          projectPath: testPath("/projects/my-app").toNative(),
+          workspacePath: testPath("/workspaces/feature-1").toNative(),
+        },
       } as Intent);
 
       // Operation succeeds despite the error
@@ -152,7 +159,9 @@ describe("KeepFilesModule Integration", () => {
       const errors = logger.getMessagesByLevel("error");
       expect(errors).toHaveLength(1);
       expect(errors[0]!.message).toBe("Keepfiles copy failed for workspace (non-fatal)");
-      expect(errors[0]!.context).toEqual({ workspacePath: "/workspaces/feature-1" });
+      expect(errors[0]!.context).toEqual({
+        workspacePath: testPath("/workspaces/feature-1").toNative(),
+      });
     });
 
     it("returns empty result on success", async () => {
@@ -160,7 +169,10 @@ describe("KeepFilesModule Integration", () => {
 
       const result = await dispatcher.dispatch({
         type: "workspace:open",
-        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+        payload: {
+          projectPath: testPath("/projects/my-app").toNative(),
+          workspacePath: testPath("/workspaces/feature-1").toNative(),
+        },
       } as Intent);
 
       expect(result).toEqual({});
@@ -179,10 +191,10 @@ describe("KeepFilesModule Integration", () => {
       await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectPath: "/projects/my-app",
-          workspacePath: "/workspaces/feature-1",
+          projectPath: testPath("/projects/my-app").toNative(),
+          workspacePath: testPath("/workspaces/feature-1").toNative(),
           existingWorkspace: {
-            path: "/workspaces/feature-1",
+            path: testPath("/workspaces/feature-1").toNative(),
             name: "feature-1",
             branch: "feature-1",
           },

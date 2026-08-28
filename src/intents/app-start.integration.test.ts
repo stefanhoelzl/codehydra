@@ -62,6 +62,7 @@ import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType, RequiredScript } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import { testPath } from "../shared/test-fixtures";
 
 /** Permissive schemas for the stub setup operation (app:setup dispatched during checks). */
 const setupStubSchemas = {
@@ -688,7 +689,7 @@ describe("AppStart Operation", () => {
           createConfigCheckModule("claude"),
           createBinaryCheckModule([]),
           createExtensionCheckModule({
-            installPlan: [{ id: "ext-a", vsixPath: "/path/ext-a.vsix" }],
+            installPlan: [{ id: "ext-a", vsixPath: testPath("/path/ext-a.vsix").toNative() }],
           }),
           createIdeServerModule(state),
           createMcpModule(state),

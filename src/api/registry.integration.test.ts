@@ -15,8 +15,9 @@ import { ApiError } from "./errors";
 import { defineEntry } from "./types";
 import type { AnyOperationEntry, OperationContext } from "./types";
 import { workspacePathSchema } from "../intents/contract";
+import { testPath } from "../shared/test-fixtures";
 
-const WS = workspacePathSchema.parse("/repo/wt/feature");
+const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
 const IN_WORKSPACE: OperationContext = { workspacePath: WS, cwd: null };
 const NO_WORKSPACE: OperationContext = { workspacePath: null, cwd: null };
 

@@ -26,7 +26,7 @@ import type { ResolveHookResult as ResolveProjectHookResult } from "../resolve-p
 import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspacePathSchema } from "../contract";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test operation
@@ -171,8 +171,8 @@ describe("WorkspaceHookOperation", () => {
       workHandlers: [{ handler: async () => ({ result: { value: "x" } }) }],
     });
 
-    await expect(dispatcher.dispatch(testIntent("/unknown"))).rejects.toThrow(
-      "Workspace not found: /unknown"
+    await expect(dispatcher.dispatch(testIntent(testPath("/unknown").toNative()))).rejects.toThrow(
+      `Workspace not found: ${testPath("/unknown").toNative()}`
     );
     expect(hookRuns()).toBe(0);
   });

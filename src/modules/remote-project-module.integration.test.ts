@@ -35,7 +35,7 @@ import type { ProjectId } from "../shared/api/types";
 import type { schemas as openProjectSchemas } from "../intents/open-project";
 import type { schemas as closeProjectSchemas } from "../intents/close-project";
 import type { ProjectPath } from "../intents/contract";
-import { projPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
 
 // Pre-computed: generateProjectIdFromUrl("https://github.com/org/repo.git")
 const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
@@ -202,7 +202,9 @@ describe("RemoteProjectModule Integration", () => {
       const { hookRegistry } = createTestSetup();
 
       const hooks = hookRegistry.resolve<typeof openProjectSchemas>(OPEN_PROJECT_OPERATION_ID);
-      const intent = openProjectIntent({ path: projPath(new Path("/local/project").toString()) });
+      const intent = openProjectIntent({
+        path: projPath("/local/project"),
+      });
 
       const { results, errors } = await hooks.collect("resolve", resolveContext(intent));
 
@@ -278,7 +280,7 @@ describe("RemoteProjectModule Integration", () => {
       const projectPath = projPath("/test/app-data/remotes/abc12345/repo");
 
       // Pre-populate clone directory
-      fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
+      fs.$.setEntry(testPath("/test/app-data/remotes/abc12345").toNative(), { type: "directory" });
       fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve<typeof closeProjectSchemas>(
@@ -301,14 +303,14 @@ describe("RemoteProjectModule Integration", () => {
       expect(results).toHaveLength(1);
 
       // Clone dir (parent of projectPath) should be deleted
-      expect(fs.$.entries.has(new Path("/test/app-data/remotes/abc12345").toString())).toBe(false);
+      expect(fs.$.entries.has(testPath("/test/app-data/remotes/abc12345").toString())).toBe(false);
     });
 
     it("no-op when removeLocalRepo=false", async () => {
       const { hookRegistry, fs } = createTestSetup();
 
       const projectPath = projPath("/test/app-data/remotes/abc12345/repo");
-      fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
+      fs.$.setEntry(testPath("/test/app-data/remotes/abc12345").toNative(), { type: "directory" });
       fs.$.setEntry(projectPath, { type: "directory" });
 
       const closeHooks = hookRegistry.resolve<typeof closeProjectSchemas>(
@@ -332,7 +334,7 @@ describe("RemoteProjectModule Integration", () => {
       expect(results[0]).toEqual({});
 
       // Directory should still exist
-      expect(fs.$.entries.has(new Path("/test/app-data/remotes/abc12345").toString())).toBe(true);
+      expect(fs.$.entries.has(testPath("/test/app-data/remotes/abc12345").toString())).toBe(true);
     });
 
     it("no-op when no remoteUrl in context (local project)", async () => {

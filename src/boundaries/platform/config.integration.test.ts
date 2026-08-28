@@ -19,6 +19,7 @@ import { DefaultConfig, parseEnvVars, parseCliArgs, resolveFileReferences } from
 import type { Config, ConfigDeps } from "./config";
 import type { PersistedKeyDefinition } from "./store-definition";
 import { parseBool, PersistedValidationError } from "./store-definition";
+import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Test Config Definitions
@@ -62,7 +63,7 @@ function enumDef(_name: string, values: string[], defaultValue: string | null = 
 // Helpers
 // =============================================================================
 
-const CONFIG_PATH = new Path("/app/config.json");
+const CONFIG_PATH = testPath("/app/config.json");
 
 /**
  * Create a sync readFileSync from a mock FileSystemBoundary.
@@ -72,9 +73,13 @@ const CONFIG_PATH = new Path("/app/config.json");
 function createSyncReader(
   entries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>>
 ): (path: string) => string {
+  // Both sides go through Path: the caller asks with whatever the OS handed it
+  // (a native path on Windows), while the fixture keys are written native too.
+  const normalized = new Map(
+    Object.entries(entries).map(([key, entry]) => [testPath(key).toString(), entry])
+  );
   return (path: string) => {
-    const normalized = new Path(path).toString();
-    const entry = entries[normalized];
+    const entry = normalized.get(testPath(path).toString());
     if (!entry || entry.type !== "file") {
       const err = new Error(`ENOENT: no such file: ${path}`) as NodeJS.ErrnoException;
       err.code = "ENOENT";
@@ -625,7 +630,7 @@ describe("Config", () => {
 
       const content = await fs.readFile(CONFIG_PATH);
       expect(JSON.parse(content)).toEqual({ "test.key": "fresh" });
-      const backup = await fs.readFile(new Path("/app/config.json.broken"));
+      const backup = await fs.readFile(testPath("/app/config.json.broken"));
       expect(backup).toBe("{{ broken");
     });
 
@@ -1092,8 +1097,8 @@ describe("resolveFileReferences", () => {
 
   it("reads a referenced file", () => {
     const { values, issues } = resolveFileReferences(
-      { "a.b": "@/cfg/value.txt" },
-      reader({ "/cfg/value.txt": "from-file" })
+      { "a.b": `@${testPath("/cfg/value.txt").toNative()}` },
+      reader({ [testPath("/cfg/value.txt").toNative()]: "from-file" })
     );
     expect(values).toEqual({ "a.b": "from-file" });
     expect(issues).toEqual([]);
@@ -1104,16 +1109,16 @@ describe("resolveFileReferences", () => {
     // the first line of an inline value would ever arrive.
     const yaml = "name: gh\ntype: cron\nmode: events\ncmd: poll\n";
     const { values } = resolveFileReferences(
-      { "auto-workspace.sources": "@/cfg/sources.yaml" },
-      reader({ "/cfg/sources.yaml": yaml })
+      { "auto-workspace.sources": `@${testPath("/cfg/sources.yaml").toNative()}` },
+      reader({ [testPath("/cfg/sources.yaml").toNative()]: yaml })
     );
     expect(values["auto-workspace.sources"]).toBe("name: gh\ntype: cron\nmode: events\ncmd: poll");
   });
 
   it("strips one trailing newline but keeps interior blank lines", () => {
     const { values } = resolveFileReferences(
-      { "a.b": "@/cfg/v" },
-      reader({ "/cfg/v": "first\n\nlast\r\n" })
+      { "a.b": `@${testPath("/cfg/v").toNative()}` },
+      reader({ [testPath("/cfg/v").toNative()]: "first\n\nlast\r\n" })
     );
     expect(values["a.b"]).toBe("first\n\nlast");
   });
@@ -1125,12 +1130,15 @@ describe("resolveFileReferences", () => {
   });
 
   it("reports an unreadable file as invalid, naming the path", () => {
-    const { values, issues } = resolveFileReferences({ "a.b": "@/cfg/missing" }, reader({}));
+    const reference = `@${testPath("/cfg/missing").toNative()}`;
+    const { values, issues } = resolveFileReferences({ "a.b": reference }, reader({}));
     expect(values).toEqual({});
     expect(issues).toHaveLength(1);
-    expect(issues[0]).toMatchObject({ kind: "invalid", key: "a.b", value: "@/cfg/missing" });
+    expect(issues[0]).toMatchObject({ kind: "invalid", key: "a.b", value: reference });
     // The path is the actionable part of the message, so it must survive.
-    expect((issues[0] as { description?: string }).description).toContain("/cfg/missing");
+    expect((issues[0] as { description?: string }).description).toContain(
+      testPath("/cfg/missing").toNative()
+    );
   });
 });
 
@@ -1138,8 +1146,11 @@ describe("Config — CLI @file references", () => {
   it("loads a multi-line value a CLI flag could not carry inline", () => {
     const yaml = "name: gh\ntype: cron\nmode: events\n";
     const service = createService({
-      argv: ["--test.key=@/app/sources.yaml"],
-      fileEntries: { "/app": directory(), "/app/sources.yaml": file(yaml) },
+      argv: [`--test.key=@${testPath("/app/sources.yaml").toNative()}`],
+      fileEntries: {
+        "/app": directory(),
+        "/app/sources.yaml": file(yaml),
+      },
     });
     const accessor = service.register("test.key", stringDef("test.key"));
     service.load();
@@ -1150,7 +1161,7 @@ describe("Config — CLI @file references", () => {
 
   it("fails startup with the path when the referenced file is missing", () => {
     const service = createService({
-      argv: ["--test.key=@/app/missing.yaml"],
+      argv: [`--test.key=@${testPath("/app/missing.yaml").toNative()}`],
       fileEntries: { "/app": directory() },
     });
     service.register("test.key", stringDef("test.key"));
@@ -1174,7 +1185,10 @@ describe("Config — settings support", () => {
 
   it("wasConfigured() is true when config.json exists", () => {
     const svc = createService({
-      fileEntries: { "/app": directory(), "/app/config.json": file("{}") },
+      fileEntries: {
+        "/app": directory(),
+        "/app/config.json": file("{}"),
+      },
     });
     svc.load();
     expect(svc.wasConfigured()).toBe(true);

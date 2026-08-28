@@ -13,6 +13,8 @@ import type {
   runClaude as RunClaudeFn,
 } from "./wrapper";
 import * as wrapper from "./wrapper";
+import { dirname } from "node:path";
+import { testPath } from "../../../shared/test-fixtures";
 
 let getInitialPromptConfig: typeof GetInitialPromptConfigFn;
 let runClaude: typeof RunClaudeFn;
@@ -49,7 +51,9 @@ describe("getInitialPromptConfig integration", () => {
 
   it("reads file and returns parsed config", () => {
     // Set up env var
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/codehydra-test/initial-prompt.json"
+    ).toNative();
 
     // Mock file content
     const fileContent = JSON.stringify({
@@ -73,15 +77,21 @@ describe("getInitialPromptConfig integration", () => {
 
     // Verify file was read
     expect(mockReadFileSync).toHaveBeenCalledWith(
-      "/tmp/codehydra-test/initial-prompt.json",
+      testPath("/tmp/codehydra-test/initial-prompt.json").toNative(),
       "utf-8"
     );
 
     // Verify file was deleted
-    expect(mockUnlinkSync).toHaveBeenCalledWith("/tmp/codehydra-test/initial-prompt.json");
+    expect(mockUnlinkSync).toHaveBeenCalledWith(
+      testPath("/tmp/codehydra-test/initial-prompt.json").toNative()
+    );
 
-    // Verify temp directory was deleted
-    expect(mockRmdirSync).toHaveBeenCalledWith("/tmp/codehydra-test");
+    // Verify temp directory was deleted. Derived with the same `dirname` the
+    // wrapper uses: `node:path` is bound to the real platform, so a literal here
+    // would only be right on the OS it was written for.
+    expect(mockRmdirSync).toHaveBeenCalledWith(
+      dirname(testPath("/tmp/codehydra-test/initial-prompt.json").toNative())
+    );
   });
 
   it("returns undefined when env var is not set", () => {
@@ -95,7 +105,9 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("returns undefined silently when file does not exist (restart scenario)", () => {
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/nonexistent/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/nonexistent/initial-prompt.json"
+    ).toNative();
 
     // Mock file not found error (expected on restart - file consumed on first launch)
     mockReadFileSync.mockImplementation(() => {
@@ -116,7 +128,9 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("handles invalid JSON gracefully", () => {
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/codehydra-test/initial-prompt.json"
+    ).toNative();
 
     // Mock invalid JSON content
     mockReadFileSync.mockReturnValue("not valid json {{{");
@@ -134,14 +148,20 @@ describe("getInitialPromptConfig integration", () => {
     expect(warnSpy.mock.calls[0]?.[0]).toContain("Warning: Failed to read initial prompt file");
 
     // Should still attempt cleanup (in catch block)
-    expect(mockUnlinkSync).toHaveBeenCalledWith("/tmp/codehydra-test/initial-prompt.json");
-    expect(mockRmdirSync).toHaveBeenCalledWith("/tmp/codehydra-test");
+    expect(mockUnlinkSync).toHaveBeenCalledWith(
+      testPath("/tmp/codehydra-test/initial-prompt.json").toNative()
+    );
+    expect(mockRmdirSync).toHaveBeenCalledWith(
+      dirname(testPath("/tmp/codehydra-test/initial-prompt.json").toNative())
+    );
 
     warnSpy.mockRestore();
   });
 
   it("returns config with prompt only when model and agent are not set", () => {
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/codehydra-test/initial-prompt.json"
+    ).toNative();
 
     // Mock file content with only prompt
     const fileContent = JSON.stringify({ prompt: "Simple prompt" });
@@ -156,7 +176,9 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("continues cleanup even if unlink fails", () => {
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/codehydra-test/initial-prompt.json"
+    ).toNative();
 
     const fileContent = JSON.stringify({ prompt: "Test" });
     mockReadFileSync.mockReturnValue(fileContent);
@@ -174,7 +196,9 @@ describe("getInitialPromptConfig integration", () => {
   });
 
   it("continues even if rmdir fails", () => {
-    process.env._CH_INITIAL_PROMPT_FILE = "/tmp/codehydra-test/initial-prompt.json";
+    process.env._CH_INITIAL_PROMPT_FILE = testPath(
+      "/tmp/codehydra-test/initial-prompt.json"
+    ).toNative();
 
     const fileContent = JSON.stringify({ prompt: "Test" });
     mockReadFileSync.mockReturnValue(fileContent);
@@ -212,7 +236,12 @@ describe("runClaude session resume", () => {
   it("succeeds on first attempt with --continue when session exists", () => {
     const mock = createSpawnMock([0]);
 
-    const result = runClaude("claude", ["--ide", "--settings", "/path"], {}, mock);
+    const result = runClaude(
+      "claude",
+      ["--ide", "--settings", testPath("/path").toNative()],
+      {},
+      mock
+    );
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(1);
@@ -224,7 +253,12 @@ describe("runClaude session resume", () => {
   it("retries without --continue when first attempt fails", () => {
     const mock = createSpawnMock([1, 0]);
 
-    const result = runClaude("claude", ["--ide", "--settings", "/path"], {}, mock);
+    const result = runClaude(
+      "claude",
+      ["--ide", "--settings", testPath("/path").toNative()],
+      {},
+      mock
+    );
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(2);
@@ -300,7 +334,7 @@ describe("runClaude session resume", () => {
 
     const result = runClaude(
       "claude",
-      ["--ide", "--settings", "/path"],
+      ["--ide", "--settings", testPath("/path").toNative()],
       { skipContinue: true },
       mock
     );
@@ -317,7 +351,7 @@ describe("runClaude session resume", () => {
 
     const result = runClaude(
       "claude",
-      ["--ide", "--settings", "/path"],
+      ["--ide", "--settings", testPath("/path").toNative()],
       { skipContinue: false },
       mock
     );

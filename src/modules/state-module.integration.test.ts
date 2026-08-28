@@ -7,7 +7,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
   createFileSystemMock,
@@ -26,16 +25,21 @@ import {
   type AppStartIntent,
 } from "../intents/app-start";
 import { createStateModule, createStateMigrationRegistry } from "./state-module";
+import { testPath } from "../shared/test-fixtures";
 
-const CONFIG_PATH = new Path("/app/config.json");
-const STATE_PATH = new Path("/app/state.json");
+const CONFIG_PATH = testPath("/app/config.json");
+const STATE_PATH = testPath("/app/state.json");
 const KEY = "telemetry.distinct-id";
 
 type Entries = Record<string, ReturnType<typeof file> | ReturnType<typeof directory>>;
 
 function syncReader(entries: Entries): (path: string) => string {
+  // Fixtures are written in the OS-native form; both sides go through Path.
+  const normalized = new Map(
+    Object.entries(entries).map(([key, entry]) => [testPath(key).toString(), entry])
+  );
   return (path: string) => {
-    const entry = entries[new Path(path).toString()];
+    const entry = normalized.get(testPath(path).toString());
     if (!entry || entry.type !== "file") {
       const err = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
       err.code = "ENOENT";
@@ -55,6 +59,7 @@ async function runMigration(entries: Entries): Promise<{
   stateValue: unknown;
 }> {
   const fs = createFileSystemMock({ entries });
+  const syncWrites: [string, string][] = [];
 
   const configDeps: ConfigDeps = {
     configPath: CONFIG_PATH,
@@ -65,6 +70,17 @@ async function runMigration(entries: Entries): Promise<{
     env: {},
     argv: [],
     readFileSync: syncReader(entries),
+    // config.json here carries a key this test never registers, so `load()`
+    // takes its "strip unknown keys" branch and rewrites the file. That branch
+    // defaults to the real `node:fs` and swallows its own failures, so without
+    // these the test silently writes to disk — and succeeds whenever the
+    // directory happens to exist. Capture the writes instead.
+    writeFileSync: (path, content) => {
+      syncWrites.push([path, content]);
+    },
+    renameSync: (from, to) => {
+      syncWrites.push([from, to]);
+    },
   };
   const config = new DefaultConfig(configDeps);
   const state = new DefaultStateService({

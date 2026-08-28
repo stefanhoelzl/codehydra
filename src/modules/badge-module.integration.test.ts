@@ -471,7 +471,10 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 2 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 2 },
+        })
       );
 
       expect(appLayer).toHaveDockBadge("\u25CF"); // ●
@@ -482,13 +485,19 @@ describe("BadgeModule Integration", () => {
 
       // First make busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Then become idle
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "idle", counts: { idle: 1, busy: 0 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "idle",
+          counts: { idle: 1, busy: 0 },
+        })
       );
       expect(appLayer).toHaveDockBadge("");
     });
@@ -499,10 +508,16 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "idle", counts: { idle: 2, busy: 0 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "idle",
+          counts: { idle: 2, busy: 0 },
+        })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/2"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
 
       expect(appLayer).toHaveDockBadge("\u25D0"); // ◐
@@ -513,16 +528,25 @@ describe("BadgeModule Integration", () => {
 
       // Mixed state
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "idle", counts: { idle: 1, busy: 0 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "idle",
+          counts: { idle: 1, busy: 0 },
+        })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/2"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25D0");
 
       // Workspace 1 becomes busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25CF");
     });
@@ -532,16 +556,25 @@ describe("BadgeModule Integration", () => {
 
       // All working
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/2"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Workspace 1 becomes idle
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "idle", counts: { idle: 1, busy: 0 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "idle",
+          counts: { idle: 1, busy: 0 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25D0");
     });
@@ -553,7 +586,10 @@ describe("BadgeModule Integration", () => {
 
       // One busy workspace
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25CF");
 
@@ -577,10 +613,16 @@ describe("BadgeModule Integration", () => {
 
       // Mixed state: one idle, one busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "idle", counts: { idle: 1, busy: 0 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "idle",
+          counts: { idle: 1, busy: 0 },
+        })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/2"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25D0");
 
@@ -607,7 +649,10 @@ describe("BadgeModule Integration", () => {
 
       // Set a busy badge first
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), { status: "busy", counts: { idle: 0, busy: 1 } })
+        updateStatusIntent(wsPath("/workspace/1"), {
+          status: "busy",
+          counts: { idle: 0, busy: 1 },
+        })
       );
       expect(appLayer).toHaveDockBadge("\u25CF");
 

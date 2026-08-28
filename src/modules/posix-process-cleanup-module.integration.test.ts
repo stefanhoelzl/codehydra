@@ -4,6 +4,11 @@
  *
  * Tests verify: lsof output parsing, kill invocation, and module release hook behavior
  * through mocked ProcessRunner (runs on all platforms).
+ *
+ * Paths here stay POSIX on purpose — unlike the rest of the integration suite,
+ * which feeds the code under test OS-native paths. The input is `lsof` stdout,
+ * and the module declares `requires: { posix: true }`, so a Windows path is a
+ * shape this code is never handed.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";

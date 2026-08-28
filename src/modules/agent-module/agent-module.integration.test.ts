@@ -82,7 +82,7 @@ import type { WorkspaceName } from "../../shared/api/types";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
-import { wsPath, projPath } from "../../shared/test-fixtures";
+import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
 import type { WorkspacePath } from "../../intents/contract";
 
 // =============================================================================
@@ -215,8 +215,8 @@ function minimalStart(pluginPort: number | null = null): Operation<OperationSche
 
 /** A stdio MCP launch config, as the composition root would resolve one. */
 const TEST_MCP_CONFIG: McpConfig = {
-  nodePath: "/ide/node",
-  cliPath: "/data/bin/ch.cjs",
+  nodePath: testPath("/ide/node").toNative(),
+  cliPath: testPath("/data/bin/ch.cjs").toNative(),
   port: 9999,
   token: "test-token",
 };
@@ -309,8 +309,8 @@ function minimalSetup(
     async execute(ctx): Promise<SetupOperationResult | undefined> {
       const { results, errors } = await ctx.hooks.collect("setup", {
         intent: ctx.intent,
-        workspacePath: "/test/workspace",
-        projectPath: "/test/project",
+        workspacePath: testPath("/test/workspace").toNative(),
+        projectPath: testPath("/test/project").toNative(),
         ...hookInput,
         ...(agentCapability !== null && {
           capabilities: { agent: agentCapability },
@@ -663,12 +663,12 @@ describe("createAgentModule", () => {
       const dispatchSpy = vi.spyOn(moduleDeps.dispatcher, "dispatch").mockResolvedValue(undefined);
 
       const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 1, busy: 0 } };
-      capturedStatusCallback!("/test/workspace" as WorkspacePath, status);
+      capturedStatusCallback!(testPath("/test/workspace").toNative() as WorkspacePath, status);
 
       expect(dispatchSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_UPDATE_AGENT_STATUS,
-          payload: { workspacePath: "/test/workspace", status },
+          payload: { workspacePath: testPath("/test/workspace").toNative(), status },
         })
       );
     });
@@ -878,9 +878,12 @@ describe("createAgentModule", () => {
         },
       } as unknown as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
 
-      expect(mockProvider.startWorkspace).toHaveBeenCalledWith("/test/workspace", {
-        isNewWorkspace: true,
-      });
+      expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
+        testPath("/test/workspace").toString(),
+        {
+          isNewWorkspace: true,
+        }
+      );
       expect(result).toBeDefined();
       expect(result!.agentType).toBe("claude");
       expect(result!.envVars).toEqual({ CLAUDE_PORT: "8080" });
@@ -907,10 +910,13 @@ describe("createAgentModule", () => {
         },
       } as unknown as OpenWorkspaceIntent);
 
-      expect(mockProvider.startWorkspace).toHaveBeenCalledWith("/test/workspace", {
-        initialPrompt: { prompt: "Hello Claude" },
-        isNewWorkspace: true,
-      });
+      expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
+        testPath("/test/workspace").toString(),
+        {
+          initialPrompt: { prompt: "Hello Claude" },
+          isNewWorkspace: true,
+        }
+      );
     });
 
     it("passes isNewWorkspace=false for existing workspaces", async () => {
@@ -931,7 +937,7 @@ describe("createAgentModule", () => {
           workspaceName: "feature-1",
           base: "main",
           existingWorkspace: {
-            path: "/test/workspace",
+            path: testPath("/test/workspace").toNative(),
             name: "feature-1",
             branch: "feature-1",
             metadata: {},
@@ -939,9 +945,12 @@ describe("createAgentModule", () => {
         },
       } as unknown as OpenWorkspaceIntent);
 
-      expect(mockProvider.startWorkspace).toHaveBeenCalledWith("/test/workspace", {
-        isNewWorkspace: false,
-      });
+      expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
+        testPath("/test/workspace").toString(),
+        {
+          isNewWorkspace: false,
+        }
+      );
     });
 
     it("does not run when agent capability does not match provider type", async () => {
@@ -992,7 +1001,9 @@ describe("createAgentModule", () => {
         },
       })) as ShutdownHookResult | undefined;
 
-      expect(mockProvider.stopWorkspace).toHaveBeenCalledWith("/test/workspace");
+      expect(mockProvider.stopWorkspace).toHaveBeenCalledWith(
+        testPath("/test/workspace").toString()
+      );
       expect(result).toBeDefined();
       expect(result!.serverName).toBe("Claude Code hook");
     });
@@ -1013,7 +1024,9 @@ describe("createAgentModule", () => {
         },
       });
 
-      expect(mockProvider.clearWorkspaceTracking).toHaveBeenCalledWith("/test/workspace");
+      expect(mockProvider.clearWorkspaceTracking).toHaveBeenCalledWith(
+        testPath("/test/workspace").toString()
+      );
     });
 
     it("returns error in result when stop fails in force mode", async () => {
@@ -1102,7 +1115,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "claude" },
             }),
           }
@@ -1111,7 +1124,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "workspace:get-status",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as GetStatusHookResult | undefined;
 
       expect(result).toBeDefined();
@@ -1129,7 +1142,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "opencode" },
             }),
           }
@@ -1138,7 +1151,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "workspace:get-status",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as GetStatusHookResult | undefined;
 
       expect(result).toBeUndefined();
@@ -1162,7 +1175,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "claude" },
             }),
           }
@@ -1171,7 +1184,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as GetAgentSessionHookResult | undefined;
 
       expect(result).toBeDefined();
@@ -1192,7 +1205,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "claude" },
             }),
           }
@@ -1201,7 +1214,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as GetAgentSessionHookResult | undefined;
 
       expect(result).toBeDefined();
@@ -1219,7 +1232,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "opencode" },
             }),
           }
@@ -1228,7 +1241,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as GetAgentSessionHookResult | undefined;
 
       expect(result).toBeUndefined();
@@ -1252,7 +1265,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "claude" },
             }),
           }
@@ -1261,10 +1274,12 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "agent:restart",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as RestartAgentHookResult | undefined;
 
-      expect(mockProvider.restartWorkspace).toHaveBeenCalledWith("/test/workspace");
+      expect(mockProvider.restartWorkspace).toHaveBeenCalledWith(
+        testPath("/test/workspace").toNative()
+      );
       expect(result).toBeDefined();
       expect(result!.port).toBe(8081);
     });
@@ -1286,7 +1301,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "claude" },
             }),
           }
@@ -1296,7 +1311,7 @@ describe("createAgentModule", () => {
       await expect(
         dispatcher.dispatch({
           type: "agent:restart",
-          payload: { workspacePath: "/test/workspace" },
+          payload: { workspacePath: testPath("/test/workspace").toNative() },
         })
       ).rejects.toThrow("restart failed");
     });
@@ -1312,7 +1327,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
-              workspacePath: "/test/workspace",
+              workspacePath: testPath("/test/workspace").toNative(),
               capabilities: { agent: "opencode" },
             }),
           }
@@ -1321,7 +1336,7 @@ describe("createAgentModule", () => {
 
       const result = (await dispatcher.dispatch({
         type: "agent:restart",
-        payload: { workspacePath: "/test/workspace" },
+        payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as RestartAgentHookResult | undefined;
 
       expect(result).toBeUndefined();
@@ -1359,10 +1374,13 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: "agent:lifecycle",
-        payload: { workspacePath: "/test/workspace", event: "open" },
+        payload: { workspacePath: testPath("/test/workspace").toNative(), event: "open" },
       });
 
-      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith("/test/workspace", "open");
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(
+        testPath("/test/workspace").toNative(),
+        "open"
+      );
     });
 
     it("forwards close to provider.applyTerminalLifecycle when active", async () => {
@@ -1372,10 +1390,13 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: "agent:lifecycle",
-        payload: { workspacePath: "/test/workspace", event: "close" },
+        payload: { workspacePath: testPath("/test/workspace").toNative(), event: "close" },
       });
 
-      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith("/test/workspace", "close");
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(
+        testPath("/test/workspace").toNative(),
+        "close"
+      );
     });
 
     it("does not run when agent capability does not match provider type", async () => {
@@ -1384,7 +1405,7 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: "agent:lifecycle",
-        payload: { workspacePath: "/test/workspace", event: "open" },
+        payload: { workspacePath: testPath("/test/workspace").toNative(), event: "open" },
       });
 
       expect(mockProvider.applyTerminalLifecycle).not.toHaveBeenCalled();

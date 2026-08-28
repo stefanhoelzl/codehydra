@@ -3,6 +3,7 @@
  */
 import type { PathProvider, PathOptions } from "./path-provider";
 import { Path } from "../../utils/path/path";
+import { testPath } from "../../shared/test-fixtures";
 import { projectDirName } from "./paths";
 
 /**
@@ -28,11 +29,18 @@ export interface MockPathProviderOptions {
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
 }
 
+/**
+ * Resolve an override, defaulting to `defaultValue` under the shared test root.
+ *
+ * These defaults are the roots almost every integration test hangs its fixtures
+ * off, so rooting them in the real temp directory is what puts this machine's
+ * actual drive and separators in front of the code under test.
+ */
 function ensurePath(value: Path | string | undefined, defaultValue: string): Path {
   if (value instanceof Path) {
     return value;
   }
-  return new Path(value ?? defaultValue);
+  return value === undefined ? testPath(defaultValue) : new Path(value);
 }
 
 /**

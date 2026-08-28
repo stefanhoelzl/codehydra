@@ -38,7 +38,7 @@ import { createPortManagerMock } from "../boundaries/platform/port-manager.state
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
 import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
-import { wsPath } from "../shared/test-fixtures";
+import { wsPath, testPath } from "../shared/test-fixtures";
 import { projPath } from "../shared/test-fixtures";
 import type { WorkspaceName } from "../intents/contract";
 
@@ -88,7 +88,7 @@ function createMinimalFinalizeOperation(
     ): Promise<void> {
       const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
-        workspacePath: "/test/project/.worktrees/feature-1",
+        workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
         envVars: { OPENCODE_PORT: "8080" },
         agentType: "opencode" as const,
         ...hookInput,

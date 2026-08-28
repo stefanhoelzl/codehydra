@@ -34,14 +34,14 @@ import type { IntentModule } from "./lib/module";
 import type { Intent } from "./lib/types";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspacePath } from "./contract";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
-const PROJECT_ROOT = new Path("/project");
-const WORKSPACES_DIR = new Path("/workspaces");
+const PROJECT_ROOT = testPath("/project");
+const WORKSPACES_DIR = testPath("/workspaces");
 
 // =============================================================================
 // Test Setup Helper

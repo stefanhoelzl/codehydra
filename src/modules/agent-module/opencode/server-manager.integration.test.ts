@@ -23,6 +23,8 @@ import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
+import { sep } from "node:path";
+import { testPath } from "../../../shared/test-fixtures";
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -88,10 +90,14 @@ describe("OpenCodeServerManager integration", () => {
       serverManager.onServerStarted(startedCallback);
 
       // Start server
-      await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
       // Callback should have been fired (with undefined pending prompt)
-      expect(startedCallback).toHaveBeenCalledWith("/workspace/feature-a", 14001, undefined);
+      expect(startedCallback).toHaveBeenCalledWith(
+        testPath("/workspace/feature-a").toNative(),
+        14001,
+        undefined
+      );
     });
 
     it("onServerStopped callback is fired when server stops", async () => {
@@ -99,11 +105,14 @@ describe("OpenCodeServerManager integration", () => {
       serverManager.onServerStopped(stoppedCallback);
 
       // Start and stop server
-      await serverManager.startServer("/workspace/feature-a");
-      await serverManager.stopServer("/workspace/feature-a");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
 
       // Callback should have been fired with isRestart=false
-      expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-a", false);
+      expect(stoppedCallback).toHaveBeenCalledWith(
+        testPath("/workspace/feature-a").toNative(),
+        false
+      );
     });
 
     it("onServerStopped callback receives correct workspace path", async () => {
@@ -113,33 +122,36 @@ describe("OpenCodeServerManager integration", () => {
       });
 
       // Start and stop two servers
-      await serverManager.startServer("/workspace/feature-a");
-      await serverManager.startServer("/workspace/feature-b");
-      await serverManager.stopServer("/workspace/feature-a");
-      await serverManager.stopServer("/workspace/feature-b");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-b").toNative());
+      await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.stopServer(testPath("/workspace/feature-b").toNative());
 
       // Both paths should have been received in order
-      expect(receivedPaths).toEqual(["/workspace/feature-a", "/workspace/feature-b"]);
+      expect(receivedPaths).toEqual([
+        testPath("/workspace/feature-a").toNative(),
+        testPath("/workspace/feature-b").toNative(),
+      ]);
     });
   });
 
   describe("workspace lifecycle", () => {
     it("server starts on add, stops on remove", async () => {
       // Start
-      const port = await serverManager.startServer("/workspace/feature-a");
+      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative());
       expect(port).toBe(14001);
 
       // Stop
-      await serverManager.stopServer("/workspace/feature-a");
+      await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
     });
   });
 
   describe("multiple workspaces", () => {
     it("each gets own server and port", async () => {
-      const port1 = await serverManager.startServer("/workspace/feature-a");
-      const port2 = await serverManager.startServer("/workspace/feature-b");
-      const port3 = await serverManager.startServer("/workspace/feature-c");
+      const port1 = await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      const port2 = await serverManager.startServer(testPath("/workspace/feature-b").toNative());
+      const port3 = await serverManager.startServer(testPath("/workspace/feature-c").toNative());
 
       expect(port1).toBe(14001);
       expect(port2).toBe(14002);
@@ -150,11 +162,13 @@ describe("OpenCodeServerManager integration", () => {
   describe("restartServer", () => {
     it("restartServer returns same port", async () => {
       // Start server
-      const originalPort = await serverManager.startServer("/workspace/feature-a");
+      const originalPort = await serverManager.startServer(
+        testPath("/workspace/feature-a").toNative()
+      );
       expect(originalPort).toBe(14001);
 
       // Restart server
-      const result = await serverManager.restartServer("/workspace/feature-a");
+      const result = await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -163,7 +177,7 @@ describe("OpenCodeServerManager integration", () => {
     });
 
     it("restartServer fails if server not running", async () => {
-      const result = await serverManager.restartServer("/workspace/feature-a");
+      const result = await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -186,12 +200,12 @@ describe("OpenCodeServerManager integration", () => {
       });
 
       // Start server (fires started)
-      await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
       expect(startedCallback).toHaveBeenCalledTimes(1);
       callOrder = []; // Reset for restart test
 
       // Restart server (fires stopped then started)
-      await serverManager.restartServer("/workspace/feature-a");
+      await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
 
       expect(stoppedCallback).toHaveBeenCalledTimes(1);
       expect(startedCallback).toHaveBeenCalledTimes(2); // 1 for start, 1 for restart
@@ -200,10 +214,12 @@ describe("OpenCodeServerManager integration", () => {
 
     it("restartServer during starting state waits then restarts", async () => {
       // Start a server that will resolve
-      const startPromise = serverManager.startServer("/workspace/feature-a");
+      const startPromise = serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
       // Immediately try to restart (while starting)
-      const restartPromise = serverManager.restartServer("/workspace/feature-a");
+      const restartPromise = serverManager.restartServer(
+        testPath("/workspace/feature-a").toNative()
+      );
 
       // Wait for both
       await startPromise;
@@ -218,11 +234,15 @@ describe("OpenCodeServerManager integration", () => {
 
     it("restartServer during restarting state returns in-progress promise", async () => {
       // Start server
-      await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
       // Start two restarts concurrently
-      const restartPromise1 = serverManager.restartServer("/workspace/feature-a");
-      const restartPromise2 = serverManager.restartServer("/workspace/feature-a");
+      const restartPromise1 = serverManager.restartServer(
+        testPath("/workspace/feature-a").toNative()
+      );
+      const restartPromise2 = serverManager.restartServer(
+        testPath("/workspace/feature-a").toNative()
+      );
 
       // They should be the same promise
       expect(restartPromise1).toBe(restartPromise2);
@@ -246,13 +266,15 @@ describe("OpenCodeServerManager integration", () => {
 
       try {
         // Start server
-        await shortTimeoutManager.startServer("/workspace/feature-a");
+        await shortTimeoutManager.startServer(testPath("/workspace/feature-a").toNative());
 
         // Make health check fail (simulating port conflict)
         mockHttpClient.fetch.mockRejectedValue(new Error("Connection refused"));
 
         // Restart server - should fail because health check fails
-        const result = await shortTimeoutManager.restartServer("/workspace/feature-a");
+        const result = await shortTimeoutManager.restartServer(
+          testPath("/workspace/feature-a").toNative()
+        );
 
         expect(result.success).toBe(false);
       } finally {
@@ -266,20 +288,20 @@ describe("OpenCodeServerManager integration", () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
-      await serverManager.startServer("/workspace/feature-a");
-      serverManager.triggerWrapperStart("/workspace/feature-a");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      serverManager.triggerWrapperStart(testPath("/workspace/feature-a").toNative());
 
-      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
+      expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
     });
 
     it("normalizes the workspace path passed to the handler", async () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
-      await serverManager.startServer("/workspace/feature-a");
-      serverManager.triggerWrapperStart("/workspace/feature-a/");
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      serverManager.triggerWrapperStart(`${testPath("/workspace/feature-a").toNative()}${sep}`);
 
-      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
+      expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
     });
   });
 
@@ -300,9 +322,9 @@ describe("OpenCodeServerManager integration", () => {
     it("handles concurrent starts/stops", async () => {
       // Start multiple concurrently
       const [port1, port2, port3] = await Promise.all([
-        serverManager.startServer("/workspace/feature-a"),
-        serverManager.startServer("/workspace/feature-b"),
-        serverManager.startServer("/workspace/feature-c"),
+        serverManager.startServer(testPath("/workspace/feature-a").toNative()),
+        serverManager.startServer(testPath("/workspace/feature-b").toNative()),
+        serverManager.startServer(testPath("/workspace/feature-c").toNative()),
       ]);
 
       expect(port1).toBeDefined();
@@ -312,9 +334,9 @@ describe("OpenCodeServerManager integration", () => {
 
       // Stop multiple concurrently
       await Promise.all([
-        serverManager.stopServer("/workspace/feature-a"),
-        serverManager.stopServer("/workspace/feature-b"),
-        serverManager.stopServer("/workspace/feature-c"),
+        serverManager.stopServer(testPath("/workspace/feature-a").toNative()),
+        serverManager.stopServer(testPath("/workspace/feature-b").toNative()),
+        serverManager.stopServer(testPath("/workspace/feature-c").toNative()),
       ]);
 
       // All processes should have been killed
