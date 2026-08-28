@@ -702,17 +702,11 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
  * Win32_Process for the name and command line. SilentlyContinue because "no
  * listener" is an error there, not an empty result.
  *
- * Two constraints shape how this is written, both learned the hard way:
- *
- * - **No double quotes anywhere.** This is passed as a single `-Command`
- *   argument, and Node escapes an embedded `"` as `\"`, which the Windows
- *   command line does not put back together — the same hazard `ProcessOptions.shell`
- *   documents for `cmd /c`. Hence `('ProcessId=' + $_)` rather than
- *   `"ProcessId=$_"`.
- * - **Windows PowerShell 5.1 only.** `powershell.exe` is 5.1, not pwsh, so
- *   `ConvertTo-Json -AsArray` (6+) is unavailable and would fail the whole
- *   command. Without it a single result serializes as a bare object, which
- *   `parseWindowsListeners` accepts.
+ * Sent via `-EncodedCommand`, so quoting is a non-issue — but it still has to
+ * be **Windows PowerShell 5.1**: `powershell.exe` is 5.1, not pwsh, so
+ * `ConvertTo-Json -AsArray` (6+) is unavailable and would fail the whole
+ * command. Without it a single result serializes as a bare object, which
+ * `parseWindowsListeners` accepts.
  */
 function windowsListenerQuery(port: number): string {
   return (
@@ -845,7 +839,7 @@ export class ExecaProcessRunner implements ProcessRunner {
     // A scan that produces nothing is indistinguishable from a free port at the
     // call site, so say why here — a broken platform query is otherwise silent.
     if (result.stdout.trim() === "") {
-      this.logger.debug("Port listener scan produced no output", {
+      this.logger.warn("Port listener scan produced no output", {
         command,
         exitCode: result.exitCode ?? -1,
         stderr: result.stderr.slice(0, 500),
@@ -874,14 +868,21 @@ export class ExecaProcessRunner implements ProcessRunner {
   }
 
   private async findListenersWindows(port: number): Promise<ListeningProcess[]> {
+    // -EncodedCommand, not -Command: the script travels as base64 of UTF-16LE,
+    // so nothing in it is subject to Windows command-line parsing. An inline
+    // -Command has to survive Node's argv escaping *and* PowerShell's own
+    // tokenizing, which is a standing source of silent breakage — a mangled
+    // script just produces no output, and an empty scan is indistinguishable
+    // from a free port at the call site.
+    const encoded = Buffer.from(windowsListenerQuery(port), "utf16le").toString("base64");
     return parseWindowsListeners(
-      await this.scan("powershell", [
+      await this.scan("powershell.exe", [
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-Command",
-        windowsListenerQuery(port),
+        "-EncodedCommand",
+        encoded,
       ])
     );
   }

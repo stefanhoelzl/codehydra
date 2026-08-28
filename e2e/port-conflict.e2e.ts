@@ -17,7 +17,7 @@ import { expect, test } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
 import { freePort, resetDataState, type Agent } from "./env";
-import { failFastOnStartupFailure, launchApp, useApp } from "./fixtures";
+import { appLogEntries, failFastOnStartupFailure, launchApp, useApp } from "./fixtures";
 
 /** A process that holds `port` and nothing else, for the app to find and kill. */
 function spawnPortHolder(port: number): ChildProcess {
@@ -32,6 +32,27 @@ function spawnPortHolder(port: number): ChildProcess {
     ],
     { stdio: "ignore" }
   );
+}
+
+/**
+ * Everything the app logged about finding the port's holder.
+ *
+ * The scan is best-effort and reports an empty result for a failed query as
+ * well as a genuinely free port, so when the dialog does not appear these lines
+ * are what distinguish "the tool is missing", "the query errored" and "it
+ * really saw nothing".
+ */
+function scanLog(): string {
+  const lines = appLogEntries()
+    .filter((entry) => {
+      const text = `${entry.scope ?? ""} ${entry.message ?? ""} ${JSON.stringify(entry.context ?? {})}`;
+      return /listener|scan|lsof|powershell|Get-NetTCPConnection|IDE server/i.test(text);
+    })
+    .map(
+      (entry) =>
+        `[${entry.level ?? "?"}] ${entry.message ?? ""} ${JSON.stringify(entry.context ?? {})}`
+    );
+  return lines.length > 0 ? lines.join("\n") : "(the app logged nothing about the scan)";
 }
 
 /** Resolve once something is accepting connections on `port`. */
@@ -92,7 +113,17 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
 
     // The UI is up before the IDE server starts (show-ui runs two hook points
     // earlier), so the dialog arrives after launchApp has already resolved.
-    await expect(ui.getByText("Port already in use")).toBeVisible({ timeout: 30_000 });
+    try {
+      await expect(ui.getByText("Port already in use")).toBeVisible({ timeout: 30_000 });
+    } catch (error) {
+      // No dialog means the platform scan reported nobody on the port, and the
+      // scan's own log lines are the only thing that says why. Without them a
+      // failure here is just "element not found" and the next attempt is a
+      // guess — which is exactly how this spec burned three CI rounds.
+      throw new Error(`The port-conflict dialog never appeared.\n\nPort scan log:\n${scanLog()}`, {
+        cause: error,
+      });
+    }
     // The pid is the whole point of the dialog: it is what lets someone decide
     // whether this is their leftover or something they care about.
     await expect(ui.getByText(String(holder.pid), { exact: true })).toBeVisible();
