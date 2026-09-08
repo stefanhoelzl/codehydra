@@ -1907,11 +1907,84 @@ describe("PresentationModule - close confirm", () => {
     );
     expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: false });
     expect(checkbox(dialog.config, "keep-repo")).toBeUndefined();
+    // Positive polarity, off by default: a local directory is the user's own
+    // working copy, so it survives unless they say otherwise.
+    expect(checkbox(dialog.config, "remove-repo")).toMatchObject({ value: false });
     expect(buttonLabel(dialog.config)).toBe("Close Project");
 
     action(deps, dialog.id, "close");
     await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
     await expectClosed(deps);
+  });
+
+  it("local project: removing the directory forces remove-all and names the path", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { workspaceCount: 2 });
+    await flush();
+    let dialog = currentDialog(deps);
+
+    change(deps, dialog.id, "remove-repo", { "remove-repo": "true" });
+    await flush();
+    dialog = currentDialog(deps);
+
+    expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: true, disabled: true });
+    expect(buttonLabel(dialog.config)).toBe("Delete & Close");
+    const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
+      .filter((s) => s.type === "text")
+      .map((s) => s.content);
+    // The path is the recovery-route stand-in: there is no remote URL to name.
+    expect(texts).toContain(
+      `This will permanently delete ${PROJECT_PATH} and all workspaces, ` +
+        "including any uncommitted changes."
+    );
+
+    action(deps, dialog.id, "close");
+    await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: true });
+  });
+
+  it("unchecking the directory removal withdraws the implied remove-all (interlock)", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { workspaceCount: 2 });
+    await flush();
+    let dialog = currentDialog(deps);
+
+    change(deps, dialog.id, "remove-repo", { "remove-repo": "true" });
+    await flush();
+    change(deps, currentDialog(deps).id, "remove-repo", { "remove-repo": "false" });
+    await flush();
+    dialog = currentDialog(deps);
+
+    expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: false });
+    expect(checkbox(dialog.config, "remove-all")!.disabled).toBeFalsy();
+    expect(buttonLabel(dialog.config)).toBe("Close Project");
+
+    action(deps, dialog.id, "close");
+    await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
+  });
+
+  it("local project with no workspaces still offers the directory removal", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { workspaceCount: 0 });
+    await flush();
+    let dialog = currentDialog(deps);
+
+    // remove-all lives behind the workspace count; remove-repo does not.
+    expect(checkbox(dialog.config, "remove-all")).toBeUndefined();
+    expect(checkbox(dialog.config, "remove-repo")).toMatchObject({ value: false });
+
+    change(deps, dialog.id, "remove-repo", { "remove-repo": "true" });
+    await flush();
+    dialog = currentDialog(deps);
+
+    const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
+      .filter((s) => s.type === "text")
+      .map((s) => s.content);
+    expect(texts).toContain(
+      `This will permanently delete ${PROJECT_PATH}, including any uncommitted changes.`
+    );
+
+    action(deps, dialog.id, "close");
+    await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: true });
   });
 
   it("checking remove-all updates the warning and button label, and submits removeAll", async () => {

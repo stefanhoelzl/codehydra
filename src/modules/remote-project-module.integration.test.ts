@@ -6,7 +6,7 @@
  * collection.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type {
   CollectOptions,
   HookContext,
@@ -24,6 +24,7 @@ import {
 } from "../boundaries/platform/git-client.state-mock";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
+import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type { OpenProjectIntent, CloneProgressFrame } from "../intents/open-project";
@@ -97,11 +98,14 @@ function createTestSetup() {
   const gitClient = createMockGitClient();
   const pathProvider = createMockPathProvider();
 
+  const notifications = createMockNotificationManager();
+
   const module = createRemoteProjectModule({
     fs,
     gitClient,
     pathProvider,
     logger: SILENT_LOGGER,
+    ui: notifications.ui,
   });
 
   const hookRegistry = {
@@ -111,7 +115,7 @@ function createTestSetup() {
       resolveHooksFromModule<S>(module, operationId),
   };
 
-  return { hookRegistry, fs, gitClient, pathProvider };
+  return { hookRegistry, fs, gitClient, pathProvider, notifications };
 }
 
 // =============================================================================
@@ -361,6 +365,36 @@ describe("RemoteProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
+    });
+
+    it("reports a failed clone removal instead of failing the close", async () => {
+      const { hookRegistry, fs, notifications } = createTestSetup();
+
+      const projectPath = projPath("/test/app-data/remotes/abc12345/repo");
+      const cloneDir = testPath("/test/app-data/remotes/abc12345").toString();
+      fs.rm = vi.fn().mockRejectedValue(new Error("EBUSY: resource busy or locked"));
+
+      const closeHooks = hookRegistry.resolve<typeof closeProjectSchemas>(
+        CLOSE_PROJECT_OPERATION_ID
+      );
+      const closeCtx: CloseHookInput = {
+        intent: closeProjectIntent({
+          projectPath: projPath("/test/project"),
+          removeLocalRepo: true,
+        }),
+        projectPath,
+        removeLocalRepo: true,
+        remoteUrl: "https://github.com/org/repo.git",
+      };
+      const { errors } = await closeHooks.collect("close", closeCtx);
+
+      // Same failure story as the local branch of removeLocalRepo: the close
+      // completes, and the surviving directory is reported rather than silent.
+      expect(errors).toHaveLength(0);
+      const notification = notifications.lastNotification;
+      expect(notification?.opened).toMatchObject({ type: "error", dismissible: true });
+      expect(notification?.opened.message).toContain(cloneDir);
+      expect(notification?.opened.message).toContain("EBUSY");
     });
   });
 });

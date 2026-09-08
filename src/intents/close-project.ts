@@ -8,7 +8,13 @@
  *    dialog that may cancel or contribute removeAll/removeLocalRepo
  * 4. Dispatches workspace:delete per workspace — runtime teardown
  *    (removeWorktree=false) by default; full deletion (removeWorktree=true,
- *    keepBranch=false, ignoreWarnings=true) when the user confirmed removeAll
+ *    keepBranch=false, ignoreWarnings=true) when removeAll holds
+ *
+ * removeLocalRepo implies removeAll (step 4's invariant): deleting the
+ * project's directory orphans every worktree, and `git worktree remove` can
+ * only run while the repository still exists. A non-interactive dispatch has
+ * no confirm hook to establish removeAll, so removeLocalRepo with any
+ * workspace present is rejected outright rather than silently orphaning them.
  * 5. "close" - Disposes provider, removes state + store, clears active workspace
  *
  * Emits project:closed after close hook completes. A canceled confirm or a
@@ -53,6 +59,12 @@ export const EVENT_PROJECT_CLOSE_FAILED = "project:close-failed" as const;
 export const closeProjectPayloadSchema = z
   .object({
     projectPath: projectPathSchema,
+    /**
+     * Delete the project's own directory from disk — the clone for a project
+     * opened from a URL, the user's own working copy for a local one. Implies
+     * removeAll; see the file header for why, and for why a non-interactive
+     * dispatch rejects it while workspaces exist.
+     */
     removeLocalRepo: z.boolean().optional(),
     /**
      * The dispatch is user-interactive: the "confirm" hook point runs after
@@ -271,6 +283,19 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     const remoteUrl = lastDefined(resolveResults, (r) => r.remoteUrl);
     const workspaces = lastDefined(resolveResults, (r) => r.workspaces) ?? [];
 
+    // A non-interactive dispatch has no confirm hook, so nothing can raise
+    // removeAll — deleting the directory would leave every worktree orphaned
+    // (its .git file pointing into a repository that no longer exists) with
+    // no way for CodeHydra to clean them up afterwards. Refuse instead.
+    if (!payload.interactive && removeLocalRepo && workspaces.length > 0) {
+      throw new Error(
+        `Cannot remove the directory of a project that still has ${
+          workspaces.length === 1 ? "1 workspace" : `${workspaces.length} workspaces`
+        }: their worktrees would be left behind. Delete its workspaces first, ` +
+          "or close the project from the app's Close Project dialog."
+      );
+    }
+
     // 3. Confirm (interactive dispatches only): park on the confirmation
     // dialog. Canceled = clean abort; the close-failed emission resets the
     // idempotency guard.
@@ -294,6 +319,12 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
       removeAll = lastDefined(confirmResults, (r) => r.removeAll) ?? false;
       removeLocalRepo = lastDefined(confirmResults, (r) => r.removeLocalRepo) ?? removeLocalRepo;
     }
+
+    // The invariant, enforced here rather than left to the dialog: a confirm
+    // handler that contributes removeLocalRepo without removeAll cannot
+    // reintroduce orphaned worktrees. The dialog's forced-checked, disabled
+    // remove-all box displays this rule; it is not its only source.
+    removeAll = removeAll || removeLocalRepo;
 
     // 4. Dispatch workspace:delete per workspace. Default: runtime teardown
     // (removeWorktree=false). removeAll: full deletion including branches —

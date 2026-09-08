@@ -9,7 +9,10 @@
  * - project:open  → resolve:  validate .git exists for local paths
  * - project:open  → register: generate ID, persist, add to internal state (all projects)
  * - project:close → resolve:  look up projectPath in config to get remoteUrl
- * - project:close → close:    remove from internal state and config (all projects)
+ * - project:close → close:    remove from internal state and config (all projects),
+ *                             and delete the project's own directory for a local
+ *                             project closed with removeLocalRepo (the remote
+ *                             branch of that flag belongs to RemoteProjectModule)
  * - app:start     → start:    load ALL saved project configs
  */
 
@@ -23,6 +26,7 @@ import type { ProjectPath } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { Logger } from "../boundaries/platform/logging";
 import type { ProjectConfig } from "../shared/types/project";
 import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
@@ -79,8 +83,9 @@ export interface LocalProjectModuleDeps {
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
-  readonly ui: Pick<UiPresenter, "dialog">;
+  readonly ui: Pick<UiPresenter, "dialog" | "notification">;
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
+  readonly logger: Logger;
 }
 
 // =============================================================================
@@ -285,12 +290,37 @@ async function removeProject(
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectsDir, fs, gitWorktreeProvider, ui, gitClient } = deps;
+  const { projectsDir, fs, gitWorktreeProvider, ui, gitClient, logger } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   // Keyed by the branded project path, so a key can be handed straight back to the
   // contract (e.g. the list-projects hook result) without re-minting the brand.
   const projects = new Map<ProjectPath, LocalProject>();
+
+  /**
+   * Delete a local project's own directory. Best-effort: by the time the
+   * close hook runs the project is already out of internal state and its
+   * workspaces are gone, so throwing would leave the app inconsistent without
+   * saving the directory. Instead say so — a directory the user explicitly
+   * asked to delete surviving in silence is the worse outcome.
+   */
+  async function removeLocalDirectory(projectPath: string): Promise<void> {
+    try {
+      await fs.rm(projectPath, { recursive: true, force: true });
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      logger.warn("Failed to remove project directory", { projectPath, error: message });
+      const handle = ui.notification({
+        type: "error",
+        title: "Could not remove the project directory",
+        message: `${projectPath} is still on disk: ${message}`,
+        dismissible: true,
+      });
+      handle.onEvent(() => {
+        handle.close();
+      });
+    }
+  }
 
   return {
     name: "local-project",
@@ -473,6 +503,15 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
                 // Fail silently
               }
             } else {
+              // Local project with removeLocalRepo: delete the user's own
+              // working copy. The app-data dir still goes through the gentle
+              // removal below — a workspaces dir left non-empty by a failed
+              // worktree deletion is evidence worth keeping, not something to
+              // force-rm away.
+              if (removeLocalRepo) {
+                await removeLocalDirectory(projectPath);
+              }
+
               // Normal removal: remove config.json and empty dirs
               try {
                 await removeProject(fs, projectsDir, projectPath);

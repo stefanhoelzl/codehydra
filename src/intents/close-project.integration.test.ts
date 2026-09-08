@@ -420,6 +420,47 @@ function buildCloseIntent(overrides?: Partial<CloseProjectIntent["payload"]>): C
 // Tests
 // =============================================================================
 
+/** Record the payloads of full-pipeline deletes (the "delete" hook only
+ *  runs when removeWorktree is true). */
+function recordFullDeletes(harness: TestHarness): DeleteWorkspaceIntent["payload"][] {
+  const payloads: DeleteWorkspaceIntent["payload"][] = [];
+  const module: IntentModule = {
+    name: "test",
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        delete: {
+          handler: async (ctx: HookContext) => {
+            payloads.push((ctx.intent as DeleteWorkspaceIntent).payload);
+            return { result: {} };
+          },
+        },
+      },
+    },
+  };
+  harness.dispatcher.registerModule(module);
+  return payloads;
+}
+
+/** Record the enriched contexts the "close" hook point receives. */
+function recordCloseInputs(harness: TestHarness): CloseHookInput[] {
+  const inputs: CloseHookInput[] = [];
+  const module: IntentModule = {
+    name: "test",
+    hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        close: {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
+            inputs.push(ctx as CloseHookInput);
+            return { result: {} };
+          },
+        },
+      },
+    },
+  };
+  harness.dispatcher.registerModule(module);
+  return inputs;
+}
+
 describe("CloseProjectOperation", () => {
   it("test 9: closes project and tears down workspaces", async () => {
     const harness = createTestHarness();
@@ -446,7 +487,7 @@ describe("CloseProjectOperation", () => {
   });
 
   it("test 10: close with removeLocalRepo deletes cloned dir", async () => {
-    const harness = createTestHarness({ withRemoteUrl: true });
+    const harness = createTestHarness({ withRemoteUrl: true, emptyProject: true });
     const intent = buildCloseIntent({ removeLocalRepo: true });
 
     await harness.dispatcher.dispatch(intent);
@@ -455,14 +496,16 @@ describe("CloseProjectOperation", () => {
     expect(harness.state.deletedProjectDirectories).toContain(PROJECT_PATH);
   });
 
-  it("test 11: close with removeLocalRepo skips for local projects", async () => {
-    const harness = createTestHarness({ noRemoteUrl: true });
-    const intent = buildCloseIntent({ removeLocalRepo: true });
+  it("test 11: close with removeLocalRepo reaches the close hook for local projects", async () => {
+    const harness = createTestHarness({ noRemoteUrl: true, emptyProject: true });
+    const closeInputs = recordCloseInputs(harness);
 
-    await harness.dispatcher.dispatch(intent);
+    await harness.dispatcher.dispatch(buildCloseIntent({ removeLocalRepo: true }));
 
-    // Directory NOT deleted (no remoteUrl)
-    expect(harness.state.deletedProjectDirectories).toHaveLength(0);
+    // The flag now means "delete the project's own directory" for both kinds;
+    // which module acts on it is decided by remoteUrl, not by the operation.
+    expect(closeInputs.at(-1)).toMatchObject({ removeLocalRepo: true });
+    expect(closeInputs.at(-1)?.remoteUrl).toBeUndefined();
   });
 
   it("test 12: project:closed event emitted after close", async () => {
@@ -565,27 +608,6 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     return spy;
   }
 
-  /** Record the payloads of full-pipeline deletes (the "delete" hook only
-   *  runs when removeWorktree is true). */
-  function recordFullDeletes(harness: TestHarness): DeleteWorkspaceIntent["payload"][] {
-    const payloads: DeleteWorkspaceIntent["payload"][] = [];
-    const module: IntentModule = {
-      name: "test",
-      hooks: {
-        [DELETE_WORKSPACE_OPERATION_ID]: {
-          delete: {
-            handler: async (ctx: HookContext) => {
-              payloads.push((ctx.intent as DeleteWorkspaceIntent).payload);
-              return { result: {} };
-            },
-          },
-        },
-      },
-    };
-    harness.dispatcher.registerModule(module);
-    return payloads;
-  }
-
   it("confirm receives the resolved workspaces and remoteUrl", async () => {
     const harness = createTestHarness({ withRemoteUrl: true });
     const confirm = registerConfirm(harness, () => ({}));
@@ -682,6 +704,22 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     });
   });
 
+  it("a confirmed removeLocalRepo forces full deletion even without removeAll", async () => {
+    const harness = createTestHarness({ withRemoteUrl: true });
+    // The dialog's forced-checked remove-all box displays this rule; the
+    // operation is what enforces it, so a confirm handler that contributes
+    // only removeLocalRepo still gets the worktrees removed.
+    registerConfirm(harness, () => ({ removeLocalRepo: true }));
+    const fullDeletes = recordFullDeletes(harness);
+
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    expect(fullDeletes.map((p) => p.workspacePath)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+    for (const payload of fullDeletes) {
+      expect(payload).toMatchObject({ removeWorktree: true, keepBranch: false });
+    }
+  });
+
   it("non-interactive dispatches never run the confirm hook", async () => {
     const harness = createTestHarness();
     const confirm = registerConfirm(harness, () => ({ canceled: true }));
@@ -689,6 +727,68 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     await harness.dispatcher.dispatch(buildCloseIntent());
 
     expect(confirm).not.toHaveBeenCalled();
+    expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
+  });
+});
+
+describe("CloseProjectOperation.removeLocalRepo without a confirm", () => {
+  /**
+   * A non-interactive dispatch has no confirm hook, so nothing can raise
+   * removeAll — deleting the directory would strand every worktree with no
+   * way to clean it up. Both project kinds refuse it; for remotes that is a
+   * behaviour change, replacing a silent orphaning.
+   */
+  for (const [kind, options] of [
+    ["local", { noRemoteUrl: true }],
+    ["remote", { withRemoteUrl: true }],
+  ] as const) {
+    it(`rejects a ${kind} project that still has workspaces`, async () => {
+      const harness = createTestHarness(options);
+
+      const closeFailed: DomainEvent[] = [];
+      harness.dispatcher.subscribe(EVENT_PROJECT_CLOSE_FAILED, (e) => closeFailed.push(e));
+
+      await expect(
+        harness.dispatcher.dispatch(buildCloseIntent({ removeLocalRepo: true }))
+      ).rejects.toThrow(/still has 2 workspaces/);
+
+      // Nothing was torn down, and the idempotency guard is reset so the
+      // caller can retry without the flag.
+      expect(harness.state.deregisteredProjects).toHaveLength(0);
+      expect(harness.state.destroyedViews).toHaveLength(0);
+      expect(harness.state.deletedProjectDirectories).toHaveLength(0);
+      expect(closeFailed).toHaveLength(1);
+    });
+
+    it(`allows a ${kind} project with no workspaces`, async () => {
+      const harness = createTestHarness({ ...options, emptyProject: true });
+      const closeInputs = recordCloseInputs(harness);
+
+      await harness.dispatcher.dispatch(buildCloseIntent({ removeLocalRepo: true }));
+
+      expect(closeInputs.at(-1)).toMatchObject({ removeLocalRepo: true });
+      expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
+    });
+  }
+
+  it("still allows an interactive dispatch with workspaces — the dialog answers for removeAll", async () => {
+    const harness = createTestHarness({ noRemoteUrl: true });
+    const module: IntentModule = {
+      name: "test",
+      hooks: {
+        [CLOSE_PROJECT_OPERATION_ID]: {
+          confirm: { handler: async () => ({ result: { removeLocalRepo: true } }) },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(module);
+    const fullDeletes = recordFullDeletes(harness);
+
+    await harness.dispatcher.dispatch(
+      buildCloseIntent({ removeLocalRepo: true, interactive: true })
+    );
+
+    expect(fullDeletes).toHaveLength(2);
     expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
   });
 });

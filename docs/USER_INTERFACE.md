@@ -365,9 +365,10 @@ There are two ways to open a project:
 1. Hover project row → [×] button becomes visible
 2. Click [×]
 3. **Confirmation dialog** opens showing workspace count
-4. Two options:
+4. Three outcomes:
    - **Close Project** (default): Workspaces remain on disk
-   - **Remove & Close** (checkbox): All workspaces AND their branches are deleted, then project closes
+   - **Remove & Close** (remove-all checkbox): All workspaces AND their branches are deleted, then project closes
+   - **Delete & Close** (repository checkbox): The project's own directory goes too
 
 **Close Project Dialog (local project):**
 
@@ -381,11 +382,19 @@ There are two ways to open a project:
 │                                                              │
 │  ☐ Remove all workspaces and their branches                  │
 │                                                              │
+│  ☐ Remove project directory from disk                        │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ ⚠ This will permanently delete /home/you/code/foo and  │  │ ← Only shown when
+│  │   all workspaces, including any uncommitted changes.   │  │   the remove-repo
+│  └────────────────────────────────────────────────────────┘  │   box is checked
+│                                                              │
 ├──────────────────────────────────────────────────────────────┤
 │                    [Cancel]  [Close Project]                 │
 │                              ↑                               │
-│                    Button changes to "Remove & Close"        │
-│                    when checkbox is checked                  │
+│                    "Remove & Close" when remove-all is       │
+│                    checked, "Delete & Close" when the        │
+│                    directory is being removed                │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -399,30 +408,40 @@ There are two ways to open a project:
 │  This project has 3 workspaces that will remain on disk      │
 │  after closing.                                              │
 │                                                              │
-│  ☐ Remove all workspaces and their branches                  │
+│  ☑ Remove all workspaces and their branches      (disabled)  │
 │                                                              │
-│  ☐ Delete cloned repository and all local files              │
+│  ☐ Keep cloned repository                                    │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │ ⚠ This will permanently delete the cloned repository   │  │ ← Only shown when
-│  │   and all workspaces. You can clone it again from:     │  │   delete checkbox
-│  │   https://github.com/org/repo.git                      │  │   is checked
+│  │   and all workspaces, including any uncommitted        │  │   the repository
+│  │   changes. You can clone it again from:                │  │   is being deleted
+│  │   https://github.com/org/repo.git                      │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                              │
 ├──────────────────────────────────────────────────────────────┤
 │                    [Cancel]  [Delete & Close]                │
 │                              ↑                               │
-│                    Button changes to "Delete & Close"        │
-│                    when delete checkbox is checked           │
+│                    Button changes to "Close Project" when    │
+│                    "Keep cloned repository" is checked       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Delete checkbox behavior (cloned projects only):**
+**Repository checkbox behavior:**
 
-- Only visible for projects that have a `remoteUrl` (were cloned from URL)
-- Checking this checkbox also auto-checks "Remove all workspaces"
-- The "Remove all workspaces" checkbox becomes disabled when delete is checked
-- Shows a warning with the original clone URL so users can re-clone if needed
+- Every project gets one, with a polarity that matches its default. A clone
+  lives in app-data and can be fetched again, so it defaults to being deleted
+  ("Keep cloned repository" unchecked). A local directory is the user's own
+  working copy with no recovery route, so it defaults to surviving ("Remove
+  project directory from disk" unchecked).
+- Deleting the repository forces "Remove all workspaces" on and disables it —
+  the worktrees would otherwise be orphaned, and `git worktree remove` can only
+  run while the repository still exists. Withdrawing the deletion withdraws
+  that implied remove-all with it.
+- The warning names the recovery route where there is one (the clone URL) and
+  the directory path where there is not.
+- The local box renders even when the project has no workspaces at all; the
+  remove-all box does not.
 
 **Post-close behavior:**
 
