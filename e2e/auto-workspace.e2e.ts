@@ -251,14 +251,33 @@ test("a workspaces source creates a worktree and records it", async () => {
   expect(trackedEntries()["ws-src/1"]?.workspaceName).toBe("tracked-1");
 });
 
-test("the tracked item disappearing forgets the entry but keeps the workspace", async () => {
+test("the tracked item disappearing keeps the entry while the workspace is there", async () => {
   const ui = app().uiPage();
 
   rmSync(wsArmed, { force: true }); // the source no longer lists it
 
+  // Retiring the entry on the item's word alone is what stranded a live
+  // workspace: a cmd that returns a short list for one cycle — `gh` does, with
+  // exit 0, empty stderr and valid JSON — dropped an entry whose worktree was
+  // still there, and every later poll then tried to recreate it, collided on the
+  // branch, recorded nothing and tried again a minute later, forever.
+  //
+  // Asserted from the log because "kept" and "not looked at yet" are the same
+  // observation from outside: this waits for the module to have made the
+  // decision, rather than for time to pass.
   await expect
-    .poll(() => Object.keys(trackedEntries()), { timeout: 30_000 })
-    .not.toContain("ws-src/1");
+    .poll(
+      () =>
+        appLogEntries().filter(
+          (entry) =>
+            entry.message === "Keeping auto-workspace entry (workspace still exists)" &&
+            entry.context?.["key"] === "ws-src/1"
+        ).length,
+      { timeout: 30_000 }
+    )
+    .toBeGreaterThan(0);
+
+  expect(Object.keys(trackedEntries())).toContain("ws-src/1");
   // There is no auto-deletion: the worktree and its row outlive the item.
   expect(existsSync(join(workspacesDir(), "tracked-1"))).toBe(true);
   await expect(workspaceRow(ui, "tracked-1")).toBeVisible();
