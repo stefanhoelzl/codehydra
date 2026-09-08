@@ -58,6 +58,52 @@ describe("ErrorNotificationModule", () => {
     });
   });
 
+  describe("a failure that repeats", () => {
+    const failure = (workspaceName: string, error: string): WorkspaceCreateFailedEvent => ({
+      type: EVENT_WORKSPACE_CREATE_FAILED,
+      payload: { workspaceName, projectPath: projPath("/projects/test"), error },
+    });
+
+    const emit = async (event: WorkspaceCreateFailedEvent): Promise<void> => {
+      await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
+    };
+
+    it("collapses into one card carrying the count", async () => {
+      // What an orphaned auto-workspace item did: the same branch collision,
+      // once a minute, for hours. 98 was a real figure from a bug report.
+      for (let i = 0; i < 98; i++) {
+        await emit(failure("pr/446/mcxn547-gpio", "Branch is already checked out"));
+      }
+
+      expect(notificationManager.notifications).toHaveLength(1);
+      expect(notificationManager.lastNotification!.count).toBe(98);
+    });
+
+    it("gives a different error its own card", async () => {
+      await emit(failure("pr/446/mcxn547-gpio", "Branch is already checked out"));
+      await emit(failure("pr/446/mcxn547-gpio", "Invalid workspace name"));
+
+      expect(notificationManager.notifications).toHaveLength(2);
+    });
+
+    it("gives a different workspace its own card", async () => {
+      await emit(failure("pr/445/ifc-50-ksz9893", "Branch is already checked out"));
+      await emit(failure("pr/446/mcxn547-gpio", "Branch is already checked out"));
+
+      expect(notificationManager.notifications).toHaveLength(2);
+    });
+
+    it("goes away on one dismiss, not ninety-eight", async () => {
+      for (let i = 0; i < 98; i++) {
+        await emit(failure("pr/446/mcxn547-gpio", "Branch is already checked out"));
+      }
+
+      notificationManager.emitEvent(0, { actionId: "dismiss" });
+
+      expect(notificationManager.notifications[0]!.closed).toBe(true);
+    });
+  });
+
   it("should close notification when user dismisses it", async () => {
     const event: WorkspaceCreateFailedEvent = {
       type: EVENT_WORKSPACE_CREATE_FAILED,

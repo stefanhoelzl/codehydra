@@ -40,6 +40,17 @@
     }
     return null;
   }
+
+  /**
+   * Badge label for a card several identical opens collapsed into, or null for
+   * an ordinary one — a "1" on every error in the app would be pure noise.
+   * Capped so the badge stays inside the 20px icon cell; the count itself is
+   * exact, only the label saturates.
+   */
+  function repeatLabel(count: number | undefined): string | null {
+    if (count === undefined || count < 2) return null;
+    return count > 99 ? "99+" : String(count);
+  }
 </script>
 
 {#if entries.length > 0}
@@ -47,7 +58,12 @@
     {#each entries as entry (entry.id)}
       {@const config = entry.config}
       {@const pct = progressPercent(config)}
-      <div class="notification-entry" role="status" aria-label={config.title}>
+      {@const repeat = repeatLabel(entry.count)}
+      <div
+        class="notification-entry"
+        role="status"
+        aria-label={repeat ? `${config.title} (${repeat})` : config.title}
+      >
         <vscode-divider class="expanded-only"></vscode-divider>
         <div class="notification-row">
           <div class="ch-label-cell notification-label">
@@ -68,6 +84,9 @@
               <vscode-progress-ring class="notification-spinner"></vscode-progress-ring>
             {:else}
               <Icon name={config.type} size={14} />
+            {/if}
+            {#if repeat}
+              <span class="notification-count">{repeat}</span>
             {/if}
           </span>
         </div>
@@ -163,6 +182,25 @@
 
   .notification-indicator {
     opacity: 0.7;
+    position: relative;
+  }
+
+  /* Repeat badge. Rides the type icon's lower-right corner rather than sitting
+     in the label, so it survives the sidebar collapsing to the icon cell —
+     which is exactly where a stack of identical cards was least readable. */
+  .notification-count {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    min-width: 12px;
+    padding: 0 2px;
+    border-radius: 6px;
+    background: var(--ch-badge-background, var(--vscode-badge-background, #4d4d4d));
+    color: var(--ch-badge-foreground, var(--vscode-badge-foreground, #ffffff));
+    font-size: 9px;
+    line-height: 12px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
   }
 
   .dismiss-btn {

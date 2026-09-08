@@ -50,6 +50,14 @@ export interface UiDialog {
 export interface UiNotification {
   readonly id: string;
   readonly config: NotificationConfig;
+  /**
+   * How many opens this card stands for. NotificationManager collapses opens
+   * whose configs are identical, so a condition that repeats produces one card
+   * with a rising count rather than a stack of duplicates. Manager-owned render
+   * state, deliberately not part of NotificationConfig: a caller says what to
+   * show, not how many times it has been said. 1 for an ordinary notification.
+   */
+  readonly count?: number;
 }
 
 /** Display status of a single workspace-deletion operation. */
