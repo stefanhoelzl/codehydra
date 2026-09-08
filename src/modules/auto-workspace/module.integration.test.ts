@@ -66,7 +66,7 @@ import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
-type StateEntry = { workspaceName: string; createdAt: string };
+type StateEntry = { workspaceName: string; createdAt: string; projectPath?: string };
 function entriesOf(state: MockStateService): Record<string, StateEntry> {
   return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry>;
 }
@@ -154,9 +154,11 @@ const getBasesSchemas = {
 class GetBasesOp implements Operation<typeof getBasesSchemas> {
   readonly id = "get-project-bases";
   readonly schemas = getBasesSchemas;
+  readonly dispatched: IntentOf<typeof getBasesSchemas>[] = [];
   async execute(
     ctx: OperationContext<IntentOf<typeof getBasesSchemas>, typeof getBasesSchemas>
   ): Promise<GetProjectBasesResult> {
+    this.dispatched.push(ctx.intent);
     return {
       bases: [],
       projectPath: ctx.intent.payload.projectPath,
@@ -398,6 +400,7 @@ function createSetup(options?: {
     mockConfig,
     openProjectOp,
     openWorkspaceOp,
+    getBasesOp,
     setMetaOp,
     listProjectsOp,
     resolveWsOp,
@@ -468,14 +471,15 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  it("forgets an entry when its item disappears, and recreates on reappearance", async () => {
+  it("forgets an entry when item and workspace are both gone, and recreates on reappearance", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)).toHaveProperty("gh/1");
 
-    cmd.items = []; // item gone
+    // Item gone, and no open project has a workspace by that name either.
+    cmd.items = [];
     await tick();
     expect(entriesOf(state)).not.toHaveProperty("gh/1");
 
@@ -483,6 +487,110 @@ describe("AutoWorkspaceModule Integration", () => {
     await tick();
     expect(entriesOf(state)).toHaveProperty("gh/1");
     expect(openWorkspaceOp.dispatched).toHaveLength(2);
+  });
+
+  it("records the project on the entry it writes", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state } = createSetup({ sources: sourceYaml() });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)["gh/1"]).toMatchObject({
+      workspaceName: "ws-1",
+      projectPath: PROJECT_PATH,
+    });
+  });
+
+  it("keeps an entry when its item vanishes from one poll but the workspace is still there", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp } = createSetup({
+      sources: sourceYaml(),
+    });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+
+    // A truncated cmd result: exit 0, valid JSON, just short. Retiring the entry
+    // here is what stranded a live workspace in a permanent create-and-collide
+    // loop, one attempt a minute, surviving restarts.
+    cmd.items = [];
+    await tick();
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+
+    cmd.items = [{ id: "1" }]; // poll recovers — still tracked, so nothing is recreated
+    await tick();
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
+  });
+
+  it("keeps a legacy entry with no projectPath while some project has that workspace", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, listProjectsOp } = createSetup({
+      sources: sourceYaml(),
+      existingEntries: { "gh/1": { workspaceName: "ws-1", createdAt: "2020-01-01T00:00:00Z" } },
+    });
+    listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+    cmd.items = []; // item absent
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+  });
+
+  it("keeps an entry whose project is not open — closed is unknown, not gone", async () => {
+    vi.useFakeTimers();
+    // project:close tears workspaces down at runtime without touching the disk,
+    // so an absent project says nothing about whether the worktree survived.
+    const { dispatcher, cmd, state } = createSetup({
+      sources: sourceYaml(),
+      existingEntries: {
+        "gh/1": {
+          workspaceName: "ws-1",
+          createdAt: "2020-01-01T00:00:00Z",
+          projectPath: testPath("/home/user/projects/closed").toNative(),
+        },
+      },
+    });
+    cmd.items = [];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+  });
+
+  it("adopts an existing workspace instead of creating, writing only the entry", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp, getBasesOp, setMetaOp } =
+      createSetup({ sources: sourceYaml() });
+    listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(entriesOf(state)["gh/1"]).toMatchObject({
+      workspaceName: "ws-1",
+      projectPath: PROJECT_PATH,
+    });
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    expect(getBasesOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
+    expect(setMetaOp.dispatched).toHaveLength(0); // entry only: no metadata, wake or focus
+  });
+
+  it("adopts rather than colliding forever when an entry is lost but the workspace remains", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp } = createSetup({
+      sources: sourceYaml(),
+    });
+    // The state that shipped in the bug reports: worktree present, entry gone.
+    listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+    openWorkspaceOp.failFor.add("ws-1"); // a create here would collide on the branch
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
+
+    await tick(); // and it stays settled: tracked, so nothing is attempted again
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
   });
 
   it("does not write an entry when creation fails, and retries next tick", async () => {
