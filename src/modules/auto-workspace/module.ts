@@ -14,13 +14,14 @@
  * `mode: workspaces` (the default) — the cmd emits the desired workspace list,
  * and the poll reconciles against it:
  *   - a key already tracked in state is skipped
- *   - a new key creates a workspace (state entry written only on success)
- *   - a tracked key absent from this cycle is forgotten (so a re-appearing item
- *     is recreated)
+ *   - a new key whose name is already taken adopts that workspace (entry only)
+ *   - any other new key creates a workspace (entry written only on success)
+ *   - a tracked key absent from this cycle is forgotten only if its workspace is
+ *     gone too, so a source that returns a short list for one cycle cannot
+ *     orphan a live workspace
  * There is no auto-deletion; a manually deleted workspace's entry simply
  * persists (so it is not recreated while its item is still active) and is
- * forgotten once the item disappears. Name collision on create is the
- * idempotency backstop.
+ * forgotten once the item disappears.
  *
  * `mode: events` — the cmd emits things that happened, and each one fires
  * exactly once. Nothing is tracked in state: the cmd owns dedup (it acks, pops
@@ -100,6 +101,14 @@ import { projectPathSchema, type ProjectPath, type WorkspacePath } from "../../i
 interface StateEntry {
   readonly workspaceName: string;
   readonly createdAt: string;
+  /**
+   * Project the workspace lives in, so the entry can be dereferenced when its
+   * item disappears (see entryWorkspaceExists). Optional: entries written before
+   * this field existed carry none, and a downgrade drops it again — both land in
+   * the same any-project fallback, and both are repaired the next time the entry
+   * is written.
+   */
+  readonly projectPath?: string;
 }
 
 /** Tracking map `${source}/${itemKey}` -> entry, stored under `auto-workspaces`. */
@@ -108,7 +117,8 @@ type AutoWorkspaceEntries = Record<string, StateEntry>;
 function isStateEntry(value: unknown): value is StateEntry {
   if (typeof value !== "object" || value === null) return false;
   const o = value as Record<string, unknown>;
-  return typeof o.workspaceName === "string" && typeof o.createdAt === "string";
+  if (typeof o.workspaceName !== "string" || typeof o.createdAt !== "string") return false;
+  return o.projectPath === undefined || typeof o.projectPath === "string";
 }
 
 function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
@@ -116,7 +126,11 @@ function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
   const out: AutoWorkspaceEntries = {};
   for (const [key, entry] of Object.entries(value)) {
     if (isStateEntry(entry)) {
-      out[key] = { workspaceName: entry.workspaceName, createdAt: entry.createdAt };
+      out[key] = {
+        workspaceName: entry.workspaceName,
+        createdAt: entry.createdAt,
+        ...(entry.projectPath !== undefined && { projectPath: entry.projectPath }),
+      };
     }
   }
   return out;
@@ -164,6 +178,10 @@ function stateKey(sourceName: string, itemKey: string): string {
 function sourceOfKey(key: string): string {
   const slash = key.indexOf("/");
   return slash === -1 ? key : key.slice(0, slash);
+}
+
+function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
+  return { workspaceName, createdAt: new Date().toISOString(), projectPath };
 }
 
 // =============================================================================
@@ -411,11 +429,14 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         key,
         workspaceName: definition.name,
       });
-      return { workspaceName: definition.name, createdAt: new Date().toISOString() };
+      return newEntry(definition.name, projectPath);
     } catch (error) {
-      // No entry written → retried next tick in workspaces mode (name collision,
-      // invalid name, or a transient failure all land here; the intent's
-      // source:"auto-workspace" suppresses a user-facing error notification).
+      // No entry written → retried next tick in workspaces mode. A name that is
+      // already taken no longer reaches here — the caller adopts instead — so
+      // what lands here is a real failure: an invalid name, a branch checked out
+      // in a worktree CodeHydra does not manage, or a transient git error. It
+      // raises a user-facing error notification like any other failed create;
+      // repeats of the same one collapse into a single card with a count.
       deps.logger.warn("Failed to create auto-workspace (will retry)", {
         source: source.name,
         key,
@@ -449,6 +470,41 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       }
     }
     return null;
+  }
+
+  /**
+   * Does the workspace an entry points at still exist?
+   *
+   * This is what makes a truncated poll survivable. A cmd that returns a short
+   * list — `gh` does, with exit 0, empty stderr and valid JSON — would otherwise
+   * retire entries whose worktrees are still there, and every later cycle would
+   * try to recreate them and collide, forever. Nothing a cmd prints can delete a
+   * worktree, so existence is the signal rather than the shape of the response.
+   *
+   * A project that is not open answers "unknown", which counts as existing:
+   * project:close tears workspaces down at runtime without touching the disk, so
+   * an absent project says nothing about whether the worktree survived.
+   *
+   * A legacy entry has no project to look in and falls back to "does any open
+   * project have a workspace by this name". Loose — two projects sharing a
+   * workspace name make such an entry un-forgettable — but it only ever errs
+   * toward keeping an entry, and the entry is rewritten with its project the
+   * next time it is created or adopted.
+   */
+  async function entryWorkspaceExists(entry: StateEntry): Promise<boolean> {
+    const projects = await deps.dispatcher.dispatch<ListProjectsIntent>({
+      type: INTENT_LIST_PROJECTS,
+      payload: {},
+    });
+    if (entry.projectPath === undefined) {
+      return projects.some((project) =>
+        project.workspaces.some((workspace) => workspace.name === entry.workspaceName)
+      );
+    }
+    const target = new Path(entry.projectPath);
+    const project = projects.find((candidate) => target.equals(new Path(candidate.path)));
+    if (!project) return true;
+    return project.workspaces.some((workspace) => workspace.name === entry.workspaceName);
   }
 
   /**
@@ -584,24 +640,52 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
     let changed = false;
 
-    // Forget entries for this source whose item is no longer active.
+    // Forget entries for this source whose item is no longer active — but only
+    // once the workspace is gone too, so one short cmd result cannot orphan a
+    // live workspace into a permanent create-and-collide loop.
     for (const key of Object.keys(entries)) {
-      if (key.startsWith(prefix) && !activeStateKeys.has(key)) {
-        delete entries[key];
-        changed = true;
-        deps.logger.info("Forgot auto-workspace entry (item disappeared)", {
+      if (!key.startsWith(prefix) || activeStateKeys.has(key)) continue;
+      const entry = entries[key];
+      if (entry !== undefined && (await entryWorkspaceExists(entry))) {
+        deps.logger.debug("Keeping auto-workspace entry (workspace still exists)", {
           source: source.name,
           key,
+          workspaceName: entry.workspaceName,
         });
+        continue;
       }
+      delete entries[key];
+      changed = true;
+      deps.logger.info("Forgot auto-workspace entry (item and workspace both gone)", {
+        source: source.name,
+        key,
+      });
     }
 
-    // Create workspaces for new items.
+    // Create workspaces for new items — or adopt, when the name is already taken.
     for (const { key, definition } of newItems) {
       const projectPath = await resolveProjectPath(definition, key);
-      const entry = projectPath
-        ? await createWorkspace(source, key, definition, projectPath)
-        : null;
+      if (!projectPath) continue;
+
+      // An entry can go missing while its workspace stays: a legacy entry the
+      // any-project fallback missed, or a workspace made by hand under an
+      // incoming item's name. Creating would then collide on the branch every
+      // cycle, forever, so take ownership of what is already there instead.
+      // Adopting writes the entry and nothing else — no metadata, no wake, no
+      // focus, and no prompt, which only ever reaches an agent at launch.
+      const existing = await findWorkspaceByName(projectPath, definition.name);
+      if (existing) {
+        entries[key] = newEntry(definition.name, projectPath);
+        changed = true;
+        deps.logger.info("Adopted existing workspace for auto-workspace item", {
+          source: source.name,
+          key,
+          workspaceName: definition.name,
+        });
+        continue;
+      }
+
+      const entry = await createWorkspace(source, key, definition, projectPath);
       if (entry) {
         entries[key] = entry;
         changed = true;
