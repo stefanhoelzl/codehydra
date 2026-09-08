@@ -5,8 +5,10 @@
  * and managing the test environment for boundary testing.
  */
 
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
+import { onTestFinished } from "vitest";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
 import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
@@ -26,6 +28,46 @@ import { OpenCodeClient } from "./client";
  */
 function createDefaultRunner(): ProcessRunner {
   return new ExecaProcessRunner(SILENT_LOGGER);
+}
+
+// ============================================================================
+// Hermetic opencode home
+// ============================================================================
+
+/**
+ * A HOME for every opencode this file spawns that is not the developer's.
+ *
+ * opencode keeps machine-global state: plugins installed with bun under
+ * `~/.config/opencode`, and a SQLite database of sessions, auth and history
+ * under `~/.local/share/opencode`. Inheriting the real HOME means these tests
+ * read and write the same files as every other opencode on the box —
+ * including the agent serving the CodeHydra workspace they are being run
+ * from. CI never notices, because a fresh runner has neither directory and
+ * nothing else running.
+ *
+ * One fixed directory rather than a fresh one per run: it is equally isolated
+ * from the developer, it cannot accumulate (there is exactly one, forever),
+ * and opencode's plugin install is paid once per machine instead of once per
+ * run. Two suites running at the same time share it, which is what they
+ * already did through the real HOME, so nothing is worse than before.
+ */
+const ISOLATED_HOME = join(tmpdir(), "codehydra-opencode-boundary-home");
+
+function isolatedHomeEnv(): NodeJS.ProcessEnv {
+  const xdg = {
+    XDG_CONFIG_HOME: join(ISOLATED_HOME, ".config"),
+    XDG_DATA_HOME: join(ISOLATED_HOME, ".local", "share"),
+    XDG_CACHE_HOME: join(ISOLATED_HOME, ".cache"),
+    XDG_STATE_HOME: join(ISOLATED_HOME, ".local", "state"),
+  };
+  const windows = {
+    APPDATA: join(ISOLATED_HOME, "AppData", "Roaming"),
+    LOCALAPPDATA: join(ISOLATED_HOME, "AppData", "Local"),
+  };
+  for (const dir of [...Object.values(xdg), ...Object.values(windows)]) {
+    mkdirSync(dir, { recursive: true });
+  }
+  return { HOME: ISOLATED_HOME, USERPROFILE: ISOLATED_HOME, ...xdg, ...windows };
 }
 
 /**
@@ -63,6 +105,12 @@ export interface OpencodeProcess {
   readonly pid: number;
   /** Stop the process gracefully */
   stop(): Promise<void>;
+  /**
+   * Whatever the process has written so far, for a failure message. Reads it
+   * without waiting for exit, so it is usable on a server that came up wrong
+   * and is still running.
+   */
+  output(): Promise<string>;
 }
 
 /**
@@ -104,6 +152,17 @@ async function startOpencode(
   // Build environment with clean settings
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // A throwaway HOME, so this server shares no plugin install and no session
+    // database with the machine running the tests. See isolatedHomeEnv().
+    ...isolatedHomeEnv(),
+    // No file watcher. Nothing here tests one — these are HTTP client tests —
+    // and on Linux the watcher takes an inotify instance from a per-user pool
+    // of 128 that CodeHydra itself drains: every workspace's IDE server and
+    // agent holds some. Past the limit opencode answers its first request and
+    // then stops answering at all, so the suite fails with bare vitest
+    // timeouts on exactly the machines it is developed on, while a CI runner
+    // with nothing else running stays green.
+    OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "1",
     // Disable colors/formatting for cleaner output
     NO_COLOR: "1",
     FORCE_COLOR: "0",
@@ -131,12 +190,24 @@ async function startOpencode(
       // Use new kill() API: SIGTERM (5s wait) → SIGKILL (1s wait)
       await proc.kill(5000, 1000);
     },
+    output: async () => {
+      // running=true comes back with whatever was buffered, which is the point.
+      const result = await proc.wait(1000);
+      return [result.stdout, result.stderr].filter((part) => part.length > 0).join("\n");
+    },
   };
 }
 
 // ============================================================================
 // Per-Test Isolation Helper
 // ============================================================================
+
+/**
+ * How long opencode gets to bind its port, as a fraction of the budget the
+ * tests give the whole scenario. The remainder is what is left to report a
+ * startup failure in terms of opencode rather than of vitest.
+ */
+const STARTUP_TIMEOUT_MS = Math.round(CI_TIMEOUT_MS * 0.6);
 
 /**
  * Options for withOpencode helper.
@@ -222,9 +293,43 @@ export async function withOpencode(
 
   let client: OpenCodeClient | null = null;
 
+  let cleanedUp = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    // Reverse order of creation.
+    client?.dispose();
+    await opencodeProcess.stop().catch(() => {});
+    await mockLlm.stop().catch(() => {});
+    await repo.cleanup().catch(() => {});
+  };
+
+  // `finally` alone loses the race with a timeout: vitest abandons the pending
+  // promise, so nothing below it runs and the repo, the server and the mock all
+  // outlive the test — which is how a machine collects dozens of stale
+  // `codehydra-test-*` directories and a drift of orphaned opencode processes.
+  // onTestFinished runs whatever the outcome, and the guard above makes the
+  // second call a no-op.
+  onTestFinished(cleanup);
+
   try {
-    // Wait for opencode to be ready
-    await waitForPort(port, CI_TIMEOUT_MS);
+    // Wait for opencode to be ready.
+    //
+    // A slice of the budget, not all of it: callers give `it` CI_TIMEOUT_MS, so
+    // spending the whole thing here means a server that never binds surfaces as
+    // vitest's bare "Test timed out" with nothing about opencode in it. Failing
+    // first leaves room to say what actually happened, and to say it with the
+    // process's own output.
+    try {
+      await waitForPort(port, STARTUP_TIMEOUT_MS);
+    } catch (error) {
+      const output = await opencodeProcess.output().catch(() => "");
+      throw new Error(
+        `opencode did not start listening on port ${port} within ${STARTUP_TIMEOUT_MS}ms` +
+          (output ? `. Process output:\n${output}` : " (no process output)."),
+        { cause: error }
+      );
+    }
 
     // Create clients
     const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` });
@@ -233,13 +338,9 @@ export async function withOpencode(
     // Run the test
     await fn({ port, sdk, client, cwd: repo.path, mockLlm });
   } finally {
-    // Cleanup in reverse order
-    if (client) {
-      client.dispose();
-    }
-    await opencodeProcess.stop().catch(() => {});
-    await mockLlm.stop().catch(() => {});
-    await repo.cleanup().catch(() => {});
+    // The normal path: free the port and the temp repo now rather than at the
+    // end of the test, so the next scenario starts from a quiet machine.
+    await cleanup();
   }
 }
 
