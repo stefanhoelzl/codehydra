@@ -496,7 +496,11 @@ describe("AutoWorkspaceModule Integration", () => {
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)["gh/1"]).toMatchObject({
       workspaceName: "ws-1",
-      projectPath: PROJECT_PATH,
+      // The entry serializes a ProjectPath, i.e. Path.toString() — forward slashes on
+      // every platform. PROJECT_PATH is toNative(), which is the same string on POSIX
+      // and backslash-separated on Windows, so asserting it here passes locally and
+      // fails in CI.
+      projectPath: projPath(PROJECT_PATH),
     });
   });
 
@@ -568,7 +572,11 @@ describe("AutoWorkspaceModule Integration", () => {
 
     expect(entriesOf(state)["gh/1"]).toMatchObject({
       workspaceName: "ws-1",
-      projectPath: PROJECT_PATH,
+      // The entry serializes a ProjectPath, i.e. Path.toString() — forward slashes on
+      // every platform. PROJECT_PATH is toNative(), which is the same string on POSIX
+      // and backslash-separated on Windows, so asserting it here passes locally and
+      // fails in CI.
+      projectPath: projPath(PROJECT_PATH),
     });
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
     expect(getBasesOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
