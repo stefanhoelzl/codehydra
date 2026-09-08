@@ -700,12 +700,14 @@ const localProjectModule = createLocalProjectModule({
   gitWorktreeProvider,
   ui: presentationModule,
   gitClient,
+  logger: lifecycleLogger,
 });
 const remoteProjectModule = createRemoteProjectModule({
   fs: fileSystemLayer,
   gitClient,
   pathProvider,
   logger: lifecycleLogger,
+  ui: presentationModule,
 });
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,

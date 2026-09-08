@@ -30,6 +30,8 @@ import type {
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { streamProgress } from "../intents/lib/hook-helpers";
 import type { CloseHookInput, CloseHookResult } from "../intents/close-project";
+import type { UiPresenter } from "./presentation/presentation-module";
+import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 
 // =============================================================================
@@ -60,8 +62,9 @@ export function createRemoteProjectModule(deps: {
   readonly gitClient: Pick<IGitClient, "clone">;
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly logger: Logger;
+  readonly ui: Pick<UiPresenter, "notification">;
 }): IntentModule {
-  const { fs, gitClient, pathProvider, logger } = deps;
+  const { fs, gitClient, pathProvider, logger, ui } = deps;
 
   return {
     name: "remote-project",
@@ -148,8 +151,28 @@ export function createRemoteProjectModule(deps: {
             }
 
             // Delete the clone directory (parent of gitPath, e.g. remotes/<url-hash>/)
+            //
+            // Best-effort, and it says so on failure: by now the project is
+            // out of state and its workspaces are gone, so throwing would
+            // leave the app inconsistent without saving the clone. Matches
+            // the local branch of removeLocalRepo in LocalProjectModule —
+            // one flag, one failure story.
             const cloneDir = nodePath.dirname(new Path(projectPath).toString());
-            await fs.rm(cloneDir, { recursive: true, force: true });
+            try {
+              await fs.rm(cloneDir, { recursive: true, force: true });
+            } catch (error: unknown) {
+              const message = getErrorMessage(error);
+              logger.warn("Failed to remove clone directory", { cloneDir, error: message });
+              const handle = ui.notification({
+                type: "error",
+                title: "Could not remove the cloned repository",
+                message: `${cloneDir} is still on disk: ${message}`,
+                dismissible: true,
+              });
+              handle.onEvent(() => {
+                handle.close();
+              });
+            }
 
             return { result: {} };
           },

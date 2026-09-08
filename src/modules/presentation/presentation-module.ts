@@ -294,24 +294,36 @@ const AGENT_NONE: AgentStatus = { type: "none" };
 /** User-driven state of the close-project confirmation dialog. */
 interface CloseConfirmState {
   removeAll: boolean;
+  /** Remote only — "Keep cloned repository", unchecked by default (delete it). */
   keepRepo: boolean;
+  /** Local only — "Remove project directory from disk", unchecked by default (keep it). */
+  removeRepo: boolean;
 }
 
 /**
- * Build the close confirmation DialogConfig. Remote projects delete the
- * cloned repository by default ("Keep cloned repository" unchecked), which
- * implies removing all workspaces — the remove-all checkbox is then forced
- * checked and disabled. Both checkboxes opt into change events and the
- * backend echoes its model on every update (the checkbox adopt-once
- * contract).
+ * Build the close confirmation DialogConfig.
+ *
+ * Deleting the repository directory implies removing all workspaces — their
+ * worktrees would otherwise be orphaned — so the remove-all checkbox is then
+ * forced checked and disabled. The polarity differs by project kind and the
+ * asymmetry is deliberate: a clone lives in app-data and can be fetched
+ * again, so it defaults to being deleted ("Keep cloned repository"
+ * unchecked); a local directory is the user's own working copy with no
+ * recovery route, so it defaults to surviving ("Remove project directory
+ * from disk" unchecked). The local box also renders when the project has no
+ * workspaces at all, which the remove-all box does not.
+ *
+ * Every checkbox opts into change events and the backend echoes its model on
+ * every update (the checkbox adopt-once contract).
  */
 function buildCloseConfirmConfig(
   state: CloseConfirmState,
   workspaceCount: number,
-  remoteUrl: string | undefined
+  remoteUrl: string | undefined,
+  projectPath: string
 ): DialogConfig {
   const isRemote = remoteUrl !== undefined;
-  const shouldDeleteRepo = isRemote && !state.keepRepo;
+  const shouldDeleteRepo = isRemote ? !state.keepRepo : state.removeRepo;
   const removeAll = state.removeAll || shouldDeleteRepo;
 
   const sections: DialogSection[] = [{ type: "text", content: "Close Project", style: "heading" }];
@@ -346,6 +358,26 @@ function buildCloseConfirmConfig(
         content:
           "This will permanently delete the cloned repository and all workspaces, " +
           `including any uncommitted changes. You can clone it again from: ${remoteUrl}`,
+        style: "warning",
+      });
+    }
+  } else {
+    sections.push({
+      type: "checkbox",
+      id: "remove-repo",
+      label: "Remove project directory from disk",
+      value: state.removeRepo,
+      changeEvent: true,
+    });
+    if (shouldDeleteRepo) {
+      // The path is what the user has to verify — a local project has no
+      // remote URL to offer as the recovery route the clone warning names.
+      sections.push({
+        type: "text",
+        content:
+          `This will permanently delete ${projectPath}` +
+          `${workspaceCount > 0 ? " and all workspaces" : ""}, ` +
+          "including any uncommitted changes.",
         style: "warning",
       });
     }
@@ -1793,15 +1825,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /**
    * The "confirm" hook on project:close (interactive dispatches only): parks
    * the dispatch on the close confirmation dialog. Checkbox changes round-trip
-   * through the backend model (interlock: keeping the cloned repository
-   * unchecks remove-all; deleting it forces remove-all on).
+   * through the backend model (interlock: deleting the repository directory
+   * forces remove-all on; withdrawing that deletion withdraws the implied
+   * remove-all with it).
    */
   async function confirmClose(ctx: HookContext): Promise<HookOutput<CloseConfirmHookResult>> {
     const input = ctx as CloseConfirmHookInput;
     const isRemote = input.remoteUrl !== undefined;
-    const state: CloseConfirmState = { removeAll: false, keepRepo: false };
+    const state: CloseConfirmState = { removeAll: false, keepRepo: false, removeRepo: false };
+    const projectPath = input.projectPath.toString();
     const buildConfig = (): DialogConfig =>
-      buildCloseConfirmConfig(state, input.workspaces.length, input.remoteUrl);
+      buildCloseConfirmConfig(state, input.workspaces.length, input.remoteUrl, projectPath);
 
     const handle = dialogs.open(buildConfig());
     const unsubscribe = handle.onChange((change) => {
@@ -1813,6 +1847,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           // Keeping the repository withdraws the implied remove-all.
           state.removeAll = false;
         }
+      } else if (change.fieldId === "remove-repo") {
+        state.removeRepo = change.data["remove-repo"] === "true";
+        if (!state.removeRepo) {
+          // Same withdrawal, positive polarity: unchecking the deletion takes
+          // the remove-all it forced on back with it.
+          state.removeAll = false;
+        }
       }
       handle.update(buildConfig());
     });
@@ -1820,7 +1861,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     try {
       const event = await handle.nextEvent();
       if (event.kind !== "dismiss" && event.actionId === "close") {
-        const shouldDeleteRepo = isRemote && !state.keepRepo;
+        const shouldDeleteRepo = isRemote ? !state.keepRepo : state.removeRepo;
         return {
           result: {
             removeAll: state.removeAll || shouldDeleteRepo,

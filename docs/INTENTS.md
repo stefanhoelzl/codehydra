@@ -510,9 +510,12 @@ After the hooks, the operation dispatches `workspace:open` per discovered worksp
 
 The `close-project` operation uses these hook modules:
 
-- **close**: ProjectCloseManagerModule (dispose provider, delete cloned dir if removeLocalRepo), ProjectCloseRegistryModule (remove from state + store)
+- **confirm** (interactive dispatches only): the presenter parks the dispatch on the close confirmation dialog, which may cancel or contribute `removeAll`/`removeLocalRepo`
+- **close**: LocalProjectModule (remove from state + store; delete the project's own directory when `removeLocalRepo` and there is no `remoteUrl`), RemoteProjectModule (delete the clone directory when `removeLocalRepo` and there is a `remoteUrl`)
 
 Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
+
+`removeLocalRepo` means "delete the project's own directory" for both project kinds, and the operation enforces `removeAll ||= removeLocalRepo`: deleting the repository orphans every worktree, and `git worktree remove` can only run while the repository still exists. A **non-interactive** dispatch has no confirm hook to establish `removeAll`, so `removeLocalRepo` with any workspace present is rejected outright (a thrown `Error`, so `project:close-failed` fires and the idempotency guard resets) rather than silently orphaning them.
 
 The `app-start` operation runs these hook points in sequence:
 

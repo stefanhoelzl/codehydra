@@ -93,15 +93,20 @@ export function appEntries(deps: EntryDeps, logger: Logger): readonly AnyOperati
     description: "Close a project and tear down its workspaces.",
     instructions:
       "Closing releases the project's workspaces at runtime; it does not delete their worktrees. " +
-      "Accepts a project name or path. Pass removeLocalRepo to also delete the clone of a " +
-      "project that was cloned from a URL.",
+      "Accepts a project name or path. Pass removeLocalRepo to also delete the project's own " +
+      "directory — the clone for a project opened from a URL, the working copy for a local one. " +
+      "That fails unless the project has no workspaces left, because deleting the directory " +
+      "would orphan their worktrees and nothing here can confirm removing them; delete the " +
+      "workspaces first, or close the project from the app's Close Project dialog.",
     input: z.object({
       project: z.string().min(1).describe("Project name or path to close"),
       removeLocalRepo: z
         .boolean()
         .optional()
         .default(false)
-        .describe("Also delete the local clone of a project cloned from a URL"),
+        .describe(
+          "Also delete the project's own directory from disk (rejected while it has workspaces)"
+        ),
     }),
     requiresWorkspace: false,
     handler: async (_ctx, input) => {

@@ -57,6 +57,8 @@ import type {
 import type { IntentModule } from "../intents/lib/module";
 import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
+import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { projectDirName } from "../boundaries/platform/paths";
 import nodePath from "path";
 import { projPath, testPath } from "../shared/test-fixtures";
@@ -82,6 +84,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
   dialogManager: ReturnType<typeof createMockDialogManager>;
   gitClient: LocalProjectModuleDeps["gitClient"];
+  notifications: ReturnType<typeof createMockNotificationManager>;
 } {
   const fs = createFileSystemMock({
     entries: {
@@ -95,6 +98,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
   };
 
   const dialog = createMockDialogManager();
+  const notifications = createMockNotificationManager();
 
   const gitClient = {
     isRepositoryRoot: vi.fn().mockResolvedValue(true),
@@ -106,13 +110,15 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
       projectsDir: PROJECTS_DIR,
       fs,
       gitWorktreeProvider,
-      ui: dialog.ui,
+      ui: { ...dialog.ui, ...notifications.ui },
       gitClient,
+      logger: SILENT_LOGGER,
     },
     fs,
     gitWorktreeProvider,
     dialogManager: dialog,
     gitClient,
+    notifications,
   };
 }
 
@@ -155,10 +161,12 @@ interface TestSetup {
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
   dialogManager: ReturnType<typeof createMockDialogManager>;
   gitClient: LocalProjectModuleDeps["gitClient"];
+  notifications: ReturnType<typeof createMockNotificationManager>;
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
-  const { deps, fs, gitWorktreeProvider, dialogManager, gitClient } = createMockDeps(fsOverrides);
+  const { deps, fs, gitWorktreeProvider, dialogManager, gitClient, notifications } =
+    createMockDeps(fsOverrides);
 
   const module = createLocalProjectModule(deps);
 
@@ -173,6 +181,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
     gitWorktreeProvider,
     dialogManager,
     gitClient,
+    notifications,
   };
 }
 
@@ -612,6 +621,77 @@ describe("LocalProjectModule Integration", () => {
       const dirName = projectDirName(new Path(PROJECT_PATH).toString());
       const configDir = nodePath.join(PROJECTS_DIR, dirName);
       expect(setup.fs.$.entries.has(new Path(configDir).toString())).toBe(false);
+    });
+
+    it("deletes the project's own directory for a local project with removeLocalRepo", async () => {
+      const setup = createTestSetup({
+        entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
+      });
+      writeConfig(setup.fs, PROJECT_PATH);
+      await setup.openHooks.collect("register", {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: projPath(new Path(PROJECT_PATH).toString()),
+      } satisfies RegisterHookInput);
+
+      const { errors } = await setup.closeHooks.collect("close", {
+        intent: closeIntent(PROJECT_PATH),
+        projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        removeLocalRepo: true,
+      } satisfies CloseHookInput);
+
+      expect(errors).toHaveLength(0);
+      expect(setup.fs.$.entries.has(new Path(PROJECT_PATH).toString())).toBe(false);
+      // App-data still goes through the gentle removal, not remote's force-rm:
+      // config.json is unlinked and the now-empty dirs collapse.
+      const configDir = nodePath.join(
+        PROJECTS_DIR,
+        projectDirName(new Path(PROJECT_PATH).toString())
+      );
+      expect(
+        setup.fs.$.entries.has(new Path(nodePath.join(configDir, "config.json")).toString())
+      ).toBe(false);
+    });
+
+    it("leaves the directory alone for a local project without removeLocalRepo", async () => {
+      const setup = createTestSetup({
+        entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
+      });
+      writeConfig(setup.fs, PROJECT_PATH);
+
+      await setup.closeHooks.collect("close", {
+        intent: closeIntent(PROJECT_PATH),
+        projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        removeLocalRepo: false,
+      } satisfies CloseHookInput);
+
+      expect(setup.fs.$.entries.has(new Path(PROJECT_PATH).toString())).toBe(true);
+    });
+
+    it("reports a failed directory removal instead of failing the close", async () => {
+      const setup = createTestSetup({
+        entries: { [new Path(PROJECT_PATH).toNative()]: directory() },
+      });
+      writeConfig(setup.fs, PROJECT_PATH);
+      const projectPathStr = new Path(PROJECT_PATH).toString();
+      setup.fs.rm = vi.fn().mockImplementation(async (target: string) => {
+        if (new Path(target).toString() === projectPathStr) {
+          throw new Error("EACCES: permission denied");
+        }
+      });
+
+      const { errors } = await setup.closeHooks.collect("close", {
+        intent: closeIntent(PROJECT_PATH),
+        projectPath: projPath(projectPathStr),
+        removeLocalRepo: true,
+      } satisfies CloseHookInput);
+
+      // The close still succeeds — by now the project is out of state and its
+      // workspaces are gone, so throwing would only leave the app inconsistent.
+      expect(errors).toHaveLength(0);
+      const notification = setup.notifications.lastNotification;
+      expect(notification?.opened).toMatchObject({ type: "error", dismissible: true });
+      expect(notification?.opened.message).toContain(projectPathStr);
+      expect(notification?.opened.message).toContain("EACCES");
     });
   });
 

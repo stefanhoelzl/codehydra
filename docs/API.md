@@ -734,6 +734,7 @@ $ ch ws delete --keep-branch
 $ ch project open .                  # a path, or a git URL to clone
 $ ch project list
 $ ch project close ohi               # by name
+$ ch project close ohi --remove-local-repo   # also delete its directory (no workspaces left)
 $ ch ws notify "build finished" --level warning
 $ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
 ```
@@ -981,7 +982,14 @@ const unsubscribe = on("workspace:switched", (event) => {
 
 ```typescript
 interface ProjectCloseOptions {
-  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
+  /**
+   * If true, delete the project's own directory from disk — the clone for a
+   * project opened from a URL, the user's own working copy for a local one.
+   * Implies removing all workspaces (their worktrees would otherwise be
+   * orphaned), which only the close confirmation dialog can establish: a
+   * dispatch with no dialog behind it is rejected while the project still has
+   * workspaces.
+   */
   removeLocalRepo?: boolean;
 }
 ```
