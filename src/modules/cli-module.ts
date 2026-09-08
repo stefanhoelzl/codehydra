@@ -121,6 +121,9 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
                 // The plugin server failed to start. Clearing the published
                 // details is what stops `ch` from attempting a stale port and
                 // reporting a confusing connection error instead of "not running".
+                // Port first here, mirroring the publish order: withdrawing the
+                // barrier before what it guards means a reader never sees a
+                // live port with no token behind it.
                 await portState.set(0);
                 await tokenState.set(null);
                 logger.warn("Plugin server did not start; the ch CLI will report it as offline");
@@ -132,8 +135,16 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               token = randomBytes(32).toString("hex");
 
               try {
-                await portState.set(pluginPort);
+                // Token first, port last. Each set() persists state.json on its
+                // own, so the two writes are visible to a reader separately —
+                // and `ch` reads the file once and requires both, reporting
+                // "CodeHydra does not appear to be running" if either is
+                // missing. Writing the port last makes it the commit barrier:
+                // a reader that sees a port has already been able to see the
+                // token. The reverse order left a window, tens of milliseconds
+                // wide on a loaded machine, in which a healthy app looked dead.
                 await tokenState.set(token);
+                await portState.set(pluginPort);
                 logger.debug("Published CLI connection details", { port: pluginPort });
               } catch (error) {
                 // Not fatal: the app runs fine, only `ch` cannot find it.
@@ -157,6 +168,8 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               // the truth, which is that CodeHydra is not running.
               token = null;
               try {
+                // Port first, the mirror of the publish order: clearing the
+                // barrier before the token it guards.
                 await portState.set(0);
                 await tokenState.set(null);
               } catch (error) {

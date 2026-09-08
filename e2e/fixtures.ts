@@ -435,7 +435,19 @@ export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void
   while (Date.now() < deadline) {
     try {
       const state = JSON.parse(readFileSync(statePath, "utf-8")) as Record<string, unknown>;
-      if (typeof state["plugin.port"] === "number" && state["plugin.port"] > 0) return;
+      // Both fields, the same pair `ch` requires — not the port alone. The app
+      // writes them in two separate persists, so a reader can catch the file
+      // between them; the port is written last precisely so that cannot happen,
+      // and checking both here keeps this honest if that order ever changes.
+      const token = state["plugin.token"];
+      if (
+        typeof state["plugin.port"] === "number" &&
+        state["plugin.port"] > 0 &&
+        typeof token === "string" &&
+        token.length > 0
+      ) {
+        return;
+      }
     } catch {
       // Not written yet, or written but not yet complete.
     }
