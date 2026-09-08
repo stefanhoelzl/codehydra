@@ -10,7 +10,9 @@
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
+import type { StateService } from "../boundaries/platform/state-service";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createCliModule, CLI_SCRIPTS } from "./cli-module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -47,6 +49,37 @@ async function startWith(pluginPort: number | null) {
 
   await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
   return { state, handle };
+}
+
+/**
+ * A state service that records the store after each individual write.
+ *
+ * Every `set()` persists state.json on its own, so each of these snapshots is a
+ * state a concurrent reader — `ch`, or the e2e fixture — can actually observe.
+ * Asserting on them is what pins the publish order down; asserting only on the
+ * final state cannot tell a safe order from an unsafe one.
+ */
+function createObservingState(): {
+  state: MockStateService;
+  snapshots: Record<string, unknown>[];
+} {
+  const state = createMockState();
+  const snapshots: Record<string, unknown>[] = [];
+  const register = state.register.bind(state) as StateService["register"];
+  const observing: MockStateService = {
+    ...state,
+    register: ((key: string, definition: never) => {
+      const accessor = register(key, definition) as PersistedAccessor<unknown>;
+      return {
+        ...accessor,
+        set: async (value: unknown) => {
+          await accessor.set(value);
+          snapshots.push(state.getEffective());
+        },
+      };
+    }) as StateService["register"],
+  };
+  return { state: observing, snapshots };
 }
 
 /** Drive app:start then app:shutdown against one module instance. */
@@ -110,6 +143,34 @@ describe("CliModule", () => {
       });
 
       expect(handle.token()).toBeNull();
+    });
+
+    it("never leaves a port published without its token", async () => {
+      // `ch` reads state.json once and requires both fields, reporting
+      // "CodeHydra does not appear to be running" if either is missing — so a
+      // moment where the port is live and the token is not is a moment a
+      // healthy app looks dead. The port is therefore written last, and every
+      // observable intermediate state has to respect that.
+      const { state, snapshots } = createObservingState();
+      const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      dispatcher.registerModule(handle.module);
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { pluginPort: 45123 } }),
+        })
+      );
+
+      await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} });
+
+      expect(snapshots.length).toBeGreaterThan(1);
+      for (const snapshot of snapshots) {
+        const port = snapshot["plugin.port"];
+        const token = snapshot["plugin.token"];
+        if (typeof port === "number" && port > 0) {
+          expect(typeof token === "string" && token.length > 0).toBe(true);
+        }
+      }
     });
 
     it("mints a different token each launch", async () => {
