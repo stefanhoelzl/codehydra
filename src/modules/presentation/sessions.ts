@@ -310,10 +310,38 @@ export interface NotificationHandle {
   readonly id: string;
   /** Replace notification config (full state replacement). */
   update(config: NotificationConfig): void;
-  /** Close notification from backend. */
+  /**
+   * Release this opener's hold on the card. Opens that collapsed into one card
+   * each hold it, so the card disappears on the last close, not the first — a
+   * clone finishing must not take another clone's indicator with it. A user
+   * dismiss overrides that and drops the count to one, so the owner's close
+   * finishes the card off.
+   */
   close(): void;
   /** Subscribe to user events. Returns unsubscribe function. */
   onEvent(handler: (event: NotificationUserEvent) => void): () => void;
+}
+
+/**
+ * Identity of a notification, for collapsing repeats.
+ *
+ * Everything the user can tell apart, and nothing else: `progress` is a live
+ * measurement rather than an identity, and including it would rekey a spinner on
+ * every frame. Two callers that describe the same thing the same way are saying
+ * the same thing, so they share a card and a count.
+ *
+ * Structural, so a caller with a distinction its visible text does not carry has
+ * no way to express it — the fix is to put the distinction in the text, as the
+ * clone card does with the URL the user typed.
+ */
+export function dedupKey(config: NotificationConfig): string {
+  return JSON.stringify([
+    config.title,
+    config.message ?? null,
+    config.type,
+    config.dismissible ?? false,
+    config.actions ?? null,
+  ]);
 }
 
 /**
@@ -321,19 +349,51 @@ export interface NotificationHandle {
  * render-ready snapshot. User events arrive via the presenter (notification
  * ui:events) and are routed to handles. Mirrors DialogManager but for
  * lightweight, non-modal sidebar indicators (no surface, single event channel).
+ *
+ * Opens whose configs are identical collapse into one card with a count, so a
+ * condition that repeats does not fill the sidebar with copies of itself.
  */
 export class NotificationManager extends SessionRegistry<UiNotification, NotificationHandleImpl> {
+  /** Open cards by identity, so a repeat collapses instead of stacking. */
+  private readonly byKey = new Map<string, NotificationHandleImpl>();
+
   constructor(notifyChange: () => void, logger?: Logger) {
     super("ntf", notifyChange, logger);
   }
 
   /**
-   * Open a notification. Returns a handle for updates and events.
+   * Open a notification, or collapse into the open card that already says this.
+   *
+   * Returns a handle either way, so a caller cannot tell the difference — which
+   * is the point: a condition that repeats once a minute (an auto-workspace
+   * create that keeps failing) yields one card with a count, not a stack that
+   * fills the sidebar.
    */
   open(config: NotificationConfig): NotificationHandle {
-    return this.register(
-      (id, onRemove) => new NotificationHandleImpl(id, config, this.notifyChange, onRemove)
+    const key = dedupKey(config);
+    const existing = this.byKey.get(key);
+    if (existing) {
+      existing.absorb();
+      return existing;
+    }
+    const handle = this.register(
+      (id, onRemove) =>
+        new NotificationHandleImpl(id, config, key, this.notifyChange, {
+          // Re-file a card whose config changed, so it is matched by what it now
+          // says rather than by what it said when it opened — otherwise a card
+          // that has moved on would still swallow a fresh open of its old text.
+          rekey: (from, to, self) => {
+            if (this.byKey.get(from) === self) this.byKey.delete(from);
+            if (!this.byKey.has(to)) this.byKey.set(to, self);
+          },
+          release: (self) => {
+            if (this.byKey.get(self.key) === self) this.byKey.delete(self.key);
+            onRemove();
+          },
+        })
     );
+    this.byKey.set(key, handle);
+    return handle;
   }
 
   /**
@@ -353,6 +413,12 @@ export class NotificationManager extends SessionRegistry<UiNotification, Notific
   }
 }
 
+/** How the registry re-files and retires a handle as its identity changes. */
+interface NotificationRegistryHooks {
+  rekey(from: string, to: string, self: NotificationHandleImpl): void;
+  release(self: NotificationHandleImpl): void;
+}
+
 /**
  * Internal implementation of NotificationHandle.
  */
@@ -362,37 +428,61 @@ class NotificationHandleImpl implements NotificationHandle, RegistrySession<UiNo
   /** Current render config — read by toSnapshot(). */
   config: NotificationConfig;
 
+  /** Current identity, kept in step with `config` — read by the registry. */
+  key: string;
+
+  /** Opens that collapsed into this card; the card retires when it hits zero. */
+  private count = 1;
+
   private readonly notifyChange: () => void;
-  private readonly onRemove: () => void;
+  private readonly hooks: NotificationRegistryHooks;
   private readonly listeners = new Set<(event: NotificationUserEvent) => void>();
   private isClosed = false;
 
   constructor(
     id: string,
     config: NotificationConfig,
+    key: string,
     notifyChange: () => void,
-    onRemove: () => void
+    hooks: NotificationRegistryHooks
   ) {
     this.id = id;
     this.config = config;
+    this.key = key;
     this.notifyChange = notifyChange;
-    this.onRemove = onRemove;
+    this.hooks = hooks;
   }
 
   toSnapshot(): UiNotification {
-    return { id: this.id, config: this.config };
+    return { id: this.id, config: this.config, count: this.count };
+  }
+
+  /** Another open said exactly this. Take it on rather than stacking a duplicate. */
+  absorb(): void {
+    if (this.isClosed) return;
+    this.count += 1;
+    this.notifyChange();
   }
 
   update(config: NotificationConfig): void {
     if (this.isClosed) return;
     this.config = config;
+    const next = dedupKey(config);
+    this.hooks.rekey(this.key, next, this);
+    this.key = next;
     this.notifyChange();
   }
 
   close(): void {
     if (this.isClosed) return;
+    if (this.count > 1) {
+      // One of several opens is done with this card; the others still hold it.
+      this.count -= 1;
+      this.notifyChange();
+      return;
+    }
     this.isClosed = true;
-    this.onRemove();
+    this.hooks.release(this);
     this.listeners.clear();
     this.notifyChange();
   }
@@ -406,6 +496,12 @@ class NotificationHandleImpl implements NotificationHandle, RegistrySession<UiNo
 
   /** Called by NotificationManager when a user event arrives for this notification. */
   emit(event: NotificationUserEvent): void {
+    if (event.actionId === "dismiss") {
+      // The user is done with the whole card, however many opens it stands for.
+      // Dropping to one lets the owner's close() finish it off, rather than
+      // peeling off a single hold and leaving the card sitting there.
+      this.count = 1;
+    }
     for (const listener of this.listeners) {
       listener(event);
     }

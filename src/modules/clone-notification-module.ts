@@ -48,9 +48,18 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
   // Track notification handles by clone URL
   const handles = new Map<string, NotificationHandle>();
 
-  function buildConfig(name: string, stage: string | null, progress: number): NotificationConfig {
+  /**
+   * The card is titled with what the user typed, not the repo's basename.
+   * NotificationManager collapses notifications whose text matches, so two
+   * clones of different URLs that happen to share a basename would otherwise be
+   * one card, and the first to finish would close it out from under the second.
+   * `CloneProgressEvent.url` is the intent's `git` verbatim — expandGitUrl runs
+   * inside the resolve hook, never on the emitted event — so this is literally
+   * the dialog input.
+   */
+  function buildConfig(url: string, stage: string | null, progress: number): NotificationConfig {
     const config: NotificationConfig = {
-      title: `Cloning ${name}`,
+      title: `Cloning ${url}`,
       type: "spinner",
       progress: stage ? progress : true,
     };
@@ -64,13 +73,13 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
     [EVENT_CLONE_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as CloneProgressEvent).payload;
-        const { url, stage, progress, name } = payload;
+        const { url, stage, progress } = payload;
 
         const existing = handles.get(url);
         if (existing) {
-          existing.update(buildConfig(name, stage, progress));
+          existing.update(buildConfig(url, stage, progress));
         } else {
-          const handle = deps.ui.notification(buildConfig(name, stage, progress));
+          const handle = deps.ui.notification(buildConfig(url, stage, progress));
           handles.set(url, handle);
         }
       },

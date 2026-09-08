@@ -2,8 +2,14 @@
  * State mock for NotificationManager. Mirrors the production API and tracks
  * all opened/updated/closed notifications plus their event listeners so tests
  * can drive the user-event side via emitEvent().
+ *
+ * Collapsing is mirrored too, using the production `dedupKey`: an open that
+ * matches a live card returns that card's handle and bumps its count instead of
+ * pushing a new entry. A mock that stacked duplicates would show tests a
+ * notification-per-occurrence the real sidebar never renders.
  */
 import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
+import { dedupKey } from "./sessions";
 import type { NotificationHandle, NotificationManager } from "./sessions";
 import type { UiPresenter } from "./presentation-module";
 
@@ -16,10 +22,16 @@ export interface MockNotification {
   updates: NotificationConfig[];
   /** Latest config — initial open + any updates applied. */
   latestConfig: NotificationConfig;
-  /** True once handle.close() was called. */
+  /** Opens that collapsed into this card. */
+  count: number;
+  /** True once the last hold on the card was released. */
   closed: boolean;
   /** Internal: listeners registered via handle.onEvent(). */
   listeners: Set<(event: NotificationUserEvent) => void>;
+  /** Internal: current identity, kept in step with latestConfig. */
+  key: string;
+  /** Internal: the handle every open of this card shares. */
+  handle: NotificationHandle;
 }
 
 export interface MockNotificationManager {
@@ -43,24 +55,27 @@ export function createMockNotificationManager(): MockNotificationManager {
 
   const manager: NotificationManager = {
     open(config: NotificationConfig): NotificationHandle {
+      const key = dedupKey(config);
+      const live = items.find((n) => !n.closed && n.key === key);
+      if (live) {
+        live.count += 1;
+        return live.handle;
+      }
       const id = `ntf-${items.length + 1}`;
-      const slot: MockNotification = {
-        id,
-        opened: config,
-        updates: [],
-        latestConfig: config,
-        closed: false,
-        listeners: new Set(),
-      };
-      items.push(slot);
-      return {
+      const handle: NotificationHandle = {
         id,
         update(next: NotificationConfig) {
           if (slot.closed) return;
           slot.updates.push(next);
           slot.latestConfig = next;
+          slot.key = dedupKey(next);
         },
         close() {
+          if (slot.closed) return;
+          if (slot.count > 1) {
+            slot.count -= 1;
+            return;
+          }
           slot.closed = true;
         },
         onEvent(handler) {
@@ -69,7 +84,20 @@ export function createMockNotificationManager(): MockNotificationManager {
             slot.listeners.delete(handler);
           };
         },
-      } satisfies NotificationHandle;
+      };
+      const slot: MockNotification = {
+        id,
+        opened: config,
+        updates: [],
+        latestConfig: config,
+        count: 1,
+        closed: false,
+        listeners: new Set(),
+        key,
+        handle,
+      };
+      items.push(slot);
+      return handle;
     },
     routeEvent() {},
     // The mock has no buffering — notifications are tracked immediately.
@@ -91,6 +119,8 @@ export function createMockNotificationManager(): MockNotificationManager {
       if (!slot) {
         throw new Error(`No notification matching ${String(indexOrId)}`);
       }
+      // A dismiss retires the whole card, however many opens it stands for.
+      if (event.actionId === "dismiss") slot.count = 1;
       const full: NotificationUserEvent = { notificationId: slot.id, ...event };
       for (const handler of slot.listeners) handler(full);
     },
