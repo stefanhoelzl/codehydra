@@ -3,6 +3,8 @@
     "allow": [
       "mcp__codehydra",
       "mcp__appctrl",
+      "mcp__plugin_posthog_posthog__exec",
+      "mcp__posthog__update-issue-status",
       "Bash(pnpm test:*)",
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
