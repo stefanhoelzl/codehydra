@@ -51,6 +51,8 @@ export interface SpawnedProcessMockState extends MockState {
   readonly env: NodeJS.ProcessEnv | undefined;
   /** True when the caller asked for shell interpretation of `command`. */
   readonly shell: boolean;
+  /** Text the caller handed the process on stdin, if any. */
+  readonly input: string | undefined;
   /** The replacement identity the caller passed as `redactBy`, if any. */
   readonly redactBy: string | undefined;
   readonly killCalls: ReadonlyArray<KillCallRecord>;
@@ -104,6 +106,7 @@ interface MockSpawnedProcessOptions {
   env: NodeJS.ProcessEnv | undefined;
   shell: boolean;
   redactBy: string | undefined;
+  input: string | undefined;
   pid: number | undefined;
   waitResult: ProcessResult;
   killResult: KillResult;
@@ -119,6 +122,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
   readonly env: NodeJS.ProcessEnv | undefined;
   readonly shell: boolean;
   readonly redactBy: string | undefined;
+  readonly input: string | undefined;
   private readonly _killCalls: KillCallRecord[] = [];
 
   constructor(options: {
@@ -128,6 +132,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
     env: NodeJS.ProcessEnv | undefined;
     shell: boolean;
     redactBy: string | undefined;
+    input: string | undefined;
   }) {
     this.command = options.command;
     this.args = options.args;
@@ -135,6 +140,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
     this.env = options.env;
     this.shell = options.shell;
     this.redactBy = options.redactBy;
+    this.input = options.input;
   }
 
   get killCalls(): ReadonlyArray<KillCallRecord> {
@@ -171,6 +177,7 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
     this.state = new SpawnedProcessMockStateImpl({
       command: options.command,
       args: options.args,
+      input: options.input,
       cwd: options.cwd,
       env: options.env,
       shell: options.shell,
@@ -316,7 +323,13 @@ class MockProcessRunnerImpl implements MockProcessRunner {
   run(
     command: string,
     args: readonly string[],
-    options?: { cwd?: string; env?: NodeJS.ProcessEnv; shell?: boolean; redactBy?: string }
+    options?: {
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+      shell?: boolean;
+      redactBy?: string;
+      input?: string;
+    }
   ): SpawnedProcess {
     // Get per-spawn configuration
     const config = this.onSpawn?.(command, args, options?.cwd, options?.env);
@@ -344,6 +357,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       env: options?.env,
       shell: options?.shell ?? false,
       redactBy: options?.redactBy,
+      input: options?.input,
       pid,
       waitResult,
       killResult,

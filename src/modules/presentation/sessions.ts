@@ -120,6 +120,19 @@ export interface DialogHandle {
 }
 
 /**
+ * How a dialog session is opened.
+ *
+ * `workspacePath` names the workspace the dialog is *about*. It never reaches
+ * the renderer — dialogs are positioned by kind, not by workspace — but it is
+ * what lets `needsAttention` mark a sidebar row, so a question raised while the
+ * user is looking elsewhere still says which workspace raised it.
+ */
+export interface DialogOpenOptions {
+  readonly kind?: DialogKind;
+  readonly workspacePath?: string;
+}
+
+/**
  * DialogManager tracks open dialog sessions and exposes a render-ready
  * snapshot. It also exposes a synchronous "modal open" signal (a blocking modal
  * dialog is currently open), consumed by the presenter (mode computation:
@@ -146,12 +159,31 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
    * The kind is a session property set once here — update commands carry
    * only the config and cannot move a session between kinds.
    */
-  open(config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle {
+  open(config: DialogConfig, options?: DialogOpenOptions): DialogHandle {
     // Default kind is "modal" (matches the renderer DialogHost default).
     const kind: DialogKind = options?.kind ?? "modal";
+    const workspacePath = options?.workspacePath;
     return this.register(
-      (id, onRemove) => new DialogHandleImpl(id, kind, config, this.notifyChange, onRemove)
+      (id, onRemove) =>
+        new DialogHandleImpl(id, kind, config, this.notifyChange, onRemove, workspacePath)
     );
+  }
+
+  /**
+   * True while an open dialog opened against this workspace is asking for an
+   * answer — its *current* config carries `needsAttention`.
+   *
+   * Asked per row while the presenter builds the sidebar, so it answers without
+   * allocating. A session flips the flag through ordinary update() calls, which
+   * means this follows the dialog's state with nothing pushed here.
+   */
+  needsAttentionFor(workspacePath: string): boolean {
+    for (const handle of this.openSessions) {
+      if (handle.workspacePath === workspacePath && handle.config.needsAttention === true) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -181,6 +213,8 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
 class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
   readonly id: string;
   readonly kind: DialogKind;
+  /** Workspace this dialog is about, when it is about one. See DialogOpenOptions. */
+  readonly workspacePath: string | undefined;
   readonly closed: Promise<void>;
 
   /** Current render config — read by toSnapshot(). */
@@ -199,10 +233,12 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
     kind: DialogKind,
     config: DialogConfig,
     notifyChange: () => void,
-    onRemove: () => void
+    onRemove: () => void,
+    workspacePath?: string
   ) {
     this.id = id;
     this.kind = kind;
+    this.workspacePath = workspacePath;
     this.config = config;
     this.notifyChange = notifyChange;
     this.onRemove = onRemove;

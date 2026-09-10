@@ -426,6 +426,22 @@ export interface DialogConfig {
    *   actions right-aligned).
    */
   readonly layout?: "centered" | "form";
+  /**
+   * This dialog is waiting on the user and they may not be looking at it.
+   *
+   * Set it when the dialog *has become* a question — not merely because it is
+   * open. A deletion panel grinding through its steps needs nothing from
+   * anyone; the same panel once it has failed and is offering Retry / Dismiss
+   * does. It is a property of the current config, so a session flips it on and
+   * off through ordinary `update()` calls as its state changes.
+   *
+   * Renderer-invisible: the presenter consumes it. Paired with a dialog opened
+   * against a workspace, it shows that workspace's sidebar row as idle — the
+   * same green the user already reads as "this one wants you" — for as long as
+   * the flag stands. Without a workspace there is no row to mark and the flag
+   * does nothing.
+   */
+  readonly needsAttention?: boolean;
 }
 
 // ---- IPC Protocol ----

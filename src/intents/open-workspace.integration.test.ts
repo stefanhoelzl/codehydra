@@ -18,7 +18,7 @@
  * #9: Interceptor cancels creation
  * #10: Keepfiles copies files after worktree creation
  * #11: Keepfiles failure does not fail workspace creation
- * #12: No keepfiles side effects when worktree creation fails
+ * #12: No setup-hook side effects when worktree creation fails
  * #15: existingWorkspace skips worktree creation
  * #16: existingWorkspace uses projectPath directly
  * #18: project:resolve failure propagates error
@@ -130,7 +130,7 @@ function createMockServerManager(opts?: { throwOnStart?: boolean }): MockServerM
   };
 }
 
-interface MockKeepFilesService {
+interface MockSetupService {
   copyToWorkspace: (
     projectRoot: Path,
     targetPath: Path
@@ -142,7 +142,7 @@ interface MockKeepFilesService {
   copies: Array<{ from: Path; to: Path }>;
 }
 
-function createMockKeepFilesService(opts?: { throwOnCopy?: boolean }): MockKeepFilesService {
+function createMockSetupService(opts?: { throwOnCopy?: boolean }): MockSetupService {
   const copies: Array<{ from: Path; to: Path }> = [];
   return {
     copies,
@@ -166,7 +166,7 @@ function createMockKeepFilesService(opts?: { throwOnCopy?: boolean }): MockKeepF
 interface TestSetupOptions {
   serverManager?: MockServerManager;
   envVars?: Record<string, string>;
-  keepFilesService?: MockKeepFilesService;
+  setupService?: MockSetupService;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
@@ -184,7 +184,7 @@ interface TestSetupOptions {
 interface TestSetup {
   dispatcher: Dispatcher;
   projectId: ProjectId;
-  keepFilesService: MockKeepFilesService;
+  setupService: MockSetupService;
   /** Set of project paths recognized by the resolve module. Add paths here for custom project tests. */
   knownProjectPaths: Set<string>;
 }
@@ -194,7 +194,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const provider = createMockWorkspaceProvider();
   const serverManager = opts?.serverManager ?? createMockServerManager();
   const envVars = opts?.envVars ?? { AGENT_PORT: "9090" };
-  const keepFilesService = opts?.keepFilesService ?? createMockKeepFilesService();
+  const setupService = opts?.setupService ?? createMockSetupService();
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
   const dispatcher = createMockDispatcher();
@@ -300,8 +300,9 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
-  // KeepFilesModule: "setup" hook (best-effort, try/catch internal)
-  const keepFilesModule: IntentModule = {
+  // A best-effort "setup" handler (its own try/catch), standing in for any
+  // module that does optional work on a new worktree.
+  const setupHandlerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
@@ -309,7 +310,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
           handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             const setupCtx = ctx as SetupHookInput;
             try {
-              await keepFilesService.copyToWorkspace(
+              await setupService.copyToWorkspace(
                 new Path(setupCtx.projectPath),
                 new Path(setupCtx.workspacePath)
               );
@@ -385,7 +386,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const modules: IntentModule[] = [
     switchViewModule,
     worktreeModule,
-    keepFilesModule,
+    setupHandlerModule,
     agentModule,
     ideServerModule,
   ];
@@ -393,12 +394,12 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     modules.push(dynamicActiveModule);
   }
   if (failingSetupModule) {
-    // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
+    // Insert before setupHandlerModule so the failing handler runs first on the "setup" hook
     modules.splice(modules.indexOf(worktreeModule) + 1, 0, failingSetupModule);
   }
   for (const m of modules) dispatcher.registerModule(m);
 
-  return { dispatcher, projectId, keepFilesService, knownProjectPaths };
+  return { dispatcher, projectId, setupService, knownProjectPaths };
 }
 
 // =============================================================================
@@ -768,22 +769,22 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("keepfiles copies files after worktree creation (#10)", () => {
+  describe("a setup handler runs after worktree creation (#10)", () => {
     it("copies files with correct project and workspace paths", async () => {
       const setup = createTestSetup();
 
       await setup.dispatcher.dispatch(createIntent());
 
-      expect(setup.keepFilesService.copies).toHaveLength(1);
-      expect(setup.keepFilesService.copies[0]!.from.toString()).toBe(PROJECT_ROOT);
-      expect(setup.keepFilesService.copies[0]!.to.toString()).toBe(WORKSPACE_PATH);
+      expect(setup.setupService.copies).toHaveLength(1);
+      expect(setup.setupService.copies[0]!.from.toString()).toBe(PROJECT_ROOT);
+      expect(setup.setupService.copies[0]!.to.toString()).toBe(WORKSPACE_PATH);
     });
   });
 
-  describe("keepfiles failure does not fail workspace creation (#11)", () => {
-    it("returns valid workspace when keepfiles copy throws", async () => {
-      const failingKeepFiles = createMockKeepFilesService({ throwOnCopy: true });
-      const setup = createTestSetup({ keepFilesService: failingKeepFiles });
+  describe("a best-effort setup failure does not fail workspace creation (#11)", () => {
+    it("returns a valid workspace when a best-effort setup handler throws", async () => {
+      const failingSetup = createMockSetupService({ throwOnCopy: true });
+      const setup = createTestSetup({ setupService: failingSetup });
 
       const receivedEvents: DomainEvent[] = [];
       setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
@@ -792,7 +793,7 @@ describe("OpenWorkspace Operation", () => {
 
       const result = await setup.dispatcher.dispatch(createIntent());
 
-      // Operation succeeds despite keepfiles failure
+      // Operation succeeds despite the setup handler's failure
       expect(result).toBeDefined();
       const workspace = result as Workspace;
       expect(workspace.path).toBe(WORKSPACE_PATH);
@@ -804,12 +805,12 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
 
       // No successful copies recorded
-      expect(failingKeepFiles.copies).toHaveLength(0);
+      expect(failingSetup.copies).toHaveLength(0);
     });
   });
 
-  describe("no keepfiles side effects when worktree creation fails (#12)", () => {
-    it("does not invoke keepfiles when create hook throws", async () => {
+  describe("no setup-hook side effects when worktree creation fails (#12)", () => {
+    it("does not invoke the setup handler when the create hook throws", async () => {
       const setup = createTestSetup({ throwOnCreate: true });
 
       await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
@@ -817,7 +818,7 @@ describe("OpenWorkspace Operation", () => {
       );
 
       // Keepfiles should not have been called
-      expect(setup.keepFilesService.copies).toHaveLength(0);
+      expect(setup.setupService.copies).toHaveLength(0);
     });
   });
 

@@ -16,6 +16,7 @@ import type {
   AgentType,
   ShowNotificationRequest,
   ShowNotificationResponse,
+  AppendOutputRequest,
   StatusBarUpdateRequest,
   StatusBarDisposeRequest,
   ShowQuickPickRequest,
@@ -467,6 +468,29 @@ const codehydraApi = {
 // Debug Commands (Development Only)
 // ============================================================================
 
+/**
+ * Output channels CodeHydra writes into, by name. Created on first use and kept
+ * for the session: a channel disposed and recreated loses its scrollback, and
+ * these hold a record the user may come back to.
+ */
+const namedOutputChannels = new Map<string, vscode.OutputChannel>();
+
+function getNamedOutputChannel(name: string): vscode.OutputChannel {
+  let channel = namedOutputChannels.get(name);
+  if (!channel) {
+    channel = vscode.window.createOutputChannel(name);
+    namedOutputChannels.set(name, channel);
+  }
+  return channel;
+}
+
+function disposeNamedOutputChannels(): void {
+  for (const channel of namedOutputChannels.values()) {
+    channel.dispose();
+  }
+  namedOutputChannels.clear();
+}
+
 function getDebugOutputChannel(): vscode.OutputChannel {
   if (!debugOutputChannel) {
     debugOutputChannel = vscode.window.createOutputChannel("CodeHydra Debug");
@@ -762,6 +786,20 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       }
     }
   );
+
+  socket.on("ui:appendOutput", (request: AppendOutputRequest) => {
+    // No ack: this is a script's own output on its way to a human, and dropping
+    // a line must never be able to fail anything upstream.
+    try {
+      const channel = getNamedOutputChannel(request.channel);
+      for (const line of request.lines) {
+        channel.appendLine(`[${line.source}] ${line.text}`);
+      }
+    } catch {
+      // A channel we cannot write to is not worth reporting anywhere the user
+      // would see it — the same text is already in CodeHydra's log file.
+    }
+  });
 
   socket.on(
     "ui:statusBarUpdate",
@@ -1190,6 +1228,7 @@ export function deactivate(): void {
   currentAgentType = null;
   currentAgentEnv = null;
 
+  disposeNamedOutputChannels();
   if (debugOutputChannel) {
     debugOutputChannel.dispose();
     debugOutputChannel = null;

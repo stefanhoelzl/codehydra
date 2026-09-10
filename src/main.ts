@@ -153,7 +153,8 @@ import { createAgentModule } from "./modules/agent-module/agent-module";
 import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
-import { createKeepFilesModule } from "./modules/keepfiles-module";
+import { createHooksModule } from "./modules/hooks-module/module";
+import { createHookOutputSink } from "./modules/hooks-module/output-sink";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
@@ -644,9 +645,21 @@ const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
   agentConfig,
   logger: loggingService.createLogger("agent-resolver"),
 });
-const keepFilesModule = createKeepFilesModule({
+const hooksModule = createHooksModule({
   fileSystem: fileSystemLayer,
-  logger: loggingService.createLogger("keepfiles"),
+  processRunner,
+  logger: loggingService.createLogger("hooks"),
+  config: configService,
+  stateService,
+  dispatcher,
+  ui: presentationModule,
+  // `ch` lives here, so a hook can call back into CodeHydra (set a title, tag a
+  // workspace) without its author having to locate the binary.
+  binDir: pathProvider.dataPath("bin"),
+  sink: createHookOutputSink({
+    transport: pluginServerModule,
+    logger: loggingService.createLogger("hooks"),
+  }),
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -997,6 +1010,10 @@ dispatcher.registerModule(pluginServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);
+// Before the agent modules on purpose. Handlers on a hook point run in
+// registration order, so a repository's `after-worktree-created` finishes
+// before an agent server is started against the tree it is still setting up.
+dispatcher.registerModule(hooksModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
@@ -1006,7 +1023,6 @@ dispatcher.registerModule(deletionDialogModule);
 dispatcher.registerModule(creationModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
-dispatcher.registerModule(keepFilesModule);
 dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);

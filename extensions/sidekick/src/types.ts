@@ -39,6 +39,7 @@ export type {
   NotificationSeverity,
   ShowNotificationRequest,
   ShowNotificationResponse,
+  AppendOutputRequest,
   StatusBarUpdateRequest,
   StatusBarDisposeRequest,
   QuickPickItem,

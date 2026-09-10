@@ -150,6 +150,7 @@ import {
   DialogManager,
   NotificationManager,
   type DialogHandle,
+  type DialogOpenOptions,
   type NotificationHandle,
 } from "./sessions";
 import type { NotificationConfig } from "../../shared/notification-types";
@@ -198,8 +199,14 @@ const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
  * the snapshot.
  */
 export interface UiPresenter extends IntentModule {
-  /** Open a dialog (modal, modeless, or panel — see DialogKind). Returns a handle. */
-  dialog(config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle;
+  /**
+   * Open a dialog (modal, modeless, or panel — see DialogKind). Returns a handle.
+   *
+   * Pass `workspacePath` when the dialog is about one workspace: together with
+   * `DialogConfig.needsAttention` it marks that workspace's sidebar row while
+   * the dialog is waiting on an answer.
+   */
+  dialog(config: DialogConfig, options?: DialogOpenOptions): DialogHandle;
   /** Open a sidebar notification. Returns a handle. */
   notification(config: NotificationConfig): NotificationHandle;
   /** True while a blocking modal dialog (kind === "modal") is open (the shortcut-module Alt+X guard). */
@@ -286,6 +293,26 @@ interface ProjectModel {
 }
 
 const AGENT_NONE: AgentStatus = { type: "none" };
+
+/**
+ * Counts for a workspace that is asking for attention without an agent behind
+ * it — a dialog raised before any agent started, or after one was stopped.
+ * One idle "thing" is the honest reading: something here is waiting on you.
+ */
+const ATTENTION_COUNTS = { idle: 1, busy: 0, total: 1 } as const;
+
+/**
+ * Present a status as idle, keeping whatever counts it already had.
+ *
+ * Used only while a dialog is waiting on the user. A busy agent shows as idle
+ * for that span, which is the intent: the question outranks the turn, and the
+ * agent's real status returns to the row the moment the dialog is answered.
+ */
+function withAttention(status: AgentStatus): AgentStatus {
+  return status.type === "none"
+    ? { type: "idle", counts: ATTENTION_COUNTS }
+    : { type: "idle", counts: status.counts };
+}
 
 // =============================================================================
 // Close-project confirmation dialog
@@ -729,14 +756,23 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
     const key = workspaceKey(project.id, workspace.name);
     const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
+    const agent =
+      workspace.path === null ? AGENT_NONE : (agentStatuses.get(workspace.path) ?? AGENT_NONE);
     return {
       key,
       name: workspace.name,
       ...(workspace.title !== undefined && { title: workspace.title }),
       status: rowStatus(workspace),
       hibernated: workspace.hibernated,
+      // A dialog waiting on the user reads as idle for as long as it waits: the
+      // green row (and the chime the renderer derives from these counts) is the
+      // signal the user already answers to, and a question nobody notices is
+      // the same as no question. Reverts on its own — the next snapshot reads
+      // the tracked status again once the dialog closes or drops the flag.
       agent:
-        (workspace.path === null ? undefined : agentStatuses.get(workspace.path)) ?? AGENT_NONE,
+        workspace.path !== null && dialogs.needsAttentionFor(workspace.path)
+          ? withAttention(agent)
+          : agent,
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: key === activeKey,
@@ -1962,7 +1998,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   return {
     name: "presentation",
-    dialog: (config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle =>
+    dialog: (config: DialogConfig, options?: DialogOpenOptions): DialogHandle =>
       dialogs.open(config, options),
     notification: (config: NotificationConfig): NotificationHandle => notifications.open(config),
     isModalOpen: (): boolean => dialogs.isModalOpen(),
