@@ -33,13 +33,20 @@ One file per entry, the way git does it: if the file is there it runs, and if it
 is not, nothing happens. No directories, no `10-`/`20-` ordering, no naming
 conventions. A repository that wants several steps writes them in one script.
 
-The extension is free — the shebang decides what interprets it:
+The file is the entry's name, with or without an extension — the extension never
+decides anything, the shebang does:
 
 ```
-.codehydra/hooks/after-worktree-created      #!/usr/bin/env python3
-.codehydra/hooks/after-worktree-created      #!/bin/bash
-.codehydra/hooks/after-worktree-created.cmd  (Windows)
+.codehydra/hooks/after-worktree-created       #!/usr/bin/env python3
+.codehydra/hooks/after-worktree-created.py    same thing
+.codehydra/hooks/after-worktree-created.sh    #!/bin/bash
+.codehydra/hooks/after-worktree-created.cmd   Windows: an extension is required,
+                                              since cmd cannot run a bare file
 ```
+
+Two files claiming one entry (`after-worktree-created` and
+`after-worktree-created.sh` side by side) is a mistake — usually a rename that
+left the old one behind. The first by name wins, and CodeHydra logs which.
 
 On Linux and macOS the file must be **executable** (`chmod +x`). Unlike git,
 which skips a non-executable hook in silence, CodeHydra reports it.
@@ -107,9 +114,10 @@ Output — every field optional:
 - `title` is the sidebar display name; the branch name stays the identity.
 - `tags` are keyed by name; `color`, `label` and `description` are all optional.
 
-Returning `title` and `tags` here is better than shelling out to `ch` during
-setup: metadata written by a subprocess at this moment is overwritten by the
-snapshot the workspace-open returns, whereas a returned value folds into it.
+`title` and `tags` are written to the workspace's git config, so they survive a
+restart exactly as a title you set by hand would. Returning them is still better
+than shelling out to `ch` during setup, which races the snapshot the
+workspace-open returns and loses.
 
 **Failure is loud but not fatal.** A non-zero exit raises a notification and is
 logged; the workspace still opens. A failed `pnpm install` is something you fix

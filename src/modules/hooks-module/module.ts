@@ -59,6 +59,7 @@ import {
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
 import type { WorkspacePath } from "../../intents/contract";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
   AFTER_WORKTREE_CREATED,
   BEFORE_WORKTREE_DELETED,
@@ -137,15 +138,8 @@ function parseTrustMap(value: unknown): Record<string, boolean> | undefined {
 // Output mapping
 // =============================================================================
 
-/**
- * Fold a setup hook's return value into the shape the operation already merges.
- *
- * `title` and `tags` become metadata keys here rather than being written
- * through `workspace:set-metadata`, and that is the point: metadata written
- * during creation is clobbered by the snapshot `workspace:open` returns, while
- * a hook *result* folds into that snapshot instead of racing it.
- */
-export function toSetupResult(output: AfterWorktreeCreatedOutput): SetupHookResult {
+/** The `codehydra.*` metadata keys a setup hook's `title`/`tags` map to. */
+export function toMetadata(output: AfterWorktreeCreatedOutput): Record<string, string> {
   const metadata: Record<string, string> = {};
 
   if (output.title !== undefined) {
@@ -155,6 +149,20 @@ export function toSetupResult(output: AfterWorktreeCreatedOutput): SetupHookResu
     metadata[`${TAGS_METADATA_KEY_PREFIX}${name}`] = JSON.stringify(tag);
   }
 
+  return metadata;
+}
+
+/**
+ * Fold a setup hook's return value into the shape the operation already merges.
+ *
+ * The metadata is reported here *as well as* being written to git config,
+ * because reporting alone would not survive: WorktreeModule's finalize handler
+ * re-reads git config and its result folds in last, so a title that exists only
+ * as a setup result is superseded by that read a moment later. Writing it first
+ * makes the read agree — and makes the value durable, which reporting never was.
+ */
+export function toSetupResult(output: AfterWorktreeCreatedOutput): SetupHookResult {
+  const metadata = toMetadata(output);
   return {
     ...(output.env !== undefined && { envVars: output.env }),
     ...(Object.keys(metadata).length > 0 && { metadata }),
@@ -264,6 +272,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
         },
         afterWorktreeCreatedOutputSchema
       );
+      await persistMetadata(input.workspacePath, toMetadata(output));
       return { result: toSetupResult(output) };
     } catch (error) {
       // Loud, but not fatal. The worktree exists by now, so failing the open
@@ -377,6 +386,35 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Write a hook's title and tags to the workspace's git config.
+   *
+   * Done during `setup`, so WorktreeModule's finalize re-read — which folds in
+   * after every setup result — sees them and reports the same values. Writing
+   * later, or not at all, loses them to that read.
+   *
+   * Best-effort per key: a tag that could not be written should not cost the
+   * title, and none of it should cost the workspace.
+   */
+  async function persistMetadata(
+    workspacePath: WorkspacePath,
+    metadata: Record<string, string>
+  ): Promise<void> {
+    for (const [key, value] of Object.entries(metadata)) {
+      try {
+        await deps.dispatcher.dispatch<SetMetadataIntent>({
+          type: INTENT_SET_METADATA,
+          payload: { workspacePath, key, value },
+        });
+      } catch (error) {
+        deps.logger.warn("Could not persist metadata from a hook", {
+          key,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
 
   /** The global kill switch — the way out when a repository's hook is broken. */
   function allowed(): boolean {

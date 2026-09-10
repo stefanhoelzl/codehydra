@@ -82,9 +82,23 @@ export class HookFailedError extends Error {
 // Discovery
 // =============================================================================
 
-/** The path a given entry would live at, whether or not it exists. */
-export function hookPath(worktree: Path, tree: HookTree, entry: string): Path {
-  return new Path(worktree, HOOKS_ROOT, tree, entry);
+/** The directory an entry's file would live in. */
+export function hookDir(worktree: Path, tree: HookTree): Path {
+  return new Path(worktree, HOOKS_ROOT, tree);
+}
+
+/**
+ * Does this filename name the given entry?
+ *
+ * The bare name, or the name plus any extension. The extension never decides
+ * whether something is a hook — a shebang does that — but it has to be *allowed*
+ * for two reasons: `after-worktree-created.py` is how most people would write
+ * one, and on Windows an extensionless file cannot be run by `cmd` at all, so a
+ * repository supporting Windows has no choice but to ship
+ * `after-worktree-created.cmd`.
+ */
+export function namesEntry(filename: string, entry: string): boolean {
+  return filename === entry || filename.startsWith(`${entry}.`);
 }
 
 /**
@@ -121,17 +135,31 @@ export async function findHook(
     return undefined;
   }
 
-  const match = entries.find((candidate) => candidate.name === entry);
-  if (!match) return undefined;
+  const matches = entries
+    .filter((candidate) => namesEntry(candidate.name, entry))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
+  if (matches.length === 0) return undefined;
+
+  // Two files claiming one entry is a repository mistake — most likely a rename
+  // that left the old one behind. Pick lexically so the choice is at least the
+  // same on every machine, and say which one was taken.
+  if (matches.length > 1) {
+    deps.logger.warn("Several files claim the same hook; using the first", {
+      entry,
+      candidates: matches.map((candidate) => candidate.name).join(", "),
+    });
+  }
+
+  const match = matches[0]!;
   if (!match.isFile) {
     deps.logger.warn("Hook entry is not a file, ignoring", {
-      path: hookPath(worktree, tree, entry).toNative(),
+      path: new Path(dir, match.name).toNative(),
     });
     return undefined;
   }
 
-  return { entry, path: hookPath(worktree, tree, entry) };
+  return { entry, path: new Path(dir, match.name) };
 }
 
 // =============================================================================

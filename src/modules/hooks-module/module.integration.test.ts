@@ -52,6 +52,11 @@ import {
 import type { IntentModule } from "../../intents/lib/module";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import type { DomainEvent } from "../../intents/lib/types";
+import {
+  SetMetadataOperation,
+  SET_METADATA_OPERATION_ID,
+  type SetMetadataIntent,
+} from "../../intents/set-metadata";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { WorkspacePath } from "../../intents/contract";
 import type { DialogConfig } from "../../shared/dialog-types";
@@ -85,6 +90,8 @@ interface TestSetup {
   readonly notifications: NotificationConfig[];
   readonly dialogs: DialogConfig[];
   readonly sinkLines: Array<{ entry: string; line: string }>;
+  /** Metadata written through the real SetMetadataOperation, in order. */
+  readonly metadataWrites: Array<{ key: string; value: string | null }>;
   /** Answer the next trust dialog with this action id. */
   answerTrust(actionId: string): void;
   /** Text each spawn was handed on stdin, in order. */
@@ -110,6 +117,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const notifications: NotificationConfig[] = [];
   const dialogs: DialogConfig[] = [];
   const sinkLines: Array<{ entry: string; line: string }> = [];
+  const metadataWrites: Array<{ key: string; value: string | null }> = [];
   const stdin: string[] = [];
   let trustAnswer = options?.trustAnswer ?? "always";
 
@@ -128,6 +136,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   dispatcher.registerOperation(new OpenWorkspaceOperation());
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
+  dispatcher.registerOperation(new SetMetadataOperation());
 
   const hookFiles = options?.hooks ?? {};
 
@@ -201,6 +210,15 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: { handler: async (): Promise<void> => {} },
       },
+      // Stands in for GitWorktreeProvider: the branch-config store metadata lands in.
+      [SET_METADATA_OPERATION_ID]: {
+        set: {
+          handler: async (ctx: HookContext): Promise<void> => {
+            const { payload } = ctx.intent as SetMetadataIntent;
+            metadataWrites.push({ key: payload.key, value: payload.value });
+          },
+        },
+      },
     },
     events: {
       [EVENT_WORKSPACE_CREATED]: {
@@ -255,6 +273,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     notifications,
     dialogs,
     sinkLines,
+    metadataWrites,
     stdin: stdinProxy,
     answerTrust: (actionId: string) => {
       trustAnswer = actionId;
@@ -348,6 +367,26 @@ describe("after-worktree-created", () => {
     await openWorkspace(setup);
 
     expect(setup.finalizeEnv[0]).toMatchObject({ DATABASE_URL: "postgres://x" });
+  });
+
+  it("persists a returned title and tags as workspace metadata", async () => {
+    const setup = createTestSetup({
+      hooks: {
+        [SETUP_HOOK]: {
+          stdout: JSON.stringify({ title: "Feature X", tags: { review: { color: "#3498db" } } }),
+        },
+      },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+
+    // Written, not merely reported: WorktreeModule's finalize re-read folds in
+    // after every setup result, so a title that exists only as a result is
+    // superseded by that read a moment later.
+    expect(setup.metadataWrites).toEqual([
+      { key: "title", value: "Feature X" },
+      { key: "tags.review", value: JSON.stringify({ color: "#3498db" }) },
+    ]);
   });
 
   it("folds a returned title and tags into workspace:created", async () => {

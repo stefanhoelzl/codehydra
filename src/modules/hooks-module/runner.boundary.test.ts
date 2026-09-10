@@ -30,6 +30,10 @@ let deps: HookRunnerDeps;
 
 const outputSchema = z.object({ ok: z.boolean().optional() }).strict();
 
+/** A hook that prints a valid result, in each platform's native form. */
+const OK_POSIX = ["#!/bin/sh", `echo '{"ok":true}'`, ""].join("\n");
+const OK_WINDOWS = ["@echo off", 'echo {"ok":true}', ""].join("\r\n");
+
 beforeEach(async () => {
   const root = await fs.mkdtemp(nodePath.join(os.tmpdir(), "ch-hooks-"));
   worktree = nodePath.join(root, "my workspace");
@@ -147,6 +151,19 @@ describe("what counts as a hook", () => {
     await expect(
       findHook(deps, new Path(worktree), HOOKS_DIR, "anything")
     ).resolves.toBeUndefined();
+  });
+
+  it("finds a hook that carries an extension", async () => {
+    // `.py` is how most people would write one, and on Windows `.cmd` is the
+    // only way a hook can run at all.
+    const entry = await writeHook("extended", OK_POSIX, OK_WINDOWS);
+    if (!isWindows) {
+      await fs.rename(
+        nodePath.join(worktree, HOOKS_ROOT, HOOKS_DIR, entry),
+        nodePath.join(worktree, HOOKS_ROOT, HOOKS_DIR, `${entry}.sh`)
+      );
+    }
+    await expect(run("extended")).resolves.toEqual({ ok: true });
   });
 
   it("ignores a directory sitting where a hook file should be", async () => {
