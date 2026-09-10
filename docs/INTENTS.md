@@ -468,7 +468,7 @@ All operations use the intent dispatcher. Intents are dispatched through operati
 | `resolve-workspace`    | `workspace:resolve`       | `resolve`                                                                                                    | --                                                                            |
 | `resolve-project`      | `project:resolve`         | `resolve`                                                                                                    | --                                                                            |
 | `open-workspace`       | `workspace:open`          | `create`, `setup`, `finalize`                                                                                | `workspace:loading`, `workspace:created`, `workspace:create-failed`           |
-| `delete-workspace`     | `workspace:delete`        | `confirm`, `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                   | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
+| `delete-workspace`     | `workspace:delete`        | `confirm`, `preflight`, `shutdown`, `pre-delete`, `release`, `flush`, `delete`, `detect`                     | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
 | `hibernate-workspace`  | `workspace:hibernate`     | `capture`, `shutdown`, `release`                                                                             | `workspace:hibernated`, `workspace:hibernate-failed`                          |
 | `wake-workspace`       | `workspace:wake`          | `cleanup`                                                                                                    | `workspace:woken`, `workspace:wake-failed`                                    |
 | `switch-workspace`     | `workspace:switch`        | `activate`, `find-candidates`, `select-next`                                                                 | `workspace:switched`                                                          |
@@ -489,7 +489,7 @@ The presenter (`PresentationModule`) maps renderer `ui:events` to these intents.
 The `open-workspace` operation uses these hook modules:
 
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces)
-- **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
+- **setup**: HooksModule (runs the repository's `.codehydra/hooks/after-worktree-created`, contributing its `env`/`title`/`tags`), AgentModule (starts agent server) -- both best-effort with internal try/catch. HooksModule is registered first so the agent never starts against a tree a setup script is still preparing
 - **finalize**: IdeServerModule (creates .code-workspace file), WorktreeModule (re-reads the workspace's `codehydra.*` metadata)
 
 The metadata a `workspace:open` reports is the `create` snapshot plus whatever setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads git config. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what git config actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
@@ -499,6 +499,7 @@ The `delete-workspace` operation uses these hook modules:
 - **confirm**: DeletionDialogModule (interactive dispatches only) -- parks on the confirmation dialog and contributes the user's `keepBranch` answer, or cancels the dispatch
 - **preflight**: WorktreeModule -- vetoes on workspace state (`{ blocked, reason }`). The handler owns both halves of the policy: whether the check applies (only a `removeWorktree` delete can lose work; `force` is an explicit teardown and `ignoreWarnings` the caller's opt-out) and what its findings mean -- uncommitted changes always block, unmerged commits only when `keepBranch` is false, since a kept branch keeps them reachable. A handler that cannot read the state throws, failing the gate closed. The operation only sequences the gate and joins the reasons into the caller's error
 - **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
+- **pre-delete**: HooksModule -- the repository's own gate (`.codehydra/hooks/before-worktree-deleted`). Runs on a quiesced workspace but _before_ `release`, so the CWD scan and kill still cleans up after anything the hook leaves holding the worktree. Skipped in force mode, which is how the progress panel's Dismiss escapes a gate that refuses or hangs, and skipped for a runtime-only teardown (it sits after the `removeWorktree` gate). Same two-signal split as `preflight`: a returned `{ blocked, reason }` is a policy decision, a throwing handler could not tell and fails the gate closed. Unlike `preflight` it owns a progress row (`repo-hook`), created by a streaming `{ started: true }` yield so a project with no hook never sees a step that does nothing
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
@@ -638,7 +639,7 @@ index.ts (composition root)
 
 **Exception - Pure Libraries:**
 
-The `ignore` package (used by KeepFilesService) is acceptable for direct usage because it's a pure pattern-matching library with no I/O or side effects. It only performs string operations on patterns and paths.
+A pure library with no I/O or side effects is acceptable for direct usage — we abstract our own I/O, not the internals of external libraries.
 
 **Implementation pattern:**
 

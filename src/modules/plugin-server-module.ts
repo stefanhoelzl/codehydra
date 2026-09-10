@@ -38,6 +38,7 @@ import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
 import type { Workspace, WorkspaceStatus } from "../shared/api/types";
 import type {
+  AppendOutputRequest,
   ServerToClientEvents,
   ClientToServerEvents,
   SocketData,
@@ -203,6 +204,17 @@ export interface PluginServerModuleHandle {
   isReady(): boolean;
   /** The bound port, or null before the server has started. */
   port(): number | null;
+  /**
+   * Append lines to an output channel in a workspace's IDE.
+   *
+   * Returns false when that workspace has no live connection — the caller
+   * decides whether that is worth buffering for or simply dropping. Nothing is
+   * awaited: the payload is human-readable text, and a lost line must never
+   * hold anything up.
+   */
+  appendOutput(workspacePath: string, request: AppendOutputRequest): boolean;
+  /** Called whenever a workspace's extension connects. Returns an unsubscribe. */
+  onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
 }
 
 export function createPluginServerModule(deps: PluginServerModuleDeps): PluginServerModuleHandle {
@@ -812,6 +824,16 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       }
 
       connections.set(workspacePath, socket);
+      for (const listener of connectListeners) {
+        try {
+          listener(workspacePath);
+        } catch (error) {
+          logger.warn("A workspace-connected listener threw", {
+            workspace: workspacePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       logger.info("Client connected", {
         workspace: workspacePath,
         socketId: socket.id,
@@ -1257,6 +1279,24 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   // Module definition
   // ---------------------------------------------------------------------------
 
+  /** Notified when a workspace's extension connects, so buffered work can flush. */
+  const connectListeners = new Set<(workspacePath: string) => void>();
+
+  /**
+   * Push lines into an output channel in one workspace's IDE.
+   *
+   * No ack and no promise: this carries text a person may read, and a line lost
+   * to a disconnect is not worth a caller's error path. A workspace that is not
+   * connected simply answers false.
+   */
+  function appendOutput(workspacePath: string, request: AppendOutputRequest): boolean {
+    const normalized = new Path(workspacePath).toString();
+    const socket = connections.get(normalized);
+    if (!socket?.connected) return false;
+    socket.emit("ui:appendOutput", request);
+    return true;
+  }
+
   const module: IntentModule = {
     name: "plugin-server",
     hooks: {
@@ -1434,7 +1474,16 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     },
   };
 
-  return { module, isReady: () => io !== null, port: () => port };
+  return {
+    module,
+    isReady: () => io !== null,
+    port: () => port,
+    appendOutput,
+    onWorkspaceConnected: (listener) => {
+      connectListeners.add(listener);
+      return () => connectListeners.delete(listener);
+    },
+  };
 }
 
 // =============================================================================

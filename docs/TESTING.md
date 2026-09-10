@@ -112,7 +112,7 @@ describe("SimpleGitClient", () => {
 **Key characteristics**:
 
 - Tests behavior, not implementation ("when user does X, outcome is Y")
-- Real module interaction (modules, GitWorktreeProvider, KeepFilesService all run together)
+- Real module interaction (modules, GitWorktreeProvider, HooksModule all run together)
 - Only mock boundaries (same interfaces tested by boundary tests)
 - **MUST be fast** - target <50ms per test, <2s per module
 
@@ -127,7 +127,7 @@ Traditional unit tests mock everything except the single module under test. This
 Integration tests solve this by:
 
 1. **Testing behavior** - "When user does X, outcome is Y"
-2. **Real module interaction** - Modules, GitWorktreeProvider, KeepFilesService all run together
+2. **Real module interaction** - Modules, GitWorktreeProvider, HooksModule all run together
 3. **Only mock boundaries** - The external system interfaces, not internal modules
 
 ---
@@ -392,7 +392,7 @@ Code change involves external system interface?
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
 | Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
 | New operation                                 | Operation tests + module tests     | CreateWorkspaceOperation, AppStartOperation |
-| New hook module                               | Module tests (integration tests)   | KeepFilesModule, IdeServerModule            |
+| New hook module                               | Module tests (integration tests)   | HooksModule, IdeServerModule                |
 
 ---
 
@@ -421,23 +421,20 @@ Modules declare hooks, event handlers, and interceptors. They depend only on inj
 #### Hook Behavior
 
 ```typescript
-it("copies keepfiles to new workspace", async () => {
-  const keepFilesService = { copyToWorkspace: vi.fn().mockResolvedValue({ copiedCount: 2 }) };
-  const module = createKeepFilesModule({ keepFilesService, logger: SILENT_LOGGER });
+it("contributes the hook's environment to the workspace", async () => {
+  const module = createHooksModule({ ...deps, processRunner });
 
-  const handler = module.hooks["workspace:open"].setup.handler;
+  const handler = module.hooks["open-workspace"].setup.handler;
   const ctx = {
-    intent: { type: "workspace:open", payload: {} },
+    intent: { type: "workspace:open", payload: { workspaceName: "feature-1" } },
     projectPath: "/project",
     workspacePath: "/project/.worktrees/feature-1",
+    branch: "feature-1",
   };
 
-  await handler(ctx);
+  const output = await handler(ctx);
 
-  expect(keepFilesService.copyToWorkspace).toHaveBeenCalledWith(
-    new Path("/project"),
-    new Path("/project/.worktrees/feature-1")
-  );
+  expect(output.result).toEqual({ envVars: { DATABASE_URL: "postgres://x" } });
 });
 ```
 
@@ -446,15 +443,12 @@ it("copies keepfiles to new workspace", async () => {
 Modules throw when they encounter errors. Operations decide what failures mean.
 
 ```typescript
-it("logs error but does not throw on copy failure", async () => {
-  const keepFilesService = {
-    copyToWorkspace: vi.fn().mockRejectedValue(new Error("IO error")),
-  };
+it("logs the failure but does not throw", async () => {
   const logger = createBehavioralLogger();
-  const module = createKeepFilesModule({ keepFilesService, logger });
+  const module = createHooksModule({ ...deps, logger, processRunner: failingRunner });
 
-  const handler = module.hooks["workspace:open"].setup.handler;
-  await handler(ctx); // Does not throw -- keepfiles is best-effort
+  const handler = module.hooks["open-workspace"].setup.handler;
+  await handler(ctx); // Does not throw -- a setup hook is best-effort
 
   expect(logger.error).toHaveBeenCalled();
 });
@@ -1354,7 +1348,7 @@ Integration tests go through specific entry points, not arbitrary internal modul
 
 Testing through `dispatcher.dispatch()` means:
 
-- Multiple modules work together (`workspace:create` → GitWorktreeProvider → IGitClient → KeepFilesService)
+- Multiple modules work together (`workspace:create` → GitWorktreeProvider → IGitClient → HooksModule)
 - State flows correctly between modules
 - Domain events are emitted properly
 - Error handling works across layers

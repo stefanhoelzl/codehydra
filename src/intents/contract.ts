@@ -330,6 +330,7 @@ export const deletionOperationIdSchema = z.enum([
   "kill-terminals",
   "stop-server",
   "cleanup-vscode",
+  "repo-hook",
   "detecting-blockers",
   "cleanup-workspace",
 ]);

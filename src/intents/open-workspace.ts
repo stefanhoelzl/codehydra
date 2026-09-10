@@ -7,8 +7,8 @@
  * Steps:
  * 1. Dispatch project:resolve to get projectId from projectPath
  * 2. "create" → CreateHookResult — worktree creation (fatal)
- *    "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
- *     agent server (fatal)
+ *    "setup" → SetupHookResult — repository hooks (best-effort, internal
+ *     try/catch), agent server (fatal)
  *    "finalize" → FinalizeHookResult — workspace URL (fatal)
  *
  * On success, builds a Workspace return value and emits a
@@ -149,6 +149,10 @@ export const createResultSchema = z
 const setupEnrichmentSchema = z.object({
   workspacePath: workspacePathSchema,
   projectPath: projectPathSchema,
+  /** The workspace's branch, as the create hook reported it. */
+  branch: z.string(),
+  /** The resolved base branch. Absent for a worktree that has none (adopted). */
+  base: z.string().optional(),
 });
 const setupInputSchema = hookCtxSchema(openWorkspacePayloadSchema, setupEnrichmentSchema.shape);
 
@@ -445,11 +449,14 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // presenter drops it (presentation-module.ts, EVENT_METADATA_CHANGED).
     const mergedMetadata: Record<string, string> = { ...metadata };
 
-    // Hook 3b: "setup" — keepfiles is best-effort (internal try/catch), agent is fatal
+    // Hook 3b: "setup" — the repository's own hook is best-effort (internal
+    // try/catch), the agent is fatal
     const setupCtx: SetupHookInput = {
       intent: ctx.intent,
       workspacePath,
       projectPath,
+      branch,
+      ...(resolvedBase !== undefined && { base: resolvedBase }),
     };
     const setupResult = await ctx.hooks.collect("setup", setupCtx);
 

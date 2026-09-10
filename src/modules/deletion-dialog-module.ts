@@ -144,7 +144,10 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
     });
   }
 
-  return { sections };
+  // A deletion grinding through its steps needs nothing from anyone; the same
+  // panel once it has failed and is offering Retry / Dismiss is a question, and
+  // the user may well have switched away while it ran.
+  return { sections, ...(progress.completed && progress.hasErrors && { needsAttention: true }) };
 }
 
 /** Display state of the remove confirmation dialog. */
@@ -282,7 +285,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   /** Open the deletion dialog for a workspace from its current progress. */
   function showDialog(path: WorkspacePath, progress: DeletionProgress): void {
-    const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel" });
+    const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel", workspacePath: path });
     activeDialog = { path, handle };
     wireEvents(handle, path);
   }

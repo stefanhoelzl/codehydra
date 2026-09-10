@@ -9,6 +9,9 @@
  *    (WorktreeModule vetoes on workspace state). Either one refusing aborts with
  *    the workspace untouched.
  * 4. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
+ * 4b. "pre-delete" hook — the repository's own gate (HooksModule), on a quiesced
+ *     workspace but before the reap, so "release" cleans up after it. Skipped in
+ *     force mode. A refusal stops the pipeline with the worktree still on disk.
  * 5. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
  * 6. If blockingPids provided (retry): "flush" hook — kill provided PIDs
  * 7. "delete" hook — WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file)
@@ -131,6 +134,31 @@ export const preflightResultSchema = z
   .readonly();
 
 /**
+ * Per-handler result for the "pre-delete" hook point.
+ *
+ * The last gate before the worktree is removed, and the only one a repository's
+ * own hook can reach. It runs on a quiesced workspace — terminals killed, agent
+ * server stopped, VS Code view closed — but *before* "release", so the CWD scan
+ * and kill still cleans up anything a handler left holding the directory.
+ *
+ * Same two-signal split as "preflight": `blocked` with a `reason` is a policy
+ * decision, while a handler that throws could not tell and fails the gate closed.
+ * Unlike preflight, a refusal here is reported on the deletion progress panel's
+ * own row (`repo-hook`) rather than as a bare rejection — the pipeline has
+ * already emitted progress by the time it runs.
+ *
+ * Skipped entirely in force mode: force is the escape hatch from a gate that
+ * refuses or hangs, and the panel's Dismiss button takes it.
+ */
+export const preDeleteResultSchema = z
+  .object({
+    blocked: z.boolean().optional(),
+    /** Why the delete was refused. Shown as the progress row's error. */
+    reason: z.string().optional(),
+  })
+  .readonly();
+
+/**
  * Per-handler result for the "shutdown" hook point.
  * AgentModule may provide serverName and error.
  *
@@ -223,6 +251,7 @@ export const schemas = {
     confirm: { input: deletePipelineInputSchema, result: confirmResultSchema },
     preflight: { input: deletePipelineInputSchema, result: preflightResultSchema },
     shutdown: { input: deletePipelineInputSchema, result: shutdownResultSchema },
+    "pre-delete": { input: deletePipelineInputSchema, result: preDeleteResultSchema },
     release: { input: deletePipelineInputSchema, result: releaseResultSchema },
     delete: { input: deletePipelineInputSchema, result: deleteResultSchema },
     detect: { input: deletePipelineInputSchema, result: detectResultSchema },
@@ -263,6 +292,7 @@ export interface WorkspaceDeletionProgressEvent extends DomainEvent {
 export type ConfirmHookResult = z.infer<typeof confirmResultSchema>;
 export type PreflightHookResult = z.infer<typeof preflightResultSchema>;
 export type ShutdownHookResult = z.infer<typeof shutdownResultSchema>;
+export type PreDeleteHookResult = z.infer<typeof preDeleteResultSchema>;
 export type ReleaseHookResult = z.infer<typeof releaseResultSchema>;
 export type DeleteHookResult = z.infer<typeof deleteResultSchema>;
 export type DetectHookResult = z.infer<typeof detectResultSchema>;
@@ -342,6 +372,30 @@ function mergeDetect(
 }
 
 // =============================================================================
+// Pre-delete streaming frame (yielded by the "pre-delete" hook; not schematized —
+// yield frames are pure data forwarded to onYield, not validated at the boundary).
+// =============================================================================
+
+/**
+ * Yielded by a "pre-delete" handler the moment it has real work to do.
+ *
+ * Its only job is to say "a gate is actually running here". Most repositories
+ * define no hook at all, and a progress row for a step that will never do
+ * anything is noise on every deletion in every project — so the row is created
+ * by this frame rather than unconditionally by the operation.
+ */
+export interface PreDeleteStartedFrame {
+  readonly started: true;
+}
+
+/** Narrow an onYield frame to a PreDeleteStartedFrame. */
+export function isPreDeleteStartedFrame(frame: unknown): frame is PreDeleteStartedFrame {
+  return (
+    typeof frame === "object" && frame !== null && "started" in frame && frame.started === true
+  );
+}
+
+// =============================================================================
 // Emit function type (for threading ctx.emit through private methods)
 // =============================================================================
 
@@ -354,6 +408,7 @@ type EmitFn = OperationContext<DeleteWorkspaceIntent, typeof schemas>["emit"];
 
 interface PipelineState {
   readonly shutdown?: MergedShutdown;
+  readonly preDelete?: MergedErrors;
   readonly release?: MergedErrors;
   readonly del?: MergedErrors;
   readonly detect?: MergedDetect;
@@ -604,6 +659,53 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       return { hasErrors: false, identity };
     }
 
+    // --- Pre-delete (the repository's own gate) ---
+    // Runs before "release" on purpose: the CWD scan and kill that follows is
+    // what cleans up after a handler that left a process holding the worktree.
+    // Skipped in force mode — force is how the user escapes a gate that refuses
+    // or hangs, and the progress panel's Dismiss button takes exactly that path.
+    let preDelete: MergedErrors | undefined;
+    if (!payload.force) {
+      let started = false;
+      const { results: preDeleteResults, errors: preDeleteCollectErrors } = await ctx.hooks.collect(
+        "pre-delete",
+        pipelineCtx,
+        {
+          onYield: (frame) => {
+            if (!isPreDeleteStartedFrame(frame) || started) return;
+            started = true;
+            this.emitPipelineProgress(
+              emit,
+              identity,
+              payload,
+              { shutdown },
+              false,
+              false,
+              "repo-hook"
+            );
+          },
+        }
+      );
+
+      // A returned `blocked` is a policy refusal; a handler that throws could not
+      // tell. Both stop the deletion — the gate fails closed either way — and both
+      // land on the same row, so the panel reads the same whichever it was.
+      const refusals = preDeleteResults.filter((r) => r.blocked).map((r) => r.reason ?? "blocked");
+      const messages = [...refusals, ...preDeleteCollectErrors.map((e) => e.message)];
+
+      if (messages.length > 0) {
+        preDelete = { errors: messages };
+        this.emitPipelineProgress(emit, identity, payload, { shutdown, preDelete }, true, true);
+        return { hasErrors: true, identity };
+      }
+
+      // Only keep a clean row when a handler reported for duty. Without a yield
+      // no hook existed, and the step must leave no trace on the panel.
+      if (started) {
+        preDelete = { errors: [] };
+      }
+    }
+
     // --- Release (CWD scan + kill) ---
     const { results: releaseResults, errors: releaseCollectErrors } = await ctx.hooks.collect(
       "release",
@@ -614,7 +716,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, release },
+      { shutdown, ...(preDelete && { preDelete }), release },
       false,
       false,
       "cleanup-workspace"
@@ -627,7 +729,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, release },
+        { shutdown, ...(preDelete && { preDelete }), release },
         false,
         false,
         "killing-blockers"
@@ -657,7 +759,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, release, del, ...(flush && { flush }) },
+        { shutdown, ...(preDelete && { preDelete }), release, del, ...(flush && { flush }) },
         true,
         false
       );
@@ -671,7 +773,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, release, del },
+        { shutdown, ...(preDelete && { preDelete }), release, del },
         true,
         hasErrors
       );
@@ -683,7 +785,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, release, del },
+      { shutdown, ...(preDelete && { preDelete }), release, del },
       false,
       false,
       "detecting-blockers"
@@ -699,7 +801,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, release, del, detect },
+      { shutdown, ...(preDelete && { preDelete }), release, del, detect },
       true,
       true
     );
@@ -793,6 +895,22 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       status: applyCurrentStep("cleanup-vscode", shutdownStatus),
       ...(shutdownError && { error: shutdownError }),
     });
+
+    // Repository hook row. Present only once a handler has said it has work to
+    // do (the "started" yield) — most projects define no hook, and a row for a
+    // step that never does anything would show on every deletion everywhere.
+    if (state.preDelete || currentStep === "repo-hook") {
+      const preDeleteError =
+        state.preDelete && state.preDelete.errors.length > 0
+          ? state.preDelete.errors.join("; ")
+          : undefined;
+      operations.push({
+        id: "repo-hook",
+        label: "Running repository hook",
+        status: applyCurrentStep("repo-hook", this.hookPointStatus(state.preDelete)),
+        ...(preDeleteError && { error: preDeleteError }),
+      });
+    }
 
     // Delete operation (always present, runs before detect/flush in pipeline)
     const deleteStatus = this.hookPointStatus(state.del);

@@ -55,7 +55,7 @@ Or download directly from [GitHub Releases](https://github.com/stefanhoelzl/code
   installed extensions register: open files, run tasks, drive the UI
 - **Cross-platform** - Linux, macOS, and Windows
 
-Also included: hibernation, `.keepfiles`, workspace tags, and auto-workspaces
+Also included: hibernation, repository hooks, workspace tags, and auto-workspaces
 (experimental) for GitHub pull requests and YouTrack issues.
 
 ## How It Works

@@ -62,6 +62,14 @@ export interface ProcessOptions {
    * will catch it.
    */
   readonly redactBy?: string;
+  /**
+   * Text written to the process's stdin, which is then closed.
+   *
+   * For handing a spawn a structured payload without putting it in argv, where
+   * it would be visible to every other process on the machine and subject to
+   * the platform's argument-length limit. Absent = stdin is not written to.
+   */
+  readonly input?: string;
 }
 
 /**
@@ -742,6 +750,7 @@ export class ExecaProcessRunner implements ProcessRunner {
       // When custom env is provided, disable extendEnv so that deleted keys
       // from the custom env are actually removed (not inherited from process.env)
       ...(options?.env && { env: options.env, extendEnv: false }),
+      ...(options?.input !== undefined && { input: options.input }),
     }) as ExecaSubprocess;
 
     const spawned = new ExecaSpawnedProcess(subprocess, this.logger, command, options?.redactBy);

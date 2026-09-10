@@ -136,6 +136,18 @@ export interface PluginConfig {
  * Server to Client events (CodeHydra -> Extension).
  * Used by Socket.IO for type-safe event handling.
  */
+/**
+ * Lines destined for an output channel in a workspace's IDE.
+ *
+ * `channel` names the channel to create on first use; the lines are appended in
+ * order. Each carries the entry that produced it so a channel shared by several
+ * hooks still reads as separate conversations.
+ */
+export interface AppendOutputRequest {
+  readonly channel: string;
+  readonly lines: readonly { readonly source: string; readonly text: string }[];
+}
+
 export interface ServerToClientEvents {
   /**
    * Configuration sent immediately after connection validation.
@@ -174,6 +186,15 @@ export interface ServerToClientEvents {
     request: ShowNotificationRequest,
     ack: (result: PluginResult<ShowNotificationResponse>) => void
   ) => void;
+
+  /**
+   * Append lines to a CodeHydra-owned output channel in this workspace.
+   *
+   * Fire-and-forget by design (no ack): it carries a script's stderr, which is
+   * for a person to read, and losing a line to a disconnect must never be worth
+   * failing anything over.
+   */
+  "ui:appendOutput": (request: AppendOutputRequest) => void;
 
   /**
    * Create or update a status bar item.

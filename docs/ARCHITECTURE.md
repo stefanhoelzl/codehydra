@@ -191,7 +191,7 @@ Services are pure Node.js for testability without Electron:
 | OpenCode Server Manager      | Spawn/manage one `opencode serve` per workspace                                                    | Implemented |
 | OpenCode Status Provider     | SSE connections, status aggregation                                                                | Implemented |
 | VS Code Setup Service        | First-run extension and config installation                                                        | Implemented |
-| KeepFiles Service            | Copy gitignored files from project root to new workspaces                                          | Implemented |
+| Hooks Module                 | Run a repository's own `.codehydra` scripts at curated lifecycle moments                           | Implemented |
 | NetworkLayer                 | HTTP, SSE, port operations (HttpClient, SseClient, PortManager)                                    | Implemented |
 | PluginServer                 | Socket.IO server for VS Code extension communication                                               | Implemented |
 | McpServerManager             | MCP server for AI agent workspace API access                                                       | Implemented |
@@ -918,7 +918,7 @@ CH_LOG__LEVEL=silly:presenter pnpm dev                # one scope, maximum detai
 | `[git]`       | SimpleGitClient           | Git commands                          |
 | `[opencode]`  | OpenCodeClient            | OpenCode SSE connections              |
 | `[pidtree]`   | PidtreeProvider           | Process tree lookups                  |
-| `[keepfiles]` | KeepFilesService          | .keepfiles copy operations            |
+| `[hooks]`     | HooksModule               | Repository hooks (.codehydra)         |
 | `[api]`       | IPC Handlers              | API request/response timing           |
 | `[window]`    | WindowManager             | Window create/resize/close            |
 | `[view]`      | ViewManager               | View lifecycle, mode changes          |
@@ -1627,7 +1627,8 @@ User: Click [+], fill dialog, click OK
   → IPC: api:workspace:create → workspace:open intent dispatched
   → OpenWorkspaceOperation runs hook points:
       → "create": GitWorktreeWorkspaceModule creates git worktree
-      → "setup": KeepFilesModule copies .keepfiles, AgentModule starts agent server
+      → "setup": HooksModule runs .codehydra/hooks/after-worktree-created,
+                   AgentModule starts agent server
       → "finalize": IdeServerModule creates .code-workspace file
   → Operation dispatches workspace:switch to activate the new workspace
   → Emits workspace:created domain event → UiIpcModule → sendToUI → Renderer

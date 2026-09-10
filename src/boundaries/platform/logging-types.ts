@@ -32,7 +32,7 @@ export type LoggerName =
   | "worktree" // GitWorktreeProvider - worktree operations
   | "opencode" // OpenCodeClient - OpenCode SDK
   | "claude" // ClaudeServerManager - Claude agent
-  | "keepfiles" // KeepFilesService - .keepfiles copying
+  | "hooks" // HooksModule - a repository's own .codehydra scripts
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
   | "api" // IPC handlers
   | "window" // WindowManager
