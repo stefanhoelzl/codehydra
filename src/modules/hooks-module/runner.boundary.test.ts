@@ -63,7 +63,7 @@ async function writeHook(name: string, posix: string, windows: string): Promise<
 
 async function run(entry: string, input: unknown = {}): Promise<z.infer<typeof outputSchema>> {
   const wt = new Path(worktree);
-  const found = await findHook(deps, wt, HOOKS_DIR, entry);
+  const found = await findHook(deps, wt, entry);
   if (!found) throw new Error(`hook ${entry} was not found`);
   return runHook(deps, found, wt, input, outputSchema);
 }
@@ -148,9 +148,7 @@ describe("failures", () => {
 describe("what counts as a hook", () => {
   it("finds nothing when the repository has no hooks directory", async () => {
     await fs.rm(nodePath.join(worktree, HOOKS_ROOT), { recursive: true, force: true });
-    await expect(
-      findHook(deps, new Path(worktree), HOOKS_DIR, "anything")
-    ).resolves.toBeUndefined();
+    await expect(findHook(deps, new Path(worktree), "anything")).resolves.toBeUndefined();
   });
 
   it("finds a hook that carries an extension", async () => {
@@ -168,9 +166,7 @@ describe("what counts as a hook", () => {
 
   it("ignores a directory sitting where a hook file should be", async () => {
     await fs.mkdir(nodePath.join(worktree, HOOKS_ROOT, HOOKS_DIR, "not-a-hook"));
-    await expect(
-      findHook(deps, new Path(worktree), HOOKS_DIR, "not-a-hook")
-    ).resolves.toBeUndefined();
+    await expect(findHook(deps, new Path(worktree), "not-a-hook")).resolves.toBeUndefined();
   });
 
   it.skipIf(isWindows)("fails loudly when the file is not executable", async () => {
