@@ -2,9 +2,10 @@
  * HooksModule — lets a repository attach its own scripts to CodeHydra's
  * lifecycle, and replaces `.keepfiles` entirely.
  *
- * A repository declares hooks by dropping executable files into `.codehydra/`
- * in its worktree: `hooks/<name>` for a blocking entry that may return data,
- * `events/<name>` for one that is fired and forgotten. `hook-map.ts` is the
+ * A repository declares hooks by dropping executable files into
+ * `.codehydra/hooks/` in its worktree. An `on-` entry reports something that
+ * already happened and is fired and forgotten; every other entry runs at a
+ * moment CodeHydra is waiting on and may return data. `hook-map.ts` is the
  * whole contract — which moments exist, what each is handed, what each may
  * return — and nothing internal reaches disk.
  *
@@ -65,8 +66,6 @@ import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-m
 import {
   AFTER_WORKTREE_CREATED,
   BEFORE_WORKTREE_DELETED,
-  EVENTS_DIR,
-  HOOKS_DIR,
   ON_WORKSPACE_CREATED,
   afterWorktreeCreatedOutputSchema,
   beforeWorktreeDeletedOutputSchema,
@@ -233,7 +232,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   }
 
   // ---------------------------------------------------------------------------
-  // hooks/after-worktree-created
+  // after-worktree-created
   // ---------------------------------------------------------------------------
 
   async function afterWorktreeCreated(ctx: HookContext): Promise<HookOutput<SetupHookResult>> {
@@ -250,7 +249,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     if (!allowed()) return { result: {} };
 
     const worktree = new Path(input.workspacePath);
-    const found = await findHook(runnerDeps, worktree, HOOKS_DIR, AFTER_WORKTREE_CREATED.name);
+    const found = await findHook(runnerDeps, worktree, AFTER_WORKTREE_CREATED.name);
     if (!found) return { result: {} };
 
     const decision = await trust.check({
@@ -293,7 +292,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   }
 
   // ---------------------------------------------------------------------------
-  // hooks/before-worktree-deleted
+  // before-worktree-deleted
   // ---------------------------------------------------------------------------
 
   async function* beforeWorktreeDeleted(
@@ -305,7 +304,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     if (!allowed()) return { result: {} };
 
     const worktree = new Path(input.workspacePath);
-    const found = await findHook(runnerDeps, worktree, HOOKS_DIR, BEFORE_WORKTREE_DELETED.name);
+    const found = await findHook(runnerDeps, worktree, BEFORE_WORKTREE_DELETED.name);
     if (!found) return { result: {} };
 
     // Claim a row on the deletion panel before anything slow happens — the
@@ -366,7 +365,6 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     const found = await findHook(
       runnerDeps,
       new Path(input.workspacePath),
-      HOOKS_DIR,
       BEFORE_WORKTREE_DELETED.name
     );
 
@@ -374,7 +372,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   }
 
   // ---------------------------------------------------------------------------
-  // events/on-workspace-created
+  // on-workspace-created (fire-and-forget)
   // ---------------------------------------------------------------------------
 
   function onWorkspaceCreated(event: DomainEvent): void {
@@ -385,7 +383,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
       try {
         if (!allowed()) return;
 
-        const found = await findHook(runnerDeps, worktree, EVENTS_DIR, ON_WORKSPACE_CREATED.name);
+        const found = await findHook(runnerDeps, worktree, ON_WORKSPACE_CREATED.name);
         if (!found) return;
 
         const decision = await trust.check({

@@ -73,7 +73,7 @@ const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 
 const SETUP_HOOK = "/workspaces/feature-x/.codehydra/hooks/after-worktree-created";
 const DELETE_HOOK = "/workspaces/feature-x/.codehydra/hooks/before-worktree-deleted";
-const EVENT_HOOK = "/workspaces/feature-x/.codehydra/events/on-workspace-created";
+const EVENT_HOOK = "/workspaces/feature-x/.codehydra/hooks/on-workspace-created";
 
 interface SpawnOutcome {
   readonly exitCode?: number;

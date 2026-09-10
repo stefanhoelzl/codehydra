@@ -1,10 +1,10 @@
 /**
  * Finds and runs a repository's hook scripts.
  *
- * A hook is one file — `.codehydra/hooks/<name>` or `.codehydra/events/<name>`
- * in the acted-on worktree — exactly as git does it: if the file is there it
- * runs, otherwise nothing happens. No directories, no ordering, no naming
- * conventions to learn. The extension is free (the shebang decides what
+ * A hook is one file — `.codehydra/hooks/<name>` in the acted-on worktree —
+ * exactly as git does it: if the file is there it runs, otherwise nothing
+ * happens. No subdirectories, no ordering, no naming conventions to learn
+ * beyond the `on-` prefix that marks an entry nothing waits for. The extension is free (the shebang decides what
  * interprets it, so a `.py` hook is as ordinary as a `.sh` one), and discovery
  * is a bare `stat` at the moment the hook point runs, so editing a hook takes
  * effect on the next workspace without a cache or a watcher in the way.
@@ -32,14 +32,11 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import { Path } from "../../utils/path/path";
 import { FileSystemError } from "../../shared/errors/service-errors";
 import { getErrorMessage } from "../../shared/error-utils";
-import { EVENTS_DIR, HOOKS_DIR, HOOKS_ROOT } from "./hook-map";
+import { HOOKS_DIR, HOOKS_ROOT } from "./hook-map";
 
 // =============================================================================
 // Types
 // =============================================================================
-
-/** Which tree an entry lives in. Decides blocking, and nothing else here. */
-export type HookTree = typeof HOOKS_DIR | typeof EVENTS_DIR;
 
 /** Where a hook's human output should be shown, beyond the log. */
 export interface HookOutputSink {
@@ -82,9 +79,9 @@ export class HookFailedError extends Error {
 // Discovery
 // =============================================================================
 
-/** The directory an entry's file would live in. */
-export function hookDir(worktree: Path, tree: HookTree): Path {
-  return new Path(worktree, HOOKS_ROOT, tree);
+/** The directory a repository's hooks live in. */
+export function hookDir(worktree: Path): Path {
+  return new Path(worktree, HOOKS_ROOT, HOOKS_DIR);
 }
 
 /**
@@ -116,10 +113,9 @@ export function namesEntry(filename: string, entry: string): boolean {
 export async function findHook(
   deps: Pick<HookRunnerDeps, "fileSystem" | "logger">,
   worktree: Path,
-  tree: HookTree,
   entry: string
 ): Promise<FoundHook | undefined> {
-  const dir = new Path(worktree, HOOKS_ROOT, tree);
+  const dir = hookDir(worktree);
 
   let entries;
   try {

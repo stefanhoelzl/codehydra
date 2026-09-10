@@ -35,6 +35,7 @@ const ENV_NAME = "CH_HOOK_E2E";
 const ENV_VALUE = "hooked";
 const TITLE = "Hooked Alpha";
 const REFUSAL = "e2e gate says no";
+const EVENT_MARKER = ".on-workspace-created-ran";
 
 let repo: { path: string; cleanup: () => Promise<void> };
 
@@ -50,12 +51,23 @@ function hookScript(json: string): string {
     : ["#!/bin/sh", "cat > /dev/null", `echo '${json}'`, ""].join("\n");
 }
 
-async function writeHook(name: string, json: string): Promise<void> {
+/** A hook that swallows stdin and touches a file in the worktree it runs in. */
+function markerScript(marker: string): string {
+  return isWindows
+    ? ["@echo off", "more > nul", `type nul > ${marker}`, ""].join("\r\n")
+    : ["#!/bin/sh", "cat > /dev/null", `touch ${marker}`, ""].join("\n");
+}
+
+async function writeHookScript(name: string, body: string): Promise<void> {
   const dir = join(repo.path, ".codehydra", "hooks");
   await mkdir(dir, { recursive: true });
   const file = join(dir, `${name}${HOOK_EXT}`);
-  await writeFile(file, hookScript(json));
+  await writeFile(file, body);
   if (!isWindows) await chmod(file, 0o755);
+}
+
+async function writeHook(name: string, json: string): Promise<void> {
+  await writeHookScript(name, hookScript(json));
 }
 
 test.beforeAll(async () => {
@@ -70,6 +82,10 @@ test.beforeAll(async () => {
     })
   );
   await writeHook("before-worktree-deleted", JSON.stringify({ blocked: true, reason: REFUSAL }));
+
+  // Same directory as the two blocking entries: the `on-` prefix is what makes
+  // this one fire-and-forget, not where it lives.
+  await writeHookScript("on-workspace-created", markerScript(EVENT_MARKER));
 
   // Hooks are read from the *worktree*, so they only exist in a new workspace if
   // they are committed on the branch it is created from.
@@ -128,6 +144,15 @@ test("the hook's title and tag reach the sidebar", async () => {
 
   await expect(row.getByText(TITLE, { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(row.getByText("e2e", { exact: true })).toBeVisible();
+});
+
+test("the on- entry fires from the same directory, without being waited for", async () => {
+  // Fire-and-forget, so it lands after the open has already returned — and it
+  // never raised a trust dialog of its own, because Always was answered for the
+  // project, not for one entry.
+  await expect
+    .poll(() => existsSync(join(workspacesDir(), "alpha", EVENT_MARKER)), { timeout: 60_000 })
+    .toBe(true);
 });
 
 test("the deletion hook refuses, and the worktree survives", async () => {

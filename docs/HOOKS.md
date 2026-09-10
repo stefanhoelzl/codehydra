@@ -8,19 +8,19 @@ This replaces `.keepfiles`, which is gone.
 
 ## Where they go
 
-Two directories in the **worktree**, not the project root:
+One directory in the **worktree**, not the project root:
 
 ```
-.codehydra/
-  hooks/
-    after-worktree-created      # blocking; may return data
-    before-worktree-deleted     # blocking; may refuse
-  events/
-    on-workspace-created        # fire-and-forget; output ignored
+.codehydra/hooks/
+  after-worktree-created      # blocking; may return data
+  before-worktree-deleted     # blocking; may refuse
+  on-workspace-created        # fire-and-forget; output ignored
 ```
 
-The directory is the rule: anything under `hooks/` blocks the operation and can
-affect it, anything under `events/` is started and forgotten.
+The name is the rule. An `on-` entry reports something that already happened —
+it is started and forgotten, and nothing it does can change the outcome. Every
+other entry runs at a moment CodeHydra is waiting on: it blocks, and what it
+returns matters. The tense tells you which you are writing.
 
 Because hooks are read from the worktree, a hook must be **committed on the
 branch a workspace is created from** — in practice, it lives on `main`. This is
@@ -30,8 +30,9 @@ the only place you ever have the repository open.
 ## What a hook is
 
 One file per entry, the way git does it: if the file is there it runs, and if it
-is not, nothing happens. No directories, no `10-`/`20-` ordering, no naming
-conventions. A repository that wants several steps writes them in one script.
+is not, nothing happens. No subdirectories, no `10-`/`20-` ordering, and beyond
+the `on-` prefix above, nothing to learn. A repository that wants several steps
+writes them in one script.
 
 The file is the entry's name, with or without an extension — the extension never
 decides anything, the shebang does:
@@ -86,7 +87,7 @@ back into CodeHydra (`ch ws set-title`, `ch ws tag`) as well as return values.
 
 There is no timeout. A hook runs until it finishes.
 
-## `hooks/after-worktree-created`
+## `after-worktree-created`
 
 Runs once, on a genuinely new worktree, before the editor and the agent start.
 This is where `.keepfiles` work now goes.
@@ -143,7 +144,7 @@ for f in .env config/local.yml; do
 done
 ```
 
-## `hooks/before-worktree-deleted`
+## `before-worktree-deleted`
 
 The last gate before the worktree is removed. By the time it runs the workspace
 is quiesced — terminals killed, agent server stopped, editor view closed — and
@@ -171,7 +172,7 @@ wrongly or hangs.
 It does not run for a runtime-only teardown (closing a project leaves worktrees
 on disk), and it does not run in force mode.
 
-## `events/on-workspace-created`
+## `on-workspace-created`
 
 Fired after a workspace is created and forgotten immediately — nothing waits for
 it, its stdout is ignored, and a non-zero exit only reaches the log.

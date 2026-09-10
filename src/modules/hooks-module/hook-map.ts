@@ -14,10 +14,11 @@
  * operation fails to compile until someone says what a repository may do there
  * — or writes an explicit `null`, which is a decision rather than an oversight.
  *
- * Directory decides blocking: an entry under `hooks/` blocks the operation and
- * may return data; one under `events/` is fire-and-forget with its output
- * ignored. That is the whole rule, which is why it is a directory and not a
- * flag.
+ * The name decides blocking: an `on-` entry reports something that already
+ * happened, so it is fire-and-forget and its output is ignored; every other
+ * entry runs at a moment CodeHydra is waiting on, blocks it, and may return
+ * data. One directory, and the tense of the name tells you which you are
+ * writing — `after-worktree-created` is a job, `on-workspace-created` is news.
  */
 
 import { z } from "zod/v4";
@@ -29,14 +30,11 @@ import { schemas as deleteWorkspaceSchemas } from "../../intents/delete-workspac
 // Directories
 // =============================================================================
 
-/** Repository-owned directory holding both hook trees. */
+/** Repository-owned directory. */
 export const HOOKS_ROOT = ".codehydra";
 
-/** Blocking entries live here. */
+/** Every entry, blocking or not, lives here. */
 export const HOOKS_DIR = "hooks";
-
-/** Fire-and-forget entries live here. */
-export const EVENTS_DIR = "events";
 
 // =============================================================================
 // Input
@@ -149,14 +147,24 @@ export type BeforeWorktreeDeletedOutput = z.infer<typeof beforeWorktreeDeletedOu
 // Entries
 // =============================================================================
 
-/** A blocking entry: the on-disk name plus the JSON it exchanges. */
+/**
+ * A blocking entry: the on-disk name plus the JSON it exchanges.
+ *
+ * Something is waiting on it — a workspace opening, a deletion pausing — so it
+ * gets to return a result, and a failure is worth reporting.
+ */
 export interface HookSpec {
   readonly name: string;
   readonly input: z.ZodType;
   readonly output: z.ZodType;
 }
 
-/** A fire-and-forget entry. No output — nothing is waiting for one. */
+/**
+ * A fire-and-forget entry, named `on-<something-that-happened>`.
+ *
+ * No output, because nothing is waiting for one: by the time it runs, the thing
+ * it reports is already true and cannot be affected.
+ */
 export interface EventSpec {
   readonly name: string;
   readonly input: z.ZodType;
