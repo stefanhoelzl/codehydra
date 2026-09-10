@@ -65,6 +65,13 @@ export const EVENT_WORKSPACE_DELETED = "workspace:deleted" as const;
 export const EVENT_WORKSPACE_DELETE_FAILED = "workspace:delete-failed" as const;
 export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" as const;
 
+/**
+ * Capability a "preflight" handler provides to say it also has a "pre-delete"
+ * hook to run. Preflight is the last thing before the first progress event, so
+ * it is the only place a row can be claimed in time to be listed with the rest.
+ */
+export const CAPABILITY_REPO_HOOK = "repo-hook" as const;
+
 // =============================================================================
 // Contract schemas (single source of truth)
 // =============================================================================
@@ -408,6 +415,8 @@ type EmitFn = OperationContext<DeleteWorkspaceIntent, typeof schemas>["emit"];
 
 interface PipelineState {
   readonly shutdown?: MergedShutdown;
+  /** The repository has a "pre-delete" hook, so its row is listed from the start. */
+  readonly repoHookPresent?: boolean;
   readonly preDelete?: MergedErrors;
   readonly release?: MergedErrors;
   readonly del?: MergedErrors;
@@ -570,22 +579,38 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // must leave the workspace untouched, with no progress event ever emitted.
     // Whether the check applies, and what its findings mean, belong to the
     // handlers — this only sequences the gate and shapes the caller's error.
-    const { results: preflightResults, errors: preflightCollectErrors } = await ctx.hooks.collect(
-      "preflight",
-      pipelineCtx
-    );
+    const {
+      results: preflightResults,
+      errors: preflightCollectErrors,
+      capabilities: preflightCapabilities,
+    } = await ctx.hooks.collect("preflight", pipelineCtx);
     throwHookErrors(preflightCollectErrors, "workspace:delete preflight hooks failed");
     const reasons = preflightResults.filter((r) => r.blocked).map((r) => r.reason ?? "blocked");
     if (reasons.length > 0) {
       throw new Error(`Preflight check failed: ${reasons.join("; ")}`);
     }
 
+    // Whether this repository has a hook for the "pre-delete" stage, learned
+    // here because preflight is the last thing that runs before the first
+    // progress event. Without it the hook's row could only be created once the
+    // hook started, which makes it appear halfway through a list the user is
+    // already reading. Absent for a repository with no hook, which is the whole
+    // point — a step that will never do anything should not be listed at all.
+    const repoHookPresent = preflightCapabilities?.[CAPABILITY_REPO_HOOK] === true;
+
     // Safety net: catch unexpected errors after identity resolution to ensure
     // the UI always receives a terminal progress event (completed: true).
     // Without this, an unexpected throw after the first progress emission
     // leaves the UI permanently stuck on "Removing workspace".
     try {
-      return await this.runPipelineBody(ctx, emit, identity, pipelineCtx, effectivePayload);
+      return await this.runPipelineBody(
+        ctx,
+        emit,
+        identity,
+        pipelineCtx,
+        effectivePayload,
+        repoHookPresent
+      );
     } catch {
       this.emitPipelineProgress(emit, identity, effectivePayload, {}, true, true);
       return { hasErrors: true, identity };
@@ -597,10 +622,26 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     emit: EmitFn,
     identity: ResolvedIdentity,
     pipelineCtx: DeletePipelineHookInput,
-    payload: DeleteWorkspacePayload
+    payload: DeleteWorkspacePayload,
+    repoHookPresent: boolean
   ): Promise<PipelineResult> {
+    // The row is listed from the first progress event, so it never appears
+    // mid-list — but only on the path that will actually run the stage: a
+    // runtime-only teardown stops before it, and force skips it outright.
+    const repoHookRow = repoHookPresent && payload.removeWorktree && !payload.force;
+    const withRepoHook = <T extends PipelineState>(state: T): T & PipelineState =>
+      repoHookRow ? { ...state, repoHookPresent: true } : state;
+
     // --- Shutdown ---
-    this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
+    this.emitPipelineProgress(
+      emit,
+      identity,
+      payload,
+      withRepoHook({}),
+      false,
+      false,
+      "kill-terminals"
+    );
     const { results: shutdownResults, errors: shutdownCollectErrors } = await ctx.hooks.collect(
       "shutdown",
       pipelineCtx
@@ -610,7 +651,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown },
+      withRepoHook({ shutdown }),
       false,
       false,
       "cleanup-workspace"
@@ -649,13 +690,13 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
 
     const shutdownFailed = shutdown.errors.length > 0;
     if (shutdownFailed && !payload.force) {
-      this.emitPipelineProgress(emit, identity, payload, { shutdown }, true, true);
+      this.emitPipelineProgress(emit, identity, payload, withRepoHook({ shutdown }), true, true);
       return { hasErrors: true, identity };
     }
 
     // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
     if (!payload.removeWorktree) {
-      this.emitPipelineProgress(emit, identity, payload, { shutdown }, true, false);
+      this.emitPipelineProgress(emit, identity, payload, withRepoHook({ shutdown }), true, false);
       return { hasErrors: false, identity };
     }
 
@@ -678,7 +719,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
               emit,
               identity,
               payload,
-              { shutdown },
+              withRepoHook({ shutdown }),
               false,
               false,
               "repo-hook"
@@ -695,7 +736,14 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
 
       if (messages.length > 0) {
         preDelete = { errors: messages };
-        this.emitPipelineProgress(emit, identity, payload, { shutdown, preDelete }, true, true);
+        this.emitPipelineProgress(
+          emit,
+          identity,
+          payload,
+          withRepoHook({ shutdown, preDelete }),
+          true,
+          true
+        );
         return { hasErrors: true, identity };
       }
 
@@ -716,7 +764,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, ...(preDelete && { preDelete }), release },
+      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release }),
       false,
       false,
       "cleanup-workspace"
@@ -729,7 +777,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, ...(preDelete && { preDelete }), release },
+        withRepoHook({ shutdown, ...(preDelete && { preDelete }), release }),
         false,
         false,
         "killing-blockers"
@@ -759,7 +807,13 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, ...(preDelete && { preDelete }), release, del, ...(flush && { flush }) },
+        withRepoHook({
+          shutdown,
+          ...(preDelete && { preDelete }),
+          release,
+          del,
+          ...(flush && { flush }),
+        }),
         true,
         false
       );
@@ -773,7 +827,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         emit,
         identity,
         payload,
-        { shutdown, ...(preDelete && { preDelete }), release, del },
+        withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del }),
         true,
         hasErrors
       );
@@ -785,7 +839,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, ...(preDelete && { preDelete }), release, del },
+      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del }),
       false,
       false,
       "detecting-blockers"
@@ -801,7 +855,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       emit,
       identity,
       payload,
-      { shutdown, ...(preDelete && { preDelete }), release, del, detect },
+      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del, detect }),
       true,
       true
     );
@@ -896,10 +950,12 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       ...(shutdownError && { error: shutdownError }),
     });
 
-    // Repository hook row. Present only once a handler has said it has work to
-    // do (the "started" yield) — most projects define no hook, and a row for a
-    // step that never does anything would show on every deletion everywhere.
-    if (state.preDelete || currentStep === "repo-hook") {
+    // Repository hook row. Present only for a repository that actually has a
+    // hook — most define none, and a row for a step that never does anything
+    // would show on every deletion everywhere. Its presence is settled during
+    // preflight, before the first progress event, so the row is listed with the
+    // rest from the start rather than appearing halfway down the list.
+    if (state.repoHookPresent || state.preDelete || currentStep === "repo-hook") {
       const preDeleteError =
         state.preDelete && state.preDelete.errors.length > 0
           ? state.preDelete.errors.join("; ")

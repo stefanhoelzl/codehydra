@@ -48,11 +48,13 @@ import {
   type WorkspaceCreatedEvent,
 } from "../../intents/open-workspace";
 import {
+  CAPABILITY_REPO_HOOK,
   DELETE_WORKSPACE_OPERATION_ID,
   type DeletePipelineHookInput,
   type DeleteWorkspaceIntent,
   type PreDeleteHookResult,
   type PreDeleteStartedFrame,
+  type PreflightHookResult,
 } from "../../intents/delete-workspace";
 import {
   INTENT_RESOLVE_WORKSPACE,
@@ -344,6 +346,33 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     };
   }
 
+  /**
+   * Claim the deletion panel's row, if this repository has a hook to run.
+   *
+   * Runs at "preflight" purely for its timing: that is the last hook point
+   * before the first progress event, so it is the only place the row can be
+   * claimed early enough to be listed alongside the other steps. It never
+   * blocks — the decision belongs to `before-worktree-deleted` itself — and it
+   * asks nothing about trust, because a question raised here would arrive
+   * before the user has even seen a deletion start.
+   */
+  async function announceDeleteHook(ctx: HookContext): Promise<HookOutput<PreflightHookResult>> {
+    const input = ctx as DeletePipelineHookInput;
+    const { payload } = ctx.intent as DeleteWorkspaceIntent;
+
+    // Exactly the conditions under which the stage will actually run.
+    if (!payload.removeWorktree || payload.force || !allowed()) return {};
+
+    const found = await findHook(
+      runnerDeps,
+      new Path(input.workspacePath),
+      HOOKS_DIR,
+      BEFORE_WORKTREE_DELETED.name
+    );
+
+    return found ? { provides: { [CAPABILITY_REPO_HOOK]: true } } : {};
+  }
+
   // ---------------------------------------------------------------------------
   // events/on-workspace-created
   // ---------------------------------------------------------------------------
@@ -459,6 +488,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
       setup: { handler: afterWorktreeCreated },
     },
     [DELETE_WORKSPACE_OPERATION_ID]: {
+      preflight: { handler: announceDeleteHook },
       "pre-delete": { handler: beforeWorktreeDeleted },
     },
   };

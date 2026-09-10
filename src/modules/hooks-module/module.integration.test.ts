@@ -465,6 +465,20 @@ describe("after-worktree-created", () => {
 });
 
 describe("before-worktree-deleted", () => {
+  it("lists its row from the first progress event, not once it starts", async () => {
+    const setup = createTestSetup({
+      hooks: { [DELETE_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await deleteWorkspace(setup);
+
+    // A row that appears halfway down a list the user is already reading is
+    // worse than one that sits there pending, so its presence is settled during
+    // preflight — before any progress is emitted.
+    const first = setup.progress[0]!.payload.operations;
+    expect(first.find((op) => op.id === "repo-hook")).toBeDefined();
+  });
+
   it("blocks the deletion and reports the reason on its row", async () => {
     const setup = createTestSetup({
       hooks: {
