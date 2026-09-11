@@ -122,7 +122,15 @@ describe("a background shell wrapped in ch-bg", () => {
 describe("a turn that spawns a sub-agent", () => {
   let run: ScenarioRun;
   beforeAll(async () => {
-    run = await runScenario("subagent", { until: (r) => seen(r, "Stop") });
+    // Wait for BOTH, because the main `Stop` does not imply `SubagentStop` —
+    // the third assertion below is precisely that the main turn ends while the
+    // sub-agent is still running, so `SubagentStop` lands afterwards. Waiting on
+    // `Stop` alone raced it: the poll returned and the agent was killed with the
+    // sub-agent's hook still in flight, which is a separate process and so is
+    // slowest exactly where this failed, on Windows.
+    run = await runScenario("subagent", {
+      until: (r) => seen(r, "Stop") && seen(r, "SubagentStop"),
+    });
   }, SCENARIO_TIMEOUT_MS);
 
   it("SubagentStart does not drive the workspace status", () => {
