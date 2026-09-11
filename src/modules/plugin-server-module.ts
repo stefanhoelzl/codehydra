@@ -186,22 +186,44 @@ export interface PluginServerOptions {
 // =============================================================================
 
 /**
- * The module plus a runtime readiness probe.
+ * The module plus its runtime readiness probes.
  *
- * `isReady()` exists for callers that fire a *best-effort* vscode command and
- * already treat "not connected yet" as normal — terminal focus on first idle,
- * notably. Dispatching anyway works, but the intent rejects and the dispatcher
- * logs that rejection at error level, so an expected startup condition ends up
- * in the log (and in every bug report) looking like a fault. Asking first keeps
- * the log honest; the caller's own retry-on-next-trigger still covers it.
+ * These exist for callers that fire a *best-effort* vscode command and already
+ * treat "not connected" as normal — terminal focus on first idle, notably.
+ * Dispatching anyway works, but the intent rejects and the dispatcher logs that
+ * rejection at error level, so an expected condition ends up in the log (and in
+ * every bug report) looking like a fault. Asking first keeps the log honest; the
+ * caller's own retry-on-next-trigger still covers it.
  *
- * Do NOT use this to pre-check a command whose failure actually matters — the
+ * Ask `isConnected` for that, not `isReady`. A listening server says nothing
+ * about the workspace you are about to address, and a command is delivered to
+ * one workspace's socket or not at all.
+ *
+ * Do NOT use either to pre-check a command whose failure actually matters — the
  * hook still throws, and that error is the real signal.
  */
 export interface PluginServerModuleHandle {
   readonly module: IntentModule;
-  /** True once the Socket.IO server is listening (workspaces may still be connecting). */
+  /**
+   * True once the Socket.IO server is listening — workspaces may still be
+   * connecting, or already gone.
+   *
+   * Almost never the question you want: it is true for a workspace that has
+   * never connected and for one whose extension host was just disposed. Use
+   * `isConnected` to guard a command aimed at a particular workspace.
+   */
   isReady(): boolean;
+  /**
+   * True when this workspace has a live socket right now — the condition a
+   * `vscode:command` for it actually needs.
+   *
+   * Answered from the same connection map the command itself resolves against,
+   * so a true here and a delivery a moment later can still disagree: a socket
+   * can drop in between, and nothing can close that gap entirely. It closes the
+   * window that matters, which is the wide one where the workspace was never
+   * connected or is being torn down.
+   */
+  isConnected(workspacePath: string): boolean;
   /** The bound port, or null before the server has started. */
   port(): number | null;
   /**
@@ -1289,6 +1311,12 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    * to a disconnect is not worth a caller's error path. A workspace that is not
    * connected simply answers false.
    */
+  /** True when `workspacePath` has a live socket. See PluginServerModuleHandle. */
+  function isConnected(workspacePath: string): boolean {
+    const socket = connections.get(new Path(workspacePath).toString());
+    return socket?.connected === true;
+  }
+
   function appendOutput(workspacePath: string, request: AppendOutputRequest): boolean {
     const normalized = new Path(workspacePath).toString();
     const socket = connections.get(normalized);
@@ -1477,6 +1505,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   return {
     module,
     isReady: () => io !== null,
+    isConnected,
     port: () => port,
     appendOutput,
     onWorkspaceConnected: (listener) => {

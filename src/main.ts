@@ -936,13 +936,18 @@ const firstFocused = new Set<string>();
 
 const focusTerminal = (workspacePath: string): void => {
   // Ask before dispatching. This fires on the first idle status, which can beat
-  // the plugin server coming up — most visibly right after a wake, or on a
-  // relaunch that rediscovers workspaces. Dispatching regardless still "works"
-  // (the catch below is exactly for that), but the intent rejects and the
-  // dispatcher logs the rejection at error level, so a routine startup ordering
-  // shows up in the log, and in every bug report, as a fault. The retry on the
-  // next trigger is what actually focuses the terminal either way.
-  if (!pluginServerModule.isReady()) return;
+  // the workspace's extension connecting — most visibly right after a wake, or
+  // on a relaunch that rediscovers workspaces — and can also arrive after it has
+  // gone, since the switch-driven trigger below awaits a status query and a
+  // deletion tears the extension host down while that is in flight. Dispatching
+  // regardless still "works" (the catch below is exactly for that), but the
+  // intent rejects and the dispatcher logs the rejection at error level, so a
+  // routine ordering shows up in the log, and in every bug report, as a fault.
+  // The retry on the next trigger is what actually focuses the terminal either way.
+  //
+  // `isConnected`, not `isReady`: a listening server says nothing about *this*
+  // workspace, so the server-level check let exactly the torn-down case through.
+  if (!pluginServerModule.isConnected(workspacePath)) return;
 
   void dispatcher
     .dispatch({
