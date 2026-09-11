@@ -33,7 +33,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { existsSync, writeFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
-import { LLMock } from "@copilotkit/aimock";
+import { LLMock, type ChatCompletionRequest, type ChatMessage } from "@copilotkit/aimock";
 import { DefaultFileSystemBoundary } from "../../../boundaries/platform/filesystem";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
@@ -129,16 +129,54 @@ function sendPrompt(child: ChildProcess): void {
 }
 
 /**
+ * The titling agent's system prompt — the only thing that tells its call apart
+ * from a turn of the conversation. Shared by {@link NAMING_FIXTURE}, which
+ * answers that call, and {@link isNamingCall}, which keeps other fixtures off
+ * it; the two must agree, so they read the same constant.
+ */
+const NAMING_SYSTEM_PROMPT = "You are naming a coding session";
+
+/**
  * Claude names the session before it does anything else, in a separate call
  * carrying its own system prompt. `DISABLE_NON_ESSENTIAL_MODEL_CALLS` does not
  * suppress it (checked on 2.1.250), and strict mode would 503 it and kill the
- * run, so it gets a fixture of its own — gated on the titling agent's own
- * system prompt so it cannot absorb the turn under test.
+ * run, so it gets a fixture of its own.
+ *
+ * This fixture decides what the naming call is ANSWERED with. It does not keep
+ * the call away from other fixtures — see {@link installFixtures}.
  */
 const NAMING_FIXTURE = {
-  match: { systemMessage: "You are naming a coding session" },
+  match: { systemMessage: NAMING_SYSTEM_PROMPT },
   response: { content: "Boundary probe" },
 } as const;
+
+/** The text of a request's system message, whichever shape it arrived in. */
+function systemText(req: ChatCompletionRequest): string {
+  const content = req.messages.find((message: ChatMessage) => message.role === "system")?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((part) => part.text ?? "").join("");
+  return "";
+}
+
+/** Claude's session-naming call, which is not a turn of the conversation. */
+function isNamingCall(req: ChatCompletionRequest): boolean {
+  return systemText(req).includes(NAMING_SYSTEM_PROMPT);
+}
+
+/**
+ * The scenario's opening turn: the coding agent, before it has said anything.
+ *
+ * Two requests have to be excluded, and both are excluded by SHAPE rather than
+ * by counting. The naming call above is one. The other is the turn Claude
+ * re-invokes when a background shell exits: it carries no tool result, so it
+ * looks like a fresh user turn, and only the assistant message from the first
+ * turn tells them apart. Serving that turn a second background shell would
+ * start a shell that outlives the run and never let the scenario end.
+ */
+function isFirstAgentTurn(req: ChatCompletionRequest): boolean {
+  if (isNamingCall(req)) return false;
+  return !req.messages.some((message: ChatMessage) => message.role === "assistant");
+}
 
 /**
  * A `Bash` tool call.
@@ -171,7 +209,14 @@ function bashCall(command: string, description: string, background: boolean) {
 }
 
 /**
- * Install the fixtures for one scenario. First match wins, so order is meaning.
+ * Install the fixtures for one scenario. The earliest match wins, so order
+ * decides which fixture ANSWERS a request — but not which fixtures are
+ * consulted about it. aimock evaluates every fixture's `predicate` on every
+ * request and picks a winner afterwards, so a predicate runs even for requests
+ * an earlier fixture is about to answer. A predicate must therefore be a pure
+ * question about the request in hand: one that counts calls instead is hostage
+ * to how many unrelated model calls the agent happens to make, which is no part
+ * of any contract. See {@link isFirstAgentTurn}.
  *
  * Every scenario answers a follow-up turn with plain text. A fixture that
  * answers with another tool call instead loops forever: when a background task
@@ -210,22 +255,18 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     case "tool":
       mock.addFixture({ match: {}, response: bashCall("echo probe", "echo", false) });
       break;
-    case "bgcomplete": {
+    case "bgcomplete":
       // Short enough to finish inside the run, so one scenario covers
       // busyForBackgroundTasks being set AND cleared.
       //
-      // One-shot, and that is load-bearing: when the shell exits Claude
-      // re-invokes the agent, and the re-invoked turn carries no tool result,
-      // so a plain `match: {}` would serve it another background shell and the
-      // run would never end. Only the first turn gets one.
-      let served = 0;
+      // Only the opening turn gets a shell, and that is load-bearing — see
+      // `isFirstAgentTurn` for what else asks for one and must not get it.
       mock.addFixture({
-        match: { predicate: () => served++ === 0 },
+        match: { predicate: isFirstAgentTurn },
         response: bashCall("sleep 2", "short sleep", true),
       });
       mock.addFixture({ match: {}, response: { content: "The shell has finished." } });
       break;
-    }
     case "chbg":
       // Long enough to still be running at Stop, so `taskKeepsBusy` really sees
       // a running shell and opts it out on the marker rather than on an empty
