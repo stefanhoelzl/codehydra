@@ -157,6 +157,15 @@ test("the on- entry fires from the same directory, without being waited for", as
 
 test("the deletion hook refuses, and the worktree survives", async () => {
   const ui = app().uiPage();
+
+  // A second workspace, so the project still has one when `alpha` goes away.
+  // Deleting the *only* workspace deactivates the project, and the creation
+  // panel — which is the ground state when nothing is active — then renders
+  // above the sidebar and swallows clicks on the rows beneath it. That is real
+  // app behaviour, not a test artifact, and having a survivor is also the
+  // ordinary case: nobody runs CodeHydra with exactly one workspace.
+  await createWorkspace(app(), "beta");
+
   await expandSidebar(ui);
 
   const row = ui
@@ -169,10 +178,11 @@ test("the deletion hook refuses, and the worktree survives", async () => {
   await expect(confirm).toBeVisible();
   await confirm.getByRole("button", { name: "Remove", exact: true }).click();
 
-  // Trust was answered Always, so the hook just runs — no second question.
-  // The row is the durable evidence: the progress panel is only on screen while
-  // the workspace being deleted is the one you are looking at, and deleting the
-  // last workspace switches away from it.
+  // Trust was answered Always, so the hook just runs — no second question, for
+  // `beta`'s creation either: trust is per project, not per workspace.
+  // The row is the durable evidence. The progress panel is only on screen while
+  // the workspace being deleted is the one you are looking at, and `beta` has
+  // the screen by now.
   await expect(row.getByRole("img", { name: "Deletion failed" })).toBeVisible({
     timeout: 60_000,
   });
@@ -186,7 +196,10 @@ test("Dismiss force-deletes past the refusing hook", async () => {
   await expandSidebar(ui);
 
   // Selecting the failed workspace brings its deletion panel back — which is how
-  // a user reaches Retry and Dismiss after switching away.
+  // a user reaches Retry and Dismiss after switching away. This click is why the
+  // previous test created `beta`: with `alpha` the only workspace, the creation
+  // panel covers the sidebar and intercepts it (on macOS and Windows, where the
+  // panel's own label overlaps the row — Linux's layout happens not to).
   await workspaceRow(ui, "alpha").click();
 
   const panel = ui.getByRole("region", { name: "Removing workspace" });
@@ -198,6 +211,8 @@ test("Dismiss force-deletes past the refusing hook", async () => {
   await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
 
   await expect(workspaceRow(ui, "alpha")).toBeHidden({ timeout: 120_000 });
+  // The survivor is untouched — a force-delete takes one workspace, not the project.
+  await expect(workspaceRow(ui, "beta")).toBeVisible();
   await expect
     .poll(() => existsSync(join(workspacesDir(), "alpha")), { timeout: 60_000 })
     .toBe(false);
