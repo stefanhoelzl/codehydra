@@ -104,7 +104,7 @@ describe("running a real hook", () => {
     const entry = await writeHook(
       "chatty",
       '#!/bin/sh\necho "working" >&2\necho \'{"ok":true}\'\n',
-      '@echo off\r\necho working 1>&2\r\necho {"ok":true}\r\n'
+      '@echo off\r\n1>&2 echo working\r\necho {"ok":true}\r\n'
     );
     await expect(run(entry)).resolves.toEqual({ ok: true });
     expect(sinkLines.map((line) => line.line)).toContain("working");
@@ -121,7 +121,7 @@ describe("failures", () => {
     const entry = await writeHook(
       "refuses",
       '#!/bin/sh\necho "lock held" >&2\nexit 3\n',
-      "@echo off\r\necho lock held 1>&2\r\nexit /b 3\r\n"
+      "@echo off\r\n1>&2 echo lock held\r\nexit /b 3\r\n"
     );
     await expect(run(entry)).rejects.toThrow(/exit 3.*lock held/s);
   });
