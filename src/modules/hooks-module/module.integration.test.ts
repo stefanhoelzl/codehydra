@@ -159,8 +159,20 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   const processRunner = createMockProcessRunner({
     onSpawn: (command) => {
-      const match = Object.entries(hookFiles).find(([path]) => command.includes(path));
-      const outcome = match?.[1] ?? {};
+      // The command line carries a *native* path, so on Windows it is
+      // backslash-separated while these keys are POSIX. Comparing them raw made
+      // every hook fall through to the default empty outcome — the hook still
+      // "ran", it just never said anything, so stdin assertions passed while
+      // every assertion about output failed.
+      const line = command.replace(/\\/g, "/");
+      const match = Object.entries(hookFiles).find(([path]) => line.includes(path));
+      if (!match) {
+        // Loud on purpose. A silent default here reads as "the hook ran and
+        // said nothing", which is indistinguishable from a real empty result —
+        // and that is precisely how the separator bug above hid.
+        throw new Error(`test spawned a command matching no declared hook: ${command}`);
+      }
+      const outcome = match[1];
       return {
         exitCode: outcome.exitCode ?? 0,
         stdout: outcome.stdout ?? "",
