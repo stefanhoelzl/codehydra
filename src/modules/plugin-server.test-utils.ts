@@ -372,7 +372,8 @@ export async function createPluginServerEnv(
     },
   };
 
-  const { module } = createPluginServerModule(moduleDeps);
+  const pluginServer = createPluginServerModule(moduleDeps);
+  const { module } = pluginServer;
 
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({ logger: createMockLogger() });
@@ -403,6 +404,8 @@ export async function createPluginServerEnv(
     mockDispatch,
     networkLayer,
     testDispatcher,
+    /** The module handle, for probes like `isConnected` that read live state. */
+    pluginServer,
 
     createClient(workspacePath: WorkspacePath): TestClientSocket {
       const client = createTestClient(this.port, { workspacePath });

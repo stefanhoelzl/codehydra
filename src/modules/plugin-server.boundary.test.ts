@@ -109,6 +109,46 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // isConnected — the guard a best-effort vscode:command has to ask
+  // ---------------------------------------------------------------------------
+
+  describe("isConnected", () => {
+    it("tracks a workspace's socket from connect to disconnect", async () => {
+      const workspace = wsPath("/test/workspace");
+
+      // Before: the server is listening, so `isReady` would say yes. The
+      // question a command actually needs is this one, and the answer is no.
+      expect(env.pluginServer.isReady()).toBe(true);
+      expect(env.pluginServer.isConnected(workspace)).toBe(false);
+
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      expect(env.pluginServer.isConnected(workspace)).toBe(true);
+
+      // And after the extension host goes away — the case that produced
+      // "[dispatcher] failed vscode:command … Workspace not connected" in the
+      // log, because the old guard only asked whether the server was up.
+      //
+      // Polled, not asserted outright: the client learns of its own disconnect
+      // before the server does, so the map is briefly stale. That is inherent —
+      // a socket can drop between the check and the send no matter what — and it
+      // is why the caller keeps its catch. What must hold is that it converges.
+      client.disconnect();
+      await waitForDisconnect(client);
+      await expect
+        .poll(() => env.pluginServer.isConnected(workspace), { timeout: 5000 })
+        .toBe(false);
+    });
+
+    it("is false for a workspace that never connected", async () => {
+      const connected = createClient(wsPath("/test/workspace"));
+      await waitForConnect(connected);
+
+      expect(env.pluginServer.isConnected(wsPath("/test/other"))).toBe(false);
+    });
+  });
+
   describe("client connection", () => {
     it("accepts client with valid auth", async () => {
       const client = createClient(wsPath("/test/workspace"));
