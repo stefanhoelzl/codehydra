@@ -105,7 +105,8 @@ The sidebar lists your projects and their workspaces, sorted by name.
   <kbd>T</kbd>) hides sleeping workspaces; a project with hidden rows shows how
   many. The choice is remembered.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
-  sidebar, newest on top; repeats merge into one card with a count.
+  sidebar, newest on top; repeats merge into one card with a count. The stack
+  takes at most 30% of the sidebar's height and scrolls beyond that.
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,

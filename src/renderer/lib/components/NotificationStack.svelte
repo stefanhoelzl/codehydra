@@ -151,16 +151,50 @@
 {/if}
 
 <style>
+  /* Capped at 30% of the sidebar's height in both states, so a pile of
+     distinct notifications can never squeeze the workspace list (which shrinks
+     to zero before this does) out of view. */
   .notification-stack {
     flex-shrink: 0;
-  }
-
-  .notification-stack.expanded {
-    max-height: 280px;
+    max-height: 30%;
     overflow-y: auto;
     /* overflow-y: auto makes the x axis scrollable too; nothing in a card is
        meant to scroll sideways, so an overhang must never grow a scrollbar. */
     overflow-x: hidden;
+  }
+
+  /* Collapsed, the ~20px gutter has no room for a scrollbar — it would cover
+     the icons. Hide it like the workspace list does; wheel scrolling still
+     works. */
+  .notification-stack:not(.expanded) {
+    scrollbar-width: none;
+  }
+
+  .notification-stack:not(.expanded)::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Theme-aware scrollbar when expanded: VS Code's scrollbar-slider colors
+     follow the active theme, so it is not a bright bar on dark backgrounds. */
+  .notification-stack.expanded {
+    scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+  }
+
+  .notification-stack.expanded::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .notification-stack.expanded::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
+    border-radius: 5px;
+  }
+
+  .notification-stack.expanded::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7));
+  }
+
+  .notification-stack.expanded::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   .notification-entry {
