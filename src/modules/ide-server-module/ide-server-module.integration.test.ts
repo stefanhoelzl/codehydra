@@ -1677,6 +1677,53 @@ describe("IdeServerModule", () => {
         vi.useRealTimers();
       }
     });
+
+    it("fails at once with the server's output when it exits during startup", async () => {
+      const fetch = vi.fn().mockResolvedValue({ status: 200 });
+      const deps = createMockDeps({
+        processRunner: createMockProcessRunner({
+          onSpawn: () => ({
+            pid: 12345,
+            exitCode: 1,
+            stderr: "noise\nError: Cannot find module 'server-main.js'\n",
+            killResult: { success: true, reason: "SIGTERM" },
+          }),
+        }),
+        httpClient: { fetch },
+      });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      // No timers advanced: a dead server must not wait out the 30s timeout.
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "Failed to start IDE server: Process exited with code 1: noise\nError: Cannot find module 'server-main.js'"
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps only the tail of a long exit output", async () => {
+      const deps = createMockDeps({
+        processRunner: createMockProcessRunner({
+          onSpawn: () => ({
+            pid: 12345,
+            exitCode: 1,
+            stderr: `${"x".repeat(5000)}THE CAUSE`,
+            killResult: { success: true, reason: "SIGTERM" },
+          }),
+        }),
+      });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+
+      const error = await dispatcher.dispatch({ type: "app:start", payload: {} }).then(
+        () => null,
+        (err: unknown) => err
+      );
+
+      const message = String(error);
+      expect(message).toContain("THE CAUSE");
+      expect(message.length).toBeLessThan(2200);
+    });
   });
 
   // ---------------------------------------------------------------------------
