@@ -924,7 +924,7 @@ function spawnTuiAgent(options: SpawnAgentOptions): AgentHandle {
   const describe = (): string =>
     `launched: ${[file, ...argv].join(" ")}\n` +
     `exited: ${state.exited ? `yes, code ${String(exitCode)}` : "no"}; ` +
-    `output: ${output.length} bytes`;
+    `output: ${output.length} bytes, ending ${JSON.stringify(output.slice(-300))}`;
 
   return {
     state,
