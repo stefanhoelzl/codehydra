@@ -180,7 +180,12 @@ export interface ServerToClientEvents {
   shutdown: (ack: (result: PluginResult<void>) => void) => void;
 
   /**
-   * Show a notification in VS Code.
+   * Show a modal notification in VS Code.
+   *
+   * Acked when the user dismisses it — also when it has no actions. The server
+   * counts the modal as open until then and shows the workspace as waiting on
+   * the user (see `vscode:modal-changed`). The same holds for
+   * `ui:showQuickPick` and `ui:showInputBox`.
    */
   "ui:showNotification": (
     request: ShowNotificationRequest,

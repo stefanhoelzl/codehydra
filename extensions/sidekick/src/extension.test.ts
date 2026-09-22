@@ -13,6 +13,7 @@ import {
   env as vscodeEnv,
   resetVscodeFake,
   shellExecutionStartHandlers,
+  window as vscodeWindow,
 } from "../../../__mocks__/vscode";
 
 // ---------------------------------------------------------------------------
@@ -181,5 +182,47 @@ describe("sidekick agent lifecycle emits", () => {
     expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
       event: "close",
     });
+  });
+});
+
+// CodeHydra shows a workspace as waiting on the user until the modal's ack
+// arrives, so the ack must follow the dismissal — also without actions.
+describe("sidekick modal notifications", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_PLUGIN_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_PLUGIN_PORT;
+  });
+
+  it.each([
+    ["without actions", undefined, undefined],
+    ["with actions", ["Yes", "No"], "Yes"],
+  ])("acks a notification %s only once it is dismissed", async (_label, actions, clicked) => {
+    let dismiss: (selected: string | undefined) => void = () => {};
+    vscodeWindow.showInformationMessage.mockReturnValueOnce(
+      new Promise<string | undefined>((resolve) => (dismiss = resolve))
+    );
+    activate(makeContext());
+    const socket = getSocket();
+    const ack = vi.fn();
+
+    socket._handlers["ui:showNotification"]!({ severity: "info", message: "Hi", actions }, ack);
+    await Promise.resolve();
+    expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+      "Hi",
+      { modal: true },
+      ...(actions ?? [])
+    );
+    expect(ack).not.toHaveBeenCalled();
+
+    dismiss(clicked);
+    await vi.waitFor(() =>
+      expect(ack).toHaveBeenCalledWith({ success: true, data: { action: clicked ?? null } })
+    );
   });
 });

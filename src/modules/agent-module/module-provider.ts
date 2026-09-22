@@ -189,8 +189,14 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   /** Per-workspace provider instances. */
   const providers = new Map<WorkspacePath, P>();
 
-  /** Cached aggregated status per workspace (for deduplication and queries). */
+  /** Cached aggregated status per workspace, as the agent reported it (for deduplication). */
   const statusCache = new Map<WorkspacePath, AggregatedAgentStatus>();
+
+  /**
+   * Workspaces with a modal open in their editor. Overlaid on `statusCache`:
+   * such a workspace reads idle whatever its agent reports (see `effectiveStatus`).
+   */
+  const modalOpen = new Set<WorkspacePath>();
 
   /** Tracks pending handleServerStarted() promises for startWorkspace(). */
   const serverStartedPromises = new Map<string, Promise<void>>();
@@ -221,6 +227,16 @@ export function createAgentModuleProvider<P extends AgentProvider>(
     }
   }
 
+  /**
+   * The status the rest of the app sees: the agent's own, unless a modal is open,
+   * which parks the workspace on the user — idle even when the agent is still
+   * working or has no session.
+   */
+  function effectiveStatus(path: WorkspacePath): AggregatedAgentStatus {
+    if (modalOpen.has(path)) return convertToAggregatedStatus("idle");
+    return statusCache.get(path) ?? createNoneStatus();
+  }
+
   function handleStatusUpdate(path: WorkspacePath, agentStatus: AgentStatus): void {
     const status = convertToAggregatedStatus(agentStatus);
     const previous = statusCache.get(path);
@@ -232,7 +248,9 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     if (hasChanged) {
       statusCache.set(path, status);
-      notifyStatusChange(path, status);
+      // While parked, the agent's changes are recorded but not reported: the
+      // workspace keeps reading idle until the modal closes.
+      if (!modalOpen.has(path)) notifyStatusChange(path, status);
     }
   }
 
@@ -253,7 +271,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       provider.dispose();
       providers.delete(path);
       statusCache.delete(path);
-      notifyStatusChange(path, createNoneStatus());
+      notifyStatusChange(path, effectiveStatus(path));
     }
   }
 
@@ -409,6 +427,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       }
       providers.clear();
       statusCache.clear();
+      modalOpen.clear();
       statusChangeListeners.clear();
       spec.onDispose?.();
     },
@@ -445,9 +464,18 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       spec.applyTerminalLifecycle(workspacePath, event, ctx);
     },
 
+    setModalOpen(workspacePath: WorkspacePath, open: boolean): void {
+      if (open) modalOpen.add(workspacePath);
+      else modalOpen.delete(workspacePath);
+      // Reported unconditionally rather than deduplicated: an `agent.status.set`
+      // nudge reaches the UI without passing through here, so the last status
+      // this core reported is not necessarily what the UI shows.
+      notifyStatusChange(workspacePath, effectiveStatus(workspacePath));
+    },
+
     // --- Query ---
     getStatus(workspacePath: WorkspacePath): AggregatedAgentStatus {
-      return statusCache.get(workspacePath) ?? createNoneStatus();
+      return effectiveStatus(workspacePath);
     },
 
     getSession(workspacePath: WorkspacePath): AgentSessionInfo | null {
@@ -464,6 +492,10 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     // --- Cleanup ---
     clearWorkspaceTracking(workspacePath: WorkspacePath): void {
+      // The plugin server reports the close when the workspace's socket drops,
+      // but that report resolves the agent from metadata that teardown may
+      // already have removed, so it can land in another agent's module.
+      modalOpen.delete(workspacePath);
       spec.clearWorkspaceTracking?.(workspacePath);
     },
   };

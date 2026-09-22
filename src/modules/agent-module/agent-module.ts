@@ -50,6 +50,7 @@ import type {
 } from "../../intents/get-agent-session";
 import type { RestartAgentHookInput, RestartAgentHookResult } from "../../intents/restart-agent";
 import type { AgentLifecycleHookInput } from "../../intents/agent-lifecycle";
+import type { ModalHookInput } from "../../intents/vscode-modal-changed";
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
@@ -67,6 +68,7 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-s
 import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
 import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
+import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-changed";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { AgentSpec } from "../../shared/api/types";
@@ -474,6 +476,16 @@ export function createAgentModule(
           handler: async (ctx: HookContext): Promise<void> => {
             const { workspacePath, event } = ctx as AgentLifecycleHookInput;
             provider.applyTerminalLifecycle(workspacePath, event);
+          },
+        },
+      },
+
+      [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
+        modal: {
+          requires: { agent: provider.type },
+          handler: async (ctx: HookContext): Promise<void> => {
+            const { workspacePath, open } = ctx as ModalHookInput;
+            provider.setModalOpen(workspacePath, open);
           },
         },
       },

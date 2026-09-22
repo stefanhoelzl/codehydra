@@ -112,6 +112,15 @@ export interface AgentModuleProvider {
    */
   applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void;
 
+  /**
+   * Record whether a modal is open in the workspace's editor. While one is, the
+   * workspace reports "idle" whatever the agent is doing (even with no agent
+   * session): the editor is blocked on the user. Every call re-reports the
+   * workspace's effective status, so a nudge from `agent.status.set` is
+   * corrected on the next edge.
+   */
+  setModalOpen(workspacePath: WorkspacePath, open: boolean): void;
+
   // --- Query ---
 
   /**
@@ -120,7 +129,7 @@ export interface AgentModuleProvider {
    */
   getLaunchOptions?(): Promise<AgentLaunchOptions>;
 
-  /** Get aggregated status for a workspace */
+  /** Get aggregated status for a workspace (with the open-modal overlay applied) */
   getStatus(workspacePath: WorkspacePath): AggregatedAgentStatus;
 
   /** Get session info for TUI attachment */

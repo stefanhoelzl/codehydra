@@ -832,17 +832,12 @@ function connectToPluginServer(port: number, workspacePath: string): void {
             ? vscode.window.showWarningMessage
             : vscode.window.showInformationMessage;
 
-      if (!request.actions || request.actions.length === 0) {
-        // Fire-and-forget: ack immediately, then show modal notification
-        ack({ success: true, data: { action: null } });
-        void showFn(request.message, { modal: true });
-      } else {
-        // Interactive: show modal with actions, await user response, then ack
-        const actions = [...request.actions];
-        void showFn(request.message, { modal: true }, ...actions).then((selected) => {
-          ack({ success: true, data: { action: selected ?? null } });
-        });
-      }
+      // Ack only once the modal is dismissed, with or without actions: CodeHydra
+      // shows the workspace as waiting on the user until then.
+      const actions = [...(request.actions ?? [])];
+      void showFn(request.message, { modal: true }, ...actions).then((selected) => {
+        ack({ success: true, data: { action: selected ?? null } });
+      });
     }
   );
 

@@ -141,6 +141,7 @@ import { ShortcutKeyOperation } from "./intents/shortcut-key";
 import { SetShortcutActiveOperation } from "./intents/set-shortcut-active";
 import { SubmitBugReportOperation } from "./intents/submit-bug-report";
 import { VscodeShowMessageOperation } from "./intents/vscode-show-message";
+import { VscodeModalChangedOperation } from "./intents/vscode-modal-changed";
 import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
 import { ResolveWorkspaceOperation } from "./intents/resolve-workspace";
 import { ResolveProjectOperation } from "./intents/resolve-project";
@@ -924,6 +925,7 @@ dispatcher.registerOperation(new ShortcutKeyOperation());
 dispatcher.registerOperation(new SetShortcutActiveOperation());
 dispatcher.registerOperation(new SubmitBugReportOperation());
 dispatcher.registerOperation(new VscodeShowMessageOperation());
+dispatcher.registerOperation(new VscodeModalChangedOperation());
 dispatcher.registerOperation(new VscodeCommandOperation());
 
 // Initial terminal focus for a workspace, fired exactly once per session

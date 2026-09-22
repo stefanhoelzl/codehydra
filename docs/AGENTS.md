@@ -100,6 +100,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 | `get-agent-session`    | `get`                                     | Return session info                                        |
 | `restart-agent`        | `restart`                                 | Restart agent server                                       |
 | `agent-lifecycle`      | `lifecycle`                               | Terminal open/close transitions (reported by the sidekick) |
+| `vscode-modal-changed` | `modal`                                   | Park the workspace on idle while an editor modal is open   |
 
 Provider initialization is lazy: it happens on the first `open-workspace` for the configured agent, using the MCP port captured during `app:start`.
 
@@ -134,13 +135,14 @@ src/modules/agent-module/
 
 ### AgentModuleProvider
 
-The unified per-agent surface consumed by the generic module (`agent-module-provider.ts`). Covers identity constants (`type`, `displayName`, `icon`, `scripts`, ...), binary management (`preflight`, `downloadBinary`), lifecycle (`initialize`, `dispose`), per-workspace operations (`startWorkspace`, `stopWorkspace`, `restartWorkspace`, `applyTerminalLifecycle`), queries (`getStatus`, `getSession`), the cross-workspace `onStatusChange` event, and `clearWorkspaceTracking`.
+The unified per-agent surface consumed by the generic module (`agent-module-provider.ts`). Covers identity constants (`type`, `displayName`, `icon`, `scripts`, ...), binary management (`preflight`, `downloadBinary`), lifecycle (`initialize`, `dispose`), per-workspace operations (`startWorkspace`, `stopWorkspace`, `restartWorkspace`, `applyTerminalLifecycle`, `setModalOpen`), queries (`getStatus`, `getSession`), the cross-workspace `onStatusChange` event, and `clearWorkspaceTracking`.
 
 ### AgentModuleSpec and the core factory
 
 `createAgentModuleProvider(spec, deps)` (`module-provider.ts`) implements `AgentModuleProvider` once. It owns the shared machinery:
 
 - per-workspace provider registry and status cache (with change deduplication)
+- the open-modal overlay (see [Open Modal Override](#open-modal-override))
 - `onServerStarted`/`onServerStopped` wiring, including the restart path (disconnect → reconnect)
 - binary preflight/download scaffolding
 - disposal
@@ -255,6 +257,15 @@ For agents like OpenCode, sessions waiting for user permission are displayed as 
 - `permission.replied`: Removes permission from `pendingPermissions`
 - `session.deleted`: Clears pending permissions for that session
 - Disconnect: Clears all pending permissions (reconnection safety)
+
+### Open Modal Override
+
+A modal in the workspace's editor — a notification, quick pick or input box raised through `vscode:show-message` (MCP `ui_show_message`, `ch`, repo hooks; with or without action buttons) — blocks it on the user, so the workspace reads **idle** while one is open, whatever the agent is doing and even with no agent session.
+
+- **Lifetime**: the sidekick acks every modal only when it is dismissed. The plugin server counts open modals per workspace from emit until that ack or a socket disconnect, independent of the caller's wait: a notification without actions returns to its caller at once, and a call's `timeout` ends only the wait (VS Code cannot close a modal from code). Notifications have no default timeout.
+- **Edges**: the 0↔1 transitions are dispatched as `vscode:modal-changed` (serialized per workspace), resolved to the workspace's agent module like `agent:lifecycle`, which calls `setModalOpen`.
+- **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while a modal is open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core) is corrected on the next edge. `getStatus` returns the effective status.
+- Parking is ordinary idle: the badge, chime and OS notification follow their usual idle-count rules.
 
 ### Background Tasks: Sub-agents and Shells (Claude Code)
 
