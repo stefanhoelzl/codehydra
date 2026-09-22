@@ -364,8 +364,17 @@ the shipped chain into a real `ClaudeCodeServerManager`.
     and history; the `[SUGGESTION MODE:` user message is the only thing that tells them
     apart, and a fixture for the fork must precede every other one.
   - Readiness is the `❯` glyph, not the footer hint: that changes with the permission mode
-    (`? for shortcuts` vs `bypass permissions on`). The config also pre-accepts the folder
-    trust dialog, which print mode never shows.
+    (`? for shortcuts` vs `bypass permissions on`). A dialog draws the same glyph as its
+    cursor, so `Enter to confirm` on screen means not ready.
+  - `TERM` is pinned to `xterm-256color`. With none (a GitHub Actions step) or `dumb` the TUI
+    draws no `❯` at all, and node-pty sets `TERM` from its `name` option on Unix only.
+  - The config pre-accepts the folder trust dialog (print mode never shows it) under every
+    spelling of the path: symlinked (macOS `/private/var`), 8.3 short (GitHub's Windows
+    `TEMP` is `C:\Users\RUNNER~1\…`, which only `realpathSync.native` expands), either
+    separator.
+  - Hooks are separate processes, so their arrival order is not their firing order: the
+    fork's `PreToolUse` can overtake the `Stop` before it (Windows does, now and then). Wait
+    for both and assert what holds in either order.
 - The agent's environment drops inherited `CLAUDE_CODE_*` / `CLAUDECODE`. Run from inside a
   Claude session, the suite would otherwise hand the agent that session's markers —
   `CLAUDE_CODE_CHILD_SESSION` alone turns transcript saving off.
