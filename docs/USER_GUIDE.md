@@ -820,10 +820,11 @@ ch guide repository-hooks
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`, `ws switch`,
   `ws open` and `ws create --project …` work outside a workspace; other
   workspace commands exit 4 there.
-- Output is human-readable at a terminal and JSON when piped (errors as
-  `{"error", "exitCode"}`); `--json` / `--no-json` force either. `ch guide`
-  prints markdown unless `--json` is given. Progress (clones, deletions) goes to
-  stderr when it is a terminal.
+- `--format auto` (the default) prints human-readable output at a terminal and
+  JSON when piped — errors too, as `{"error", "exitCode"}` on stderr;
+  `--format json` or `--format text` forces either. `ch guide` prints markdown
+  unless `--format json` is given. An unknown flag is a usage error (exit 2).
+  Progress (clones, deletions) goes to stderr when it is a terminal.
 - Exit codes: 0 ok, 1 failed, 2 usage, 3 CodeHydra not reachable, 4 not in a
   workspace, 5 conflict, 6 not found.
 
