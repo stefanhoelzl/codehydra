@@ -14,6 +14,7 @@ import {
   resetVscodeFake,
   shellExecutionStartHandlers,
   window as vscodeWindow,
+  type FakeTerminal,
 } from "../../../__mocks__/vscode";
 
 // ---------------------------------------------------------------------------
@@ -180,6 +181,59 @@ describe("sidekick agent lifecycle emits", () => {
     expect(terminal.sendText).toHaveBeenCalledWith("\x03", false);
     expect(terminal.dispose).not.toHaveBeenCalled();
     closeHandlers.forEach((handler) => handler(terminal));
+  });
+
+  // After an extension host restart the window still holds the agent terminal,
+  // and the agent in it is still running. A second launch would be a second agent.
+  describe("with an agent terminal that outlived the extension host", () => {
+    function existingTerminal(creationOptions: unknown): FakeTerminal {
+      const terminal: FakeTerminal = {
+        name: "",
+        creationOptions,
+        show: vi.fn(),
+        sendText: vi.fn(),
+        dispose: vi.fn(),
+      };
+      vscodeWindow.terminals.push(terminal);
+      return terminal;
+    }
+
+    const RESTART_CONFIG = { ...CONFIG, resetWorkspace: false };
+    let agent: FakeTerminal;
+    let duplicate: FakeTerminal;
+
+    beforeEach(() => {
+      existingTerminal({ name: "bash" });
+      agent = existingTerminal({ name: "Claude", env: CONFIG.env });
+      duplicate = existingTerminal({ name: "Claude", env: CONFIG.env });
+    });
+
+    it("adopts it instead of launching a second agent", async () => {
+      activate(makeContext());
+      const socket = getSocket();
+      await socket._handlers.config!(RESTART_CONFIG);
+
+      expect(createdTerminals).toHaveLength(0);
+      expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
+        event: "open",
+      });
+      expect(agent.show).not.toHaveBeenCalled();
+      expect(agent.sendText).not.toHaveBeenCalled();
+      expect(duplicate.dispose).not.toHaveBeenCalled();
+    });
+
+    it("stops the adopted agent with Ctrl+C", async () => {
+      activate(makeContext());
+      const socket = getSocket();
+      await socket._handlers.config!(RESTART_CONFIG);
+
+      expect(closeAgent()).toEqual({ closed: true });
+
+      expect(agent.sendText).toHaveBeenCalledWith("\x03", false);
+      expect(agent.dispose).not.toHaveBeenCalled();
+      expect(duplicate.sendText).not.toHaveBeenCalled();
+      closeHandlers.forEach((handler) => handler(agent));
+    });
   });
 
   it("does not emit when the socket is disconnected", async () => {

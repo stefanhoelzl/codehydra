@@ -1135,6 +1135,30 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(config.workspaceEnv).toEqual({ DATABASE_URL: "postgres://x" });
     });
 
+    // A new extension host (crash, restart) connects again in the same window:
+    // re-running the layout reset would close the editors around the agent.
+    it("resets a new workspace's layout only for the first client", async () => {
+      await env.setWorkspaceConfig(wsPath("/test/workspace"), {}, "claude", true);
+
+      const first = createClient(wsPath("/test/workspace"));
+      const firstConfig = new Promise<PluginConfig>((resolve) => {
+        first.on("config", (config) => resolve(config));
+      });
+      await waitForConnect(first);
+      expect((await firstConfig).resetWorkspace).toBe(true);
+      first.disconnect();
+
+      const second = createClient(wsPath("/test/workspace"));
+      const secondConfig = new Promise<PluginConfig>((resolve) => {
+        second.on("config", (config) => resolve(config));
+      });
+      await waitForConnect(second);
+      const config = await secondConfig;
+
+      expect(config.resetWorkspace).toBe(false);
+      expect(config.agentType).toBe("claude");
+    });
+
     it("sends config with null env when no config stored", async () => {
       const client = createClient(wsPath("/test/workspace"));
       const configPromise = new Promise<PluginConfig>((resolve) => {
