@@ -159,8 +159,9 @@ offers:
 Click **New workspace** at the top of the sidebar (or <kbd>Alt</kbd>+<kbd>X</kbd>,
 <kbd>Enter</kbd>). The form has:
 
-- **Project** — preselected with the one you opened last, or the active
-  workspace's.
+- **Project** — preselected with the project of the workspace you came from
+  (the project you opened most recently when you have just opened one), unless
+  you have already started filling in the form.
 - **Name** — becomes the git branch. Type a new name, or pick an existing local
   or remote branch to check it out (which also fills in its base). Letters,
   digits and `-_./`, starting with a letter or digit, at most 100 characters,
