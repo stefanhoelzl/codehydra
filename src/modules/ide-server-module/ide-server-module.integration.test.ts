@@ -778,33 +778,6 @@ describe("IdeServerModule", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // code-server.port -> ide-server.port rename (Config legacyNames)
-  // ---------------------------------------------------------------------------
-
-  describe("code-server.port rename", () => {
-    it("registers ide-server.port with code-server.port as a legacy name", () => {
-      const deps = createMockDeps();
-      createIdeServerModule(deps); // registers config keys on the mock Config
-
-      const def = deps.configService.getDefinitions().get("ide-server.port");
-      const translate = def?.legacyNames?.["code-server.port"];
-      expect(translate).toBeTypeOf("function");
-      // A valid legacy port carries over; privileged (<1024) / non-numbers are
-      // rejected (→ the new key falls back to its default, per legacyNames rules).
-      expect(translate!(40000)).toBe(40000);
-      expect(translate!(1023)).toBeUndefined();
-      expect(translate!("nope")).toBeUndefined();
-    });
-
-    it("does not register the retired code-server.port key", () => {
-      const deps = createMockDeps();
-      createIdeServerModule(deps);
-
-      expect(deps.configService.getDefinitions().has("code-server.port")).toBe(false);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
   // stop
   // ---------------------------------------------------------------------------
 

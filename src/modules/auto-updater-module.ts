@@ -36,7 +36,6 @@ import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { storeBoolean, storeString } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
 import type { StateService } from "../boundaries/platform/state-service";
-import type { StateMigrationRegistry } from "./state-module";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { NotificationHandle } from "./presentation/sessions";
@@ -53,7 +52,6 @@ interface AutoUpdaterModuleDeps {
   /** Persisted app state (state.json) — owns the dismissed-version bookkeeping. */
   readonly stateService: StateService;
   /** Registry the state module drains to migrate dismissed-version out of config.json. */
-  readonly stateMigrations: StateMigrationRegistry;
   readonly ui: Pick<UiPresenter, "notification">;
 }
 
@@ -121,22 +119,13 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   });
   // App-written bookkeeping (not user config): persisted in state.json so a
   // dismissed update stays silent across restarts; a genuinely newer version
-  // still re-surfaces (reconcile compares against this value). A read-only
-  // `deprecated` shadow in config.json lets the state module migrate a value
-  // written by an older build, then strip it.
+  // still re-surfaces (reconcile compares against this value).
   const dismissedVersionState = deps.stateService.register("update.dismissed-version", {
     default: null,
     description:
       "The update version the user last dismissed (silences re-notification across restarts)",
     ...storeString({ nullable: true }),
   });
-  const dismissedVersionLegacy = deps.configService.register("update.dismissed-version", {
-    default: null,
-    description: "Deprecated: dismissed update version (migrated to state.json)",
-    deprecated: true,
-    ...storeString({ nullable: true }),
-  });
-  deps.stateMigrations.add({ from: dismissedVersionLegacy, to: dismissedVersionState });
 
   function isEnabled(): boolean {
     return updateNotificationConfig.get();
