@@ -11,16 +11,23 @@
  * one calling convention it can use for every command.
  */
 
+import { parseArgs as tokenize } from "node:util";
+
 // =============================================================================
 // Types
 // =============================================================================
+
+/** How a result is rendered; `auto` means "JSON unless stdout is a TTY". */
+export type Format = "json" | "text" | "auto";
+
+const FORMATS: readonly Format[] = ["json", "text", "auto"];
 
 /** Flags that apply to every command rather than to one operation. */
 export interface GlobalArgs {
   /** Explicit workspace target, overriding the one derived from cwd. */
   readonly workspace?: string;
-  /** Forced output mode; undefined means "decide from whether stdout is a TTY". */
-  readonly json?: boolean;
+  /** Output format; undefined when `--format` was not given, which means `auto`. */
+  readonly format?: Format;
   readonly help: boolean;
 }
 
@@ -45,7 +52,69 @@ export class UsageError extends Error {
 // Parsing
 // =============================================================================
 
-const GLOBAL_VALUE_FLAGS = new Set(["workspace", "input"]);
+type OptionSpec = { readonly type: "string" | "boolean"; readonly short?: string };
+
+/**
+ * Flags every command accepts. They win over an operation field of the same
+ * name, so `--workspace` always targets a workspace.
+ */
+const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
+  help: { type: "boolean", short: "h" },
+  workspace: { type: "string" },
+  input: { type: "string" },
+  format: { type: "string" },
+  // Consumed by the entry point before run() is called; declared here so they
+  // are not rejected as unknown flags.
+  progress: { type: "boolean" },
+  "no-progress": { type: "boolean" },
+};
+
+/**
+ * Split argv into flag and positional tokens.
+ *
+ * Non-strict on purpose: node reports an unknown flag, a missing value or an
+ * inline value on a boolean only by throwing with its own wording. Taking the
+ * tokens and judging them here keeps the messages ours and lets
+ * `--wait=false` keep working. Negations are declared as options of their own
+ * rather than left to node's `allowNegative`, which would read a field that is
+ * genuinely named `noWait` as the negation of `wait`.
+ */
+function tokenizeArgv(argv: readonly string[], options: Readonly<Record<string, OptionSpec>>) {
+  return (
+    tokenize({
+      args: [...argv],
+      options,
+      strict: false,
+      allowPositionals: true,
+      tokens: true,
+    }).tokens ?? []
+  );
+}
+
+/** Validate a `--format` value. */
+function parseFormat(raw: string | undefined): Format {
+  if (raw === undefined) throw new UsageError("--format expects a value");
+  const format = FORMATS.find((candidate) => candidate === raw);
+  if (format === undefined) {
+    throw new UsageError(`--format expects one of ${FORMATS.join(", ")}, got "${raw}"`);
+  }
+  return format;
+}
+
+/**
+ * Read `--format` from raw argv, before the command is resolved.
+ *
+ * The format is needed to report a failure, and failures can happen before
+ * the operation's schema is known — so this reads only `--format`, ignoring
+ * every other flag. The last occurrence wins; nothing after `--` counts.
+ */
+export function readFormat(argv: readonly string[]): Format {
+  let format: Format = "auto";
+  for (const token of tokenizeArgv(argv, { format: GLOBAL_OPTIONS.format! })) {
+    if (token.kind === "option" && token.name === "format") format = parseFormat(token.value);
+  }
+  return format;
+}
 
 /** `--keep-branch` names the `keepBranch` field. */
 function toCamelCase(flag: string): string {
@@ -131,8 +200,17 @@ function parseInputFlag(raw: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+/** `keepBranch` is spelled `--keep-branch` on the command line. */
+export function toKebabCase(field: string): string {
+  return field.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
 /**
  * Parse the arguments that follow a resolved subcommand path.
+ *
+ * A flag that is neither global nor a field of the operation is refused rather
+ * than dropped: a typo, or a flag from an older `ch`, must not run the command
+ * as if it had not been given.
  *
  * @param argv     arguments after the subcommand path
  * @param schema   the operation's input schema, as described by the app
@@ -143,82 +221,88 @@ export function parseArgs(
   schema: InputSchema,
   positionals: readonly string[] = []
 ): ParsedArgs {
+  const fields = Object.keys(schema.properties ?? {});
+  const options: Record<string, OptionSpec> = {};
+  for (const field of fields) {
+    options[toKebabCase(field)] = {
+      type: typeOf(schema, field) === "boolean" ? "boolean" : "string",
+    };
+  }
+  // `--no-thing` clears a boolean field, unless a field is literally named that.
+  const negations = new Map<string, string>();
+  for (const field of fields) {
+    const flag = `no-${toKebabCase(field)}`;
+    if (typeOf(schema, field) === "boolean" && options[flag] === undefined) {
+      options[flag] = { type: "boolean" };
+      negations.set(flag, field);
+    }
+  }
+  Object.assign(options, GLOBAL_OPTIONS);
+
   let input: Record<string, unknown> = {};
   const flags: Record<string, unknown> = {};
   const free: string[] = [];
-  const global: { workspace?: string; json?: boolean; help: boolean } = {
+  const global: { workspace?: string; format?: Format; help: boolean } = {
     help: false,
   };
 
-  for (let i = 0; i < argv.length; i++) {
-    const token = argv[i]!;
-
-    // Everything after `--` is positional, so a value that looks like a flag
-    // (a filename beginning with a dash, say) can still be passed.
-    if (token === "--") {
-      free.push(...argv.slice(i + 1));
-      break;
-    }
-
-    if (!token.startsWith("--")) {
-      free.push(token);
+  // Everything after `--` arrives as positional tokens, so a value that looks
+  // like a flag (a filename beginning with a dash, say) can still be passed.
+  for (const token of tokenizeArgv(argv, options)) {
+    if (token.kind === "positional") {
+      free.push(token.value);
       continue;
     }
+    if (token.kind !== "option") continue;
 
-    const body = token.slice(2);
-    const eq = body.indexOf("=");
-    const name = eq === -1 ? body : body.slice(0, eq);
-    const inlineValue = eq === -1 ? undefined : body.slice(eq + 1);
+    const { name, rawName, value } = token;
+    if (options[name] === undefined) {
+      throw new UsageError(
+        `unknown flag "${rawName}"` +
+          (rawName.startsWith("--") ? "" : ` (put an argument starting with "-" after --)`)
+      );
+    }
 
-    if (name === "help" || name === "h") {
+    // A value-taking flag must have one — the next token, or `=value`.
+    const required = (): string => {
+      if (value === undefined) throw new UsageError(`--${name} expects a value`);
+      return value;
+    };
+
+    if (name === "help") {
       global.help = true;
       continue;
     }
-    // Consumed by the entry point before run() is called; recognized here so it
-    // is not mistaken for an operation field.
-    if (name === "progress" || name === "no-progress") {
+    if (name === "progress" || name === "no-progress") continue;
+    if (name === "format") {
+      global.format = parseFormat(value);
       continue;
     }
-    if (name === "json") {
-      global.json = true;
+    if (name === "workspace") {
+      global.workspace = required();
       continue;
     }
-    if (name === "no-json") {
-      global.json = false;
-      continue;
-    }
-
-    // A value-taking flag reads the next token when no `=value` was given.
-    const readValue = (): string => {
-      if (inlineValue !== undefined) return inlineValue;
-      const next = argv[++i];
-      if (next === undefined) throw new UsageError(`--${name} expects a value`);
-      return next;
-    };
-
-    if (GLOBAL_VALUE_FLAGS.has(name)) {
-      const value = readValue();
-      if (name === "workspace") global.workspace = value;
-      else input = { ...input, ...parseInputFlag(value) };
+    if (name === "input") {
+      input = { ...input, ...parseInputFlag(required()) };
       continue;
     }
 
-    // `--no-thing` clears a boolean field, mirroring `--thing` setting it.
-    if (name.startsWith("no-") && typeOf(schema, toCamelCase(name.slice(3))) === "boolean") {
-      flags[toCamelCase(name.slice(3))] = false;
+    const negated = negations.get(name);
+    if (negated !== undefined) {
+      if (value !== undefined) throw new UsageError(`--${name} does not take a value`);
+      flags[negated] = false;
       continue;
     }
 
     const field = toCamelCase(name);
     const type = typeOf(schema, field);
 
-    if (type === "boolean" && inlineValue === undefined) {
-      flags[field] = true;
+    if (type === "boolean") {
+      flags[field] = value === undefined ? true : coerce(value, type, name);
       continue;
     }
 
-    const raw = readValue();
-
+    const raw = required();
     if (type === "array") {
       flags[field] = appendToArray(flags[field], raw, name);
       continue;

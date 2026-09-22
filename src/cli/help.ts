@@ -7,6 +7,7 @@
  */
 
 import type { OperationDescriptor } from "../api/adapters/describe";
+import { toKebabCase } from "./args";
 
 /** Group descriptors by their first path segment: `ws`, `project`, and the rest. */
 function group(
@@ -66,7 +67,7 @@ export function renderHelp(descriptors: readonly OperationDescriptor[]): string 
     columns([
       ["--workspace <path>", "Act on this workspace instead of the one containing cwd"],
       ["--input <json>", "Supply the whole payload as JSON"],
-      ["--json / --no-json", "Force JSON or human output (default: JSON when piped)"],
+      ["--format json|text|auto", "Output format (default auto: JSON when piped, else text)"],
       ["--help", "Show this, or a command's own arguments"],
     ])
   );
@@ -107,9 +108,4 @@ export function renderCommandHelp(descriptor: OperationDescriptor): string {
   }
 
   return sections.join("\n");
-}
-
-/** `keepBranch` is spelled `--keep-branch` on the command line. */
-function toKebabCase(field: string): string {
-  return field.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }

@@ -8,7 +8,7 @@
 
 import { resolvePath } from "../api/adapters/cli-map";
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
-import { parseArgs, UsageError } from "./args";
+import { parseArgs, readFormat, UsageError } from "./args";
 import { CallError, UnreachableError, type Client } from "./client";
 import { DiscoveryError } from "./discovery";
 import type { ApiErrorCategory } from "../api/errors";
@@ -66,16 +66,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
   // The output mode is needed to report a failure, and failures can happen
   // before the command is even resolved — so read the flag from raw argv first.
-  const forcedJson = argv.includes("--json")
-    ? true
-    : argv.includes("--no-json")
-      ? false
-      : undefined;
-  const json = useJson(forcedJson, isTty);
+  // A bad `--format` is itself such a failure, reported in the default mode.
+  let json = useJson("auto", isTty);
   const wantsHelp = argv.includes("--help") || argv.includes("-h");
 
   let client: Client | undefined;
   try {
+    json = useJson(readFormat(argv), isTty);
     client = await options.connect();
     const descriptors = await client.call<readonly OperationDescriptor[]>(DESCRIBE_CHANNEL, {
       target: "cli",

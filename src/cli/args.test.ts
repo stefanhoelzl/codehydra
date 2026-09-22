@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseArgs, UsageError, type InputSchema } from "./args";
+import { parseArgs, readFormat, UsageError, type InputSchema } from "./args";
 
 const DELETE: InputSchema = {
   properties: {
@@ -71,6 +71,35 @@ describe("parseArgs", () => {
 
     it("reports a missing value rather than swallowing the next flag", () => {
       expect(() => parseArgs(["--workspace-path"], DELETE)).toThrow(/expects a value/);
+    });
+
+    it("accepts true or false inline on a boolean flag", () => {
+      expect(parseArgs(["--wait=false"], DELETE).input).toEqual({ wait: false });
+      expect(parseArgs(["--wait=true"], DELETE).input).toEqual({ wait: true });
+    });
+
+    it("keeps a field whose own name starts with no-", () => {
+      const schema: InputSchema = { properties: { noWait: { type: "boolean" } } };
+      expect(parseArgs(["--no-wait"], schema).input).toEqual({ noWait: true });
+    });
+  });
+
+  describe("unknown flags", () => {
+    it("rejects a flag that is not a field of the operation", () => {
+      expect(() => parseArgs(["--keep-brnach"], DELETE)).toThrow(/unknown flag "--keep-brnach"/);
+    });
+
+    it("rejects the removed --json and --no-json", () => {
+      expect(() => parseArgs(["--json"], DELETE)).toThrow(/unknown flag "--json"/);
+      expect(() => parseArgs(["--no-json"], DELETE)).toThrow(/unknown flag "--no-json"/);
+    });
+
+    it("rejects negating a field that is not boolean", () => {
+      expect(() => parseArgs(["--no-timeout"], MESSAGE)).toThrow(/unknown flag "--no-timeout"/);
+    });
+
+    it("rejects an unknown short flag, pointing at --", () => {
+      expect(() => parseArgs(["-5"], MESSAGE, ["message"])).toThrow(/after --/);
     });
   });
 
@@ -152,13 +181,52 @@ describe("parseArgs", () => {
       expect(global).toEqual({ workspace: "/wt/a", help: true });
     });
 
-    it("records a forced output mode in both directions", () => {
-      expect(parseArgs(["--json"], DELETE).global.json).toBe(true);
-      expect(parseArgs(["--no-json"], DELETE).global.json).toBe(false);
+    it("records the output format", () => {
+      expect(parseArgs(["--format", "json"], DELETE).global.format).toBe("json");
+      expect(parseArgs(["--format=text"], DELETE).global.format).toBe("text");
     });
 
-    it("leaves the output mode undecided when neither is given", () => {
-      expect(parseArgs([], DELETE).global.json).toBeUndefined();
+    it("leaves the output format undecided when not given", () => {
+      expect(parseArgs([], DELETE).global.format).toBeUndefined();
     });
+
+    it("rejects an unknown format", () => {
+      expect(() => parseArgs(["--format", "yaml"], DELETE)).toThrow(/json, text, auto/);
+    });
+
+    it("accepts --progress and --no-progress without treating them as input", () => {
+      expect(parseArgs(["--progress", "--no-progress"], DELETE).input).toEqual({});
+    });
+
+    it("lets a global flag win over a field of the same name", () => {
+      const schema: InputSchema = { properties: { workspace: { type: "string" } } };
+      const { input, global } = parseArgs(["--workspace", "/wt/a"], schema, ["workspace"]);
+      expect(input).toEqual({});
+      expect(global.workspace).toBe("/wt/a");
+    });
+  });
+});
+
+describe("readFormat", () => {
+  it("defaults to auto", () => {
+    expect(readFormat(["ws", "status"])).toBe("auto");
+  });
+
+  it("reads either spelling, ignoring other flags", () => {
+    expect(readFormat(["ws", "status", "--bogus", "--format", "json"])).toBe("json");
+    expect(readFormat(["--format=text"])).toBe("text");
+  });
+
+  it("lets the last occurrence win", () => {
+    expect(readFormat(["--format", "json", "--format", "auto"])).toBe("auto");
+  });
+
+  it("ignores everything after --", () => {
+    expect(readFormat(["lock", "run", "x", "--", "cmd", "--format", "json"])).toBe("auto");
+  });
+
+  it("rejects an unknown value or a missing one", () => {
+    expect(() => readFormat(["--format", "yaml"])).toThrow(UsageError);
+    expect(() => readFormat(["--format"])).toThrow(/expects a value/);
   });
 });
