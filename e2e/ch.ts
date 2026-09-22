@@ -7,7 +7,7 @@
  * cwd; here it must resolve both on its own.
  */
 import { expect } from "@playwright/test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { DATA_ROOT } from "./env.ts";
 
@@ -75,6 +75,26 @@ export async function chAsync(args: readonly string[], cwd: string = DATA_ROOT):
   return new Promise<Run>((resolve) => {
     child.on("error", (error) => resolve({ stdout, stderr, status: -1, error: error.message }));
     child.on("close", (code) => resolve({ stdout, stderr, status: code ?? -1 }));
+  });
+}
+
+/**
+ * Start `ch` and hand back the process, for a spec that has to signal it.
+ *
+ * Runs the bundle with this process's node rather than through the wrapper:
+ * on Windows the wrapper is `cmd /c ch.cmd`, and killing `cmd` would leave the
+ * node process it started running — the opposite of what a kill test needs. The
+ * bundle still finds its instance from its own path, as it does via the wrapper.
+ */
+export function chSpawn(args: readonly string[], cwd: string = DATA_ROOT): ChildProcess {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("_CH_")) env[key] = value;
+  }
+  return spawn(process.execPath, [join(BIN_DIR, "ch.cjs"), ...args], {
+    cwd,
+    env,
+    stdio: "ignore",
   });
 }
 

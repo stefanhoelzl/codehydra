@@ -35,6 +35,8 @@ export interface OperationDescriptor {
   readonly path?: readonly string[];
   /** Positional argument order, when describing the CLI view. */
   readonly positionals?: readonly string[];
+  /** Callable but left out of help, when describing the CLI view. */
+  readonly hidden?: boolean;
 }
 
 /**
@@ -69,6 +71,7 @@ export function describe(
       ...("path" in mapping && { path: mapping.path }),
       ...("positionals" in mapping &&
         mapping.positionals !== undefined && { positionals: mapping.positionals }),
+      ...("hidden" in mapping && mapping.hidden === true && { hidden: true }),
     });
   }
 

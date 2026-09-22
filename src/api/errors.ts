@@ -14,9 +14,27 @@
  *   none. CLI exit code 4. Distinct from `usage` because it is the expected
  *   outcome of running a workspace command outside a worktree, not a mistake in
  *   how the command was written.
+ * - `conflict` — the operation was refused because something it needs is held by
+ *   someone else, and the caller asked not to wait (`ch lock take --no-wait`).
+ *   CLI exit code 5.
+ * - `not-found` — the thing the caller named is not there, or is not theirs to
+ *   act on (`ch lock release` of a lock this workspace does not hold). CLI exit
+ *   code 6.
  * - `failed` — the operation ran and did not succeed. CLI exit code 1.
+ *
+ * `conflict` and `not-found` are named for the condition rather than for locks,
+ * so a later operation with the same failure shape reports it the same way.
  */
-export type ApiErrorCategory = "usage" | "no-workspace" | "failed";
+export type ApiErrorCategory = "usage" | "no-workspace" | "conflict" | "not-found" | "failed";
+
+/** Every category, for validating one that arrived over the wire. */
+export const API_ERROR_CATEGORIES: readonly ApiErrorCategory[] = [
+  "usage",
+  "no-workspace",
+  "conflict",
+  "not-found",
+  "failed",
+];
 
 export class ApiError extends Error {
   readonly category: ApiErrorCategory;

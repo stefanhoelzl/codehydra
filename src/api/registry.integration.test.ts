@@ -18,8 +18,16 @@ import { workspacePathSchema } from "../intents/contract";
 import { testPath } from "../shared/test-fixtures";
 
 const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
-const IN_WORKSPACE: OperationContext = { workspacePath: WS, cwd: null };
-const NO_WORKSPACE: OperationContext = { workspacePath: null, cwd: null };
+const IN_WORKSPACE: OperationContext = {
+  workspacePath: WS,
+  cwd: null,
+  signal: new AbortController().signal,
+};
+const NO_WORKSPACE: OperationContext = {
+  workspacePath: null,
+  cwd: null,
+  signal: new AbortController().signal,
+};
 
 /** A delete-shaped entry, so shaping is exercised on the real divergence. */
 function deleteEntry(calls: unknown[]): AnyOperationEntry {

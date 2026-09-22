@@ -526,8 +526,14 @@ The authoritative declarations for all events and payloads are in `src/shared/pl
 ### Response Format
 
 ```typescript
-type PluginResult<T> = { success: true; data: T } | { success: false; error: string };
+type PluginResult<T> =
+  | { success: true; data: T }
+  | { success: false; error: string; category?: ApiErrorCategory };
 ```
+
+`category` (`usage`, `no-workspace`, `conflict`, `not-found`, `failed`) says what kind of
+failure it was, so a client can branch without parsing `error`. It is additive: a client that
+ignores it reads `error` exactly as before. The `ch` CLI maps it to its exit code.
 
 ### Request Types
 
@@ -737,6 +743,7 @@ $ ch project close ohi               # by name
 $ ch project close ohi --remove-local-repo   # also delete its directory (no workspaces left)
 $ ch ws notify "build finished" --level warning
 $ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
+$ ch lock take device "smoke test"   # wait for, then hold, a shared resource
 ```
 
 Run `ch --help` for the command list, or `ch <command> --help` for one command's
@@ -754,17 +761,64 @@ operations that instance actually has.
 
 ### Exit codes
 
-| Code | Meaning                                            |
-| ---- | -------------------------------------------------- |
-| `0`  | Success                                            |
-| `1`  | The operation ran and failed                       |
-| `2`  | Usage error — unknown command, bad arguments       |
-| `3`  | CodeHydra could not be reached                     |
-| `4`  | The operation needs a workspace and none was found |
+| Code | Meaning                                                               |
+| ---- | --------------------------------------------------------------------- |
+| `0`  | Success                                                               |
+| `1`  | The operation ran and failed                                          |
+| `2`  | Usage error — unknown command, bad arguments                          |
+| `3`  | CodeHydra could not be reached                                        |
+| `4`  | The operation needs a workspace and none was found                    |
+| `5`  | Refused: someone else holds it (`ch lock take --no-wait`)             |
+| `6`  | Not there, or not yours (`ch lock release` of a lock you do not hold) |
 
 `3` and `4` are separate from `1` on purpose: a script that cannot tell "the app
 is not running" and "you are in the wrong directory" from "the operation was
-refused" cannot retry sensibly.
+refused" cannot retry sensibly. `5` and `6` go further for the refusals a script
+most often branches on. The code comes from the failure's `category`, not from the
+wording of its message.
+
+Calls have no client-side timeout — `ch lock take` waits its turn, `ch ws ask` waits
+for a person — so bound a wait yourself when you need one (`timeout 60 ch …`). An app
+that goes away mid-call still ends the call, as exit `3`.
+
+### Locks
+
+`ch lock` gives workspaces turns at a resource only one may touch at a time — one
+physical phone, one port, one staging database — without a lock file or a background
+process.
+
+```console
+$ ch lock take device "install and run the smoke test"   # waits its turn, then returns
+$ ch lock ls
+name    project  holder  held  reason                           waiting
+device           ios     4m    install and run the smoke test   android
+$ ch lock release device
+$ ch lock run device -- ./install.sh                      # take, run, release
+$ ch bg ch lock run device "long session"                 # hold until killed
+```
+
+- **The holder is the workspace**, not a process: `take` returns once the lock is granted
+  and the hold continues with nothing running, across agent turns. It ends on
+  `ch lock release` (no name: everything this workspace holds), when the workspace
+  hibernates, or when it is deleted. Closing the agent terminal does not release it.
+- **Waiting is FIFO and the grant is atomic**, so there is no gap to lose a race in.
+  `take` waits unbounded and prints nothing while it does; run it as a background call.
+  `--no-wait` fails at once with exit `5` instead. Over MCP (`lock_take`) it never waits.
+- **Re-taking a lock you hold** succeeds and changes nothing. **Releasing one you do not
+  hold** is exit `6` — usually a sign the hold ended earlier than you thought.
+- **Names** are free-form (`[A-Za-z0-9-_]+`) and exist while held. `--scope global`
+  (default) is shared by every workspace of every open project; `--scope project` only by
+  this project's. `ch lock ls` shows both, with the project named for a project lock.
+- **There is no steal.** To break another workspace's lock, run `ch lock release` in that
+  workspace's terminal.
+- **`ch lock run`** ties the lock to its own process: it is released when the command
+  exits or `ch` is killed, and only if `run` acquired it — inside an existing hold it
+  leaves that hold alone. With no command it holds until killed; start that under
+  `ch bg`, or the workspace stays busy for as long as it holds.
+- **Advisory.** CodeHydra coordinates; whether a command may run without the lock is for
+  your project to enforce, e.g. a hook that checks `ch lock ls --json`.
+- **Sidebar.** A holder shows a `🔒 <names>` tag and a waiter `⏳ <names>`, with the
+  reasons as the tooltip. Locks live in memory and are all gone after a restart.
 
 ### Progress events
 
@@ -804,10 +858,11 @@ nothing on PATH.
 
 ### Other subcommands
 
-| Command                     | Purpose                                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `ch bg <cmd…>`              | Run a command without keeping the workspace busy. Never contacts the app.                                      |
-| `ch claude` / `ch opencode` | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. |
+| Command                          | Purpose                                                                                                        |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ch bg <cmd…>`                   | Run a command without keeping the workspace busy. Never contacts the app.                                      |
+| `ch lock run <name> [-- <cmd…>]` | Take a lock and run a command, or hold until killed. See [Locks](#locks).                                      |
+| `ch claude` / `ch opencode`      | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. |
 
 ---
 

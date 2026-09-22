@@ -14,12 +14,13 @@
 
 import { io, type Socket } from "socket.io-client";
 import { EVENT_CHANNEL, type ClientEvent } from "../api/events";
+import { API_ERROR_CATEGORIES, type ApiErrorCategory } from "../api/errors";
 import type { Connection } from "./discovery";
 
 /** Result wrapper every command is acknowledged with. */
 export type PluginResult<T> =
   | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string };
+  | { readonly success: false; readonly error: string; readonly category?: unknown };
 
 export class UnreachableError extends Error {
   constructor(message: string) {
@@ -30,10 +31,19 @@ export class UnreachableError extends Error {
 
 /** Raised when the app answered and refused the request. */
 export class CallError extends Error {
-  constructor(message: string) {
+  /** What kind of failure the app reported; `failed` when it did not say. */
+  readonly category: ApiErrorCategory;
+
+  constructor(message: string, category: ApiErrorCategory = "failed") {
     super(message);
     this.name = "CallError";
+    this.category = category;
   }
+}
+
+/** Accept a category from the wire only if it is one we know. */
+function categoryFrom(value: unknown): ApiErrorCategory {
+  return API_ERROR_CATEGORIES.find((category) => category === value) ?? "failed";
 }
 
 export interface ClientOptions {
@@ -42,7 +52,19 @@ export interface ClientOptions {
   readonly cwd: string;
   /** Explicit workspace, overriding whatever cwd would resolve to. */
   readonly workspace?: string;
-  /** How long to wait for the connection and for each call. */
+  /**
+   * How long to wait for the connection.
+   *
+   * Calls themselves have no timeout. Some legitimately take as long as they
+   * take — `ch lock take` waits its turn, `ch ws ask` waits for a person — and a
+   * timer here would report those as an unreachable app. A caller that wants a
+   * bound sets its own (the agent's Bash tool, `timeout(1)`); an app that goes
+   * away mid-call is still caught, by the socket's disconnect.
+   *
+   * The one thing that would hang is a call on a channel the app never mounted,
+   * since nothing answers it. So callers only call what the app described:
+   * `run` resolves every command against describe, and so does `ch lock run`.
+   */
   readonly timeoutMs?: number;
 }
 
@@ -103,27 +125,21 @@ export async function connect(options: ClientOptions): Promise<Client> {
 
     async call<T>(channel: string, request?: unknown): Promise<T> {
       const result = await new Promise<PluginResult<T>>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          reject(new UnreachableError(`Timed out after ${timeoutMs}ms waiting for ${channel}`));
-        }, timeoutMs);
+        // With no timeout, this is the only thing that ends a call the app will
+        // never answer: without it a lost app would hang the command forever.
+        const onDisconnect = () => reject(new UnreachableError("CodeHydra closed the connection"));
+        socket.once("disconnect", onDisconnect);
 
         const done = (value: PluginResult<T>) => {
-          clearTimeout(timer);
+          socket.off("disconnect", onDisconnect);
           resolve(value);
         };
-
-        // The server disconnecting mid-call would otherwise hang until the
-        // timeout, which reads as a stuck command rather than a lost app.
-        socket.once("disconnect", () => {
-          clearTimeout(timer);
-          reject(new UnreachableError("CodeHydra closed the connection"));
-        });
 
         if (request === undefined) socket.emit(channel, done);
         else socket.emit(channel, request, done);
       });
 
-      if (!result.success) throw new CallError(result.error);
+      if (!result.success) throw new CallError(result.error, categoryFrom(result.category));
       return result.data;
     },
     close(): void {

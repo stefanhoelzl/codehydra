@@ -11,6 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import { createLockModule } from "../../modules/lock-module";
 import { createRegistry } from "../entries";
 import { OPERATION_NAMES, type OperationName } from "../names";
 import { PLUGIN_MAP } from "./plugin-map";
@@ -21,6 +22,7 @@ function registry() {
       dispatcher: createMockDispatcher(),
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+      locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
     },
     SILENT_LOGGER
   );

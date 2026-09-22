@@ -19,6 +19,10 @@ import { defineEntry } from "../api/types";
 import { workspacePathSchema, type WorkspacePath } from "../intents/contract";
 import type { ClientEvent } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
+import { lockEntries } from "../api/entries/lock";
+import { createLockModule } from "./lock-module";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
 const TOKEN = "test-token";
@@ -331,5 +335,77 @@ describe("forwarded events", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(received).toEqual([]);
+  });
+});
+
+describe("locks tied to a CLI connection", () => {
+  const OTHER = workspacePathSchema.parse("/repo/wt/other") as WorkspacePath;
+
+  /** The real lock entries over a real lock table, and nothing else. */
+  function lockRegistry() {
+    const dispatcher = createMockDispatcher();
+    const locks = createLockModule({ dispatcher, logger: SILENT_LOGGER }).locks;
+    const registry: OperationRegistry = new OperationRegistry(
+      lockEntries({
+        dispatcher,
+        appLayer: { openPath: async () => undefined },
+        awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+        registry: () => registry,
+        locks,
+      })
+    );
+    return { registry, locks };
+  }
+
+  it("releases a `lock.hold` when the socket that took it disconnects", async () => {
+    const { registry, locks } = lockRegistry();
+    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    const run = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    run.connect();
+    await waitForConnect(run);
+
+    await expect(call(run, "api:operation:lock.hold", { name: "device" })).resolves.toMatchObject({
+      success: true,
+    });
+    expect(locks.list()).toHaveLength(1);
+
+    // What killing `ch lock run` looks like from the app's side.
+    run.disconnect();
+
+    await vi.waitFor(() => expect(locks.list()).toEqual([]));
+  });
+
+  it("keeps a `lock.take` after the socket that took it disconnects", async () => {
+    const { registry, locks } = lockRegistry();
+    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    cli.connect();
+    await waitForConnect(cli);
+
+    await call(cli, "api:operation:lock.take", { name: "device" });
+    cli.disconnect();
+    await waitForDisconnect(cli);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Held by the workspace, not by the process that asked.
+    expect(locks.list()).toHaveLength(1);
+  });
+
+  it("drops a queued waiter whose socket disconnects", async () => {
+    const { registry, locks } = lockRegistry();
+    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    const holder = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    const waiter = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: OTHER });
+    holder.connect();
+    waiter.connect();
+    await Promise.all([waitForConnect(holder), waitForConnect(waiter)]);
+
+    await call(holder, "api:operation:lock.take", { name: "device" });
+    void call(waiter, "api:operation:lock.take", { name: "device" });
+    await vi.waitFor(() => expect(locks.list()[0]?.waiting).toHaveLength(1));
+
+    waiter.disconnect();
+
+    await vi.waitFor(() => expect(locks.list()[0]?.waiting).toEqual([]));
   });
 });

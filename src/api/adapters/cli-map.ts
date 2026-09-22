@@ -15,6 +15,12 @@ export interface CliMapping extends InputShaping {
   readonly path: readonly string[];
   /** Positional arguments, in order, mapped onto input fields. */
   readonly positionals?: readonly string[];
+  /**
+   * Callable but left out of `ch --help`: plumbing for a built-in, not a
+   * command anyone should type. `lock hold` exists for `ch lock run`, and
+   * typed by hand it would release the moment `ch` exits.
+   */
+  readonly hidden?: boolean;
 }
 
 export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
@@ -57,6 +63,10 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "project.list": { path: ["project", "list"] },
   "project.open": { path: ["project", "open"], positionals: ["target"] },
   "project.close": { path: ["project", "close"], positionals: ["project"] },
+  "lock.take": { path: ["lock", "take"], positionals: ["name", "reason"] },
+  "lock.release": { path: ["lock", "release"], positionals: ["name"] },
+  "lock.list": { path: ["lock", "ls"] },
+  "lock.hold": { path: ["lock", "hold"], positionals: ["name", "reason"], hidden: true },
   log: { path: ["log"], positionals: ["level", "message"] },
   "report.issue": { path: ["report-issue"], positionals: ["description"] },
 };

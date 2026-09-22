@@ -40,6 +40,10 @@ export const OPERATION_NAMES = [
   "project.list",
   "project.open",
   "project.close",
+  "lock.take",
+  "lock.release",
+  "lock.list",
+  "lock.hold",
   "log",
   "report.issue",
 ] as const;

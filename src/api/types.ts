@@ -52,6 +52,19 @@ export interface OperationContext {
    * open .` is the natural way to open the repository you are looking at.
    */
   readonly cwd: string | null;
+  /**
+   * Aborted when the caller goes away.
+   *
+   * Lives as long as the caller's *connection*, not the call: the plugin adapter
+   * aborts it when the socket disconnects, which may be long after a handler has
+   * returned. That is what lets a handler tie state to its caller — `lock.hold`
+   * returns once the lock is granted and keeps listening, so killing `ch lock
+   * run` mid-command releases the lock — and what lets a caller that is still
+   * waiting (a queued `lock.take`) be dropped when it is killed.
+   *
+   * A caller with no connection gets a signal that never aborts.
+   */
+  readonly signal: AbortSignal;
 }
 
 // =============================================================================

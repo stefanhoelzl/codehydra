@@ -14,10 +14,10 @@
  */
 import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import { BIN_DIR, CH, ch, json } from "./ch.ts";
+import { BIN_DIR, CH, ch, chAsync, chSpawn, json } from "./ch.ts";
 import {
   DATA_ROOT,
   createWorkspace,
@@ -138,6 +138,101 @@ test.describe("ch CLI", () => {
 
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("wrapped");
+  });
+});
+
+test.describe("ch lock", () => {
+  /**
+   * Two workspaces to contend with. Reuses the project and `cli-target` the
+   * earlier test made, and makes them itself when run on its own (`-g "ch lock"`).
+   */
+  let holder: string;
+  let other: string;
+
+  const ensureWorkspace = async (name: string): Promise<string> => {
+    const projects = join(DATA_ROOT, "projects");
+    if (!existsSync(projects) || readdirSync(projects).length === 0) {
+      await openProject(app(), repo.path);
+    }
+    if (!existsSync(join(workspacesDir(), name))) await createWorkspace(app(), name);
+    const path = join(workspacesDir(), name);
+    await expect.poll(() => existsSync(path), { timeout: 60_000 }).toBe(true);
+    return path;
+  };
+
+  type Row = { name: string; holder: string; waiting: string };
+  const locks = (): Row[] => json(ch(["lock", "ls"])) as Row[];
+
+  test.beforeAll(async () => {
+    await waitForConnectionDetails();
+    holder = await ensureWorkspace("cli-target");
+    other = await ensureWorkspace("lock-other");
+  });
+
+  test("hands a lock between workspaces, refusing and reporting with distinct exit codes", async () => {
+    expect(json(ch(["lock", "take", "device", "e2e"], holder))).toMatchObject({ acquired: true });
+
+    // Refused without waiting: exit 5, from the category the app sent.
+    const refused = ch(["lock", "take", "device", "--no-wait"], other);
+    expect(refused.status).toBe(5);
+    expect(refused.stderr).toContain("'device' is held by 'cli-target'");
+
+    // A real waiter, queued behind the holder, granted on release.
+    const waiting = chAsync(["lock", "take", "device"], other);
+    await expect.poll(() => locks()[0]?.waiting, { timeout: 15_000 }).toBe("lock-other");
+    expect(locks()).toMatchObject([{ name: "device", holder: "cli-target" }]);
+
+    expect(json(ch(["lock", "release", "device"], holder))).toEqual({ released: ["device"] });
+    expect(json(await waiting)).toMatchObject({ acquired: true });
+    expect(locks()).toMatchObject([{ name: "device", holder: "lock-other", waiting: "" }]);
+
+    // Releasing what this workspace no longer holds: exit 6.
+    const notHeld = ch(["lock", "release", "device"], holder);
+    expect(notHeld.status).toBe(6);
+
+    json(ch(["lock", "release"], other));
+    expect(locks()).toEqual([]);
+  });
+
+  test("shows the holder's lock as a sidebar tag", async () => {
+    json(ch(["lock", "take", "device", "tag check"], holder));
+
+    const tags = () => json(ch(["ws", "tag", "ls"], holder)) as { name: string; label?: string }[];
+    await expect.poll(() => tags().find((tag) => tag.name === "lock")?.label).toBe("🔒 device");
+
+    json(ch(["lock", "release", "device"], holder));
+    await expect.poll(() => tags().some((tag) => tag.name === "lock")).toBe(false);
+  });
+
+  test("runs a command under the lock and exits with its status", () => {
+    const run = ch(
+      ["lock", "run", "device", "--", process.execPath, "-e", "process.exit(7)"],
+      holder
+    );
+
+    expect(run.status).toBe(7);
+    // Released when the command finished.
+    expect(locks()).toEqual([]);
+  });
+
+  test("releases a hold when the process holding it is killed", async () => {
+    const hold = chSpawn(["lock", "run", "device", "long session"], holder);
+    const closed = new Promise((resolve) => hold.on("close", resolve));
+
+    await expect.poll(() => locks()[0]?.holder, { timeout: 15_000 }).toBe("cli-target");
+
+    hold.kill();
+    await closed;
+
+    await expect.poll(() => locks(), { timeout: 15_000 }).toEqual([]);
+  });
+
+  test("lists its commands in help, but not the plumbing `ch lock run` rides on", () => {
+    const run = ch(["--help"]);
+
+    expect(run.stdout).toContain("lock take");
+    expect(run.stdout).toContain("lock run <name>");
+    expect(run.stdout).not.toContain("lock hold");
   });
 });
 

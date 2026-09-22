@@ -72,6 +72,12 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "project.list": { channel: "api:project:list" },
   "project.open": { channel: "api:project:open" },
   "project.close": { channel: "api:project:close" },
+  // No extension needs locks, and the plugin surface is a published contract —
+  // it grows when a consumer does, not before.
+  "lock.take": null,
+  "lock.release": null,
+  "lock.list": null,
+  "lock.hold": null,
   log: { channel: "api:log", fireAndForget: true },
   "report.issue": { channel: "api:reportIssue" },
 };

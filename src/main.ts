@@ -191,6 +191,7 @@ import { createCreationModule } from "./modules/creation-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createAutoTaggingModule } from "./modules/auto-tagging-module";
+import { createLockModule } from "./modules/lock-module";
 // Shared
 import { getErrorMessage } from "./shared/error-utils";
 
@@ -557,11 +558,18 @@ const resolveMcpConfig = (): McpConfig | null => {
  */
 const deletionWaiter = createDeletionWaiter(dispatcher);
 
+// Built before the registry because the `lock.*` entries reach its table.
+const lockModule = createLockModule({
+  dispatcher,
+  logger: loggingService.createLogger("lock"),
+});
+
 const operationRegistry = createRegistry(
   {
     dispatcher,
     appLayer,
     awaitDeletion: (workspacePath) => deletionWaiter.await(workspacePath),
+    locks: lockModule.locks,
   },
   apiLogger
 );
@@ -1049,6 +1057,7 @@ dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(settingsModule.module);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(autoTaggingModule);
+dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);

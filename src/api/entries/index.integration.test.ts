@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import { createLockModule } from "../../modules/lock-module";
 import { createRegistry } from "./index";
 import { OPERATION_NAMES } from "../names";
 import type { AnyOperationEntry } from "../types";
@@ -23,6 +24,7 @@ function registry(dispatcher: Dispatcher = createMockDispatcher()) {
       dispatcher,
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+      locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
     },
     SILENT_LOGGER
   );
@@ -59,7 +61,7 @@ async function createdAgentSpec(
   const create = registry(dispatcher).get("workspace.create");
   // `project` explicitly, so the handler skips resolving one from the caller.
   await create.handler(
-    { workspacePath: null, cwd: null },
+    { workspacePath: null, cwd: null, signal: new AbortController().signal },
     // The entry's own schema is what an adapter feeds the handler.
     create.input.parse({ name: "w", project: "/p", ...input })
   );
@@ -209,6 +211,7 @@ describe("registry contents", () => {
       // These name their own target, or need none, so they work from a shell
       // standing anywhere — including outside every worktree.
       expect(global).toEqual([
+        "lock.list",
         "log",
         "project.close",
         "project.list",
