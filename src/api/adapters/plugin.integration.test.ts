@@ -11,7 +11,9 @@ import { describe, it, expect, vi } from "vitest";
 import { z } from "zod/v4";
 import { attachPluginAdapter, type AdapterSocket, type PluginResult } from "./plugin";
 import { OperationRegistry } from "../registry";
+import { ApiError } from "../errors";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import { createLockModule } from "../../modules/lock-module";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
 import { workspacePathSchema } from "../../intents/contract";
@@ -26,6 +28,7 @@ function realRegistry() {
       dispatcher: createMockDispatcher(),
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+      locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
     },
     SILENT_LOGGER
   );
@@ -104,8 +107,9 @@ describe("plugin adapter", () => {
     );
 
     // describe is adapter infrastructure and is always mounted; `log` maps to
-    // null and must not appear.
-    expect(harness.channels()).toEqual(["api:registry:describe", "api:a"]);
+    // null and must not appear. `disconnect` is the adapter aborting the
+    // connection's signal, not an operation.
+    expect(harness.channels()).toEqual(["disconnect", "api:registry:describe", "api:a"]);
   });
 
   it("acks a successful call with the handler's data", async () => {
@@ -192,6 +196,61 @@ describe("plugin adapter", () => {
     expect((result as { error: string }).error).toContain("agent.status.set");
   });
 
+  it("hands every call on a connection one signal, aborted when the socket disconnects", async () => {
+    const signals: AbortSignal[] = [];
+    const harness = build(
+      [
+        defineEntry({
+          name: "project.list",
+          kind: "command",
+          description: "a",
+          input: z.object({}),
+          requiresWorkspace: false,
+          handler: async (ctx) => {
+            signals.push(ctx.signal);
+            return null;
+          },
+        }),
+      ],
+      { "project.list": { channel: "api:a" } }
+    );
+
+    await harness.call("api:a", {});
+    await harness.call("api:a", {});
+    expect(signals[0]?.aborted).toBe(false);
+
+    // Per connection, not per call: a handler can tie state to its caller
+    // beyond its own return, as `lock.hold` does.
+    harness.emit("disconnect", undefined);
+
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[0]?.aborted).toBe(true);
+  });
+
+  it("tells the caller what kind of failure it was", async () => {
+    const harness = build(
+      [
+        defineEntry({
+          name: "project.list",
+          kind: "command",
+          description: "a",
+          input: z.object({}),
+          requiresWorkspace: false,
+          handler: async () => {
+            throw new ApiError("conflict", "held by someone else");
+          },
+        }),
+      ],
+      { "project.list": { channel: "api:a" } }
+    );
+
+    await expect(harness.call("api:a", {})).resolves.toEqual({
+      success: false,
+      error: "held by someone else",
+      category: "conflict",
+    });
+  });
+
   it("reports a thrown handler error without rejecting", async () => {
     const harness = build(
       [
@@ -212,6 +271,7 @@ describe("plugin adapter", () => {
     await expect(harness.call("api:boom", {})).resolves.toEqual({
       success: false,
       error: "worktree is locked",
+      category: "failed",
     });
   });
 

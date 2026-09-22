@@ -11,6 +11,7 @@ import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/desc
 import { parseArgs, UsageError } from "./args";
 import { CallError, UnreachableError, type Client } from "./client";
 import { DiscoveryError } from "./discovery";
+import type { ApiErrorCategory } from "../api/errors";
 import { renderCommandHelp, renderHelp } from "./help";
 import { EXIT, render, renderError, useJson, type ExitCode } from "./output";
 import { renderEvent } from "./progress";
@@ -35,19 +36,24 @@ export interface RunOptions {
   readonly onProgress?: (line: string) => void;
 }
 
+/** Exit code for each failure category the app reports. */
+const EXIT_FOR_CATEGORY: Readonly<Record<ApiErrorCategory, ExitCode>> = {
+  usage: EXIT.USAGE,
+  // Worth its own code so a script can tell "run it from a workspace" apart
+  // from an operation that ran and refused.
+  "no-workspace": EXIT.NO_WORKSPACE,
+  conflict: EXIT.CONFLICT,
+  "not-found": EXIT.NOT_FOUND,
+  failed: EXIT.FAILED,
+};
+
 /** Which exit code a failure reports. */
-function exitCodeFor(error: unknown): ExitCode {
+export function exitCodeFor(error: unknown): ExitCode {
   if (error instanceof UsageError) return EXIT.USAGE;
   if (error instanceof DiscoveryError || error instanceof UnreachableError) {
     return EXIT.UNREACHABLE;
   }
-  if (error instanceof CallError) {
-    // The registry's own "not in a workspace" failure is worth its own code so a
-    // script can tell it apart from an operation that ran and refused.
-    return /acts on a workspace, but no workspace was given/.test(error.message)
-      ? EXIT.NO_WORKSPACE
-      : EXIT.FAILED;
-  }
+  if (error instanceof CallError) return EXIT_FOR_CATEGORY[error.category];
   return EXIT.FAILED;
 }
 

@@ -13,6 +13,7 @@ import { metadataEntries } from "./metadata";
 import { agentEntries } from "./agent";
 import { vscodeEntries } from "./vscode";
 import { appEntries } from "./app";
+import { lockEntries } from "./lock";
 
 export type { EntryDeps } from "./deps";
 
@@ -36,6 +37,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
     ...metadataEntries(full),
     ...agentEntries(full),
     ...vscodeEntries(full),
+    ...lockEntries(full),
     ...appEntries(full, logger),
   ]);
   return box.current;

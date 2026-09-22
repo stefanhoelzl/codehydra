@@ -24,17 +24,23 @@ import { MCP_MAP } from "./mcp-map";
 import { CLI_MAP } from "./cli-map";
 import { DESCRIBE_CHANNEL, describe, type DescribeTarget } from "./describe";
 import type { InputShaping } from "../registry";
-import { ApiError, categoryOf } from "../errors";
+import { ApiError, categoryOf, type ApiErrorCategory } from "../errors";
 import type { OperationContext } from "../types";
 import type { WorkspacePath } from "../../intents/contract";
 import type { OperationName } from "../names";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
 
-/** Result wrapper the plugin protocol acknowledges every command with. */
+/**
+ * Result wrapper the plugin protocol acknowledges every command with.
+ *
+ * `category` rides along on a failure so the CLI can pick an exit code from what
+ * went wrong rather than from the wording of the message. Additive: a client that
+ * does not know it reads `error` exactly as before.
+ */
 export type PluginResult<T> =
   | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string };
+  | { readonly success: false; readonly error: string; readonly category?: ApiErrorCategory };
 
 /**
  * The slice of a Socket.IO socket this adapter needs.
@@ -130,7 +136,18 @@ function splitArgs(args: readonly unknown[]): {
 
 export function attachPluginAdapter(options: PluginAdapterOptions): void {
   const { socket, registry, workspacePath, logger, kind, map } = options;
-  const ctx: OperationContext = { workspacePath, cwd: options.cwd ?? null };
+
+  // One per connection, not per call: a handler may tie state to its caller
+  // beyond its own return (`lock.hold`), and a caller still waiting (a queued
+  // `lock.take`) must be dropped when it goes away.
+  const connection = new AbortController();
+  socket.on("disconnect", () => connection.abort());
+
+  const ctx: OperationContext = {
+    workspacePath,
+    cwd: options.cwd ?? null,
+    signal: connection.signal,
+  };
 
   // Describe is adapter infrastructure rather than an operation: it is how an
   // out-of-process client learns what exists, so it is mounted here rather than
@@ -179,13 +196,14 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
           // outside a worktree is a normal thing to do and answers with exit 4.
           // Logging those at error level would put a fault in the log, and in
           // every bug report, for something working as designed.
-          const level = categoryOf(error) === "failed" ? "error" : "warn";
+          const category = categoryOf(error);
+          const level = category === "failed" ? "error" : "warn";
           logger[level]("API call failed", {
             event: mount.channel,
             workspace: workspacePath,
             error: message,
           });
-          ack?.({ success: false, error: message });
+          ack?.({ success: false, error: message, category });
         })
         // Only reachable if ack() itself throws; the caller is gone either way.
         .catch(() => {});

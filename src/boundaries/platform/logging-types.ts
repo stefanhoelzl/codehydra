@@ -66,7 +66,8 @@ export type LoggerName =
   | "error-report" // ErrorReportModule - crash + manual bug report
   | "auto-tagging" // AutoTaggingModule - "new" tag on background workspaces
   | "notification" // OsNotificationModule + OsNotificationBoundary - OS toasts
-  | "cleanup"; // CleanupModule - stale data-root sweeps
+  | "cleanup" // CleanupModule - stale data-root sweeps
+  | "lock"; // LockModule - `ch lock` single-holder resources
 
 /**
  * Context data for log entries.

@@ -24,6 +24,10 @@ export const EXIT = {
   UNREACHABLE: 3,
   /** The operation needs a workspace and none was found. */
   NO_WORKSPACE: 4,
+  /** Refused because someone else holds what it needs (`ch lock take --no-wait`). */
+  CONFLICT: 5,
+  /** What was named is not there, or not the caller's (`ch lock release`). */
+  NOT_FOUND: 6,
 } as const;
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];

@@ -49,6 +49,15 @@ const DESCRIPTORS: readonly OperationDescriptor[] = [
     inputSchema: { type: "object", properties: {} },
     path: ["project", "list"],
   },
+  {
+    name: "lock.hold",
+    kind: "command",
+    description: "Take a lock for as long as this connection lives",
+    inputSchema: { type: "object", properties: { name: { type: "string" } } },
+    path: ["lock", "hold"],
+    positionals: ["name"],
+    hidden: true,
+  },
 ];
 
 interface Recorded {
@@ -221,12 +230,28 @@ describe("run", () => {
         fakeClient(
           () =>
             new CallError(
-              '"workspace.status" acts on a workspace, but no workspace was given. Run it from inside a workspace.'
+              '"workspace.status" acts on a workspace, but no workspace was given. Run it from inside a workspace.',
+              "no-workspace"
             )
         )
       );
 
       expect(result.exitCode).toBe(EXIT.NO_WORKSPACE);
+    });
+
+    it.each([
+      ["usage", EXIT.USAGE],
+      ["conflict", EXIT.CONFLICT],
+      ["not-found", EXIT.NOT_FOUND],
+      ["failed", EXIT.FAILED],
+    ] as const)("maps an app-reported %s failure to exit %i", async (category, code) => {
+      // The category the app sends decides the code, not the message's wording.
+      const result = await runWith(
+        ["ws", "status"],
+        fakeClient(() => new CallError("refused", category))
+      );
+
+      expect(result.exitCode).toBe(code);
     });
 
     it("reports a failure as a structured object in JSON mode", async () => {
@@ -252,6 +277,17 @@ describe("run", () => {
       // Built-in modes are not registry operations and must still be listed.
       expect(result.stdout).toContain("mcp");
       expect(result.stdout).toContain("bg <cmd…>");
+      expect(result.stdout).toContain("lock run <name> [-- <cmd…>]");
+    });
+
+    it("leaves hidden commands out of the listing", async () => {
+      const result = await runWith(
+        ["--help"],
+        fakeClient(() => null)
+      );
+
+      // Plumbing for `ch lock run`, not something to type.
+      expect(result.stdout).not.toContain("lock hold");
     });
 
     it("describes one command's own arguments", async () => {

@@ -7,6 +7,7 @@
 import { describe as suite, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import { createLockModule } from "../../modules/lock-module";
 import { createRegistry } from "../entries";
 import { OPERATION_NAMES, type OperationName } from "../names";
 import { MCP_MAP } from "./mcp-map";
@@ -19,6 +20,7 @@ function registry() {
       dispatcher: createMockDispatcher(),
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
+      locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
     },
     SILENT_LOGGER
   );
@@ -147,5 +149,11 @@ suite("describe", () => {
     expect(mcp.path).toBeUndefined();
     expect(cli.path).toEqual(["ws", "delete"]);
     expect(cli.tool).toBeUndefined();
+  });
+
+  it("marks a hidden CLI command, and only that one", () => {
+    const cli = describe(registry(), "cli");
+
+    expect(cli.filter((d) => d.hidden === true).map((d) => d.name)).toEqual(["lock.hold"]);
   });
 });

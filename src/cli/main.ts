@@ -7,12 +7,14 @@
  */
 
 import { readFileSync, realpathSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { constants as osConstants } from "node:os";
 
 import { runClaudeWrapper } from "../modules/agent-module/claude/wrapper";
 import { runOpencodeWrapper } from "../modules/agent-module/opencode/wrapper";
 import { connect } from "./client";
 import { readConnection, resolveDataDir, DiscoveryError, type DiscoveryFs } from "./discovery";
+import { lockRun } from "./lock-run";
 import { serveMcp } from "./mcp";
 import { EXIT, renderError, useJson } from "./output";
 import { run } from "./run";
@@ -49,6 +51,40 @@ function passthrough(command: string, args: readonly string[]): number {
   return result.status ?? 1;
 }
 
+/**
+ * Run a command to completion without blocking the event loop.
+ *
+ * `ch lock run` must NOT do what `bg` does with `spawnSync`: a blocked event
+ * loop stops the socket's heartbeats, the app drops the connection after its
+ * ping timeout, and the lock tied to that connection is released while the
+ * command is still using the resource.
+ *
+ * Signals aimed at `ch` are passed on to the command, so the lock is held until
+ * the command has actually stopped rather than until `ch` was asked to.
+ */
+function runCommand(command: string, args: readonly string[]): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...args], { stdio: "inherit" });
+    const forward = (signal: NodeJS.Signals) => () => child.kill(signal);
+    const handlers = (["SIGINT", "SIGTERM", "SIGHUP"] as const).map(
+      (signal) => [signal, forward(signal)] as const
+    );
+    for (const [signal, handler] of handlers) process.on(signal, handler);
+    const done = (status: number) => {
+      for (const [signal, handler] of handlers) process.off(signal, handler);
+      resolve(status);
+    };
+
+    child.on("error", (error) => {
+      process.stderr.write(`ch lock run: ${error.message}\n`);
+      done(127);
+    });
+    child.on("exit", (code, signal) => {
+      done(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1));
+    });
+  });
+}
+
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
 
@@ -72,7 +108,11 @@ async function main(): Promise<number> {
     return passthrough(command, rest);
   }
 
-  const dataDir = resolveDataDir(process.argv[1] ?? __filename, fs, dataDirFlag(argv));
+  // Flags are read only up to `--`: past it is a command `ch lock run` passes
+  // through, and its own `--workspace` is not ours.
+  const flagArgv = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
+
+  const dataDir = resolveDataDir(process.argv[1] ?? __filename, fs, dataDirFlag(flagArgv));
 
   /**
    * Connection details, preferring what the caller was handed directly.
@@ -108,6 +148,20 @@ async function main(): Promise<number> {
       ...(workspace !== undefined && { workspace }),
     });
 
+  if (argv[0] === "lock" && argv[1] === "run") {
+    return lockRun({
+      argv: argv.slice(2),
+      isTty: process.stdout.isTTY === true,
+      connect: (workspace) => openConnection(workspace),
+      runCommand,
+      // The open socket keeps the process alive; the default signal handling
+      // ends it, and the closing connection releases the lock.
+      holdForever: () => new Promise<void>(() => {}),
+      stdout: (line) => process.stdout.write(`${line}\n`),
+      stderr: (line) => process.stderr.write(`${line}\n`),
+    });
+  }
+
   if (argv[0] === "mcp") {
     // Failing here would leave the agent with a dead MCP server, so the reason
     // goes to stderr where the agent's logs will show it.
@@ -136,7 +190,7 @@ async function main(): Promise<number> {
   const result = await run({
     argv,
     isTty: process.stdout.isTTY === true,
-    connect: () => openConnection(workspaceFlag(argv)),
+    connect: () => openConnection(workspaceFlag(flagArgv)),
     ...(showProgress && {
       onProgress: (line: string) => process.stderr.write(`${line}\n`),
     }),

@@ -25,6 +25,7 @@ function group(
 const BUILTIN = [
   ["mcp", "Run as an MCP server over stdio (used by agent configs)"],
   ["bg <cmd…>", "Run a command without keeping the workspace busy"],
+  ["lock run <name> [-- <cmd…>]", "Take a lock; run a command, or hold until killed"],
   ["claude [args…]", "Launch the Claude agent"],
   ["opencode [args…]", "Launch the OpenCode agent"],
 ] as const;
@@ -44,7 +45,8 @@ export function renderHelp(descriptors: readonly OperationDescriptor[]): string 
     "",
   ];
 
-  for (const [head, items] of group(descriptors)) {
+  // Hidden commands stay callable (a built-in rides on them) but are not offered.
+  for (const [head, items] of group(descriptors.filter((d) => d.hidden !== true))) {
     sections.push(`${head}:`);
     sections.push(
       columns(

@@ -56,6 +56,14 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "project.list": { tool: "project_list" },
   "project.open": { tool: "project_open" },
   "project.close": { tool: "project_close" },
+  // A tool call that waits unbounded would hang the agent's turn, so the MCP
+  // take fails fast by default. Waiting belongs in a background shell.
+  "lock.take": { tool: "lock_take", defaults: { noWait: true } },
+  "lock.release": { tool: "lock_release" },
+  "lock.list": { tool: "lock_list" },
+  // `ch lock run`'s plumbing. Over MCP the connection is the whole agent
+  // session, which is not what a hold tied to a process means.
+  "lock.hold": null,
   log: { tool: "log" },
   "report.issue": { tool: "report_bug" },
 };
