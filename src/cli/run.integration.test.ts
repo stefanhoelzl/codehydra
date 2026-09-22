@@ -50,6 +50,15 @@ const DESCRIPTORS: readonly OperationDescriptor[] = [
     path: ["project", "list"],
   },
   {
+    name: "guide",
+    kind: "command",
+    description: "Print the user guide.",
+    inputSchema: { type: "object", properties: { section: { type: "string" } } },
+    path: ["guide"],
+    positionals: ["section"],
+    text: true,
+  },
+  {
     name: "lock.hold",
     kind: "command",
     description: "Take a lock for as long as this connection lives",
@@ -204,6 +213,28 @@ describe("run", () => {
       expect(result.exitCode).toBe(EXIT.USAGE);
       expect(result.stderr).toContain('unknown flag "--json"');
       expect(calls).toEqual([]);
+    });
+  });
+
+  describe("document output", () => {
+    const MARKDOWN = "## Repository hooks\n\nRuns once.\n";
+
+    it("prints a document as-is when piped", async () => {
+      const result = await runWith(
+        ["guide", "repository-hooks"],
+        fakeClient(() => MARKDOWN)
+      );
+
+      expect(result.stdout).toBe(MARKDOWN);
+    });
+
+    it("still wraps a document in JSON when --format json is given", async () => {
+      const result = await runWith(
+        ["guide", "--format", "json"],
+        fakeClient(() => MARKDOWN)
+      );
+
+      expect(JSON.parse(result.stdout)).toBe(MARKDOWN);
     });
   });
 

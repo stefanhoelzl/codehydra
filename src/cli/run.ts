@@ -121,7 +121,12 @@ export async function run(options: RunOptions): Promise<RunResult> {
 
     try {
       const data = await client.call<unknown>(channelFor(resolved.match), input);
-      return { stdout: render(data, json), stderr: "", exitCode: EXIT.OK };
+      // A document prints as itself unless JSON was asked for by name.
+      const stdout =
+        resolved.match.text === true && readFormat(argv) !== "json" && typeof data === "string"
+          ? data
+          : render(data, json);
+      return { stdout, stderr: "", exitCode: EXIT.OK };
     } finally {
       stopWatching?.();
     }

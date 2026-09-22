@@ -46,6 +46,8 @@
     onRemoveWorkspace: (key: string) => void;
     /** Open the settings dialog (gear in the PROJECTS header). */
     onOpenSettings: () => void;
+    /** Open the user guide dialog (question mark in the PROJECTS header). */
+    onOpenHelp: () => void;
     /** Whether hibernated workspaces are currently hidden (from the snapshot). */
     hideHibernated?: boolean;
     /** Toggle hiding of hibernated workspaces (bottom-of-sidebar toggle). */
@@ -66,6 +68,7 @@
     onOpenNewWorkspace,
     onRemoveWorkspace,
     onOpenSettings,
+    onOpenHelp,
     hideHibernated = false,
     onToggleHideHibernated,
   }: SidebarProps = $props();
@@ -328,15 +331,26 @@
       <h2>PROJECTS</h2>
     </div>
     {#if isExpanded}
-      <button
-        type="button"
-        class="header-gear"
-        aria-label="Settings"
-        title="Settings"
-        onclick={() => onOpenSettings()}
-      >
-        <Icon name="gear" size={14} />
-      </button>
+      <div class="header-actions">
+        <button
+          type="button"
+          class="header-action"
+          aria-label="Help"
+          title="Help"
+          onclick={() => onOpenHelp()}
+        >
+          <Icon name="question" size={14} />
+        </button>
+        <button
+          type="button"
+          class="header-action"
+          aria-label="Settings"
+          title="Settings"
+          onclick={() => onOpenSettings()}
+        >
+          <Icon name="gear" size={14} />
+        </button>
+      </div>
     {:else}
       <span class="ch-icon-cell expand-hint" aria-hidden="true">
         <Icon name="chevron-right" size={12} />
@@ -693,12 +707,18 @@
     opacity: 1;
   }
 
-  /* Gear button in the (expanded) PROJECTS header — a global settings entry. */
-  .header-gear {
+  /* Help and gear buttons in the (expanded) PROJECTS header — global entries. */
+  .header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-right: 12px;
+  }
+
+  .header-action {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin-right: 12px;
     padding: 2px 6px;
     color: var(--ch-foreground);
     background: transparent;
@@ -708,7 +728,7 @@
     opacity: 0.7;
   }
 
-  .header-gear:hover {
+  .header-action:hover {
     opacity: 1;
     background: var(--ch-list-hover-bg);
   }

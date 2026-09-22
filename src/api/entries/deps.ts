@@ -124,4 +124,6 @@ export interface EntryDeps {
   readonly registry: () => OperationRegistry;
   /** The lock table, owned by the lock module. */
   readonly locks: Locks;
+  /** The user guide's markdown (docs/USER_GUIDE.md as shipped), owned by the help module. */
+  readonly readUserGuide: () => Promise<string>;
 }

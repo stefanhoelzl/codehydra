@@ -186,6 +186,11 @@ export interface PresentationModuleDeps {
    * the presenter itself stays agnostic of the settings dialog.
    */
   readonly onOpenSettings?: () => void;
+  /**
+   * Called when the renderer emits the `open-help` ui event (the sidebar
+   * question mark). Wired in the composition root to the help module.
+   */
+  readonly onOpenHelp?: () => void;
 }
 
 /** Allowed values for the `sidebar.label-scroll` config key. */
@@ -1305,6 +1310,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     if (event.kind === "open-settings") {
       deps.onOpenSettings?.();
+      return;
+    }
+    if (event.kind === "open-help") {
+      deps.onOpenHelp?.();
       return;
     }
     if (event.kind === "toggle-hide-hibernated") {

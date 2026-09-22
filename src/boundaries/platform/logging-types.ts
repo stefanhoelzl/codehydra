@@ -61,6 +61,7 @@ export type LoggerName =
   | "auto-workspace:youtrack" // YouTrackSource - YouTrack issue polling
   | "state" // StateService - state.json persistence
   | "settings" // SettingsModule - settings UI
+  | "help" // HelpModule - user guide (ch guide, help dialog)
   | "agent-resolver" // AgentResolver - agent selection
   | "power" // AppBoundary.allowPowerSaving - sleep prevention
   | "error-report" // ErrorReportModule - crash + manual bug report

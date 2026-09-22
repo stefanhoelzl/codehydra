@@ -1,3 +1,6 @@
+Two gates below — the application log and the user guide. Run both; the ship passes only if
+both pass, and an abort reports every gate that failed.
+
 # Gate: the application log
 
 CodeHydra writes its dev logs to `app-data/logs/`. An `error` or `warn` entry sitting there when a
@@ -39,4 +42,46 @@ Cannot ship with unresolved log issues.
 - [<level>] [<scope>] <message>
 
 Review these issues. Fix them or confirm they are expected, then run `/ship` again.
+```
+
+---
+
+# Gate: the user guide
+
+`docs/USER_GUIDE.md` is the one user-facing guide: the site's help page, `ch guide` (which agents
+read to learn how CodeHydra works) and the in-app help dialog all render it. A change that alters
+what users or agents can observe and leaves the guide behind makes all three wrong at once. Deciding
+whether a diff is user-facing needs judgment, which is why this gate is prose.
+
+## The check
+
+Read `git diff origin/main..HEAD` and list every change a user or an agent can observe: UI
+(sidebar, dialogs, notifications), keyboard shortcuts, workspace lifecycle, config keys and their
+meaning, the `ch` CLI and MCP tools, auto-workspace sources, repository hooks (`.codehydra/hooks`
+input, output, when they run, failure behavior), what agents are told, install and first-run.
+
+**Pass immediately** if there is none — refactors, tests, internal docs, build and CI changes.
+
+For each one, read the section of `docs/USER_GUIDE.md` that covers it — or should — and decide
+whether the guide, as it stands **after** this diff, describes the new behavior correctly. The
+guide describes what the code does, so a change that makes a sentence of it false counts, and so
+does a new capability a user would need to be told about.
+
+"The guide doesn't mention this area anyway" is **not** a pass for a new user-facing behavior; it
+is a missing section.
+
+## The outcome
+
+**Every change reflected → pass.**
+
+**Any change not reflected → abort**, listing each one with the section it affects:
+
+```
+Cannot ship with the user guide out of date.
+
+**Not reflected in docs/USER_GUIDE.md**:
+- <change> → <section slug, or "new section needed">
+- <change> → <section slug, or "new section needed">
+
+Update the guide in this change, then run `/ship` again.
 ```

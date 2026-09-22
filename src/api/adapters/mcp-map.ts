@@ -13,6 +13,8 @@ import type { InputShaping } from "../registry";
 export interface McpMapping extends InputShaping {
   /** MCP tool name, e.g. `workspace_delete`. */
   readonly tool: string;
+  /** The result is a document, returned as plain text rather than JSON-encoded. */
+  readonly text?: boolean;
 }
 
 export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
@@ -70,4 +72,5 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "config.reset": { tool: "config_reset" },
   log: { tool: "log" },
   "report.issue": { tool: "report_bug" },
+  guide: { tool: "guide", text: true },
 };

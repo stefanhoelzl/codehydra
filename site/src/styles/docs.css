@@ -1,0 +1,135 @@
+/* The docs page: docs/USER_GUIDE.md rendered to plain HTML at build time. */
+
+.docs-main {
+  min-height: calc(100vh - 60px - 100px);
+  padding: 2rem 0 4rem;
+}
+
+.docs-content {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.docs-content h1 {
+  font-size: 2rem;
+  margin: 0 0 0.25rem 0;
+  background: linear-gradient(135deg, var(--site-gradient-start), var(--site-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* The line under the title. */
+.docs-content h1 + p {
+  font-size: 1.1rem;
+  color: var(--site-text-secondary);
+  margin: 0 0 1rem 0;
+}
+
+.docs-content h2 {
+  font-size: 1.5rem;
+  margin: 2.5rem 0 0.5rem 0;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--site-border);
+}
+
+.docs-content h3 {
+  font-size: 1.2rem;
+  margin: 1.5rem 0 0.35rem 0;
+}
+
+.docs-content h4 {
+  font-size: 1rem;
+  margin: 1rem 0 0.25rem 0;
+}
+
+.docs-content p,
+.docs-content ul,
+.docs-content ol,
+.docs-content blockquote {
+  margin: 0 0 0.75rem 0;
+}
+
+.docs-content ul,
+.docs-content ol {
+  padding-left: 1.25rem;
+}
+
+.docs-content li {
+  margin: 0.15rem 0;
+}
+
+.docs-content img {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--site-border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  margin: 1rem 0;
+}
+
+.docs-content pre {
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0 0.75rem 0;
+}
+
+.docs-content :not(pre) > code {
+  background: var(--site-bg-card);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.85em;
+}
+
+.docs-content kbd {
+  background: var(--site-bg-card);
+  border: 1px solid var(--site-border);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.docs-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.25rem 0 0.75rem 0;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.docs-content th,
+.docs-content td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--site-border);
+}
+
+.docs-content th {
+  background: var(--site-bg-card);
+  font-weight: 600;
+}
+
+.docs-content td {
+  background: var(--site-bg-secondary);
+}
+
+.docs-content blockquote {
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--site-gradient-start);
+  background: var(--site-bg-card);
+  border-radius: 0 6px 6px 0;
+}
+
+.docs-content blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+@media (min-width: 640px) {
+  .docs-content h1 {
+    font-size: 3rem;
+  }
+}

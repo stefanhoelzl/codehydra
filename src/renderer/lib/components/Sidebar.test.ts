@@ -88,6 +88,7 @@ describe("Sidebar component", () => {
     onOpenNewWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
     onOpenSettings: vi.fn(),
+    onOpenHelp: vi.fn(),
     onToggleHideHibernated: vi.fn(),
   };
 
@@ -119,6 +120,19 @@ describe("Sidebar component", () => {
 
       const workspaceItem = screen.getByText(ws.name).closest("li");
       expect(workspaceItem).toHaveAttribute("aria-current", "true");
+    });
+  });
+
+  describe("header actions", () => {
+    it("opens help and settings from the expanded header", async () => {
+      // No workspaces: the sidebar is expanded, so the header buttons show.
+      render(Sidebar, { props: defaultProps });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Help" }));
+      expect(defaultProps.onOpenHelp).toHaveBeenCalledTimes(1);
+
+      await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
     });
   });
 

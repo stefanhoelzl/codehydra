@@ -90,6 +90,9 @@ export async function serveMcp(client: Client, version: string): Promise<void> {
         `${OPERATION_CHANNEL_PREFIX}${descriptor.name}`,
         request.params.arguments ?? {}
       );
+      if (descriptor.text === true && typeof data === "string") {
+        return { content: [{ type: "text" as const, text: data }] };
+      }
       return toolResult(data);
     } catch (error: unknown) {
       // Reported as a tool error rather than thrown: a failed operation is a

@@ -44,6 +44,7 @@ function setup() {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks,
       config: createMockConfig(),
+      readUserGuide: async () => "",
     },
     SILENT_LOGGER
   );

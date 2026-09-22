@@ -50,6 +50,7 @@ export const OPERATION_NAMES = [
   "config.reset",
   "log",
   "report.issue",
+  "guide",
 ] as const;
 
 export type OperationName = (typeof OPERATION_NAMES)[number];

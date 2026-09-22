@@ -37,6 +37,17 @@ interface TextSection {
 }
 
 /**
+ * Markdown section - a rendered markdown document (the user guide in the help
+ * dialog). Raw HTML other than `<kbd>` is shown as text and images are
+ * dropped; in-document `#anchor` links scroll within the dialog and other
+ * links open in the OS browser.
+ */
+interface MarkdownSection {
+  readonly type: "markdown";
+  readonly content: string;
+}
+
+/**
  * Progress section - displays a list of progress items with status indicators.
  *
  * - style "bar" (default): running items show a progress bar
@@ -308,6 +319,7 @@ interface SettingRowSection {
 
 export type DialogSection =
   | TextSection
+  | MarkdownSection
   | ProgressSection
   | RadioSection
   | DropdownSection

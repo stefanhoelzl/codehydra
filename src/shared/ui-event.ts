@@ -63,6 +63,9 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // to the settings module, which opens the declarative settings dialog. The
   // Alt+X+S shortcut reaches the same module via the shortcut-key domain event.
   z.object({ kind: z.literal("open-settings") }),
+  // Open the user guide dialog (sidebar question-mark click). The presenter
+  // forwards this to the help module.
+  z.object({ kind: z.literal("open-help") }),
   // Toggle whether hibernated workspaces are hidden from the sidebar (bottom
   // toggle click). The presenter flips the `sidebar.hide-hibernated` state key,
   // persists it, and re-pushes the snapshot. The Alt+X+T shortcut drives the

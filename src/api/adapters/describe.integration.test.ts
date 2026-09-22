@@ -23,6 +23,7 @@ function registry() {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config: createMockConfig(),
+      readUserGuide: async () => "",
     },
     SILENT_LOGGER
   );

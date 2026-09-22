@@ -14,13 +14,13 @@ CodeHydra workspace afterwards.
 Everything specific to CodeHydra lives in `.ship/` at the repo root — the skill's five hook points.
 See `~/.claude/skills/ship/hooks.md` for the contract:
 
-| File            | What it does here                                                                                                                                                                            |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.json`   | The merge-wait budget: 25 min total, 15 min for CI. Measured from this repo — p85 of the last 100 merged PRs' createdAt→mergedAt is 24 min, and the slowest CI run on a PR branch was 13 min |
-| `gates.sh`      | Runs `pnpm format:check` after the rebase and before the push. CI is the real gate; this is what is worth failing locally first                                                              |
-| `gates.md`      | Scans the newest `app-data/logs/*.log` and stops the ship on an `error`/`warn` entry whose cause the change does not address                                                                 |
-| `pr-title.md`   | The title policy. `feat:`/`fix:` titles are published verbatim in the release notes, so they must name an observable outcome                                                                 |
-| `post-merge.md` | Resolves the PostHog error-tracking issue when the session was spent fixing one. Never fails the ship                                                                                        |
+| File            | What it does here                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.json`   | The merge-wait budget: 25 min total, 15 min for CI. Measured from this repo — p85 of the last 100 merged PRs' createdAt→mergedAt is 24 min, and the slowest CI run on a PR branch was 13 min                  |
+| `gates.sh`      | Runs `pnpm format:check` after the rebase and before the push. CI is the real gate; this is what is worth failing locally first                                                                               |
+| `gates.md`      | Scans the newest `app-data/logs/*.log` and stops the ship on an `error`/`warn` entry whose cause the change does not address; stops it too when a user-facing change is not reflected in `docs/USER_GUIDE.md` |
+| `pr-title.md`   | The title policy. `feat:`/`fix:` titles are published verbatim in the release notes, so they must name an observable outcome                                                                                  |
+| `post-merge.md` | Resolves the PostHog error-tracking issue when the session was spent fixing one. Never fails the ship                                                                                                         |
 
 To change how shipping behaves here, edit `.ship/`. To change how it behaves everywhere, edit the
 skill — a repo that needs different behaviour needs a hook, not a fork.
