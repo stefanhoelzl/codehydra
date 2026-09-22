@@ -4,8 +4,6 @@ A repository can ship scripts that CodeHydra runs at a few points in a
 workspace's life: set a new worktree up, refuse to delete one, or hear that one
 was created. They live in the repository, so everyone who works on it gets them.
 
-This replaces `.keepfiles`, which is gone.
-
 ## Where they go
 
 One directory in the **worktree**, not the project root:
@@ -90,7 +88,6 @@ There is no timeout. A hook runs until it finishes.
 ## `after-worktree-created`
 
 Runs once, on a genuinely new worktree, before the editor and the agent start.
-This is where `.keepfiles` work now goes.
 
 It **blocks** the workspace opening — it has to, since it can contribute the
 environment the agent will run in. The sidebar row shows as loading throughout.
@@ -127,7 +124,7 @@ _in_ the workspace.
 The output shape is strict — `{"envs": …}` is an error, not a silently dropped
 key.
 
-Replacing a `.keepfiles` that listed `.env` and `config/local.yml`:
+Copying untracked files such as `.env` and `config/local.yml` into the new worktree:
 
 ```bash
 #!/usr/bin/env bash

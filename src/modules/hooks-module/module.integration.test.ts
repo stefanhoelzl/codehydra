@@ -106,7 +106,6 @@ interface SetupOptions {
   readonly trusted?: Record<string, boolean>;
   /** Action id the trust dialog answers with. Default: Always. */
   readonly trustAnswer?: string;
-  readonly keepFilesPresent?: boolean;
 }
 
 function createTestSetup(options?: SetupOptions): TestSetup {
@@ -150,9 +149,6 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     const dir = path.slice(0, path.lastIndexOf("/"));
     entries[dir] = directory();
     entries[path] = file("#!/bin/sh\n", { executable: true });
-  }
-  if (options?.keepFilesPresent) {
-    entries[`${PROJECT_ROOT}/.keepfiles`] = file(".env\n");
   }
 
   const fileSystem = createFileSystemMock({ entries });
@@ -645,7 +641,7 @@ describe("trust", () => {
   });
 });
 
-describe("kill switch and migration", () => {
+describe("kill switch", () => {
   it("runs nothing when hooks.enabled is false", async () => {
     const setup = createTestSetup({
       hooks: { [SETUP_HOOK]: {} },
@@ -655,16 +651,5 @@ describe("kill switch and migration", () => {
     await openWorkspace(setup);
 
     expect(setup.stdin).toHaveLength(0);
-  });
-
-  it("warns once about a stale .keepfiles instead of copying it", async () => {
-    const setup = createTestSetup({ keepFilesPresent: true });
-    await openWorkspace(setup);
-    await openWorkspace(setup);
-
-    const warnings = setup.notifications.filter((n) =>
-      n.title.includes(".keepfiles is no longer supported")
-    );
-    expect(warnings).toHaveLength(1);
   });
 });

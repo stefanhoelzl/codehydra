@@ -16,8 +16,7 @@
  * #7: Initial prompt included in event payload
  * #8: stealFocus flag included in event payload
  * #9: Interceptor cancels creation
- * #10: Keepfiles copies files after worktree creation
- * #11: Keepfiles failure does not fail workspace creation
+ * #10: Setup handlers receive the new worktree's project and workspace paths
  * #12: No setup-hook side effects when worktree creation fails
  * #15: existingWorkspace skips worktree creation
  * #16: existingWorkspace uses projectPath directly
@@ -130,33 +129,10 @@ function createMockServerManager(opts?: { throwOnStart?: boolean }): MockServerM
   };
 }
 
-interface MockSetupService {
-  copyToWorkspace: (
-    projectRoot: Path,
-    targetPath: Path
-  ) => Promise<{
-    copiedCount: number;
-    errors: readonly { path: string; message: string }[];
-  }>;
-  /** State: tracks copy operations for assertions */
-  copies: Array<{ from: Path; to: Path }>;
-}
-
-function createMockSetupService(opts?: { throwOnCopy?: boolean }): MockSetupService {
-  const copies: Array<{ from: Path; to: Path }> = [];
-  return {
-    copies,
-    copyToWorkspace: async (projectRoot: Path, targetPath: Path) => {
-      if (opts?.throwOnCopy) {
-        throw new Error("Keepfiles copy failed");
-      }
-      copies.push({ from: projectRoot, to: targetPath });
-      return {
-        copiedCount: 1,
-        errors: [],
-      };
-    },
-  };
+/** A setup-hook call, recorded so tests can assert what setup handlers are handed. */
+interface SetupCall {
+  projectPath: string;
+  workspacePath: string;
 }
 
 // =============================================================================
@@ -166,7 +142,6 @@ function createMockSetupService(opts?: { throwOnCopy?: boolean }): MockSetupServ
 interface TestSetupOptions {
   serverManager?: MockServerManager;
   envVars?: Record<string, string>;
-  setupService?: MockSetupService;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
@@ -184,7 +159,8 @@ interface TestSetupOptions {
 interface TestSetup {
   dispatcher: Dispatcher;
   projectId: ProjectId;
-  setupService: MockSetupService;
+  /** Every setup-hook call, in order. */
+  setupCalls: SetupCall[];
   /** Set of project paths recognized by the resolve module. Add paths here for custom project tests. */
   knownProjectPaths: Set<string>;
 }
@@ -194,7 +170,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const provider = createMockWorkspaceProvider();
   const serverManager = opts?.serverManager ?? createMockServerManager();
   const envVars = opts?.envVars ?? { AGENT_PORT: "9090" };
-  const setupService = opts?.setupService ?? createMockSetupService();
+  const setupCalls: SetupCall[] = [];
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
   const dispatcher = createMockDispatcher();
@@ -300,23 +276,16 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     },
   };
 
-  // A best-effort "setup" handler (its own try/catch), standing in for any
-  // module that does optional work on a new worktree.
+  // A "setup" handler that only records what it was handed, standing in for
+  // any module that does work on a new worktree.
   const setupHandlerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
-            const setupCtx = ctx as SetupHookInput;
-            try {
-              await setupService.copyToWorkspace(
-                new Path(setupCtx.projectPath),
-                new Path(setupCtx.workspacePath)
-              );
-            } catch {
-              // Best-effort: do not re-throw
-            }
+            const { projectPath, workspacePath } = ctx as SetupHookInput;
+            setupCalls.push({ projectPath, workspacePath });
             return { result: {} };
           },
         },
@@ -399,7 +368,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   }
   for (const m of modules) dispatcher.registerModule(m);
 
-  return { dispatcher, projectId, setupService, knownProjectPaths };
+  return { dispatcher, projectId, setupCalls, knownProjectPaths };
 }
 
 // =============================================================================
@@ -770,42 +739,14 @@ describe("OpenWorkspace Operation", () => {
   });
 
   describe("a setup handler runs after worktree creation (#10)", () => {
-    it("copies files with correct project and workspace paths", async () => {
+    it("hands the handler the project and workspace paths", async () => {
       const setup = createTestSetup();
 
       await setup.dispatcher.dispatch(createIntent());
 
-      expect(setup.setupService.copies).toHaveLength(1);
-      expect(setup.setupService.copies[0]!.from.toString()).toBe(PROJECT_ROOT);
-      expect(setup.setupService.copies[0]!.to.toString()).toBe(WORKSPACE_PATH);
-    });
-  });
-
-  describe("a best-effort setup failure does not fail workspace creation (#11)", () => {
-    it("returns a valid workspace when a best-effort setup handler throws", async () => {
-      const failingSetup = createMockSetupService({ throwOnCopy: true });
-      const setup = createTestSetup({ setupService: failingSetup });
-
-      const receivedEvents: DomainEvent[] = [];
-      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
-        receivedEvents.push(event);
-      });
-
-      const result = await setup.dispatcher.dispatch(createIntent());
-
-      // Operation succeeds despite the setup handler's failure
-      expect(result).toBeDefined();
-      const workspace = result as Workspace;
-      expect(workspace.path).toBe(WORKSPACE_PATH);
-      expect(workspace.branch).toBe(WORKSPACE_BRANCH);
-
-      // Event is emitted
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
-
-      // No successful copies recorded
-      expect(failingSetup.copies).toHaveLength(0);
+      expect(setup.setupCalls).toEqual([
+        { projectPath: PROJECT_ROOT, workspacePath: WORKSPACE_PATH },
+      ]);
     });
   });
 
@@ -817,8 +758,7 @@ describe("OpenWorkspace Operation", () => {
         "Worktree creation failed"
       );
 
-      // Keepfiles should not have been called
-      expect(setup.setupService.copies).toHaveLength(0);
+      expect(setup.setupCalls).toHaveLength(0);
     });
   });
 
