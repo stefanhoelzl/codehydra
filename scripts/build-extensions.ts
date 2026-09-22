@@ -9,9 +9,9 @@
  *
  * Version injection:
  * - Extensions have "version": "1.0.0-placeholder" in package.json (placeholder with major version prefix)
- * - Version is injected at build time: {major}.{commits}.0[-dev.{hash}]
+ * - Version is injected at build time: {major}.{commits}.0[-dev.h{hash}]
  * - Release builds (VERSION env set): 1.47.0
- * - Dev builds: 1.47.0-dev.a1b2c3d4
+ * - Dev builds: 1.47.0-dev.ha1b2c3d4
  *
  * Usage: pnpm build:extensions [--force] [--verbose]
  *        npx tsx scripts/build-extensions.ts
@@ -119,7 +119,7 @@ function getCommitCount(extDir: string): string {
  * @param extDir - Full path to the extension directory
  * @param major - Major version from package.json (e.g., "1")
  * @param hash - Pre-computed folder hash from hashExtensionFolder()
- * @returns SemVer version string (e.g., "1.47.0" or "1.47.0-dev.a1b2c3d4")
+ * @returns SemVer version string (e.g., "1.47.0" or "1.47.0-dev.ha1b2c3d4")
  */
 function getExtensionVersion(extDir: string, major: string, hash: string): string {
   const commits = getCommitCount(extDir);
@@ -127,8 +127,10 @@ function getExtensionVersion(extDir: string, major: string, hash: string): strin
     // Release: valid SemVer format required by VS Code
     return `${major}.${commits}.0`;
   }
-  // Dev: SemVer with prerelease tag
-  return `${major}.${commits}.0-dev.${hash}`;
+  // Dev: SemVer with prerelease tag. The "h" keeps the identifier alphanumeric:
+  // a hash that happens to be all digits would otherwise be a numeric identifier,
+  // and one with a leading zero (e.g. 02633870) is invalid SemVer that vsce rejects.
+  return `${major}.${commits}.0-dev.h${hash}`;
 }
 
 /**
