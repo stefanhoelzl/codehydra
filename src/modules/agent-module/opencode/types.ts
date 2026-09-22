@@ -69,25 +69,29 @@ export type SessionStatus =
   | { readonly type: "created"; readonly sessionId: string }
   | { readonly type: "deleted"; readonly sessionId: string };
 
-// ============ Permission Event Types ============
+// ============ User Request Event Types ============
 
 /**
- * Permission request event from OpenCode.
- * Emitted when a session requests user permission.
+ * What a session is waiting on the user for. OpenCode parks a session on either
+ * one mid-turn: a tool call that needs permission, or its `question` tool.
  */
-export interface PermissionUpdatedEvent {
-  readonly id: string; // permission ID
-  readonly sessionID: string; // session requesting permission
-  readonly type: string; // permission type (e.g., "bash")
-  readonly title: string; // human-readable description
+export type UserRequestKind = "permission" | "question";
+
+/**
+ * A session asked the user something (`permission.asked` / `question.asked`).
+ */
+export interface UserRequestAskedEvent {
+  readonly kind: UserRequestKind;
+  readonly id: string; // request ID
+  readonly sessionID: string; // session waiting on the answer
 }
 
 /**
- * Permission response event from OpenCode.
- * Emitted when user responds to a permission request.
+ * A pending request was answered (`permission.replied`, `question.replied`,
+ * `question.rejected`). Only the fact matters here, not the answer.
  */
-export interface PermissionRepliedEvent {
+export interface UserRequestResolvedEvent {
+  readonly kind: UserRequestKind;
+  readonly requestID: string;
   readonly sessionID: string;
-  readonly permissionID: string;
-  readonly response: "once" | "always" | "reject";
 }

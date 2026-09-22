@@ -1284,7 +1284,7 @@ CodeHydra downloads VSCodium and opencode binaries from GitHub releases instead 
 Binary versions are defined per component:
 
 - `VSCODIUM_VERSION` - `src/modules/ide-server-module/vscodium.ts` (e.g., "1.126.04524")
-- `OPENCODE_VERSION` - `src/modules/agent-module/opencode/setup-info.ts` (e.g., "1.0.223")
+- `OPENCODE_VERSION` - `src/modules/agent-module/opencode/setup-info.ts` (e.g., "1.18.32")
 - `CLAUDE_VERSION` - `src/modules/agent-module/claude/setup-info.ts` (`null` prefers the system
   binary, falling back to latest)
 

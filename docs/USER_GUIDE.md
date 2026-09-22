@@ -757,8 +757,8 @@ and `--agent-name`; these need `--agent`.
 ### Status and permissions
 
 Busy and idle come from the agent itself: Claude Code through its hooks,
-OpenCode through its server's events. A pending permission prompt counts as
-idle — the agent is waiting on you.
+OpenCode through its server's events. A pending permission prompt, or a
+question the agent asked you, counts as idle — the agent is waiting on you.
 
 So does a dialog in the workspace's editor — a notification, pick list or text
 prompt raised by the agent, `ch` or a repository hook. The workspace reads idle
@@ -777,8 +777,8 @@ CodeHydra. Claude Code is also told about `ch bg`. The MCP server adds: pass a
 prompt when creating a workspace, and file a bug report only when asked.
 
 A line in your project's `CLAUDE.md` or `AGENTS.md` is the place to tighten or
-loosen any of it. With OpenCode the prompt is passed as `instructions`, which
-replaces an `instructions` list in your own `opencode.json` — use `AGENTS.md`.
+loosen any of it. With OpenCode the prompt is added to the `instructions` list,
+alongside any entries in your own `opencode.json`.
 
 ## CLI and MCP
 

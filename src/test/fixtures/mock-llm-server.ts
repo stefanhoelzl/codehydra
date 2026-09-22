@@ -17,6 +17,7 @@
  *
  * server.setMode('instant');  // Quick response
  * server.setMode('tool-call'); // Triggers permission request
+ * server.setMode('question'); // Asks the user a question
  * server.setMode('rate-limit'); // Returns 429
  *
  * await server.stop();
@@ -36,10 +37,11 @@ import { LLMock } from "@copilotkit/aimock";
  * | ------------- | ----------------------------------- | ------------------------ |
  * | `instant`     | Return completion immediately       | idle → busy → idle       |
  * | `slow-stream` | Stream slowly enough to observe     | Extended busy state      |
- * | `tool-call`   | Return `bash` tool_call             | permission.updated event |
+ * | `tool-call`   | Return `bash` tool_call             | permission.asked event   |
+ * | `question`    | Return `question` tool_call         | question.asked event     |
  * | `rate-limit`  | Return HTTP 429 with `Retry-After`  | retry status             |
  */
-export type MockLlmMode = "instant" | "slow-stream" | "tool-call" | "rate-limit";
+export type MockLlmMode = "instant" | "slow-stream" | "tool-call" | "question" | "rate-limit";
 
 /**
  * Mock LLM server handle.
@@ -94,6 +96,34 @@ function applyMode(mock: LLMock, mode: MockLlmMode): void {
             {
               name: "bash",
               arguments: { command: "echo hello", description: "Prints hello to stdout" },
+            },
+          ],
+        }
+      );
+      return;
+
+    case "question":
+      // Same shape as tool-call: keep the title agent off the tool-call slot.
+      mock.on({ predicate: (req) => (req.tools?.length ?? 0) === 0 }, { content: "ok" });
+      mock.on({ hasToolResult: true }, { content: "Thanks for answering." });
+      mock.on(
+        {},
+        {
+          toolCalls: [
+            {
+              name: "question",
+              arguments: {
+                questions: [
+                  {
+                    question: "Which one?",
+                    header: "Pick",
+                    options: [
+                      { label: "A", description: "The first" },
+                      { label: "B", description: "The second" },
+                    ],
+                  },
+                ],
+              },
             },
           ],
         }

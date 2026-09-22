@@ -14,7 +14,8 @@ import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import { waitForPort, CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
+import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
+import { waitForHealthy } from "../../../utils/health-check";
 import { createTestGitRepo } from "../../../utils/testing/test-utils";
 import {
   createMockLlmServer,
@@ -320,12 +321,23 @@ export async function withOpencode(
     // vitest's bare "Test timed out" with nothing about opencode in it. Failing
     // first leaves room to say what actually happened, and to say it with the
     // process's own output.
+    //
+    // Over HTTP, the way OpenCodeServerManager checks health, and not with a
+    // bare TCP connect: opencode (seen on 1.18) binds its port before it can
+    // serve, and a connection opened and dropped in that window leaves the
+    // next request hanging until it times out — while a request that simply
+    // retries on refusal is answered as soon as the server is up.
     try {
-      await waitForPort(port, STARTUP_TIMEOUT_MS);
+      await waitForHealthy({
+        checkFn: async () =>
+          (await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 2000 })).ok,
+        timeoutMs: STARTUP_TIMEOUT_MS,
+        intervalMs: 100,
+      });
     } catch (error) {
       const output = await opencodeProcess.output().catch(() => "");
       throw new Error(
-        `opencode did not start listening on port ${port} within ${STARTUP_TIMEOUT_MS}ms` +
+        `opencode did not answer on port ${port} within ${STARTUP_TIMEOUT_MS}ms` +
           (output ? `. Process output:\n${output}` : " (no process output)."),
         { cause: error }
       );
