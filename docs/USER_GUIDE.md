@@ -127,7 +127,8 @@ The icon on each row:
 
 Hovering the dot shows the counts, e.g. "2 idle, 1 busy". A row also turns
 green while a dialog about that workspace is waiting for you — a hook trust
-question, a failed deletion.
+question, a failed deletion — including the placeholder row of a workspace
+still being created.
 
 ### Opening and closing projects
 
@@ -204,8 +205,7 @@ terminating processes, stopping the agent server, closing the editor, running
 the repository hook (if the repository has one), removing the worktree. On a
 failure it offers **Retry**, **Kill & Retry** (with a table of the processes
 holding files open) and **Dismiss**, which force-removes the workspace from
-CodeHydra (deleting its branch even if you chose to keep it) even if files
-remain on disk. <kbd>Escape</kbd> on a failed panel means Dismiss.
+CodeHydra even if files remain on disk (a branch you chose to keep is kept). <kbd>Escape</kbd> on a failed panel means Dismiss.
 
 ### Notifications and updates
 
@@ -637,8 +637,8 @@ the last stderr line, rather than as a refusal.
 Either way the deletion stops before the worktree is removed and the reason
 appears on the progress row, with **Retry** and **Dismiss**. Neither keeps the
 workspace: Retry runs the whole deletion again (trust question included, unless
-answered Always or Never); Dismiss force-deletes, skipping hooks, and deletes
-the branch even if you chose to keep it. **Escape on the failed panel means
+answered Always or Never); Dismiss force-deletes, skipping hooks, and keeps
+the branch if you chose to keep it. **Escape on the failed panel means
 Dismiss.** These buttons appear only once the hook has exited: a hook that
 hangs can only be stopped by killing its process (or quitting CodeHydra).
 
@@ -678,8 +678,10 @@ project, CodeHydra asks:
   without asking.
 - One question per project is open at a time; every hook waiting on it gets
   the same answer.
-- The operation waits while the question is open. With an
-  `on-workspace-created` hook, it can appear right at app start.
+- The operation waits while the question is open, and the workspace's sidebar
+  row turns green — during `after-worktree-created` that is the placeholder row
+  of the workspace being created. With an `on-workspace-created` hook, it can
+  appear right at app start.
 - Skip or Never on a `before-worktree-deleted` lets the deletion proceed
   without the gate.
 - The question is asked whatever triggered the hook — the UI, `ch ws delete`,

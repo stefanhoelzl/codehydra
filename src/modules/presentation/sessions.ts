@@ -25,6 +25,7 @@ import type {
 import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
 import type { UiDialog, UiNotification } from "../../shared/ui-state";
 import type { Logger } from "../../boundaries/platform/logging";
+import { Path } from "../../utils/path/path";
 
 // =============================================================================
 // Shared registry core
@@ -126,10 +127,15 @@ export interface DialogHandle {
  * the renderer — dialogs are positioned by kind, not by workspace — but it is
  * what lets `needsAttention` mark a sidebar row, so a question raised while the
  * user is looking elsewhere still says which workspace raised it.
+ *
+ * `projectPath` names that workspace's project. Pass it when the workspace may
+ * still be being created: its sidebar row is then a placeholder with no path
+ * yet, and project + workspace name is the only identity the two share.
  */
 export interface DialogOpenOptions {
   readonly kind?: DialogKind;
   readonly workspacePath?: string;
+  readonly projectPath?: string;
 }
 
 /**
@@ -163,9 +169,18 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
     // Default kind is "modal" (matches the renderer DialogHost default).
     const kind: DialogKind = options?.kind ?? "modal";
     const workspacePath = options?.workspacePath;
+    const projectPath = options?.projectPath;
     return this.register(
       (id, onRemove) =>
-        new DialogHandleImpl(id, kind, config, this.notifyChange, onRemove, workspacePath)
+        new DialogHandleImpl(
+          id,
+          kind,
+          config,
+          this.notifyChange,
+          onRemove,
+          workspacePath,
+          projectPath
+        )
     );
   }
 
@@ -180,6 +195,28 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
   needsAttentionFor(workspacePath: string): boolean {
     for (const handle of this.openSessions) {
       if (handle.workspacePath === workspacePath && handle.config.needsAttention === true) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * needsAttentionFor for a workspace still being created, whose row has no
+   * path to match yet: matches an attention dialog opened with this project and
+   * a workspace path whose last segment is this name (a managed workspace is
+   * named after its directory). A dialog opened without `projectPath` never
+   * matches here — a bare name could belong to another project.
+   */
+  needsAttentionForPending(projectPath: string, workspaceName: string): boolean {
+    for (const handle of this.openSessions) {
+      if (
+        handle.config.needsAttention === true &&
+        handle.projectPath !== undefined &&
+        handle.workspacePath !== undefined &&
+        new Path(handle.projectPath).equals(projectPath) &&
+        new Path(handle.workspacePath).basename === workspaceName
+      ) {
         return true;
       }
     }
@@ -215,6 +252,8 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
   readonly kind: DialogKind;
   /** Workspace this dialog is about, when it is about one. See DialogOpenOptions. */
   readonly workspacePath: string | undefined;
+  /** Project of that workspace, when given. See DialogOpenOptions. */
+  readonly projectPath: string | undefined;
   readonly closed: Promise<void>;
 
   /** Current render config — read by toSnapshot(). */
@@ -234,11 +273,13 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
     config: DialogConfig,
     notifyChange: () => void,
     onRemove: () => void,
-    workspacePath?: string
+    workspacePath?: string,
+    projectPath?: string
   ) {
     this.id = id;
     this.kind = kind;
     this.workspacePath = workspacePath;
+    this.projectPath = projectPath;
     this.config = config;
     this.notifyChange = notifyChange;
     this.onRemove = onRemove;
