@@ -59,6 +59,17 @@ export interface RenderProcessGoneDetails {
 }
 
 /**
+ * A committed navigation of one of a view's top-level child frames — an iframe
+ * directly in the view's page, not one nested inside such an iframe.
+ */
+export interface ChildFrameNavigation {
+  /** The URL the frame navigated to. */
+  readonly url: string;
+  /** HTTP status of the response; 0 for navigations without one. */
+  readonly httpResponseCode: number;
+}
+
+/**
  * Details about an uncaught JavaScript exception in a view's page.
  */
 export interface UncaughtExceptionDetails {
@@ -319,6 +330,23 @@ export interface ViewBoundary {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   installChildFrameScript(handle: ViewHandle, script: string): void;
+
+  /**
+   * Subscribe to committed navigations of this view's top-level child frames.
+   *
+   * Frames nested deeper (a webview inside a workspace iframe) are skipped:
+   * they come and go with the IDE's own UI and say nothing about the frame the
+   * app mounted.
+   *
+   * @param handle - Handle to the host view
+   * @param callback - Called with the navigated URL and response code
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onChildFrameNavigate(
+    handle: ViewHandle,
+    callback: (details: ChildFrameNavigation) => void
+  ): Unsubscribe;
 
   // Cleanup
   /**
@@ -714,6 +742,41 @@ export class DefaultViewBoundary implements ViewBoundary {
         });
       }
     });
+  }
+
+  onChildFrameNavigate(
+    handle: ViewHandle,
+    callback: (details: ChildFrameNavigation) => void
+  ): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (
+      _event: Electron.Event,
+      url: string,
+      httpResponseCode: number,
+      _httpStatusText: string,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number
+    ): void => {
+      if (isMainFrame) return;
+      // Same rules as the script injection above: look the frame up by id, and
+      // let nothing escape a native emit.
+      try {
+        const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+        // A top-level child's parent is the main frame, which has no parent.
+        if (!frame?.parent || frame.parent.parent !== null) return;
+        callback({ url, httpResponseCode });
+      } catch (error) {
+        this.logger.debug("Child frame navigation skipped", {
+          id: handle.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    state.webContents.on("did-frame-navigate", handler);
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("did-frame-navigate", handler)
+    );
   }
 
   private getView(handle: ViewHandle): ViewState {

@@ -150,6 +150,64 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // onWorkspaceDisconnected — what the frame watchdog reads a dead IDE from
+  // ---------------------------------------------------------------------------
+
+  describe("onWorkspaceDisconnected", () => {
+    it("reports a disconnect the IDE end made as not ours", async () => {
+      const workspace = wsPath("/test/workspace");
+      const listener = vi.fn();
+      env.pluginServer.onWorkspaceDisconnected(listener);
+
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      // What the sidekick's socket does when its extension host shuts down.
+      client.disconnect();
+
+      await expect.poll(() => listener.mock.calls.length, { timeout: 5000 }).toBe(1);
+      expect(listener).toHaveBeenCalledWith({
+        workspacePath: workspace,
+        reason: "client namespace disconnect",
+        initiatedByUs: false,
+      });
+    });
+
+    it("reports our own teardown as ours", async () => {
+      const workspace = testPath("/test/workspace").toNative();
+      const listener = vi.fn();
+      env.pluginServer.onWorkspaceDisconnected(listener);
+
+      const client = createClient(wsPath(workspace));
+      await waitForConnect(client);
+      env.testDispatcher.registerOperation(createDeleteShutdownOperation());
+      await env.testDispatcher.dispatch({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: { workspacePath: workspace, removeWorktree: true },
+      } as Intent);
+
+      await expect.poll(() => listener.mock.calls.length, { timeout: 5000 }).toBe(1);
+      expect(listener.mock.calls[0]![0]).toMatchObject({ initiatedByUs: true });
+    });
+
+    it("reports a socket replaced by a newer connection as ours", async () => {
+      const workspace = wsPath("/test/workspace");
+      const listener = vi.fn();
+      env.pluginServer.onWorkspaceDisconnected(listener);
+
+      const first = createClient(workspace);
+      await waitForConnect(first);
+      const second = createClient(workspace);
+      await waitForConnect(second);
+      await waitForDisconnect(first);
+
+      // The workspace never stopped being connected, so there is nothing to judge.
+      await expect.poll(() => listener.mock.calls.length, { timeout: 5000 }).toBe(1);
+      expect(listener.mock.calls[0]![0]).toMatchObject({ initiatedByUs: true });
+      expect(env.pluginServer.isConnected(workspace)).toBe(true);
+    });
+  });
+
   describe("client connection", () => {
     it("accepts client with valid auth", async () => {
       const client = createClient(wsPath("/test/workspace"));

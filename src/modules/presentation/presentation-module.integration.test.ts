@@ -2658,6 +2658,41 @@ describe("PresentationModule - background-focus suppression", () => {
 // configs, frame URLs, and the hibernation screenshot's bytes.
 // =============================================================================
 
+describe("PresentationModule - reloadFrame", () => {
+  it("reloads a mounted workspace's frame by its key", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+
+    expect(module.reloadFrame(workspace.path)).toBe(true);
+    expect(deps.viewManager.reloadFrame).toHaveBeenCalledWith(`${PROJECT_ID}/feat`);
+  });
+
+  it("does nothing for a hibernated workspace, which has no frame", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", {
+      url: "http://127.0.0.1:1/feat",
+      metadata: { hibernated: "true" },
+    });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+
+    expect(module.reloadFrame(workspace.path)).toBe(false);
+    expect(deps.viewManager.reloadFrame).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for a workspace it does not know", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    expect(module.reloadFrame(wsPath("/elsewhere/ws"))).toBe(false);
+    expect(deps.viewManager.reloadFrame).not.toHaveBeenCalled();
+  });
+});
+
 describe("PresentationModule - push logging", () => {
   /** The context of the last `debug` "ui:state push", parsed back from JSON. */
   function loggedProjection(deps: Deps): Record<string, unknown> {

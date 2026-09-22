@@ -167,6 +167,44 @@ describe("UiViewManager", () => {
     });
   });
 
+  describe("workspace frame navigation", () => {
+    it("logs where a workspace frame navigated", () => {
+      const { manager, viewLayer, logger } = createManager();
+
+      viewLayer.$.triggerChildFrameNavigate(manager.getUIViewHandle(), {
+        url: "http://127.0.0.1:25448/?folder=/ws/ios",
+        httpResponseCode: 200,
+      });
+
+      expect(logger.info).toHaveBeenCalledWith("Workspace frame navigated", {
+        url: "http://127.0.0.1:25448/?folder=/ws/ios",
+        httpResponseCode: 200,
+      });
+    });
+  });
+
+  describe("reloadFrame", () => {
+    it("asks the renderer to reload the one frame, key passed as a string literal", () => {
+      const { manager, viewLayer } = createManager();
+      const exec = vi.spyOn(viewLayer, "executeJavaScript");
+
+      manager.reloadFrame(`proj-1/it's "quoted"`);
+
+      expect(exec).toHaveBeenCalledWith(
+        manager.getUIViewHandle(),
+        `window.__chReloadFrame && window.__chReloadFrame("proj-1/it's \\"quoted\\"")`
+      );
+    });
+
+    it("swallows a rejected executeJavaScript (UI mid-load)", async () => {
+      const { manager, viewLayer } = createManager();
+      vi.spyOn(viewLayer, "executeJavaScript").mockRejectedValue(new Error("page gone"));
+
+      expect(() => manager.reloadFrame("proj-1/ws")).not.toThrow();
+      await Promise.resolve();
+    });
+  });
+
   describe("captureActiveWorkspaceView", () => {
     it("clips the capture to the active frame rect reported by the renderer", async () => {
       const { manager, viewLayer } = createManager();

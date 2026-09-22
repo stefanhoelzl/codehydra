@@ -191,6 +191,10 @@ is easy to spot. Turn this off with `auto-tag.new`.
 - **Wake** — select it and click its screenshot, click the pause icon on its
   row, or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> again. Selecting a
   hibernated workspace never wakes it by itself.
+- **A blank editor** — if a workspace's editor shuts down or navigates away on
+  its own, CodeHydra reloads that workspace's editor after about 15 seconds.
+  Open files and the agent terminal come back; the agent keeps running
+  throughout. If the reload does not help, hibernate and wake the workspace.
 
 ### Deleting a workspace
 

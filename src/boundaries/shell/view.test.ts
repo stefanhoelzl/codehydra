@@ -210,3 +210,78 @@ describe("DefaultViewBoundary unload vetoes", () => {
     expect(logger.debug).toHaveBeenCalledWith("unload veto ignored ui");
   });
 });
+
+describe("DefaultViewBoundary onChildFrameNavigate", () => {
+  let boundary: DefaultViewBoundary;
+  let logger: MockLogger;
+
+  const mainFrame = { parent: null };
+  const workspaceFrame = { parent: mainFrame };
+  const nestedFrame = { parent: workspaceFrame };
+
+  function emitNavigate(isMainFrame: boolean, processId: number, routingId: number): void {
+    emit(
+      "did-frame-navigate",
+      undefined,
+      "http://127.0.0.1:1/x",
+      200,
+      "OK",
+      isMainFrame,
+      processId,
+      routingId
+    );
+  }
+
+  beforeEach(() => {
+    listeners.clear();
+    resetElectronFake();
+    logger = createMockLogger();
+    boundary = new DefaultViewBoundary(windowLayer, logger);
+  });
+
+  it("reports a navigation of a frame directly in the view's page", () => {
+    webFrameMainState.lookup = () => workspaceFrame;
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameNavigate(handle, callback);
+    emitNavigate(false, 1, 7);
+
+    expect(callback).toHaveBeenCalledWith({ url: "http://127.0.0.1:1/x", httpResponseCode: 200 });
+  });
+
+  it("skips frames nested inside a workspace frame", () => {
+    webFrameMainState.lookup = () => nestedFrame;
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameNavigate(handle, callback);
+    emitNavigate(false, 1, 7);
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("skips main-frame navigations without a lookup", () => {
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameNavigate(handle, callback);
+    emitNavigate(true, 1, 7);
+
+    expect(webFrameMain.fromId).not.toHaveBeenCalled();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("survives a frame lookup that throws", () => {
+    webFrameMainState.lookup = () => {
+      throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+    };
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameNavigate(handle, callback);
+
+    expect(() => emitNavigate(false, 1, 7)).not.toThrow();
+    expect(callback).not.toHaveBeenCalled();
+  });
+});

@@ -39,11 +39,14 @@
   A frame that does not answer is logged, and reloaded if it had answered
   before (the workbench session lives on the IDE server, so a reload is cheap).
 
-  Exposes two window hooks for the main process (UiViewManager):
+  Exposes window hooks for the main process (UiViewManager):
   - __chFocusActiveFrame(): focus the active frame (window-focus handler,
     post-terminal-focus refresh)
   - __chActiveFrameRect(): bounding rect of the active frame (hibernation
     screenshot capture clipping)
+  - __chReloadFrames(): reload every mounted frame (IDE server restart)
+  - __chReloadFrame(key): reload one mounted frame (its IDE went away on its
+    own; see frame-watchdog-module)
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -66,6 +69,7 @@
     __chFocusActiveFrame?: () => void;
     __chActiveFrameRect?: () => { x: number; y: number; width: number; height: number } | null;
     __chReloadFrames?: () => void;
+    __chReloadFrame?: (key: string) => void;
   }
 
   /** One mountable workspace frame from the UiState snapshot. */
@@ -291,6 +295,23 @@
     if (mode === "workspace") focusActiveFrame();
   }
 
+  // Reload one mounted frame. Invoked by the main process via __chReloadFrame
+  // when that workspace's IDE went away on its own — the workbench shut down or
+  // navigated off while its iframe stayed mounted, which leaves a blank frame
+  // that still answers the liveness probe. An unknown key is a no-op: the frame
+  // may have been unmounted (hibernated, deleted) since main decided.
+  function reloadFrame(key: string): void {
+    const el = frameEls.get(key);
+    if (!el) return;
+    // A reloading frame is legitimately silent until its script is re-injected.
+    if (key === probeKey) cancelProbe();
+    // Re-assigning src (via a local, to dodge no-self-assign) forces a fresh
+    // navigation even though the resolved URL is identical.
+    const url = el.src;
+    el.src = url;
+    if (key === activeKey && mode === "workspace") focusFrame(el);
+  }
+
   // Show flow: when the active workspace changes, force a paint-tree refresh
   // of the now-visible frame to work around Windows DirectComposition
   // surfaces that can come back blank after a display:none → display:block
@@ -373,6 +394,7 @@
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     };
     hooks.__chReloadFrames = reloadFrames;
+    hooks.__chReloadFrame = reloadFrame;
 
     window.addEventListener("message", handleFrameMessage);
 
@@ -380,6 +402,7 @@
       delete hooks.__chFocusActiveFrame;
       delete hooks.__chActiveFrameRect;
       delete hooks.__chReloadFrames;
+      delete hooks.__chReloadFrame;
       window.removeEventListener("message", handleFrameMessage);
       cancelProbe();
     };
