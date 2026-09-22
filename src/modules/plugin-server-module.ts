@@ -138,10 +138,10 @@ const CLOSE_AGENT_COMMAND = "codehydra.closeAgent";
 /**
  * How long to wait for the agent terminal to actually close during teardown.
  *
- * Must exceed the extension's own force-dispose deadline (3s, see
- * AGENT_CLOSE_TIMEOUT_MS in extensions/sidekick) so the graceful path gets to
- * finish before we give up on it — after that the terminal is disposed either
- * way and waiting longer only delays the teardown.
+ * The sidekick sends Ctrl+C until the agent exits, and the terminal closes with
+ * it (the launch line takes the shell down too), which is what reports the
+ * close. An agent that has not exited by now is not going to, so the teardown
+ * falls back to process cleanup rather than waiting longer.
  */
 const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 

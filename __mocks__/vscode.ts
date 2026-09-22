@@ -97,6 +97,10 @@ export const commands = {
   executeCommand: vi.fn(() => Promise.resolve()),
 };
 
+export const env = {
+  shell: "/bin/bash",
+};
+
 export const workspace = {
   workspaceFolders: [{ uri: { fsPath: "/workspace/feature-a" } }] as unknown,
   updateWorkspaceFolders: vi.fn(),
@@ -120,4 +124,5 @@ export function resetVscodeFake(): void {
   mockStatusBarItem.color = undefined;
   mockStatusBarItem.backgroundColor = undefined;
   workspace.workspaceFolders = [{ uri: { fsPath: "/workspace/feature-a" } }];
+  env.shell = "/bin/bash";
 }

@@ -102,6 +102,34 @@ function emitAgentLifecycle(event: "open" | "close"): void {
 }
 
 /**
+ * The line typed into the agent terminal: the launcher, plus whatever makes the
+ * shell go away with it.
+ *
+ * The terminal must close when the agent exits. Its close is the "close" agent
+ * lifecycle event, which is what workspace teardown waits for after asking the
+ * agent to stop — a bare `ch claude` leaves the shell at its prompt, the terminal
+ * open, and every deletion waiting out plugin-server's full timeout.
+ *
+ * The shell is the terminal's default profile, so the syntax follows
+ * `vscode.env.shell`. PowerShell gets `finally` rather than `; exit` because
+ * Ctrl+C — how teardown stops the agent — abandons the rest of a statement list
+ * but still runs `finally`. An unknown shell on Windows is assumed to be
+ * PowerShell, VS Code's default there.
+ */
+function launchLine(command: string): string {
+  const shell = path.win32.basename(vscode.env.shell).toLowerCase();
+  if (shell === "cmd.exe" || shell === "cmd") return `${command} & exit`;
+  if (
+    shell.startsWith("powershell") ||
+    shell.startsWith("pwsh") ||
+    (shell === "" && process.platform === "win32")
+  ) {
+    return `try { ${command} } finally { exit }`;
+  }
+  return `exec ${command}`;
+}
+
+/**
  * Open agent terminal in the editor area.
  * Creates a new terminal if none exists, otherwise focuses the existing one.
  * On reopened workspaces (show=false), disposes any stale restored terminals
@@ -126,7 +154,7 @@ function openAgentTerminal(
   // The `ch` CLI carries both launchers. The `ch-claude` script still exists,
   // but only because the Claude Code extension's process-wrapper setting takes a
   // bare path; nothing needs it here.
-  const command = agentType === "claude" ? "ch claude" : "ch opencode";
+  const command = launchLine(agentType === "claude" ? "ch claude" : "ch opencode");
 
   if (!show) {
     // Reopened workspace: dispose stale restored terminals (empty creationOptions

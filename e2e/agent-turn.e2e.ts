@@ -22,7 +22,14 @@ import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
 import { AGENT_PROMPT, AGENT_SET_TITLE, setTitleTool, useAgentMock } from "./agent-mock.ts";
 import { chAsync, json } from "./ch.ts";
-import { useApp, waitForConnectionDetails, workspaceRow, workspacesDir } from "./fixtures";
+import {
+  appLogEntries,
+  type LogEntry,
+  useApp,
+  waitForConnectionDetails,
+  workspaceRow,
+  workspacesDir,
+} from "./fixtures";
 import type { Agent } from "./env.ts";
 
 const WORKSPACE_NAME = "agent-turn";
@@ -30,7 +37,8 @@ const WORKSPACE_NAME = "agent-turn";
 /** A whole turn: worktree, IDE server, agent boot, two round trips to the mock. */
 const TURN_TIMEOUT_MS = 240_000;
 
-test.describe.configure({ timeout: TURN_TIMEOUT_MS + 120_000 });
+// The teardown test deletes the workspace the turn created: one story.
+test.describe.configure({ mode: "serial", timeout: TURN_TIMEOUT_MS + 120_000 });
 
 let repo: { path: string; cleanup: () => Promise<void> };
 
@@ -192,5 +200,43 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
     requests.some((entry) => entry.response.fixture === gatedTurn),
     `nothing was served by the gated fixture — the agent never sent a request carrying both ` +
       `CodeHydra's system prompt and ${setTitleTool(agent)}`
+  ).toBe(true);
+});
+
+test("deleting the workspace waits for the agent to exit, not for a timeout", async () => {
+  // Teardown Ctrl+Cs the agent and waits for its terminal's close, reported as
+  // the "close" agent lifecycle event. The agent used to be typed into a shell
+  // that outlived it, so the terminal never closed: every deletion of a
+  // workspace with a live agent sat out plugin-server's full timeout and fell
+  // back to killing the orphaned shell. Only a real terminal running a real
+  // agent shows that, which is why it is asserted here.
+
+  // Logged as a normalized Path, so compare separator-agnostically.
+  const forWorkspace = (entry: LogEntry): boolean =>
+    String(entry.context?.["workspace"] ?? "")
+      .replaceAll("\\", "/")
+      .endsWith(`/${WORKSPACE_NAME}`);
+
+  const deleted = await chAsync([
+    "ws",
+    "delete",
+    "--workspace",
+    WORKSPACE_NAME,
+    "--ignore-warnings",
+  ]);
+  expect(deleted.status, `ch ws delete failed: ${deleted.stderr}`).toBe(0);
+
+  const entries = appLogEntries().filter(forWorkspace);
+  expect(
+    entries.filter(
+      (entry) =>
+        entry.message === "Agent terminal did not close in time; falling back to process cleanup"
+    ),
+    "teardown timed out waiting for the agent terminal — the shell it was launched in " +
+      "outlived the agent"
+  ).toEqual([]);
+  expect(
+    entries.some((entry) => entry.message === "Agent terminal closed"),
+    "teardown never saw the agent terminal close"
   ).toBe(true);
 });
