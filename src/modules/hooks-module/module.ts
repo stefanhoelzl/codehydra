@@ -355,7 +355,14 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   }
 
   function reportFailure(found: FoundHook, error: unknown): void {
-    deps.logger.error("Repository hook failed", { entry: found.entry }, toError(error));
+    // warn, not error: a repository's script failing — or the user canceling
+    // it — is the repository's problem, and CodeHydra is working as designed.
+    // The `error` level is kept for CodeHydra itself being broken; the user
+    // still gets the error notification below.
+    deps.logger.warn("Repository hook failed", {
+      entry: found.entry,
+      error: getErrorMessage(error),
+    });
     notify(deps.dispatcher, {
       type: "error",
       title: "Repository hook failed",
@@ -618,8 +625,4 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   };
 
   return { name: "hooks", hooks, events };
-}
-
-function toError(error: unknown): Error | undefined {
-  return error instanceof Error ? error : undefined;
 }
