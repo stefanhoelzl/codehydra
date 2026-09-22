@@ -763,6 +763,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
     const agent =
       workspace.path === null ? AGENT_NONE : (agentStatuses.get(workspace.path) ?? AGENT_NONE);
+    // A workspace still being created has no path yet — its placeholder row is
+    // matched by project + name, which is what the first hook-trust question
+    // (raised during after-worktree-created) is asked against.
+    const waitingOnUser =
+      workspace.path !== null
+        ? dialogs.needsAttentionFor(workspace.path)
+        : dialogs.needsAttentionForPending(project.path, workspace.name);
     return {
       key,
       name: workspace.name,
@@ -774,10 +781,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // signal the user already answers to, and a question nobody notices is
       // the same as no question. Reverts on its own — the next snapshot reads
       // the tracked status again once the dialog closes or drops the flag.
-      agent:
-        workspace.path !== null && dialogs.needsAttentionFor(workspace.path)
-          ? withAttention(agent)
-          : agent,
+      agent: waitingOnUser ? withAttention(agent) : agent,
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: key === activeKey,

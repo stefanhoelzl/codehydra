@@ -35,7 +35,11 @@ export type TrustDecision = "run" | "skip";
 export interface TrustDialogOpener {
   dialog(
     config: DialogConfig,
-    options?: { kind?: "modal" | "modeless" | "panel"; workspacePath?: string }
+    options?: {
+      kind?: "modal" | "modeless" | "panel";
+      workspacePath?: string;
+      projectPath?: string;
+    }
   ): DialogHandle;
 }
 
@@ -139,6 +143,9 @@ export function createTrustGate(deps: TrustGateDeps): TrustGate {
     const handle = deps.ui.dialog(buildTrustConfig(request, repoName), {
       kind: "modal",
       workspacePath: request.workspacePath,
+      // The first question usually comes from after-worktree-created, while
+      // the row is still a pathless placeholder the project + name identify.
+      projectPath: request.projectPath,
     });
 
     try {

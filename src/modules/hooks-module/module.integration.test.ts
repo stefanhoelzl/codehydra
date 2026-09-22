@@ -89,6 +89,8 @@ interface TestSetup {
   readonly finalizeEnv: Array<Record<string, string>>;
   readonly notifications: NotificationConfig[];
   readonly dialogs: DialogConfig[];
+  /** The open options each dialog was raised with, in order. */
+  readonly dialogOptions: Array<{ workspacePath?: string; projectPath?: string } | undefined>;
   readonly sinkLines: Array<{ entry: string; line: string }>;
   /** Metadata written through the real SetMetadataOperation, in order. */
   readonly metadataWrites: Array<{ key: string; value: string | null }>;
@@ -115,6 +117,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const finalizeEnv: Array<Record<string, string>> = [];
   const notifications: NotificationConfig[] = [];
   const dialogs: DialogConfig[] = [];
+  const dialogOptions: TestSetup["dialogOptions"] = [];
   const sinkLines: Array<{ entry: string; line: string }> = [];
   const metadataWrites: Array<{ key: string; value: string | null }> = [];
   const stdin: string[] = [];
@@ -182,8 +185,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   };
 
   const ui = {
-    dialog: (config: DialogConfig) => {
+    dialog: (config: DialogConfig, options?: { workspacePath?: string; projectPath?: string }) => {
       dialogs.push(config);
+      dialogOptions.push(options);
       return makeDialogStub(() => trustAnswer);
     },
     notification: (config: NotificationConfig) => {
@@ -280,6 +284,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     finalizeEnv,
     notifications,
     dialogs,
+    dialogOptions,
     sinkLines,
     metadataWrites,
     stdin: stdinProxy,
@@ -620,6 +625,16 @@ describe("trust", () => {
     expect(setup.dialogs).toHaveLength(1);
     expect(setup.dialogs[0]!.needsAttention).toBe(true);
     expect(setup.stdin).toHaveLength(1);
+  });
+
+  it("names the workspace and its project, so a still-creating row can be marked", async () => {
+    const setup = createTestSetup({ hooks: { [SETUP_HOOK]: {} } });
+    await openWorkspace(setup);
+
+    expect(setup.dialogOptions[0]).toMatchObject({
+      workspacePath: WORKSPACE_PATH,
+      projectPath: PROJECT_ROOT,
+    });
   });
 
   it("does not run the hook when the answer is Skip", async () => {

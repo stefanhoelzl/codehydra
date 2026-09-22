@@ -2765,3 +2765,75 @@ describe("PresentationModule - push logging", () => {
     );
   });
 });
+
+describe("PresentationModule - attention highlight", () => {
+  const ATTENTION = { sections: [], needsAttention: true };
+  const IDLE_ATTENTION = { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+
+  /** The agent status of the named row in the latest snapshot. */
+  function rowAgent(deps: Deps, name: string): unknown {
+    const rows = lastSnapshot(deps).sidebar.projects[0]!.workspaces;
+    return rows.find((row) => row.name === name)!.agent;
+  }
+
+  it("marks a workspace's row while a dialog opened against it waits on the user", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    const handle = module.dialog(ATTENTION, { kind: "modal", workspacePath: workspace.path });
+    await flush();
+    expect(rowAgent(deps, "feat")).toEqual(IDLE_ATTENTION);
+
+    handle.close();
+    await flush();
+    expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+
+  it("marks the placeholder row of a workspace still being created", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+    });
+
+    // The hook-trust question during after-worktree-created: the worktree
+    // exists, but the row is still a pathless placeholder.
+    const handle = module.dialog(ATTENTION, {
+      kind: "modal",
+      workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
+      projectPath: PROJECT_PATH.toString(),
+    });
+    await flush();
+    expect(rowAgent(deps, "feat")).toEqual(IDLE_ATTENTION);
+
+    handle.close();
+    await flush();
+    expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+
+  it("does not mark a placeholder for a same-named workspace of another project", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+    });
+
+    const other = testPath("/projects/beta").toString();
+    module.dialog(ATTENTION, {
+      kind: "modal",
+      workspacePath: `${other}/.worktrees/feat`,
+      projectPath: other,
+    });
+    // Without a project the name alone is not enough to claim the row.
+    module.dialog(ATTENTION, { kind: "modal", workspacePath: `${PROJECT_PATH}/.worktrees/feat` });
+    await flush();
+
+    expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+});
