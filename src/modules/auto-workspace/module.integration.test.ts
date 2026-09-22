@@ -53,6 +53,7 @@ import {
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
+import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
 import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
 import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -91,7 +92,7 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
   readonly id = "open-project";
   readonly schemas = openProjectSchemas;
   readonly dispatched: IntentOf<typeof openProjectSchemas>[] = [];
-  /** Git URLs whose open throws (unreachable remote, bad path, …). */
+  /** Git URLs or project paths whose open throws (unreachable remote, bad path, …). */
   readonly failFor = new Set<string>();
   async execute(
     ctx: OperationContext<IntentOf<typeof openProjectSchemas>, typeof openProjectSchemas>
@@ -99,6 +100,8 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
     this.dispatched.push(ctx.intent);
     const git = ctx.intent.payload.git;
     if (git !== undefined && this.failFor.has(git)) throw new Error(`clone failed for ${git}`);
+    const path = ctx.intent.payload.path;
+    if (path !== undefined && this.failFor.has(path)) throw new Error(`not a git repo: ${path}`);
     const pathStr =
       ctx.intent.payload.path?.toString() ?? testPath("/home/user/projects/repo").toNative();
     return { id: "project-1" as ProjectId, name: "repo", path: projPath(pathStr), workspaces: [] };
@@ -346,6 +349,7 @@ function createSetup(options?: {
   const resolveWsOp = new ResolveWorkspaceOp(listProjectsOp);
   const wakeOp = new WakeWorkspaceOp();
   const switchOp = new SwitchWorkspaceOp();
+  const notificationManager = createMockNotificationManager();
 
   const configDefaults: Record<string, unknown> = { ...(options?.configDefaults ?? {}) };
   if (options?.sources !== undefined && options.sources !== null) {
@@ -370,6 +374,7 @@ function createSetup(options?: {
     processRunner,
     configService: mockConfig,
     stateService: state,
+    ui: notificationManager.ui,
   });
   dispatcher.registerModule(module);
 
@@ -387,6 +392,7 @@ function createSetup(options?: {
     resolveWsOp,
     wakeOp,
     switchOp,
+    notificationManager,
   };
 }
 
@@ -657,8 +663,9 @@ describe("AutoWorkspaceModule Integration", () => {
   it("contains a failing project open to its own item, finishing the cycle", async () => {
     vi.useFakeTimers();
     const broken = "https://github.com/org/broken.git";
-    const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp } = createSetup({
-      sources: `name: bad
+    const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, notificationManager } =
+      createSetup({
+        sources: `name: bad
 cmd: fetch
 template:
   name: "bad-{{ id }}"
@@ -666,7 +673,7 @@ template:
   git: "${broken}"
 ---
 ${sourceYaml("good")}`,
-    });
+      });
     openProjectOp.failFor.add(broken);
     cmd.items = [{ id: "1" }];
 
@@ -677,6 +684,70 @@ ${sourceYaml("good")}`,
     expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("ws-1");
     expect(entriesOf(state)).not.toHaveProperty("bad/1"); // unrecorded → retried next tick
     expect(entriesOf(state)).toHaveProperty("good/1");
+    // A failed clone already turns its own card into "Clone failed".
+    expect(notificationManager.notifications).toHaveLength(0);
+  });
+
+  it("reports a project that is not an absolute path as one collapsing error card, retried every poll", async () => {
+    vi.useFakeTimers();
+    const url = "https://github.com/org/repo.git";
+    const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, notificationManager } =
+      createSetup({
+        sources: `name: github
+cmd: fetch
+template:
+  name: "ws-{{ id }}"
+  key: "{{ id }}"
+  project: "${url}"`,
+      });
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(openProjectOp.dispatched).toHaveLength(0);
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    expect(entriesOf(state)).not.toHaveProperty("github/1");
+    expect(notificationManager.notifications).toHaveLength(1);
+    const card = notificationManager.notifications[0]!;
+    expect(card.opened.type).toBe("error");
+    expect(card.opened.dismissible).toBe(true);
+    expect(card.opened.message).toContain(
+      "github: project must be an absolute path — use git: for a URL"
+    );
+    expect(card.opened.message).toContain(url);
+
+    await tick(); // still broken: retried, and the repeat collapses into the same card
+    expect(notificationManager.notifications).toHaveLength(1);
+    expect(card.count).toBe(2);
+
+    notificationManager.emitEvent(0, { actionId: "dismiss" }); // dismiss retires the card
+    expect(card.closed).toBe(true);
+    await tick(); // the next failing poll raises a fresh one
+    expect(notificationManager.notifications).toHaveLength(2);
+    expect(notificationManager.lastNotification!.closed).toBe(false);
+  });
+
+  it("reports a project path that cannot be opened as an error card naming the source", async () => {
+    vi.useFakeTimers();
+    const missing = testPath("/home/user/projects/missing");
+    const { dispatcher, cmd, state, openProjectOp, notificationManager } = createSetup({
+      sources: `name: local
+cmd: fetch
+template:
+  name: "ws-{{ id }}"
+  key: "{{ id }}"
+  project: '${missing.toNative()}'`,
+    });
+    openProjectOp.failFor.add(missing.toString()); // the normalized form project:open receives
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(entriesOf(state)).not.toHaveProperty("local/1");
+    expect(notificationManager.notifications).toHaveLength(1);
+    expect(notificationManager.notifications[0]!.opened.message).toBe(
+      `local: not a git repo: ${missing.toString()}`
+    );
   });
 
   describe("poll interval", () => {

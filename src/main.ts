@@ -778,6 +778,7 @@ const autoWorkspaceModule = createAutoWorkspaceModule({
   processRunner,
   configService,
   stateService,
+  ui: presentationModule,
 });
 const autoTaggingModule = createAutoTaggingModule({
   dispatcher,
