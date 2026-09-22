@@ -478,6 +478,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         }
       }
     } else {
+      let failed = false;
       try {
         const result = await this.runPipeline(ctx, ctx.emit);
 
@@ -495,6 +496,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         }
 
         if (result.hasErrors) {
+          failed = true;
           // Emit delete-failed to reset idempotency, allowing retry dispatch
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
@@ -513,6 +515,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         ctx.emit(failedEvent);
         throw error;
       }
+      // A failed deletion leaves the workspace in place, with its progress
+      // panel asking Retry or Dismiss. A user who navigated to it is looking at
+      // that question; switching away would hide it.
+      if (failed) return { started: true };
     }
 
     await this.autoSwitchIfBecameActive(ctx, payload.workspacePath);

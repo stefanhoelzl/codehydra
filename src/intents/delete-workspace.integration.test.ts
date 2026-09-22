@@ -1339,6 +1339,25 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
     expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_B);
   });
 
+  it("leaves the user on a workspace whose deletion failed, so its Retry/Dismiss stay in view", async () => {
+    const harness = createTestHarness({
+      activeWorkspacePath: WORKSPACE_PATH_B,
+    });
+
+    // The user navigates back to A to watch the deletion — and it fails. A is
+    // still there, and its panel is the question the user now has to answer.
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = vi
+      .fn()
+      .mockImplementation(async () => {
+        harness.activeWorkspace.path = WORKSPACE_PATH;
+        throw new Error("EBUSY: worktree is locked");
+      });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH);
+  });
+
   it("leaves the user on the workspace they moved to while the delete was running", async () => {
     // The active workspace is read at the start of the operation, but the
     // switch decision happens after the interactive confirm (a dialog the user
