@@ -5,6 +5,19 @@
  */
 
 /**
+ * Thrown by a `checkFn` to stop polling at once: the service can no longer
+ * become healthy (e.g. its process exited), so waiting out the timeout would
+ * only delay the failure and hide its cause. Propagates out of
+ * `waitForHealthy` unchanged; every other error is retried.
+ */
+export class HealthCheckAbortError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HealthCheckAbortError";
+  }
+}
+
+/**
  * Configuration for health check polling.
  */
 export interface HealthCheckConfig {
@@ -23,6 +36,7 @@ export interface HealthCheckConfig {
  * Polls the check function until it returns true or timeout is reached.
  *
  * @param config - Health check configuration
+ * @throws HealthCheckAbortError as soon as `checkFn` throws one
  * @throws Error if timeout is reached before health check passes
  *
  * @example
@@ -46,8 +60,9 @@ export async function waitForHealthy(config: HealthCheckConfig): Promise<void> {
       if (await config.checkFn()) {
         return;
       }
-    } catch {
-      // Continue retrying on errors
+    } catch (error) {
+      if (error instanceof HealthCheckAbortError) throw error;
+      // Continue retrying on other errors
     }
 
     await new Promise((resolve) => setTimeout(resolve, config.intervalMs));

@@ -68,7 +68,7 @@ import { Path } from "../../utils/path/path";
 import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
 import type { Config } from "../../boundaries/platform/config";
 import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
-import { waitForHealthy } from "../../utils/health-check";
+import { HealthCheckAbortError, waitForHealthy } from "../../utils/health-check";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
 import { applyBundlePatches } from "./bundle-patches";
 import type { IdeServer } from "./types";
@@ -122,6 +122,20 @@ const IDE_RECONNECTION_GRACE_MS = 3 * 60 * 60 * 1000;
  * is a separate step, so the retry polls rather than assuming.
  */
 const PORT_RELEASE_TIMEOUT_MS = 3000;
+
+/**
+ * How much of an exited server's output to keep in its start error. The error
+ * travels into crash reports, so keep the end — where the cause is — and bound it.
+ */
+const EXIT_OUTPUT_MAX_CHARS = 2000;
+
+/** The trimmed tail of a process's output, at most EXIT_OUTPUT_MAX_CHARS long. */
+function tailOutput(output: string): string {
+  const trimmed = output.trim();
+  return trimmed.length > EXIT_OUTPUT_MAX_CHARS
+    ? `…${trimmed.slice(-EXIT_OUTPUT_MAX_CHARS)}`
+    : trimmed;
+}
 
 /**
  * Determine the IDE server port from build info.
@@ -453,10 +467,18 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
     const processCheck = await serverProcess.wait(0);
     if (!processCheck.running) {
+      // A dead server never becomes healthy: stop polling, and carry its own
+      // account of why into the error — it is the only place the cause is.
+      const output = tailOutput(processCheck.stderr || processCheck.stdout);
       logger.warn("Health check failed: process exited", {
         exitCode: processCheck.exitCode,
+        output,
       });
-      return false;
+      const exit =
+        processCheck.exitCode !== null
+          ? `exited with code ${processCheck.exitCode}`
+          : `exited${processCheck.signal ? ` on ${processCheck.signal}` : ""}`;
+      throw new HealthCheckAbortError(output ? `Process ${exit}: ${output}` : `Process ${exit}`);
     }
 
     try {
