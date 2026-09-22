@@ -1,0 +1,30 @@
+# Interactive dev runners (the ssh-runner skill): workflow_dispatch-only, no
+# status checks, so they never gate a merge. For reproducing platform-specific
+# behaviour on a warm box instead of one CI run per change.
+name: macos
+runs-on: macos-26
+checkout: true
+stop-after: 120
+idle-timeout: 30
+steps:
+  - uses: ./.github/actions/setup
+  - name: Install the Claude CLI
+    shell: bash
+    run: npm install -g @anthropic-ai/claude-code
+sync:
+  delete: true
+  exclude: [.git, node_modules, out, dist, app-data, e2e/.output]
+---
+name: windows
+runs-on: windows-2025
+checkout: true
+stop-after: 120
+idle-timeout: 30
+steps:
+  - uses: ./.github/actions/setup
+  - name: Install the Claude CLI
+    shell: bash
+    run: npm install -g @anthropic-ai/claude-code
+sync:
+  delete: true
+  exclude: [.git, node_modules, out, dist, app-data, e2e/.output]
