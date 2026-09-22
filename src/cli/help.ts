@@ -67,7 +67,6 @@ export function renderHelp(descriptors: readonly OperationDescriptor[]): string 
       ["--workspace <path>", "Act on this workspace instead of the one containing cwd"],
       ["--input <json>", "Supply the whole payload as JSON"],
       ["--json / --no-json", "Force JSON or human output (default: JSON when piped)"],
-      ["--data-dir <path>", "Target a different CodeHydra instance"],
       ["--help", "Show this, or a command's own arguments"],
     ])
   );

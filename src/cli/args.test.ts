@@ -145,14 +145,11 @@ describe("parseArgs", () => {
   });
 
   describe("global flags", () => {
-    it("captures workspace, data-dir and help without treating them as input", () => {
-      const { input, global } = parseArgs(
-        ["--workspace", "/wt/a", "--data-dir", "/data", "--help"],
-        DELETE
-      );
+    it("captures workspace and help without treating them as input", () => {
+      const { input, global } = parseArgs(["--workspace", "/wt/a", "--help"], DELETE);
 
       expect(input).toEqual({});
-      expect(global).toEqual({ workspace: "/wt/a", dataDir: "/data", help: true });
+      expect(global).toEqual({ workspace: "/wt/a", help: true });
     });
 
     it("records a forced output mode in both directions", () => {

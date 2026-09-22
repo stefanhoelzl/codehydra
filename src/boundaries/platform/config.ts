@@ -131,6 +131,25 @@ function generateHelpText(
 }
 
 // =============================================================================
+// User Settings
+// =============================================================================
+
+/** Keys that are registered config but not user settings. */
+const NON_SETTING_KEYS = new Set(["help"]);
+
+/**
+ * Whether a key is a user setting: something the settings dialog shows and
+ * `ch config` reads and writes. One predicate for both, so the two surfaces
+ * never disagree about which keys exist.
+ *
+ * `help` is a CLI action, and deprecated keys are migration sources that
+ * cannot be set.
+ */
+export function isUserSetting(key: string, def: PersistedKeyDefinition<unknown>): boolean {
+  return !def.deprecated && def.settingsControl !== undefined && !NON_SETTING_KEYS.has(key);
+}
+
+// =============================================================================
 // Interface
 // =============================================================================
 
@@ -181,6 +200,12 @@ export interface Config {
 
   /** Where the key's effective value came from (default|user|env|cli). */
   getSource(key: string): ConfigSource;
+
+  /**
+   * The key's default for this build — the computed default where one applies
+   * (e.g. `log.level` is `debug` in development), else the static one.
+   */
+  getDefault(key: string): unknown;
 
   /**
    * Whether config.json existed at load. false = genuine first run (no config
@@ -578,6 +603,10 @@ export class DefaultConfig implements Config {
 
   getSource(key: string): ConfigSource {
     return this.store.getSource(key) as ConfigSource;
+  }
+
+  getDefault(key: string): unknown {
+    return this.store.getDefault(key);
   }
 
   wasConfigured(): boolean {

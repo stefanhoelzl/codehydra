@@ -221,6 +221,11 @@ export class PersistedStore {
     return this.sources[key] ?? "default";
   }
 
+  /** The key's default (static or computed) — what reset() reverts it to. */
+  getDefault(key: string): unknown {
+    return this.defaults[key];
+  }
+
   /**
    * String-keyed set for callers that don't hold the typed accessor (the settings
    * dialog). Same validation/persistence as PersistedAccessor.set().

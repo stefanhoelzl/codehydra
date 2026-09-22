@@ -106,6 +106,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     },
     getSource: (key: string): ConfigSource =>
       store.get(key) === defaultsByKey.get(key) ? "default" : "user",
+    getDefault: (key: string) => defaultsByKey.get(key),
     wasConfigured: () => options?.wasConfigured ?? true,
     getRedactedOverrides: () => ({ ...overrides }),
     getHelpText: () => "",

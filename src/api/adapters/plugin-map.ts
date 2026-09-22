@@ -78,6 +78,10 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "lock.release": null,
   "lock.list": null,
   "lock.hold": null,
+  "config.get": { channel: "api:config:get" },
+  "config.list": { channel: "api:config:list" },
+  "config.set": { channel: "api:config:set" },
+  "config.reset": { channel: "api:config:reset" },
   log: { channel: "api:log", fireAndForget: true },
   "report.issue": { channel: "api:reportIssue" },
 };

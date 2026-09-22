@@ -567,6 +567,7 @@ const operationRegistry = createRegistry(
     appLayer,
     awaitDeletion: (workspacePath) => deletionWaiter.await(workspacePath),
     locks: lockModule.locks,
+    config: configService,
   },
   apiLogger
 );

@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../../modules/lock-module";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createRegistry } from "./index";
 import { OPERATION_NAMES } from "../names";
 import type { AnyOperationEntry } from "../types";
@@ -25,6 +26,7 @@ function registry(dispatcher: Dispatcher = createMockDispatcher()) {
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
+      config: createMockConfig(),
     },
     SILENT_LOGGER
   );
@@ -211,6 +213,10 @@ describe("registry contents", () => {
       // These name their own target, or need none, so they work from a shell
       // standing anywhere — including outside every worktree.
       expect(global).toEqual([
+        "config.get",
+        "config.list",
+        "config.reset",
+        "config.set",
         "lock.list",
         "log",
         "project.close",

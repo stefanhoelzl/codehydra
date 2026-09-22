@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { registerTestInfrastructure } from "../../intents/operations.test-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { WorkspacePath } from "../../intents/contract";
@@ -42,6 +43,7 @@ function setup() {
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks,
+      config: createMockConfig(),
     },
     SILENT_LOGGER
   );

@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../../modules/lock-module";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createRegistry } from "../entries";
 import { OPERATION_NAMES, type OperationName } from "../names";
 import { PLUGIN_MAP } from "./plugin-map";
@@ -23,6 +24,7 @@ function registry() {
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
+      config: createMockConfig(),
     },
     SILENT_LOGGER
   );
@@ -61,6 +63,7 @@ describe("plugin map", () => {
     expect(PLUGIN_MAP["vscode.command"]?.channel).toBe("api:workspace:executeCommand");
     expect(PLUGIN_MAP["system.open"]?.channel).toBe("api:workspace:openSystemPath");
     expect(PLUGIN_MAP["log"]?.channel).toBe("api:log");
+    expect(PLUGIN_MAP["config.set"]?.channel).toBe("api:config:set");
   });
 
   it("keeps the two fire-and-forget channels fire-and-forget", () => {

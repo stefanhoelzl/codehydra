@@ -14,6 +14,7 @@ import { agentEntries } from "./agent";
 import { vscodeEntries } from "./vscode";
 import { appEntries } from "./app";
 import { lockEntries } from "./lock";
+import { configEntries } from "./config";
 
 export type { EntryDeps } from "./deps";
 
@@ -39,6 +40,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
     ...vscodeEntries(full),
     ...lockEntries(full),
     ...appEntries(full, logger),
+    ...configEntries(full),
   ]);
   return box.current;
 }
