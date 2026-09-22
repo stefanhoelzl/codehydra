@@ -162,7 +162,7 @@ import { createTelemetryModule } from "./modules/telemetry-module";
 import { createPostHogBoundary } from "./boundaries/platform/posthog";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { DefaultStateService } from "./boundaries/platform/state-service";
-import { createStateModule, createStateMigrationRegistry } from "./modules/state-module";
+import { createStateModule } from "./modules/state-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
@@ -222,15 +222,12 @@ const configService = new DefaultConfig({
 });
 
 // State — app-written persisted state (state.json), sibling of config. Loaded
-// asynchronously by the state module in app:start/init. The migration registry
-// is drained there to move keys that left config.json (telemetry.distinct-id,
-// update.dismissed-version) into state.json on first launch after upgrade.
+// asynchronously by the state module in app:start/init.
 const stateService = new DefaultStateService({
   statePath: pathProvider.dataPath("state.json"),
   fileSystem: fileSystemLayer,
   logger: loggingService.createLogger("state"),
 });
-const stateMigrations = createStateMigrationRegistry();
 
 // Register core config keys (not owned by any single module). Their accessors
 // are threaded into the modules/intents that read or write them, so those
@@ -694,7 +691,6 @@ const telemetryModule = createTelemetryModule({
   buildInfo,
   configService,
   stateService,
-  stateMigrations,
   agentConfig,
   telemetryEnabled: telemetryEnabledConfig,
   boundary: postHogBoundary,
@@ -705,16 +701,10 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   dispatcher,
   configService,
   stateService,
-  stateMigrations,
   ui: presentationModule,
 });
-// State module — loads state.json and drains the migration registry in
-// app:start/init. Constructed after the modules that contribute migrations.
-const stateModule = createStateModule({
-  stateService,
-  migrations: stateMigrations,
-  logger: loggingService.createLogger("state"),
-});
+// State module — loads state.json in app:start/init.
+const stateModule = createStateModule({ stateService });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   fs: fileSystemLayer,
@@ -769,9 +759,7 @@ const creationModule = createCreationModule({
 });
 const workspaceSelectionModule = createWorkspaceSelectionModule();
 const autoWorkspaceModule = createAutoWorkspaceModule({
-  fs: fileSystemLayer,
   logger: loggingService.createLogger("auto-workspace"),
-  legacyStateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
   dispatcher,
   processRunner,
   configService,

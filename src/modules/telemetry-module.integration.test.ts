@@ -37,7 +37,6 @@ import {
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
-import { createStateMigrationRegistry } from "./state-module";
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { wsPath, projPath, testPath } from "../shared/test-fixtures";
@@ -128,7 +127,6 @@ function createTestSetup(overrides?: {
     buildInfo,
     configService: mockConfig,
     stateService: state,
-    stateMigrations: createStateMigrationRegistry(),
     agentConfig,
     telemetryEnabled,
     boundary,

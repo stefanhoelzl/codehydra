@@ -255,17 +255,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     description: "VSCodium version",
     ...storeString(),
   });
-  // `ide-server.port` is the rename of the retired `code-server.port`: a config
-  // file still carrying the old key is translated to this one at load (env/CLI
-  // legacy names honored too). The legacy value shares this key's validation.
   // Min 1024: the server binds an unprivileged loopback port, so reject the
   // privileged range (<1024, which needs root on Unix) at config-validation time.
-  const portType = storeNumber({ min: 1024, max: 65535, integer: true });
   const ideServerPortConfig = deps.configService.register("ide-server.port", {
     default: getIdeServerPort(deps.buildInfo),
     description: "IDE server port",
-    legacyNames: { "code-server.port": (value) => portType.validate(value) },
-    ...portType,
+    ...storeNumber({ min: 1024, max: 65535, integer: true }),
   });
 
   /** Resolve the IdeServer descriptor (call only after config load()). */

@@ -29,7 +29,6 @@ import {
   type CreateMockConfigOptions,
 } from "../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
-import { createStateMigrationRegistry } from "./state-module";
 import type { Config } from "../boundaries/platform/config";
 import {
   createMockNotificationManager,
@@ -179,7 +178,6 @@ function createTestSetup(overrides?: {
     dispatcher,
     configService: mockConfig,
     stateService: mockState,
-    stateMigrations: createStateMigrationRegistry(),
     ui: notificationManager.ui,
   });
 

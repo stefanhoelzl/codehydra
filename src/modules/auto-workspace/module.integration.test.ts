@@ -53,11 +53,6 @@ import {
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
-import {
-  createFileSystemMock,
-  file,
-  directory,
-} from "../../boundaries/platform/filesystem.state-mock";
 import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
 import { createAutoWorkspaceModule } from "./module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -324,7 +319,6 @@ interface CmdControl {
 function createSetup(options?: {
   sources?: string | null;
   configDefaults?: Record<string, unknown>;
-  legacyStateFileContent?: string;
   existingEntries?: Record<string, StateEntry>;
 }) {
   const cmd: CmdControl = { items: [], exitCode: 0, stderr: "" };
@@ -336,16 +330,6 @@ function createSetup(options?: {
     }),
   });
   const logger = createBehavioralLogger();
-
-  const fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
-    "/data": directory(),
-  };
-  if (options?.legacyStateFileContent !== undefined) {
-    fsEntries[testPath("/data/auto-workspaces.json").toNative()] = file(
-      options.legacyStateFileContent
-    );
-  }
-  const fs = createFileSystemMock({ entries: fsEntries });
 
   const state = createMockState(
     options?.existingEntries
@@ -381,9 +365,7 @@ function createSetup(options?: {
   dispatcher.registerOperation(switchOp);
 
   const module = createAutoWorkspaceModule({
-    fs,
     logger,
-    legacyStateFilePath: testPath("/data/auto-workspaces.json").toNative(),
     dispatcher,
     processRunner,
     configService: mockConfig,
@@ -393,7 +375,6 @@ function createSetup(options?: {
 
   return {
     dispatcher,
-    fs,
     state,
     cmd,
     logger,
@@ -927,62 +908,6 @@ ${sourceYaml("good")}`,
       cmd.items = [];
       await tick();
       expect(entriesOf(state)).not.toHaveProperty("gh/1");
-    });
-  });
-
-  describe("retired experimental.* keys", () => {
-    it("leaves them untouched and seeds nothing from them", async () => {
-      vi.useFakeTimers();
-      const template =
-        "---\nname: pr-{{ number }}\ngit: https://github.com/o/r.git\n---\nReview {{ number }}";
-      const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({
-        configDefaults: {
-          "experimental.github.template": template,
-          "experimental.github.query": "is:open is:pr",
-        },
-      });
-      cmd.items = [{ number: 7, html_url: "https://github.com/o/r/pull/7" }];
-
-      await dispatcher.dispatch(startIntent());
-
-      // Still registered (so config.json is not stripped) and still readable,
-      // but nothing drains them: sources stays unset and no workspace is created.
-      const effective = mockConfig.getEffective();
-      expect(effective["experimental.github.template"]).toBe(template);
-      expect(effective["auto-workspace.sources"]).toBeNull();
-      expect(openWorkspaceOp.dispatched).toHaveLength(0);
-    });
-  });
-
-  describe("legacy state file import", () => {
-    it("imports the legacy auto-workspaces.json into state", async () => {
-      vi.useFakeTimers();
-      const legacy = JSON.stringify({
-        version: 1,
-        entries: { "gh/old": { workspaceName: "old", createdAt: "2020-01-01T00:00:00Z" } },
-      });
-      const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({
-        sources: sourceYaml(),
-        legacyStateFileContent: legacy,
-      });
-      cmd.items = [{ id: "old" }]; // item still active → imported entry is preserved (and deduped)
-      await dispatcher.dispatch(startIntent());
-      expect(entriesOf(state)).toHaveProperty("gh/old");
-      expect(openWorkspaceOp.dispatched).toHaveLength(0); // not recreated — tracking survived
-    });
-
-    it("forgets an imported legacy entry whose item is no longer active", async () => {
-      vi.useFakeTimers();
-      const legacy = JSON.stringify({
-        entries: { "gh/gone": { workspaceName: "gone", createdAt: "2020-01-01T00:00:00Z" } },
-      });
-      const { dispatcher, cmd, state } = createSetup({
-        sources: sourceYaml(),
-        legacyStateFileContent: legacy,
-      });
-      cmd.items = [];
-      await dispatcher.dispatch(startIntent());
-      expect(entriesOf(state)).not.toHaveProperty("gh/gone");
     });
   });
 });

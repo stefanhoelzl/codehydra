@@ -27,7 +27,6 @@
 import { randomUUID } from "node:crypto";
 import type { PostHogBoundary } from "../boundaries/platform/posthog";
 import type { StateService } from "../boundaries/platform/state-service";
-import type { StateMigrationRegistry } from "./state-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -52,7 +51,6 @@ export interface TelemetryModuleDeps {
   /** Persisted app state (state.json) — owns the auto-generated distinct-id. */
   readonly stateService: StateService;
   /** Registry the state module drains to migrate distinct-id out of config.json. */
-  readonly stateMigrations: StateMigrationRegistry;
   /** Accessor for the user's agent selection (registered in the composition root). */
   readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   /** Accessor for telemetry.enabled (registered in the composition root). */
@@ -68,22 +66,13 @@ export interface TelemetryModuleDeps {
 
 export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
   // The auto-generated telemetry id is app-written state, not user config: it
-  // lives in state.json. A read-only `deprecated` shadow in config.json lets the
-  // state module migrate an id written by an older build, then strip it.
+  // lives in state.json.
   const telemetryDistinctIdState = deps.stateService.register("telemetry.distinct-id", {
     default: null,
     description: "Telemetry user ID (auto-generated)",
     redact: true,
     ...storeString({ nullable: true }),
   });
-  const telemetryDistinctIdLegacy = deps.configService.register("telemetry.distinct-id", {
-    default: null,
-    description: "Deprecated: telemetry user ID (migrated to state.json)",
-    redact: true,
-    deprecated: true,
-    ...storeString({ nullable: true }),
-  });
-  deps.stateMigrations.add({ from: telemetryDistinctIdLegacy, to: telemetryDistinctIdState });
 
   let distinctId: string | null = null;
   let enabled = false;

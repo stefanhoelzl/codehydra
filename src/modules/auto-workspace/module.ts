@@ -43,7 +43,6 @@
  * in the settings dialog applies once the current wait elapses.
  *
  * Hooks:
- * - app:start -> "start": import the pre-state.json auto-workspaces.json, once
  * - app:shutdown -> "stop": stop polling
  *
  * Events:
@@ -52,7 +51,6 @@
 
 import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
@@ -75,7 +73,6 @@ import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import type { Config } from "../../boundaries/platform/config";
 import {
-  storeString,
   storeText,
   storeCustom,
   storeNumber,
@@ -83,7 +80,6 @@ import {
 } from "../../boundaries/platform/store-definition";
 import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { AgentSpec } from "../../shared/api/types";
@@ -157,10 +153,7 @@ const METADATA_SOURCE_KEY = "source";
 // =============================================================================
 
 export interface AutoWorkspaceModuleDeps {
-  readonly fs: Pick<FileSystemBoundary, "readFile" | "rm">;
   readonly logger: Logger;
-  /** Path of the pre-state.json `auto-workspaces.json`, imported once then deleted. */
-  readonly legacyStateFilePath: string;
   readonly dispatcher: Dispatcher;
   readonly processRunner: ProcessRunner;
   readonly configService: Config;
@@ -225,30 +218,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   );
 
-  // The retired experimental.* keys of the hardcoded GitHub/YouTrack sources.
-  // Nothing reads them — they stay registered only so that an upgrade does not
-  // silently delete them: an unregistered key is "unknown", which Config warns
-  // about and strips from config.json. Keeping them deprecated preserves the old
-  // templates and credentials on disk (read-only, hidden from help) so they can
-  // be ported into `auto-workspace.sources` by hand.
-  for (const key of [
-    "experimental.github.template",
-    "experimental.github.template-path",
-    "experimental.github.query",
-    "experimental.youtrack.template",
-    "experimental.youtrack.template-path",
-    "experimental.youtrack.base-url",
-    "experimental.youtrack.token",
-    "experimental.youtrack.query",
-  ]) {
-    deps.configService.register(key, {
-      default: null,
-      deprecated: true,
-      description: "(deprecated) retired; port into auto-workspace.sources by hand",
-      ...storeString({ nullable: true }),
-    });
-  }
-
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
     description: "Auto-workspace tracking entries (app-managed)",
@@ -272,38 +241,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     } catch (error) {
       deps.logger.warn("Failed to save auto-workspace state", { error: getErrorMessage(error) });
     }
-  }
-
-  // ------ Migrations (one-shot, on first launch after upgrade) ------
-
-  async function migrateLegacyStateFile(): Promise<void> {
-    if (!stateAccessor.isDefault()) return;
-    let raw: string;
-    try {
-      raw = await deps.fs.readFile(deps.legacyStateFilePath);
-    } catch {
-      return;
-    }
-    const parsed = safeJsonParse(raw);
-    const entriesValue =
-      typeof parsed === "object" && parsed !== null && "entries" in parsed
-        ? (parsed as { entries: unknown }).entries
-        : parsed;
-    const migrated = validateEntries(entriesValue);
-    if (migrated && Object.keys(migrated).length > 0) {
-      try {
-        await stateAccessor.set(migrated);
-        deps.logger.info("Migrated auto-workspaces.json into state.json", {
-          count: Object.keys(migrated).length,
-        });
-      } catch (error) {
-        deps.logger.warn("Failed to migrate auto-workspaces.json into state.json", {
-          error: getErrorMessage(error),
-        });
-        return;
-      }
-    }
-    await deps.fs.rm(deps.legacyStateFilePath, { force: true }).catch(() => {});
   }
 
   // ------ Workspace lifecycle ------
@@ -790,13 +727,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   return {
     name: "auto-workspace",
     hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<void> => {
-            await migrateLegacyStateFile();
-          },
-        },
-      },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
