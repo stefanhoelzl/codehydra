@@ -1,9 +1,9 @@
 /**
  * Clone Notification Module - Shows clone progress as sidebar notifications.
  *
- * Subscribes to clone progress domain events and manages notification handles
- * via NotificationManager. Each active clone gets its own notification that
- * updates with progress and stage information.
+ * Subscribes to clone progress domain events and keeps one sidebar card per
+ * active clone, updated with progress and stage information through
+ * `notification:show`.
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -18,8 +18,8 @@ import {
   EVENT_PROJECT_OPENED,
   EVENT_PROJECT_OPEN_FAILED,
 } from "../intents/open-project";
-import type { NotificationHandle } from "./presentation/sessions";
-import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { NotificationCard } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
 
 /**
@@ -41,12 +41,12 @@ function stageLabel(stage: string): string {
 }
 
 export interface CloneNotificationModuleDeps {
-  readonly ui: Pick<UiPresenter, "notification">;
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }
 
 export function createCloneNotificationModule(deps: CloneNotificationModuleDeps): IntentModule {
-  // Track notification handles by clone URL
-  const handles = new Map<string, NotificationHandle>();
+  // One card per clone URL
+  const cards = new Map<string, NotificationCard>();
 
   /**
    * The card is titled with what the user typed, not the repo's basename.
@@ -75,13 +75,12 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
         const payload = (event as CloneProgressEvent).payload;
         const { url, stage, progress } = payload;
 
-        const existing = handles.get(url);
-        if (existing) {
-          existing.update(buildConfig(url, stage, progress));
-        } else {
-          const handle = deps.ui.notification(buildConfig(url, stage, progress));
-          handles.set(url, handle);
+        let card = cards.get(url);
+        if (!card) {
+          card = new NotificationCard(deps.dispatcher);
+          cards.set(url, card);
         }
+        card.show(buildConfig(url, stage, progress));
       },
     },
     [EVENT_PROJECT_OPENED]: {
@@ -89,11 +88,8 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
         const payload = (event as ProjectOpenedEvent).payload;
         // Close notification for completed clones (git field matches the clone URL)
         if (payload.git) {
-          const handle = handles.get(payload.git);
-          if (handle) {
-            handle.close();
-            handles.delete(payload.git);
-          }
+          cards.get(payload.git)?.close();
+          cards.delete(payload.git);
         }
       },
     },
@@ -101,20 +97,14 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as ProjectOpenFailedEvent).payload;
         if (payload.git) {
-          const handle = handles.get(payload.git);
-          if (handle) {
-            handle.update({
-              title: "Clone failed",
-              message: payload.reason,
-              type: "error",
-              dismissible: true,
-            });
-            // Listen for dismiss and clean up
-            handle.onEvent(() => {
-              handle.close();
-              handles.delete(payload.git!);
-            });
-          }
+          // The card turns into the error in place; the user's dismiss closes it.
+          cards.get(payload.git)?.show({
+            title: "Clone failed",
+            message: payload.reason,
+            type: "error",
+            dismissible: true,
+          });
+          cards.delete(payload.git);
         }
       },
     },

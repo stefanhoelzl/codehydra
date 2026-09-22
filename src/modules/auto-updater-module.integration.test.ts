@@ -178,8 +178,8 @@ function createTestSetup(overrides?: {
     dispatcher,
     configService: mockConfig,
     stateService: mockState,
-    ui: notificationManager.ui,
   });
+  notificationManager.register(dispatcher);
 
   dispatcher.registerOperation(
     createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start")
@@ -266,9 +266,10 @@ describe("AutoUpdaterModule Integration", () => {
     await flush();
 
     expect(autoUpdater.downloadCalled).toBe(true);
-    // Notification updated to downloading state
-    const slot = notificationManager.notifications[0]!;
-    expect(slot.updates[0]!.title).toBe("Downloading update");
+    // The click answered (and closed) the question; the download is its own card.
+    expect(notificationManager.notifications[0]!.closed).toBe(true);
+    const slot = notificationManager.notifications[1]!;
+    expect(slot.opened.title).toBe("Downloading update");
 
     // Download completes
     autoUpdater.resolveDownload!();
@@ -291,7 +292,8 @@ describe("AutoUpdaterModule Integration", () => {
     await flush();
 
     autoUpdater.capturedProgressCb!({ percent: 50 });
-    const slot = notificationManager.notifications[0]!;
+    await flush();
+    const slot = notificationManager.notifications[1]!;
     const progressUpdate = slot.updates.find((u) => u.progress === 0.5);
     expect(progressUpdate).toBeDefined();
     expect(progressUpdate!.title).toBe("Downloading update");
@@ -310,7 +312,7 @@ describe("AutoUpdaterModule Integration", () => {
     autoUpdater.rejectDownload!(new Error("network down"));
     await flush();
 
-    const slot = notificationManager.notifications[0]!;
+    const slot = notificationManager.notifications[1]!;
     const last = slot.updates[slot.updates.length - 1]!;
     expect(last.type).toBe("error");
     expect(last.title).toBe("Update failed");
@@ -329,7 +331,7 @@ describe("AutoUpdaterModule Integration", () => {
     autoUpdater.resolveDownload!();
     await flush();
 
-    notificationManager.emitEvent(0, { actionId: "restart" });
+    notificationManager.emitEvent(1, { actionId: "restart" });
     await flush();
 
     expect(autoUpdater.quitAndInstallCalled).toBe(true);
@@ -402,7 +404,7 @@ describe("AutoUpdaterModule Integration", () => {
     await flush();
     autoUpdater.resolveDownload!();
     await flush();
-    const slot = notificationManager.notifications[0]!;
+    const slot = notificationManager.notifications[1]!;
     expect(slot.updates[slot.updates.length - 1]!.title).toBe("Update ready");
 
     // Newer version detected on resume reverts to "Update available".
@@ -410,7 +412,8 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(resumeIntent());
     await flush();
 
-    expect(notificationManager.notifications).toHaveLength(1);
+    // The ready card itself turns back into the question — no new card.
+    expect(notificationManager.notifications).toHaveLength(2);
     const last = slot.updates[slot.updates.length - 1]!;
     expect(last.title).toBe("Update available");
     expect(last.message).toContain("3.0.0");
@@ -432,9 +435,9 @@ describe("AutoUpdaterModule Integration", () => {
     await flush();
 
     expect(autoUpdater.downloadCalled).toBe(true);
-    const slot = notificationManager.notifications[0]!;
-    const downloading = slot.updates.find((u) => u.title === "Downloading update");
-    expect(downloading!.message).toContain("3.0.0");
+    const downloading = notificationManager.notifications[1]!.opened;
+    expect(downloading.title).toBe("Downloading update");
+    expect(downloading.message).toContain("3.0.0");
   });
 
   it("dismissing then re-checking the same version stays silent", async () => {

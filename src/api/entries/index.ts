@@ -12,6 +12,7 @@ import { workspaceEntries } from "./workspace";
 import { metadataEntries } from "./metadata";
 import { agentEntries } from "./agent";
 import { vscodeEntries } from "./vscode";
+import { notificationEntries } from "./notification";
 import { appEntries } from "./app";
 import { lockEntries } from "./lock";
 import { configEntries } from "./config";
@@ -39,6 +40,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
     ...metadataEntries(full),
     ...agentEntries(full),
     ...vscodeEntries(full),
+    ...notificationEntries(full),
     ...lockEntries(full),
     ...appEntries(full, logger),
     ...configEntries(full),

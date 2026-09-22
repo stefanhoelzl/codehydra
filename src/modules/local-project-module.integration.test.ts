@@ -110,7 +110,8 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
       projectsDir: PROJECTS_DIR,
       fs,
       gitWorktreeProvider,
-      ui: { ...dialog.ui, ...notifications.ui },
+      ui: dialog.ui,
+      dispatcher: notifications.dispatcher,
       gitClient,
       logger: SILENT_LOGGER,
     },
@@ -688,6 +689,7 @@ describe("LocalProjectModule Integration", () => {
       // The close still succeeds — by now the project is out of state and its
       // workspaces are gone, so throwing would only leave the app inconsistent.
       expect(errors).toHaveLength(0);
+      await setup.notifications.settle();
       const notification = setup.notifications.lastNotification;
       expect(notification?.opened).toMatchObject({ type: "error", dismissible: true });
       expect(notification?.opened.message).toContain(projectPathStr);

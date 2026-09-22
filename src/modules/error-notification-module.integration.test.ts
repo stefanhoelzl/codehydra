@@ -3,7 +3,7 @@
  * Integration tests for ErrorNotificationModule.
  *
  * Tests that workspace:create-failed events trigger error notifications
- * via NotificationManager with the correct config.
+ * through notification:show with the correct config.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -29,7 +29,7 @@ describe("ErrorNotificationModule", () => {
   beforeEach(() => {
     notificationManager = createMockNotificationManager();
     module = createErrorNotificationModule({
-      ui: notificationManager.ui,
+      dispatcher: notificationManager.dispatcher,
     });
   });
 
@@ -49,6 +49,8 @@ describe("ErrorNotificationModule", () => {
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
+    await notificationManager.settle();
+
     expect(notificationManager.notifications).toHaveLength(1);
     expect(notificationManager.lastNotification!.opened).toEqual({
       type: "error",
@@ -66,6 +68,7 @@ describe("ErrorNotificationModule", () => {
 
     const emit = async (event: WorkspaceCreateFailedEvent): Promise<void> => {
       await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
+      await notificationManager.settle();
     };
 
     it("collapses into one card carrying the count", async () => {
@@ -116,6 +119,8 @@ describe("ErrorNotificationModule", () => {
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
+    await notificationManager.settle();
+
     expect(notificationManager.lastNotification!.closed).toBe(false);
 
     // Simulate user dismissing
@@ -137,6 +142,8 @@ describe("ErrorNotificationModule", () => {
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
+    await notificationManager.settle();
+
     expect(notificationManager.notifications).toHaveLength(0);
   });
 
@@ -153,6 +160,8 @@ describe("ErrorNotificationModule", () => {
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
+    await notificationManager.settle();
+
     expect(notificationManager.notifications).toHaveLength(1);
   });
 
@@ -168,6 +177,8 @@ describe("ErrorNotificationModule", () => {
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
+    await notificationManager.settle();
+
     expect(notificationManager.notifications).toHaveLength(1);
   });
 
@@ -178,6 +189,8 @@ describe("ErrorNotificationModule", () => {
     };
 
     await module.events![EVENT_APP_RESUME_FAILED]!.handler(event);
+
+    await notificationManager.settle();
 
     expect(notificationManager.notifications).toHaveLength(1);
     expect(notificationManager.lastNotification!.opened).toEqual({
@@ -195,6 +208,8 @@ describe("ErrorNotificationModule", () => {
     };
 
     await module.events![EVENT_APP_RESUME_FAILED]!.handler(event);
+
+    await notificationManager.settle();
 
     notificationManager.emitEvent(0, { actionId: "dismiss" });
 
@@ -220,7 +235,10 @@ describe("ErrorNotificationModule", () => {
     };
 
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event1);
+
+    await notificationManager.settle();
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event2);
+    await notificationManager.settle();
 
     expect(notificationManager.notifications).toHaveLength(2);
     expect(notificationManager.notifications[0]!.opened.title).toBe('Failed to create "ws-1"');

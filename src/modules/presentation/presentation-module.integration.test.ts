@@ -71,6 +71,12 @@ import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
 import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import { createPresentationModule, type UiPresenter } from "./presentation-module";
+import {
+  INTENT_SHOW_NOTIFICATION,
+  SHOW_NOTIFICATION_OPERATION_ID,
+  type ShowNotificationPayload,
+  type ShowNotificationResult,
+} from "../../intents/show-notification";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
@@ -152,6 +158,17 @@ async function emit(module: IntentModule, type: string, payload: unknown): Promi
   const declaration = module.events?.[type];
   if (!declaration) throw new Error(`No handler for event ${type}`);
   await declaration.handler({ type, payload } as DomainEvent);
+}
+
+/** Run the presenter's notification:show hook, as the operation would. */
+async function showNotification(
+  module: IntentModule,
+  payload: ShowNotificationPayload
+): Promise<ShowNotificationResult> {
+  const output = (await module.hooks![SHOW_NOTIFICATION_OPERATION_ID]!.show!.handler({
+    intent: { type: INTENT_SHOW_NOTIFICATION, payload },
+  } as never)) as { result: { result: ShowNotificationResult } };
+  return output.result.result;
 }
 
 /** Flush the microtask coalescer (one macrotask is enough). */
@@ -2734,7 +2751,7 @@ describe("PresentationModule - push logging", () => {
     const module = await startModule(deps);
     const workspace = makeWorkspace("feat", { metadata: { "tags.new": '{"color":"blue"}' } });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    module.notification({ title: "Update available", type: "info" });
+    await showNotification(module, { config: { title: "Update available", type: "info" } });
     await flush();
 
     const snapshot = lastSnapshot(deps);
@@ -2835,5 +2852,112 @@ describe("PresentationModule - attention highlight", () => {
     await flush();
 
     expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+});
+
+// =============================================================================
+// Sidebar notifications (notification:show / notification:close hooks)
+// =============================================================================
+
+describe("PresentationModule - sidebar notifications", () => {
+  it("renders an attached card with its workspace's row key and name", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { metadata: { title: "Login form" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    await showNotification(module, {
+      config: { title: "Build done", type: "info" },
+      workspacePath: workspace.path,
+    });
+    await flush();
+
+    const [card] = lastSnapshot(deps).notifications;
+    const row = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    expect(card!.workspace).toEqual({ key: row.key, name: "Login form" });
+  });
+
+  it("leaves an unattached card without a workspace", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    await showNotification(module, { config: { title: "Update available", type: "info" } });
+    await flush();
+
+    expect(lastSnapshot(deps).notifications[0]!.workspace).toBeUndefined();
+  });
+
+  it("closes an attached card, and answers its waiter null, when the workspace is deleted", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    const answer = showNotification(module, {
+      config: { title: "Deploy?", type: "info", actions: [{ id: "yes", label: "Yes" }] },
+      workspacePath: workspace.path,
+      wait: true,
+    });
+    await flush();
+    expect(lastSnapshot(deps).notifications).toHaveLength(1);
+
+    await emit(module, EVENT_WORKSPACE_DELETED, {
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspacePath: workspace.path,
+      projectPath: PROJECT_PATH,
+    });
+    await flush();
+
+    expect(await answer).toEqual({ choice: null });
+    expect(lastSnapshot(deps).notifications).toEqual([]);
+  });
+
+  it("answers a waiter with the clicked button and closes the card", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    const answer = showNotification(module, {
+      config: { title: "Deploy?", type: "info", actions: [{ id: "yes", label: "Yes" }] },
+      wait: true,
+    });
+    await flush();
+    const [card] = lastSnapshot(deps).notifications;
+
+    emitUiEvent(deps, { kind: "notification-event", notificationId: card!.id, actionId: "yes" });
+    await flush();
+
+    expect(await answer).toEqual({ choice: "yes" });
+    expect(lastSnapshot(deps).notifications).toEqual([]);
+  });
+
+  it("answers missing, rather than failing, for a card that is gone", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    // A failed dispatch is logged as an app error; a dismissed card is not one.
+    await expect(
+      showNotification(module, { config: { title: "Heads up", type: "info" }, id: "ntf-99" })
+    ).resolves.toEqual({ missing: true });
+  });
+
+  it("closes a card on dismiss even when nothing waits on it", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    const result = await showNotification(module, {
+      config: { title: "Hook failed", type: "error", dismissible: true },
+    });
+    await flush();
+    expect(lastSnapshot(deps).notifications).toHaveLength(1);
+
+    emitUiEvent(deps, {
+      kind: "notification-event",
+      notificationId: (result as { id: string }).id,
+      actionId: "dismiss",
+    });
+    await flush();
+
+    expect(lastSnapshot(deps).notifications).toEqual([]);
   });
 });

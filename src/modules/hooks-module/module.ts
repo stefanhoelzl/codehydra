@@ -36,6 +36,7 @@ import type { DomainEvent } from "../../intents/lib/types";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { UiPresenter } from "../presentation/presentation-module";
+import { notify } from "../presentation/notification-card";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { Logger } from "../../boundaries/platform/logging-types";
@@ -103,7 +104,7 @@ export interface HooksModuleDeps {
   readonly config: Config;
   readonly stateService: StateService;
   readonly dispatcher: Dispatcher;
-  readonly ui: Pick<UiPresenter, "dialog" | "notification">;
+  readonly ui: Pick<UiPresenter, "dialog">;
   /** Directory holding the `ch` CLI, prepended to every hook's PATH. */
   readonly binDir: Path;
   readonly sink: HookOutputSink;
@@ -306,7 +307,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
 
   function reportFailure(found: FoundHook, error: unknown): void {
     deps.logger.error("Repository hook failed", { entry: found.entry }, toError(error));
-    deps.ui.notification({
+    notify(deps.dispatcher, {
       type: "error",
       title: "Repository hook failed",
       message: getErrorMessage(error),

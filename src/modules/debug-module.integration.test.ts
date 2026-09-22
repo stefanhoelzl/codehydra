@@ -242,26 +242,28 @@ describe("DebugModule Integration", () => {
 
   describe("update (inactive)", () => {
     it("start hook opens nothing when debug.update is off", async () => {
-      const { ui, notifications } = createMockNotificationManager();
+      const { dispatcher, notifications, settle } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig(),
-        ui,
+        dispatcher,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
+      await settle();
       expect(notifications).toHaveLength(0);
     });
   });
 
   describe("update (active)", () => {
     it("start hook opens 'Update available' notification when debug.update is 'pending'", async () => {
-      const { ui, notifications } = createMockNotificationManager();
+      const { dispatcher, notifications, settle } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
-        ui,
+        dispatcher,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
+      await settle();
 
       expect(notifications).toHaveLength(1);
       expect(notifications[0]!.opened.title).toBe("Update available");
@@ -269,26 +271,28 @@ describe("DebugModule Integration", () => {
     });
 
     it("bare flag value 'true' behaves like 'pending'", async () => {
-      const { ui, notifications } = createMockNotificationManager();
+      const { dispatcher, notifications, settle } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "true" } }),
-        ui,
+        dispatcher,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
+      await settle();
 
       expect(notifications).toHaveLength(1);
       expect(notifications[0]!.opened.title).toBe("Update available");
     });
 
     it("start hook opens 'Update ready' notification when debug.update is 'downloaded'", async () => {
-      const { ui, notifications } = createMockNotificationManager();
+      const { dispatcher, notifications, settle } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "downloaded" } }),
-        ui,
+        dispatcher,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
+      await settle();
 
       expect(notifications).toHaveLength(1);
       expect(notifications[0]!.opened.title).toBe("Update ready");
@@ -298,13 +302,14 @@ describe("DebugModule Integration", () => {
     it("clicking Install transitions to downloading then ready", async () => {
       vi.useFakeTimers();
       try {
-        const { ui, notifications, emitEvent } = createMockNotificationManager();
+        const { dispatcher, notifications, emitEvent, settle } = createMockNotificationManager();
         const module = createDebugModule({
           configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
-          ui,
+          dispatcher,
         });
         const hook = getHook(module, APP_START_OPERATION_ID, "start");
         await hook.handler(makeHookContext());
+        await settle();
 
         emitEvent(0, { actionId: "install" });
 
@@ -314,7 +319,10 @@ describe("DebugModule Integration", () => {
         }
         await vi.runAllTimersAsync();
 
-        const slot = notifications[0]!;
+        // The click answered (and closed) the question; the download is a new card.
+        expect(notifications[0]!.closed).toBe(true);
+        const slot = notifications[1]!;
+        expect(slot.opened.title).toBe("Downloading update");
         expect(slot.updates.length).toBeGreaterThan(0);
         const last = slot.updates[slot.updates.length - 1]!;
         expect(last.title).toBe("Update ready");

@@ -68,6 +68,8 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "vscode.goto": { channel: "api:workspace:goto" },
   "vscode.preview": { channel: "api:workspace:previewMarkdown" },
   "system.open": { channel: "api:workspace:openSystemPath" },
+  "notification.show": { channel: "api:notification:show" },
+  "notification.close": { channel: "api:notification:close" },
 
   "project.list": { channel: "api:project:list" },
   "project.open": { channel: "api:project:open" },

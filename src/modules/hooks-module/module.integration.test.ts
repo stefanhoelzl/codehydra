@@ -63,6 +63,7 @@ import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { WorkspacePath } from "../../intents/contract";
 import type { DialogConfig } from "../../shared/dialog-types";
 import type { NotificationConfig } from "../../shared/notification-types";
+import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
 import { projPath, wsPath } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import { createHooksModule } from "./module";
@@ -97,7 +98,7 @@ interface TestSetup {
   readonly terminalEnv: Array<Record<string, string>>;
   /** workspaceEnv the setup hook point saw — what the agent server starts with. */
   readonly agentStartEnv: Array<Record<string, string>>;
-  readonly notifications: NotificationConfig[];
+  readonly notifications: readonly NotificationConfig[];
   readonly dialogs: DialogConfig[];
   /** The open options each dialog was raised with, in order. */
   readonly dialogOptions: Array<{ workspacePath?: string; projectPath?: string } | undefined>;
@@ -127,7 +128,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const finalizeEnv: Array<Record<string, string>> = [];
   const terminalEnv: Array<Record<string, string>> = [];
   const agentStartEnv: Array<Record<string, string>> = [];
-  const notifications: NotificationConfig[] = [];
+  const cards = createMockNotificationManager();
+  cards.register(dispatcher);
   const dialogs: DialogConfig[] = [];
   const dialogOptions: TestSetup["dialogOptions"] = [];
   const sinkLines: Array<{ entry: string; line: string }> = [];
@@ -201,10 +203,6 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       dialogs.push(config);
       dialogOptions.push(options);
       return makeDialogStub(() => trustAnswer);
-    },
-    notification: (config: NotificationConfig) => {
-      notifications.push(config);
-      return { id: "n1", update: () => {}, close: () => {}, onEvent: () => () => {} };
     },
   };
 
@@ -321,7 +319,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     finalizeEnv,
     terminalEnv,
     agentStartEnv,
-    notifications,
+    get notifications() {
+      return cards.notifications.map((card) => card.opened);
+    },
     dialogs,
     dialogOptions,
     sinkLines,
@@ -442,6 +442,7 @@ describe("after-worktree-created", () => {
 
     // Rejected loudly rather than dropped: a repository that has not moved its
     // env yet must find out, not open workspaces quietly without it.
+    await settle();
     expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
     expect(setup.finalizeEnv[0]).toEqual(AGENT_ENV);
   });
@@ -494,6 +495,7 @@ describe("after-worktree-created", () => {
     await openWorkspace(setup);
 
     expect(setup.createdEvents).toHaveLength(1);
+    await settle();
     expect(setup.notifications.map((n) => n.type)).toContain("error");
   });
 
@@ -506,6 +508,7 @@ describe("after-worktree-created", () => {
 
     // A misspelled key must not be dropped in silence — an environment that
     // quietly never arrived is the worst version of this failure.
+    await settle();
     expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
     expect(setup.metadataWrites).toEqual([]);
   });
@@ -611,6 +614,7 @@ describe("before-workspace-opened", () => {
     await reopenWorkspace(setup);
 
     expect(setup.createdEvents).toHaveLength(1);
+    await settle();
     expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
     expect(setup.terminalEnv[0]).toEqual({});
   });
@@ -621,6 +625,7 @@ describe("before-workspace-opened", () => {
       trusted: { [PROJECT_ROOT]: true },
     });
     await openWorkspace(setup);
+    await settle();
 
     expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
     expect(setup.agentStartEnv[0]).toEqual({});

@@ -58,6 +58,12 @@ export interface UiNotification {
    * show, not how many times it has been said. 1 for an ordinary notification.
    */
   readonly count?: number;
+  /**
+   * The workspace this card is about, when it is attached to one: `key` is the
+   * row's opaque key (echoed back in `switch-workspace` when the card is
+   * clicked), `name` is what the row shows. Absent for app-wide cards.
+   */
+  readonly workspace?: { readonly key: string; readonly name: string };
 }
 
 /** Display status of a single workspace-deletion operation. */

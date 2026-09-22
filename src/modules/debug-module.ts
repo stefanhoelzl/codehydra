@@ -30,14 +30,15 @@ import {
 } from "../intents/resolve-workspace";
 import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type SetupProgressPayload } from "../intents/setup";
-import type { NotificationHandle } from "./presentation/sessions";
-import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { NotificationCard, notify } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
 import type { ProjectPath } from "../intents/contract";
 
 interface DebugModuleDeps {
   readonly configService: Config;
-  readonly ui?: Pick<UiPresenter, "notification">;
+  /** Raises the simulated update cards; without it the update simulation is off. */
+  readonly dispatcher?: Pick<Dispatcher, "dispatch">;
 }
 
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
@@ -145,12 +146,12 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         start: {
           handler: async (): Promise<void> => {
             const mode = updateMode();
-            if (mode === null || !deps.ui) return;
+            if (mode === null || !deps.dispatcher) return;
             const version = "99.0.0-debug";
             if (mode === "downloaded") {
-              deps.ui.notification(readyConfig(version));
+              notify(deps.dispatcher, readyConfig(version));
             } else {
-              simulateUpdateNotification(deps.ui, version);
+              void simulateUpdateNotification(deps.dispatcher, version);
             }
           },
         },
@@ -185,7 +186,10 @@ function readyConfig(version: string): NotificationConfig {
   };
 }
 
-function simulateUpdateNotification(ui: Pick<UiPresenter, "notification">, version: string): void {
+async function simulateUpdateNotification(
+  dispatcher: Pick<Dispatcher, "dispatch">,
+  version: string
+): Promise<void> {
   const available: NotificationConfig = {
     type: "info",
     title: "Update available",
@@ -193,17 +197,15 @@ function simulateUpdateNotification(ui: Pick<UiPresenter, "notification">, versi
     dismissible: true,
     actions: [{ id: "install", label: "Install" }],
   };
-  const handle: NotificationHandle = ui.notification(available);
-  handle.onEvent((event) => {
-    if (event.actionId === "install") {
-      void simulateDownload(handle, version);
-    }
-  });
+  const card = new NotificationCard(dispatcher);
+  if ((await card.ask(available)) === "install") {
+    await simulateDownload(card, version);
+  }
 }
 
-async function simulateDownload(handle: NotificationHandle, version: string): Promise<void> {
+async function simulateDownload(card: NotificationCard, version: string): Promise<void> {
   for (let percent = 5; percent <= 100; percent += 5) {
-    handle.update({
+    card.show({
       type: "spinner",
       title: "Downloading update",
       message: `Version ${version}`,
@@ -212,7 +214,7 @@ async function simulateDownload(handle: NotificationHandle, version: string): Pr
     });
     await delay(150);
   }
-  handle.update(readyConfig(version));
+  card.show(readyConfig(version));
 }
 
 function delay(ms: number): Promise<void> {

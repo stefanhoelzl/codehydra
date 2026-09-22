@@ -105,7 +105,7 @@ function createTestSetup() {
     gitClient,
     pathProvider,
     logger: SILENT_LOGGER,
-    ui: notifications.ui,
+    dispatcher: notifications.dispatcher,
   });
 
   const hookRegistry = {
@@ -391,6 +391,7 @@ describe("RemoteProjectModule Integration", () => {
       // Same failure story as the local branch of removeLocalRepo: the close
       // completes, and the surviving directory is reported rather than silent.
       expect(errors).toHaveLength(0);
+      await notifications.settle();
       const notification = notifications.lastNotification;
       expect(notification?.opened).toMatchObject({ type: "error", dismissible: true });
       expect(notification?.opened.message).toContain(cloneDir);

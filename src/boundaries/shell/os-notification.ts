@@ -3,7 +3,7 @@
  *
  * The *OS* notification channel — a desktop toast raised by the platform
  * (Windows Action Center, GNOME/KDE, macOS Notification Center). Distinct from
- * the in-app sidebar notifications the presenter owns (`UiPresenter.notification()`,
+ * the in-app sidebar notifications the presenter owns (`notification:show`,
  * `clone-notification-module`, `error-notification-module`), which render inside
  * CodeHydra's own UI and are useless when the window is not on screen — which is
  * exactly when this channel is used.

@@ -215,6 +215,13 @@ CodeHydra even if files remain on disk (a branch you chose to keep is kept). <kb
   CodeHydra window is not focused; clicking one brings the window forward and
   switches to that workspace. By default only the first agent to finish while
   all were busy notifies (`notification`).
+- **Sidebar cards** — clone progress, failures and updates appear as cards at
+  the bottom of the sidebar. The same card raised again stacks into one with a
+  counter. Dismissing a card closes it; clicking a button answers it and closes
+  it. A card about a workspace names it — click the title to go there — and
+  goes away when the workspace is deleted. Agents, scripts and hooks can raise
+  their own with `ch notification show` (see
+  [Sidebar notifications](#sidebar-notifications)).
 - **Updates** — checked every 4 hours and on resume. A sidebar card offers
   **Install**, shows the download, then **Restart Now**; dismissing silences
   that version (a newer one shows again). Only for DMG, NSIS and AppImage
@@ -854,6 +861,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
 | `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
 | `ws notify`, `ws status-bar`, `ws ask`                             | A notification, status-bar text, or a question in the editor (`ask` waits for the answer)                        |
+| `notification show <title>`, `notification close <id>`             | A card in CodeHydra's sidebar, see below                                                                         |
 | `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                   |
 | `ws vscode-command <command>`                                      | Run a VS Code command                                                                                            |
 | `ws open <path>`                                                   | Open with the OS (`--reveal` shows it in the file manager)                                                       |
@@ -881,9 +889,9 @@ ch guide repository-hooks
   open workspace fails the first command that needs a workspace with exit 6; a
   name that matches several fails it with exit 2 — pass a path instead.
   Commands that need no workspace still run.
-- `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`, `ws switch`,
-  `ws open` and `ws create --project …` work outside a workspace; other
-  workspace commands exit 4 there.
+- `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`,
+  `notification`, `ws switch`, `ws open` and `ws create --project …` work
+  outside a workspace; other workspace commands exit 4 there.
 - `--format auto` (the default) prints human-readable output at a terminal and
   JSON when piped — errors too, as `{"error", "exitCode"}` on stderr;
   `--format json` or `--format text` forces either. `ch guide` prints markdown
@@ -921,6 +929,37 @@ ch lock run device -- npm run e2e   # hold only while the command runs
   `ch lock release device --workspace <holder>`. That ends the hold, not
   whatever the holder is still running.
 
+### Sidebar notifications
+
+`ch notification show` puts a card in CodeHydra's own sidebar — the same kind
+CodeHydra uses for clone progress and errors, visible whichever workspace you
+are looking at. (`ch ws notify` is different: a toast inside one workspace's
+editor.)
+
+```sh
+ch notification show "Nightly build finished"
+id=$(ch notification show "Building" --type spinner --percent 0 | jq -r .id)
+ch notification show "Building" --id "$id" --type spinner --percent 50
+ch notification close "$id"
+ch notification show "Deploy to staging?" --actions Deploy --actions Skip --wait --attach
+```
+
+- It returns the card's `id` (`{"id": …}` when piped). Pass `--id` to change
+  that card (progress, a new message) and `ch notification close <id>` to
+  remove it. Changing a card that was dismissed exits 6.
+- `--type info|warning|error|spinner` (default `info`), `--message` for a
+  second line, `--percent 0..100` for a bar, `--no-dismissible` to hide the
+  dismiss button.
+- A card is app-wide. `--attach` ties it to the current workspace
+  (`--workspace-path` to another): it names the workspace, clicking its title
+  switches there, and it closes when the workspace is deleted.
+- `--wait` blocks until you answer and returns the clicked action as `choice`,
+  or `null` if you dismissed it, `--timeout <seconds>` passed or the workspace
+  went away. Answering closes the card. Stopping the command (<kbd>Ctrl</kbd>+<kbd>C</kbd>)
+  takes the question down, unless another caller is waiting on the same card.
+- A card that says exactly what an open card says joins it (a counter) and
+  gets its id; it goes away once every caller that raised it has closed it.
+
 ### MCP
 
 The agents reach the same operations as MCP tools (`ch mcp` is the server both
@@ -933,6 +972,7 @@ agents launch):
 | Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                        |
 | Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                            |
 | Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                      |
+| Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                  |
 | Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                    |
 
 You don't need to learn any of it. Just describe what you want in plain

@@ -21,6 +21,8 @@ import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { UnmanagedWorktree, Workspace } from "../boundaries/platform/git-types";
 import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { notify } from "./presentation/notification-card";
 import type { DialogSection } from "../shared/dialog-types";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { Logger } from "../boundaries/platform/logging-types";
@@ -95,14 +97,16 @@ import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
  * @param gitWorktreeProvider - Global GitWorktreeProvider for all git operations
  * @param pathProvider - PathProvider for resolving workspace directories
  * @param logger - Logger for warnings and errors
- * @param ui - Presenter for the add-project worktree picker and its failure notice
+ * @param ui - Presenter for the add-project worktree picker
+ * @param dispatcher - Dispatcher for the picker's failure notice (`notification:show`)
  * @returns IntentModule with hook contributions
  */
 export function createGitWorktreeWorkspaceModule(
   gitWorktreeProvider: GitWorktreeProvider,
   pathProvider: PathProvider,
   logger: Logger,
-  ui: Pick<UiPresenter, "dialog" | "notification">
+  ui: Pick<UiPresenter, "dialog">,
+  dispatcher: Pick<Dispatcher, "dispatch">
 ): IntentModule {
   // Internal state
   // Keyed by branded paths: these maps feed hook results directly, so keeping the brand on
@@ -485,7 +489,7 @@ export function createGitWorktreeWorkspaceModule(
             // is not a workspace — say so rather than let it silently disappear on
             // the next restart.
             if (failed.length > 0) {
-              ui.notification({
+              notify(dispatcher, {
                 title: "Could not open some worktrees",
                 message: `${failed.join(", ")} could not be marked as CodeHydra workspaces.`,
                 type: "error",

@@ -82,8 +82,7 @@ import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../../boundaries/platform/process";
-import type { UiPresenter } from "../presentation/presentation-module";
-import type { NotificationHandle } from "../presentation/sessions";
+import { notify } from "../presentation/notification-card";
 import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
@@ -160,7 +159,6 @@ export interface AutoWorkspaceModuleDeps {
   readonly processRunner: ProcessRunner;
   readonly configService: Config;
   readonly stateService: StateService;
-  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 // =============================================================================
@@ -250,19 +248,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
   /**
    * Raise an error card for a per-item failure the log alone would hide. Every
-   * poll re-reports it, and the NotificationManager collapses a repeat of the
-   * same text into the live card with a count; dismissing retires the card, and
-   * the next failing poll raises a fresh one. The handle is shared across those
-   * collapsed opens, so its dismiss listener is wired only once.
+   * poll re-reports it, and a repeat of the same text collapses into the live
+   * card with a count; dismissing closes the card, and the next failing poll
+   * raises a fresh one.
    */
-  const wiredHandles = new WeakSet<NotificationHandle>();
   function notifyItemError(title: string, message: string): void {
-    const handle = deps.ui.notification({ type: "error", title, message, dismissible: true });
-    if (wiredHandles.has(handle)) return;
-    wiredHandles.add(handle);
-    handle.onEvent(() => {
-      handle.close();
-    });
+    notify(deps.dispatcher, { type: "error", title, message, dismissible: true });
   }
 
   /**

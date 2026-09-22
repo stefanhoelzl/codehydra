@@ -70,6 +70,13 @@ const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
 };
 
 /**
+ * The global flag names. An operation field whose flag spelling is one of these
+ * can never be set from the command line (the global wins), so the registry's
+ * conformance test rejects such a field.
+ */
+export const GLOBAL_FLAG_NAMES: readonly string[] = Object.keys(GLOBAL_OPTIONS);
+
+/**
  * Split argv into flag and positional tokens.
  *
  * Non-strict on purpose: node reports an unknown flag, a missing value or an

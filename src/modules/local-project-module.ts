@@ -39,6 +39,8 @@ import {
   type RegisterHookResult,
 } from "../intents/open-project";
 import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { notify } from "./presentation/notification-card";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,
@@ -83,7 +85,8 @@ export interface LocalProjectModuleDeps {
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
-  readonly ui: Pick<UiPresenter, "dialog" | "notification">;
+  readonly ui: Pick<UiPresenter, "dialog">;
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
   readonly logger: Logger;
 }
@@ -290,7 +293,7 @@ async function removeProject(
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectsDir, fs, gitWorktreeProvider, ui, gitClient, logger } = deps;
+  const { projectsDir, fs, gitWorktreeProvider, ui, dispatcher, gitClient, logger } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   // Keyed by the branded project path, so a key can be handed straight back to the
@@ -310,14 +313,11 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
     } catch (error: unknown) {
       const message = getErrorMessage(error);
       logger.warn("Failed to remove project directory", { projectPath, error: message });
-      const handle = ui.notification({
+      notify(dispatcher, {
         type: "error",
         title: "Could not remove the project directory",
         message: `${projectPath} is still on disk: ${message}`,
         dismissible: true,
-      });
-      handle.onEvent(() => {
-        handle.close();
       });
     }
   }

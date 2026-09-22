@@ -1,9 +1,9 @@
 /**
  * Tests for the NotificationStack component.
  *
- * The repeat badge is the only place a collapsed card's count becomes visible,
- * and it is the piece that has to survive the sidebar collapsing to bare icons —
- * so its edges (absent at one, capped at three digits) are pinned here.
+ * The repeat badge is the only place a collapsed card's count becomes visible —
+ * so its edges (absent at one, capped at three digits) and its placement (in
+ * the label, never over the type icon) are pinned here.
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -19,6 +19,7 @@ window.api = mockApi;
 vi.mock("$lib/api");
 
 import NotificationStack from "./NotificationStack.svelte";
+import { emitEvent } from "$lib/api";
 
 function notification(
   count: number | undefined,
@@ -87,9 +88,41 @@ describe("NotificationStack repeat badge", () => {
     expect(screen.getByRole("status")).toHaveAttribute("aria-label", 'Failed to create "ws-1"');
   });
 
-  it("still renders the badge while the sidebar is collapsed", () => {
-    renderStack(notification(7), false);
+  it("puts the badge in the label, not over the type icon", () => {
+    // In the 20px icon cell the badge covered the icon and overhung the
+    // sidebar's right edge, growing a horizontal scrollbar.
+    renderStack(notification(7));
 
-    expect(screen.getByText("7")).toBeInTheDocument();
+    const badge = screen.getByText("7");
+    expect(badge.closest(".notification-label")).not.toBeNull();
+    expect(badge.closest(".notification-indicator")).toBeNull();
+  });
+});
+
+describe("NotificationStack attached card", () => {
+  const attached: UiNotification = {
+    id: "ntf-2",
+    config: { type: "info", title: "Tests green", dismissible: true },
+    workspace: { key: "p1/feat", name: "Login form" },
+  };
+
+  it("names the workspace it is about", () => {
+    renderStack(attached);
+
+    expect(screen.getByText("Login form")).toBeInTheDocument();
+  });
+
+  it("switches to the workspace when its title is clicked", () => {
+    renderStack(attached);
+
+    screen.getByRole("button", { name: "Tests green" }).click();
+
+    expect(emitEvent).toHaveBeenCalledWith({ kind: "switch-workspace", key: "p1/feat" });
+  });
+
+  it("renders an unattached title as plain text", () => {
+    renderStack(notification(1, "Update available"));
+
+    expect(screen.queryByRole("button", { name: "Update available" })).not.toBeInTheDocument();
   });
 });
