@@ -37,6 +37,18 @@ import { testPath } from "../shared/test-fixtures";
 // Test Helpers
 // =============================================================================
 
+/** Every button id in a dialog config, in order. */
+function buttonIds(config: DialogConfig): string[] {
+  const ids: string[] = [];
+  for (const section of config.sections) {
+    if (section.type !== "group") continue;
+    for (const item of section.items) {
+      if (item.type === "button") ids.push(item.id);
+    }
+  }
+  return ids;
+}
+
 /** The id of the footer's cancel-role button (the one Escape clicks), or undefined. */
 function cancelRoleButtonId(config: DialogConfig): string | undefined {
   for (const section of config.sections) {
@@ -102,6 +114,8 @@ interface TestSetup {
   fireProgress(progress: DeletionProgress): Promise<void>;
   fireSwitched(path: string | null): Promise<void>;
   fireDeleted(workspacePath: string): Promise<void>;
+  /** Workspace paths `ui.cancelRunningHooks` was called with, in order. */
+  canceledHooks: string[];
 }
 
 function createTestSetup(): TestSetup {
@@ -112,9 +126,14 @@ function createTestSetup(): TestSetup {
   // progress event mirrors the presenter's set/clear so the module's reads via
   // ui.deletionProgress() see what the presenter would hold.
   const progressStore = new Map<string, DeletionProgress>();
+  const canceledHooks: string[] = [];
 
   const module = createDeletionDialogModule({
-    ui: { ...dialogManager.ui, deletionProgress: (path: string) => progressStore.get(path) },
+    ui: {
+      ...dialogManager.ui,
+      deletionProgress: (path: string) => progressStore.get(path),
+      cancelRunningHooks: (path: string) => canceledHooks.push(path),
+    },
     dispatcher: dispatcher as unknown as Dispatcher,
     logger: SILENT_LOGGER,
   });
@@ -146,7 +165,15 @@ function createTestSetup(): TestSetup {
     });
   };
 
-  return { module, dialogManager, dispatcher, fireProgress, fireSwitched, fireDeleted };
+  return {
+    module,
+    dialogManager,
+    dispatcher,
+    fireProgress,
+    fireSwitched,
+    fireDeleted,
+    canceledHooks,
+  };
 }
 
 // =============================================================================
@@ -476,6 +503,74 @@ describe("DeletionDialogModule", () => {
     expect(cancelRoleButtonId(dialogManager.lastHandle!.config)).toBeUndefined();
   });
 
+  describe("a running repository hook", () => {
+    const hookRunning = makeProgress({
+      operations: [
+        { id: "kill-terminals", label: "Terminating processes", status: "done" },
+        { id: "repo-hook", label: "Running repository hook", status: "in-progress" },
+        { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
+      ],
+    });
+
+    it("offers Cancel while the hook runs, and Cancel stops that workspace's hooks", async () => {
+      const { dialogManager, fireProgress, fireSwitched, canceledHooks } = setup;
+
+      await fireSwitched(WS_PATH_A);
+      await fireProgress(hookRunning);
+      const handle = dialogManager.lastHandle!;
+      expect(buttonIds(handle.config)).toEqual(["cancel-hook"]);
+
+      handle.emitEvent({ kind: "action", dialogId: handle.id, actionId: "cancel-hook" });
+
+      expect(canceledHooks).toEqual([WS_PATH_A]);
+      // Cancel is not Dismiss: the deletion is not forced through, and the panel stays.
+      expect(setup.dispatcher.dispatched).toEqual([]);
+      expect(handle.closed).toBe(false);
+    });
+
+    it("keeps Cancel off Escape — only Dismiss answers to it", async () => {
+      const { dialogManager, fireProgress, fireSwitched } = setup;
+
+      await fireSwitched(WS_PATH_A);
+      await fireProgress(hookRunning);
+
+      expect(cancelRoleButtonId(dialogManager.lastHandle!.config)).toBeUndefined();
+    });
+
+    it("drops Cancel once the hook has failed, leaving Retry and Dismiss", async () => {
+      const { dialogManager, fireProgress, fireSwitched } = setup;
+
+      await fireSwitched(WS_PATH_A);
+      await fireProgress(hookRunning);
+      await fireProgress(
+        makeProgress({
+          completed: true,
+          hasErrors: true,
+          operations: [
+            { id: "kill-terminals", label: "Terminating processes", status: "done" },
+            {
+              id: "repo-hook",
+              label: "Running repository hook",
+              status: "error",
+              error: "before-worktree-deleted was canceled",
+            },
+          ],
+        })
+      );
+
+      expect(buttonIds(dialogManager.lastHandle!.config)).toEqual(["retry", "dismiss"]);
+    });
+
+    it("offers no Cancel when no hook is running", async () => {
+      const { dialogManager, fireProgress, fireSwitched } = setup;
+
+      await fireSwitched(WS_PATH_A);
+      await fireProgress(makeProgress());
+
+      expect(buttonIds(dialogManager.lastHandle!.config)).toEqual([]);
+    });
+  });
+
   it("should clean up on EVENT_WORKSPACE_DELETED", async () => {
     const { dialogManager, fireProgress, fireSwitched, fireDeleted } = setup;
 
@@ -537,7 +632,11 @@ describe("DeletionDialogModule - remove confirm", () => {
 
     const module = createDeletionDialogModule({
       // The confirm hook only opens + parks; it never reads deletion progress.
-      ui: { ...dialogManager.ui, deletionProgress: () => undefined },
+      ui: {
+        ...dialogManager.ui,
+        deletionProgress: () => undefined,
+        cancelRunningHooks: () => {},
+      },
       dispatcher: dispatcher as unknown as Dispatcher,
       logger: SILENT_LOGGER,
     });

@@ -857,6 +857,35 @@ describe("ExecaProcessRunner", () => {
       },
       TEST_TIMEOUT
     );
+
+    // Unix-only: the tree is deeper than one level — a shell command line is
+    // sh → script → what the script started, and the grandchild holding the
+    // pipes is what used to keep a killed spawn from ever finishing.
+    it.skipIf(isWindows)(
+      "kill() kills grandchildren too, not only direct children",
+      async () => {
+        const proc = runner.run("sh", [
+          "-c",
+          "sh -c 'sleep 30 & echo $!; wait'; echo inner-exited",
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await delay(200);
+
+        const killResult = await proc.kill(1000, 1000);
+        expect(killResult.success).toBe(true);
+
+        const result = await proc.wait(1000);
+        expect(result.running).toBeUndefined();
+        const grandchildPid = parseInt(result.stdout.trim(), 10);
+        expect(isNaN(grandchildPid)).toBe(false);
+        spawnedPids.push(grandchildPid);
+
+        expect(await waitForProcessDeath(grandchildPid, 1000)).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
   });
 
   describe("large output", () => {

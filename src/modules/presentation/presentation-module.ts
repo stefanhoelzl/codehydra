@@ -132,6 +132,7 @@ import type {
   DialogKind,
   ProgressItem,
 } from "../../shared/dialog-types";
+import type { NotificationConfig } from "../../shared/notification-types";
 import { uiEventSchema } from "../../shared/ui-event";
 import {
   clampSidebarWidthMin,
@@ -157,6 +158,7 @@ import {
 import { createNotificationHooks } from "./notification-hooks";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ProjectPath, WorkspacePath } from "../../intents/contract";
+import { Path } from "../../utils/path/path";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
@@ -201,6 +203,30 @@ export interface PresentationModuleDeps {
 const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
 /**
+ * A blocking repository hook that is running, and how to stop it.
+ *
+ * Registered by the hooks module for the length of one process, so every
+ * surface that could leave the user staring at a hook that never ends has a
+ * Cancel to offer.
+ */
+export interface RunningHook {
+  readonly workspacePath: string;
+  readonly projectPath: string;
+  readonly workspaceName: string;
+  /** The hook's on-disk entry name — what the user sees. */
+  readonly entry: string;
+  /**
+   * Where its Cancel lives. An `open` hook is offered on the loading surface
+   * (the startup screen, the active workspace's loading panel) or, when none
+   * shows it, on a sidebar notification. A `delete` hook is offered by the
+   * deletion panel, which calls `cancelRunningHooks`.
+   */
+  readonly phase: "open" | "delete";
+  /** Kill it. Idempotent; the run then fails as a canceled hook. */
+  cancel(): void;
+}
+
+/**
  * The UI presenter: an IntentModule that also exposes the imperative dialog
  * command surface for any module to inject. It is the sole owner of ui:state
  * and of the UI-view IPC (both directions, via ViewManager), and privately owns
@@ -233,6 +259,10 @@ export interface UiPresenter extends IntentModule {
    * name the workspace and never see a frame key.
    */
   reloadFrame(workspacePath: string): boolean;
+  /** Offer a Cancel for a running repository hook until the returned function is called. */
+  trackRunningHook(hook: RunningHook): () => void;
+  /** Cancel every running repository hook of a workspace (the deletion panel's Cancel). */
+  cancelRunningHooks(workspacePath: string): void;
 }
 
 /**
@@ -667,6 +697,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   let inPush = false;
   /** Set once app:shutdown starts: the system dialog stays closed thereafter. */
   let shuttingDown = false;
+  /** Running repository hooks by registration id (see `trackRunningHook`). */
+  const runningHooks = new Map<number, RunningHook>();
+  let nextRunningHookId = 0;
+  /**
+   * Hooks old enough for a notification. Most hooks finish in well under a
+   * second, and a card per background creation that flashes and vanishes would
+   * be noise; only one still running after the grace period gets a card.
+   */
+  const notifiableHooks = new Set<number>();
+  const hookNotificationTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  /** The sidebar notification standing in for a hook no loading surface shows. */
+  /** Card id per hook, from the NotificationManager. */
+  const hookNotifications = new Map<number, string>();
 
   // --- UI mode inputs (main-owned). Mode = shortcut > dialog > hover >
   //     workspace, computed in buildMode() from these four signals.
@@ -958,6 +1001,129 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // re-pushes; a kind change forces close + reopen (kind is immutable).
   // ---------------------------------------------------------------------------
 
+  /** How long a background hook runs before it gets a notification. */
+  const HOOK_NOTIFICATION_DELAY_MS = 1500;
+
+  /** Action-id prefix of a running hook's Cancel button on the loading surface. */
+  const CANCEL_HOOK_ACTION = "cancel-hook:";
+
+  /** The running `open` hooks, by registration id. */
+  function openHooks(): Array<[number, RunningHook]> {
+    return [...runningHooks].filter(([, hook]) => hook.phase === "open");
+  }
+
+  /** Is this hook for the workspace behind `key`? By project + name: a creating placeholder has no path yet. */
+  function hookBelongsTo(hook: RunningHook, key: string | null): boolean {
+    if (key === null) return false;
+    const project = findProjectByPath(hook.projectPath);
+    return project !== undefined && workspaceKey(project.id, hook.workspaceName) === key;
+  }
+
+  /**
+   * The loading surface: the spinner, plus a row and a Cancel for each running
+   * hook it covers. `named` adds the workspace to each row, for the startup
+   * screen, which stands for every workspace at once.
+   */
+  function loadingConfig(hooks: Array<[number, RunningHook]>, named: boolean): DialogConfig {
+    const base = spinnerConfig("Loading workspace...");
+    if (hooks.length === 0) return base;
+    const label = (hook: RunningHook): string =>
+      named ? `${hook.entry} (${hook.workspaceName})` : hook.entry;
+    return {
+      sections: [
+        {
+          type: "progress",
+          style: "spinner",
+          items: [
+            { id: "status", label: "Loading workspace...", status: "running" },
+            ...hooks.map(([id, hook]) => ({
+              id: `hook-${id}`,
+              label: `Running ${label(hook)}`,
+              status: "running" as const,
+            })),
+          ],
+        },
+        {
+          type: "group",
+          items: hooks.map(([id, hook]) => ({
+            type: "button" as const,
+            id: `${CANCEL_HOOK_ACTION}${id}`,
+            label: hooks.length === 1 ? "Cancel" : `Cancel ${label(hook)}`,
+            variant: "secondary" as const,
+            title:
+              "Stop the repository hook. The workspace opens without what it would have set up.",
+          })),
+        },
+      ],
+    };
+  }
+
+  /**
+   * Give each running open hook that no loading surface shows a notification
+   * with its own Cancel — a background creation, a wake or project open of a
+   * workspace that is not the active one. Without it the hook could only be
+   * stopped by killing its process. Reconciled in push(), like the system dialog.
+   */
+  function reconcileHookNotifications(): void {
+    const covered = (hook: RunningHook): boolean =>
+      shuttingDown || startupPhase !== "done" || hookBelongsTo(hook, activeKey);
+    for (const [id, cardId] of hookNotifications) {
+      const hook = runningHooks.get(id);
+      if (hook === undefined || covered(hook)) {
+        // No-op when the user already dismissed the card.
+        notifications.close(cardId);
+        hookNotifications.delete(id);
+      }
+    }
+    for (const [id, hook] of openHooks()) {
+      if (hookNotifications.has(id) || !notifiableHooks.has(id) || covered(hook)) continue;
+      const projectName =
+        findProjectByPath(hook.projectPath)?.name ?? new Path(hook.projectPath).basename;
+      const config: NotificationConfig = {
+        type: "spinner",
+        title: `Running ${hook.entry}`,
+        message: `${hook.workspaceName} in ${projectName}`,
+        actions: [{ id: "cancel", label: "Cancel", variant: "secondary" }],
+      };
+      // Open, then wait on that same card: the wait takes the card's only hold,
+      // so `close` above ends it, and a click answers it.
+      const cardId = notifications.show({ config });
+      void notifications.showAndWait({ config, id: cardId }, {}).then((choice) => {
+        if (choice === "cancel") hook.cancel();
+      });
+      hookNotifications.set(id, cardId);
+    }
+  }
+
+  function trackRunningHook(hook: RunningHook): () => void {
+    const id = nextRunningHookId++;
+    runningHooks.set(id, hook);
+    if (hook.phase === "open") {
+      hookNotificationTimers.set(
+        id,
+        setTimeout(() => {
+          hookNotificationTimers.delete(id);
+          notifiableHooks.add(id);
+          scheduleUpdate();
+        }, HOOK_NOTIFICATION_DELAY_MS)
+      );
+    }
+    scheduleUpdate();
+    return () => {
+      if (!runningHooks.delete(id)) return;
+      clearTimeout(hookNotificationTimers.get(id));
+      hookNotificationTimers.delete(id);
+      notifiableHooks.delete(id);
+      scheduleUpdate();
+    };
+  }
+
+  function cancelRunningHooks(workspacePath: string): void {
+    for (const hook of runningHooks.values()) {
+      if (hook.workspacePath === workspacePath) hook.cancel();
+    }
+  }
+
   /** A centered spinner + label (boot splash / loading), via a spinner row. */
   function spinnerConfig(label: string): DialogConfig {
     return {
@@ -1044,13 +1210,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       case "agent-selection":
         return { config: agentConfig(), kind: "modal" };
       case "running":
-        return { config: spinnerConfig("Loading workspace..."), kind: "modal" };
+        // Startup opens every workspace in turn, so a hook of any of them is
+        // what the user is waiting on.
+        return { config: loadingConfig(openHooks(), true), kind: "modal" };
       case "done": {
-        // Mid-session: a still-creating active workspace has no frame yet.
+        // Mid-session: a still-creating active workspace has no frame yet, and
+        // one whose open hook is running (a wake) is not usable yet either.
         if (activeKey === null) return null;
-        const active = findByKey(activeKey);
-        return active?.workspace.creating
-          ? { config: spinnerConfig("Loading workspace..."), kind: "panel" }
+        const key = activeKey;
+        const hooks = openHooks().filter(([, hook]) => hookBelongsTo(hook, key));
+        return findByKey(key)?.workspace.creating || hooks.length > 0
+          ? { config: loadingConfig(hooks, false), kind: "panel" }
           : null;
       }
     }
@@ -1058,6 +1228,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   /** Route the system dialog's action events (agent pick, Retry, Quit). */
   function handleSystemAction(event: DialogActionEvent): void {
+    if (event.actionId.startsWith(CANCEL_HOOK_ACTION)) {
+      runningHooks.get(Number(event.actionId.slice(CANCEL_HOOK_ACTION.length)))?.cancel();
+      return;
+    }
     switch (event.actionId) {
       case "continue": {
         const agent = event.data?.["agent"];
@@ -1237,6 +1411,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // so this push carries the reconciled dialog (and mode reads isModalOpen()).
     inPush = true;
     reconcileSystemDialog();
+    reconcileHookNotifications();
     inPush = false;
     const snapshot = buildSnapshot();
     deps.viewManager.sendToUI(ApiIpcChannels.UI_STATE, snapshot);
@@ -2070,6 +2245,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
       deletions.get(workspacePath),
     reloadFrame,
+    trackRunningHook,
+    cancelRunningHooks,
     events,
     interceptors: [suppressBackgroundFocus],
     hooks: {

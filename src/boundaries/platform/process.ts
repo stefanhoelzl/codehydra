@@ -247,18 +247,57 @@ type ExecaSubprocess = ReturnType<typeof execa>;
 const TIMEOUT_SYMBOL = Symbol("timeout");
 
 /**
- * Kill a process and its children using platform-appropriate method.
+ * Every descendant of `pid` alive right now, found level by level with
+ * `pgrep -P` (available wherever `pkill` is: procps on Linux, base macOS).
+ *
+ * Direct children are not enough. A shell command line is `sh` → the script →
+ * whatever the script started, and a grandchild left running keeps the
+ * inherited stdout/stderr pipes open, so the spawn it belongs to never
+ * finishes even though its own process is gone.
+ */
+async function collectDescendants(pid: number): Promise<number[]> {
+  const found: number[] = [];
+  let frontier = [pid];
+  while (frontier.length > 0) {
+    const next: number[] = [];
+    for (const parent of frontier) {
+      try {
+        const { stdout } = await execa("pgrep", ["-P", String(parent)]);
+        for (const token of stdout.split(/\s+/)) {
+          const child = Number(token);
+          if (Number.isInteger(child) && child > 0 && !found.includes(child)) next.push(child);
+        }
+      } catch {
+        // pgrep exits non-zero when nothing matched - a leaf
+      }
+    }
+    found.push(...next);
+    frontier = next;
+  }
+  return found;
+}
+
+/**
+ * Kill a process and its descendants using platform-appropriate method.
  * - Windows: taskkill /pid <pid> /t /f for native tree killing
  *   (Always uses /f because WM_CLOSE cannot signal console processes)
- * - Unix: pkill -P to kill children, then process.kill for parent
+ * - Unix: signal every descendant (`collectDescendants`), then the process
  *
  * Works on any PID, not just one we spawned — the tree-kill mechanics are
  * identical either way, and `ProcessRunner.kill` needs them for foreign PIDs.
  *
  * @param pid - Process ID to kill
  * @param force - If true, use SIGKILL (Unix only). On Windows, always forceful.
+ * @param tree - Descendants seen by an earlier call for the same kill (Unix).
+ *   Pass the same set to the SIGTERM and the SIGKILL pass: a descendant whose
+ *   parent died of the SIGTERM is re-parented and can no longer be found from
+ *   `pid`, so the forced pass must remember it rather than look for it again.
  */
-async function killProcessTree(pid: number, force: boolean): Promise<void> {
+async function killProcessTree(
+  pid: number,
+  force: boolean,
+  tree: Set<number> = new Set()
+): Promise<void> {
   if (isWindows) {
     // Windows: Always use /f because WM_CLOSE (sent by taskkill without /f)
     // is ignored by console applications. We can't send CTRL_C_EVENT to
@@ -272,16 +311,16 @@ async function killProcessTree(pid: number, force: boolean): Promise<void> {
       // (e.g., access denied, process not found)
     }
   } else {
-    // Unix: kill children first with pkill -P, then kill parent
+    // Unix: kill descendants first, then the parent
     const signal = force ? "SIGKILL" : "SIGTERM";
 
-    // Kill all child processes by parent PID.
-    // The signal must come first: BSD pkill (macOS) only accepts a signal as
-    // its first argument and rejects it anywhere else as an invalid option.
-    try {
-      await execa("pkill", [force ? "-9" : "-15", "-P", String(pid)]);
-    } catch {
-      // pkill returns non-zero if no processes matched - that's fine
+    for (const descendant of await collectDescendants(pid)) tree.add(descendant);
+    for (const descendant of tree) {
+      try {
+        process.kill(descendant, signal);
+      } catch {
+        // Already exited (ESRCH)
+      }
     }
 
     // Kill the parent process
@@ -351,6 +390,8 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   readonly redacted: boolean;
   private cachedResult: ProcessResult | null = null;
   private readonly streamingActive: boolean;
+  /** Descendants met while killing, shared by the SIGTERM and SIGKILL passes. */
+  private readonly killTree = new Set<number>();
 
   constructor(subprocess: ExecaSubprocess, logger: Logger, command: string, redactBy?: string) {
     this.subprocess = subprocess;
@@ -422,7 +463,7 @@ class ExecaSpawnedProcess implements SpawnedProcess {
   }
 
   private async killProcess(pid: number, force: boolean): Promise<void> {
-    return killProcessTree(pid, force);
+    return killProcessTree(pid, force, this.killTree);
   }
 
   async wait(timeout?: number): Promise<ProcessResult> {
@@ -809,13 +850,14 @@ export class ExecaProcessRunner implements ProcessRunner {
       return { success: false };
     }
 
-    await killProcessTree(pid, false);
+    const tree = new Set<number>();
+    await killProcessTree(pid, false, tree);
     this.logger.info("Killed foreign process", { pid, signal: "SIGTERM" });
     if (termTimeout !== undefined && (await waitForPidExit(pid, termTimeout))) {
       return { success: true, reason: "SIGTERM" };
     }
 
-    await killProcessTree(pid, true);
+    await killProcessTree(pid, true, tree);
     this.logger.warn("Killed foreign process", { pid, signal: "SIGKILL" });
     if (killTimeout !== undefined && (await waitForPidExit(pid, killTimeout))) {
       return { success: true, reason: "SIGKILL" };

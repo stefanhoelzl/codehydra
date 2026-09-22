@@ -2996,3 +2996,207 @@ describe("PresentationModule - sidebar notifications", () => {
     expect(lastSnapshot(deps).notifications).toEqual([]);
   });
 });
+
+describe("PresentationModule - running repository hooks", () => {
+  const FEAT_PATH = `${PROJECT_PATH}/.worktrees/feat`;
+
+  function openHook(
+    workspaceName: string,
+    cancel: () => void = vi.fn(),
+    phase: "open" | "delete" = "open"
+  ) {
+    return {
+      workspacePath: `${PROJECT_PATH}/.worktrees/${workspaceName}`,
+      projectPath: PROJECT_PATH,
+      workspaceName,
+      entry: "after-worktree-created",
+      phase,
+      cancel,
+    };
+  }
+
+  /** The Cancel buttons on the current system dialog, as [id, label]. */
+  function cancelButtons(deps: Deps): Array<[string, string]> {
+    const buttons: Array<[string, string]> = [];
+    for (const section of currentSystemDialog(deps).config.sections as Array<{
+      type: string;
+      items?: Array<{ type?: string; id: string; label?: string }>;
+    }>) {
+      if (section.type !== "group") continue;
+      for (const item of section.items ?? []) buttons.push([item.id, item.label ?? ""]);
+    }
+    return buttons;
+  }
+
+  function click(deps: Deps, actionId: string): void {
+    const { id } = currentSystemDialog(deps);
+    emitUiEvent(deps, { kind: "dialog-action", dialogId: id, actionId });
+  }
+
+  it("offers a Cancel per hook on the startup screen, each naming its workspace", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+    await module.hooks![APP_START_OPERATION_ID]!.start!.handler({
+      intent: { type: "app:start", payload: {} },
+    } as never);
+
+    const cancelA = vi.fn();
+    module.trackRunningHook(openHook("a", cancelA));
+    module.trackRunningHook(openHook("b"));
+    await flush();
+
+    expect(currentSystemDialog(deps).kind).toBe("modal");
+    expect(currentSystemDialog(deps).config.sections[0]).toEqual({
+      type: "progress",
+      style: "spinner",
+      items: [
+        { id: "status", label: "Loading workspace...", status: "running" },
+        { id: "hook-0", label: "Running after-worktree-created (a)", status: "running" },
+        { id: "hook-1", label: "Running after-worktree-created (b)", status: "running" },
+      ],
+    });
+    expect(cancelButtons(deps)).toEqual([
+      ["cancel-hook:0", "Cancel after-worktree-created (a)"],
+      ["cancel-hook:1", "Cancel after-worktree-created (b)"],
+    ]);
+
+    click(deps, "cancel-hook:0");
+    expect(cancelA).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers Cancel on the loading panel of the workspace being created", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+    });
+
+    const cancel = vi.fn();
+    const untrack = module.trackRunningHook(openHook("feat", cancel));
+    await flush();
+
+    expect(currentSystemDialog(deps).kind).toBe("panel");
+    expect(cancelButtons(deps)).toEqual([["cancel-hook:0", "Cancel"]]);
+    click(deps, "cancel-hook:0");
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    // The hook ending takes its row and Cancel with it; the workspace still loads.
+    untrack();
+    await flush();
+    expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
+  });
+
+  it("covers a running open hook of the active workspace that is not being created (a wake)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const feat = makeWorkspace("feat", { metadata: { hibernated: "true" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([feat]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+
+    const untrack = module.trackRunningHook(openHook("feat"));
+    await flush();
+    expect(currentSystemDialog(deps).kind).toBe("panel");
+    expect(cancelButtons(deps)).toEqual([["cancel-hook:0", "Cancel"]]);
+
+    untrack();
+    await flush();
+    expect(lastSnapshot(deps).dialogs).toEqual([]);
+  });
+
+  describe("a hook no loading surface shows", () => {
+    function notificationCards(deps: Deps) {
+      return lastSnapshot(deps).notifications;
+    }
+
+    it("gets a notification with Cancel once it has run past the grace period", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const deps = createDeps();
+        const module = createPresentationModule(deps);
+        connect(deps);
+        await emit(module, EVENT_APP_STARTED, {});
+        await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
+
+        const cancel = vi.fn();
+        const untrack = module.trackRunningHook(openHook("feat", cancel));
+        await vi.advanceTimersByTimeAsync(0);
+        // A hook that finishes quickly never flashes a card.
+        expect(notificationCards(deps)).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(1500);
+        const [card] = notificationCards(deps);
+        expect(card?.config).toEqual({
+          type: "spinner",
+          title: "Running after-worktree-created",
+          message: "feat in alpha",
+          actions: [{ id: "cancel", label: "Cancel", variant: "secondary" }],
+        });
+
+        emitUiEvent(deps, {
+          kind: "notification-event",
+          notificationId: card!.id,
+          actionId: "cancel",
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(cancel).toHaveBeenCalledTimes(1);
+
+        untrack();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(notificationCards(deps)).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("trades its notification for the loading panel when its workspace becomes active", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const deps = createDeps();
+        const module = createPresentationModule(deps);
+        connect(deps);
+        await emit(module, EVENT_APP_STARTED, {});
+        const feat = makeWorkspace("feat", { metadata: { hibernated: "true" } });
+        await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([feat]) });
+
+        module.trackRunningHook(openHook("feat"));
+        await vi.advanceTimersByTimeAsync(1500);
+        expect(notificationCards(deps)).toHaveLength(1);
+
+        await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(notificationCards(deps)).toEqual([]);
+        expect(currentSystemDialog(deps).kind).toBe("panel");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it("leaves a deletion hook to the deletion panel, which cancels by workspace", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const deps = createDeps();
+      const module = createPresentationModule(deps);
+      connect(deps);
+      await emit(module, EVENT_APP_STARTED, {});
+
+      const cancelFeat = vi.fn();
+      const cancelOther = vi.fn();
+      module.trackRunningHook(openHook("feat", cancelFeat, "delete"));
+      module.trackRunningHook(openHook("other", cancelOther, "delete"));
+      await vi.advanceTimersByTimeAsync(1500);
+
+      expect(lastSnapshot(deps).notifications).toEqual([]);
+      expect(lastSnapshot(deps).dialogs).toEqual([]);
+
+      module.cancelRunningHooks(FEAT_PATH);
+      expect(cancelFeat).toHaveBeenCalledTimes(1);
+      expect(cancelOther).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

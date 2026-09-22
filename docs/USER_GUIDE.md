@@ -498,11 +498,26 @@ prints matters.
 One file per entry. If the file is there it runs; if not, nothing happens. The
 file is named after the entry, with or without an extension —
 `after-worktree-created`, `after-worktree-created.sh` and
-`after-worktree-created.py` are all the same entry. If two files claim one entry,
-the first by name wins and CodeHydra logs a warning; this is not platform-aware,
-so a repository cannot ship both a bare file for POSIX and a `.cmd` for Windows.
-Backup files count too — `after-worktree-created.bak` sorts before `.sh` and
-wins — so remove them.
+`after-worktree-created.py` are all the same entry.
+
+A file can be pinned to one platform with a suffix right after the entry name:
+`.win`, `.linux` or `.mac`, optionally followed by an extension
+(`after-worktree-created.win.cmd`, `after-worktree-created.mac.sh`). On each
+platform:
+
+- a file suffixed for that platform runs, and the unsuffixed ones are ignored;
+- otherwise the unsuffixed file runs;
+- a file suffixed for another platform never runs.
+
+So a repository that supports Windows too ships `after-worktree-created` (a
+shebang script) and `after-worktree-created.win.cmd`. Only the whole segment
+counts: `after-worktree-created.windows.cmd` is an ordinary unsuffixed file.
+
+If more than one file is left for the platform — `after-worktree-created.sh`
+beside a forgotten `after-worktree-created.bak`, or two `.win.*` files —
+nothing runs: a **Repository hook failed** notification names the files, and
+the entry counts as a failed hook (a `before-worktree-deleted` gate therefore
+stops the deletion). Remove all but one, or pin them to their platforms.
 
 How a hook is started:
 
@@ -510,9 +525,10 @@ How a hook is started:
   interpreter. The file must be executable (`chmod +x`); unlike git, CodeHydra
   reports a non-executable blocking hook instead of skipping it silently.
 - **Windows**: `cmd.exe /d /s /c "<path>"`. The shebang means nothing there, so
-  use `.cmd` or `.bat`.
-- Symlinks and directories are not run (a warning is logged) — and if one sorts
-  first, it still claims the entry.
+  use `.cmd` or `.bat` — as a `.win.cmd` file, so the other platforms do not
+  try to run it.
+- Symlinks and directories are not run (a warning is logged), and they do not
+  count when choosing the file: a real file beside them still runs.
 
 ### The exchange
 
@@ -522,7 +538,8 @@ How a hook is started:
   failure. Output shapes are strict for every blocking hook.
 - **stderr**: never parsed. It is shown in the **CodeHydra Hooks** output
   channel of the workspace's editor after the hook exits (not live), and logged
-  at `info` level.
+  at `warn` level — whether the hook succeeds or fails — so it is in the log
+  file at the default log level.
 - **Working directory**: the worktree.
 - **Environment**: CodeHydra's own environment, with CodeHydra's bin directory
   put first on `PATH`. `ch` therefore works inside a hook and finds the
@@ -531,7 +548,8 @@ How a hook is started:
 - **Paths**: on Windows, `workspacePath` is lower-case with forward slashes
   (`c:/users/…`). For a project cloned from a URL, `projectPath` is
   CodeHydra's bare clone, which has no working files.
-- **Timeout**: none. A hook runs until it exits.
+- **Timeout**: none. A blocking hook runs until it exits or you cancel it (see
+  [Canceling a hook](#canceling-a-hook)).
 
 Every entry receives this core, plus a field of its own:
 
@@ -591,18 +609,19 @@ Output — every field optional:
 - `tags` are keyed by tag name; `color`, `label` and `description` are optional.
   Each dot-separated part of a tag name must start with a letter and contain
   only letters, digits and `-`, not ending in `-`; at most 59 characters. An
-  invalid tag is not saved (a warning is logged) but shows until the next
-  restart.
+  invalid tag name makes the whole output invalid: a hook failure whose message
+  names it (`tags.1st-review: not a valid tag name …`), and neither the title
+  nor any tag is applied.
 
 `title` and `tags` are stored in the workspace's git config, so they survive a
 restart like a title set by hand. `env` is not accepted here (it is a hook
 failure): environment belongs to `before-workspace-opened`.
 
-**Failure is loud but not fatal.** A non-zero exit or invalid output shows a
-**Repository hook failed** notification (e.g. `after-worktree-created failed:
-exit 1 — <last stderr line>`) and is logged; the workspace still opens, without
-anything the hook returned. A hook that never exits leaves the workspace
-loading.
+**Failure is loud but not fatal.** A non-zero exit, invalid output or a cancel
+shows a **Repository hook failed** notification (e.g. `after-worktree-created
+failed: exit 1 — <last stderr line>`, or `after-worktree-created was canceled`)
+and is logged; the workspace still opens, without anything the hook returned. A
+hook that never exits leaves the workspace loading until you cancel it.
 
 Replacing a `.keepfiles` that listed `.env` and `config/local.yml`:
 
@@ -660,7 +679,7 @@ token. When it changes between opens, the new values apply from that open on.
 **Failure is loud but not fatal**, as for `after-worktree-created`: a
 **Repository hook failed** notification, and the workspace opens without the
 environment. A hook that never exits leaves the workspace unopened (a new one
-keeps loading).
+keeps loading) until you cancel it.
 
 ### before-worktree-deleted
 
@@ -684,17 +703,19 @@ Printing nothing, or `{}`, allows the deletion. `{"reason": "…"}` without
 `"blocked": true` also allows it; `{"blocked": true}` without a reason shows
 "blocked".
 
-A **non-zero exit** or invalid output means the hook broke. That stops the
-deletion too — the gate fails closed — but is reported as a hook failure, with
-the last stderr line, rather than as a refusal.
+A **non-zero exit**, invalid output or a cancel means the hook broke. That stops
+the deletion too — the gate fails closed — but is reported as a hook failure,
+with the last stderr line (or `before-worktree-deleted was canceled`), rather
+than as a refusal.
 
 Either way the deletion stops before the worktree is removed and the reason
 appears on the progress row, with **Retry** and **Dismiss**. Neither keeps the
 workspace: Retry runs the whole deletion again (trust question included, unless
 answered Always or Never); Dismiss force-deletes, skipping hooks, and keeps
 the branch if you chose to keep it. **Escape on the failed panel means
-Dismiss.** These buttons appear only once the hook has exited: a hook that
-hangs can only be stopped by killing its process (or quitting CodeHydra).
+Dismiss.** These buttons appear once the hook has exited; while it runs, the
+panel offers **Cancel** instead, which stops it (see
+[Canceling a hook](#canceling-a-hook)) and leads to Retry and Dismiss.
 
 When closing a project with "remove all", a refused deletion does not stop the
 project from closing; that worktree stays on disk.
@@ -705,7 +726,9 @@ Started after a workspace is open — its editor and agent already running, so
 it cannot prepare anything for them; use `before-workspace-opened` for that —
 and forgotten immediately. Nothing waits for it, its stdout is ignored, and a
 failure (including a non-executable file) only logs a warning with the exit
-code; its stderr is logged at `info`, below the default level.
+code; its stderr is logged at `warn`. It cannot be canceled from CodeHydra. The
+one failure that raises a notification is several files claiming the entry (see
+[Where hooks go](#where-hooks-go)), because then nothing ran.
 
 It runs on the same opens as `before-workspace-opened`: creation, app start,
 project open (adopted worktrees included) and wake. Extra input:
@@ -715,6 +738,28 @@ cache will not.
 
 (This entry was called `on-workspace-created`; a file with that name is no
 longer run.)
+
+### Canceling a hook
+
+A blocking hook has no timeout, so while one runs CodeHydra offers **Cancel**
+for it:
+
+- `after-worktree-created` and `before-workspace-opened`: on the
+  **Loading workspace...** screen — at startup, one Cancel per running hook,
+  each naming its workspace; later, on the loading panel of the workspace you
+  are looking at. A hook of a workspace you are not looking at (a background
+  creation, a wake, a project being opened) gets a sidebar notification with
+  Cancel once it has run for about a second and a half.
+- `before-worktree-deleted`: on the deletion progress panel, below the
+  hook's row.
+
+Cancel kills the hook and everything it started (on Linux and macOS SIGTERM,
+then SIGKILL for whatever is still running a second later; on Windows the
+whole process tree at once) and
+counts as the hook failing, with that entry's usual consequence: an open goes
+on without what the hook would have returned, and a deletion stops with Retry
+and Dismiss. Cancel is not offered while the trust question is open — answer
+Skip there instead.
 
 ### Trust
 
@@ -765,13 +810,19 @@ To turn hooks off entirely, set `hooks.enabled` to `false` (settings,
   exits, each line tagged with the hook's name (up to 500 lines are kept until
   the editor is up; the log keeps them all). `before-worktree-deleted` has no editor left to show it in: only its
   reason, or its last stderr line on failure, reaches the progress row.
-- stderr is logged at `info`, below the default log level. Run with
-  `--log.level=info` (or `debug`) to see it in the log file; the process
+- stderr is logged at `warn` under the `[hooks]` logger, so it is in the log
+  file at the default log level, for hooks that succeed too. The process
   details (command line, exit code, stdout) are under the `[process]` logger at
-  `debug`. At `debug` stdout is logged in full, including any `env` values.
-- "not executable" means `chmod +x`. "the interpreter in its shebang was not
-  found" means the `#!` line points at something that is not installed — or
-  that the script itself exited with 127 (command not found).
+  `debug`; run with `--log.level=debug` to see them. At `debug` stdout is
+  logged in full, including any `env` values.
+- `exit 126: a file could not be executed (is it chmod +x?)` is usually the
+  hook file missing its exec bit — or a command the script ran that is not
+  executable. `exit 127: a command was not found (the shebang interpreter, or
+one the script ran)` means the `#!` line points at something that is not
+  installed, or the script called a command that is not on `PATH`. The shell
+  reports both cases with the same code, so check the last stderr line.
+- `several files claim it on this platform (…)` lists the files CodeHydra could
+  not choose between; see [Where hooks go](#where-hooks-go).
 
 ## Agents
 
