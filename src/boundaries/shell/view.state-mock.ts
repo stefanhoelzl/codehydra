@@ -21,6 +21,7 @@ import type {
   KeyboardInput,
   RenderProcessGoneDetails,
   UncaughtExceptionDetails,
+  ChildFrameNavigation,
 } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
@@ -96,6 +97,12 @@ export interface ViewBoundaryMockState extends MockState {
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void;
 
   /**
+   * Simulates Electron's 'did-frame-navigate' for a top-level child frame.
+   * Invokes all onChildFrameNavigate handlers for the specified view.
+   */
+  triggerChildFrameNavigate(handle: ViewHandle, details: ChildFrameNavigation): void;
+
+  /**
    * Simulates a fire-and-forget IPC message from the view's renderer
    * (`webContents.ipc`). Invokes all onIpc listeners for the view + channel.
    */
@@ -141,6 +148,7 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   readonly destroyedCallbacks = new CallbackRegistry();
   readonly uncaughtExceptionCallbacks = new CallbackRegistry<[UncaughtExceptionDetails]>();
   readonly renderProcessGoneCallbacks = new CallbackRegistry<[RenderProcessGoneDetails]>();
+  readonly childFrameNavigateCallbacks = new CallbackRegistry<[ChildFrameNavigation]>();
   /** Keyed by `${handle.id}::${channel}`. */
   readonly ipcCallbacks = new CallbackRegistry<unknown[]>();
 
@@ -185,6 +193,10 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void {
     this.renderProcessGoneCallbacks.trigger(handle.id, details);
+  }
+
+  triggerChildFrameNavigate(handle: ViewHandle, details: ChildFrameNavigation): void {
+    this.childFrameNavigateCallbacks.trigger(handle.id, details);
   }
 
   triggerIpc(handle: ViewHandle, channel: string, ...args: unknown[]): void {
@@ -264,6 +276,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
     state.destroyedCallbacks,
     state.uncaughtExceptionCallbacks,
     state.renderProcessGoneCallbacks,
+    state.childFrameNavigateCallbacks,
     state.ipcCallbacks,
   ];
   let nextId = 1;
@@ -390,6 +403,14 @@ export function createViewBoundaryMock(): MockViewBoundary {
     ): Unsubscribe {
       getView(handle); // Validate handle exists
       return state.renderProcessGoneCallbacks.add(handle.id, callback);
+    },
+
+    onChildFrameNavigate(
+      handle: ViewHandle,
+      callback: (details: ChildFrameNavigation) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      return state.childFrameNavigateCallbacks.add(handle.id, callback);
     },
 
     onUnresponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {

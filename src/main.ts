@@ -172,6 +172,7 @@ import { createWorkspaceLifecycleModule } from "./modules/workspace-lifecycle-mo
 import { createBadgeModule } from "./modules/badge-module";
 import { createOsNotificationModule } from "./modules/os-notification-module";
 import { createPowerModule } from "./modules/power-module";
+import { createFrameWatchdogModule } from "./modules/frame-watchdog-module";
 import { createCliModule } from "./modules/cli-module";
 import { createRegistry } from "./api/entries";
 import { createDeletionWaiter } from "./api/deletion-waiter";
@@ -760,6 +761,11 @@ const powerModule = createPowerModule({
   appLayer,
   logger: loggingService.createLogger("power"),
 });
+const frameWatchdogModule = createFrameWatchdogModule({
+  transport: pluginServerModule,
+  frames: presentationModule,
+  logger: loggingService.createLogger("view"),
+});
 const deletionDialogModule = createDeletionDialogModule({
   ui: presentationModule,
   dispatcher,
@@ -1039,6 +1045,7 @@ dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(osNotificationModule);
 dispatcher.registerModule(powerModule);
+dispatcher.registerModule(frameWatchdogModule);
 dispatcher.registerModule(deletionDialogModule);
 dispatcher.registerModule(creationModule);
 dispatcher.registerModule(workspaceSelectionModule);

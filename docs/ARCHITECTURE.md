@@ -139,6 +139,15 @@ component), derived declaratively from the renderer's projects store:
 - **Loading indication**: the main process shows a "Loading workspace..."
   dialog from `workspace:created` until the agent's first status report (or
   a 10s timeout). No view-level load tracking exists.
+- **Recovery**: two witnesses catch a frame that stays mounted but no longer
+  shows a workbench. Showing a frame pings it, and a frame that stops
+  answering is reloaded (renderer process died). A workbench that shuts down
+  or navigates away on its own keeps answering, so the second witness is its
+  sidekick: `frame-watchdog-module` watches `onWorkspaceDisconnected`, and a
+  disconnect we did not cause (not hibernate/delete/quit) that is not followed
+  by a reconnect within 15 s reloads that one frame (`reloadFrame` →
+  `__chReloadFrame`), once. Every committed navigation of a workspace frame is
+  logged (`Workspace frame navigated`) so a report shows where a frame went.
 
 The main process side is a slim `UiViewManager`: UI view lifecycle
 (create/load/bounds-on-resize/destroy), the shared session's

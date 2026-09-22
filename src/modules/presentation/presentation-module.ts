@@ -160,7 +160,10 @@ import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
-  readonly viewManager: Pick<IViewManager, "sendToUI" | "onFromUI" | "waitForUIPaint">;
+  readonly viewManager: Pick<
+    IViewManager,
+    "sendToUI" | "onFromUI" | "waitForUIPaint" | "reloadFrame"
+  >;
   readonly windowManager: {
     getTheme(): Theme;
     onThemeChange(callback: (theme: Theme) => void): Unsubscribe;
@@ -223,6 +226,13 @@ export interface UiPresenter extends IntentModule {
    * its modal and retry/dismiss dispatch inputs rather than tracking its own.
    */
   deletionProgress(workspacePath: string): DeletionProgress | undefined;
+  /**
+   * Reload a workspace's IDE frame, if it is mounted. Returns false when there
+   * is no frame to reload: unknown workspace, hibernated, still being created,
+   * or released for deletion. The presenter owns frame identity, so callers
+   * name the workspace and never see a frame key.
+   */
+  reloadFrame(workspacePath: string): boolean;
 }
 
 /**
@@ -674,6 +684,24 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** Presenter-assigned opaque workspace identity. Never leaves main except inside UiState. */
   function workspaceKey(projectId: string, workspaceName: string): string {
     return `${projectId}/${workspaceName}`;
+  }
+
+  /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
+  function isFrameMounted(workspace: WorkspaceModel): boolean {
+    const released = workspace.path !== null && framesReleased.has(workspace.path);
+    return workspace.url !== undefined && !workspace.hibernated && !released;
+  }
+
+  function reloadFrame(workspacePath: string): boolean {
+    for (const project of projects.values()) {
+      for (const workspace of project.workspaces.values()) {
+        if (workspace.path !== workspacePath) continue;
+        if (!isFrameMounted(workspace)) return false;
+        deps.viewManager.reloadFrame(workspaceKey(project.id, workspace.name));
+        return true;
+      }
+    }
+    return false;
   }
 
   function findProjectByPath(projectPath: string): ProjectModel | undefined {
@@ -1140,8 +1168,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // documented as rendering "over the already-torn-down frame". Dismissing
         // that panel dispatches a force delete, so an entry here can never
         // outlive the workspace.
-        const released = workspace.path !== null && framesReleased.has(workspace.path);
-        if (workspace.url !== undefined && !workspace.hibernated && !released) {
+        if (workspace.url !== undefined && isFrameMounted(workspace)) {
           frames[workspaceKey(project.id, workspace.name)] = workspace.url;
         }
       }
@@ -2042,6 +2069,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     isModalOpen: (): boolean => dialogs.isModalOpen(),
     deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
       deletions.get(workspacePath),
+    reloadFrame,
     events,
     interceptors: [suppressBackgroundFocus],
     hooks: {

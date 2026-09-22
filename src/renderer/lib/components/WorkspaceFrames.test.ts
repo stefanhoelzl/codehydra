@@ -18,6 +18,7 @@ interface FrameHooks {
   __chFocusActiveFrame?: () => void;
   __chActiveFrameRect?: () => { x: number; y: number; width: number; height: number } | null;
   __chReloadFrames?: () => void;
+  __chReloadFrame?: (key: string) => void;
 }
 
 const FRAMES = [
@@ -88,11 +89,13 @@ describe("WorkspaceFrames", () => {
     expect(typeof hooks.__chFocusActiveFrame).toBe("function");
     expect(typeof hooks.__chActiveFrameRect).toBe("function");
     expect(typeof hooks.__chReloadFrames).toBe("function");
+    expect(typeof hooks.__chReloadFrame).toBe("function");
 
     unmount();
     expect(hooks.__chFocusActiveFrame).toBeUndefined();
     expect(hooks.__chActiveFrameRect).toBeUndefined();
     expect(hooks.__chReloadFrames).toBeUndefined();
+    expect(hooks.__chReloadFrame).toBeUndefined();
   });
 
   it("__chReloadFrames re-assigns the src of every mounted frame", () => {
@@ -120,6 +123,38 @@ describe("WorkspaceFrames", () => {
     for (const { setter, original } of tracked) {
       expect(setter).toHaveBeenCalledWith(original);
     }
+  });
+
+  it("__chReloadFrame re-assigns the src of only the named frame", () => {
+    const { container } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: "test-12345678/ws1" },
+    });
+
+    const tracked = frames(container).map((el) => {
+      const original = el.src;
+      const setter = vi.fn();
+      Object.defineProperty(el, "src", {
+        configurable: true,
+        get: () => original,
+        set: setter,
+      });
+      return { key: el.dataset.key, setter, original };
+    });
+
+    const hooks = window as FrameHooks;
+    hooks.__chReloadFrame!("test-12345678/ws2");
+
+    const ws1 = tracked.find((t) => t.key === "test-12345678/ws1")!;
+    const ws2 = tracked.find((t) => t.key === "test-12345678/ws2")!;
+    expect(ws2.setter).toHaveBeenCalledWith(ws2.original);
+    expect(ws1.setter).not.toHaveBeenCalled();
+  });
+
+  it("__chReloadFrame ignores a key with no mounted frame", () => {
+    render(WorkspaceFrames, { props: { frames: FRAMES, activeKey: null } });
+
+    const hooks = window as FrameHooks;
+    expect(() => hooks.__chReloadFrame!("test-12345678/gone")).not.toThrow();
   });
 
   it("__chActiveFrameRect returns null when no frame is active", () => {

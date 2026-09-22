@@ -142,6 +142,8 @@ const CHILD_FRAME_SCRIPT = `${CHILD_FRAME_FOCUS_TRACKER}${CHILD_FRAME_PROBE}`;
 const FOCUS_ACTIVE_FRAME = `window.__chFocusActiveFrame && window.__chFocusActiveFrame()`;
 const ACTIVE_FRAME_RECT = `window.__chActiveFrameRect ? window.__chActiveFrameRect() : null`;
 const RELOAD_FRAMES = `window.__chReloadFrames && window.__chReloadFrames()`;
+const reloadFrameScript = (frameKey: string): string =>
+  `window.__chReloadFrame && window.__chReloadFrame(${JSON.stringify(frameKey)})`;
 
 // Resolves after two animation frames — one committed paint of the current UI
 // state. executeJavaScript awaits the returned promise, giving main a paint
@@ -273,6 +275,13 @@ export class UiViewManager implements IViewManager {
     });
 
     this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_SCRIPT);
+
+    // Every workspace frame navigates once when it mounts or reloads; any other
+    // navigation means the workbench left its own page. Logged so a blank frame
+    // in a bug report says where it went (PostHog issue 01a08399).
+    this.viewLayer.onChildFrameNavigate(uiViewHandle, ({ url, httpResponseCode }) => {
+      this.logger.info("Workspace frame navigated", { url, httpResponseCode });
+    });
 
     this.uiViewHandle = uiViewHandle;
     // (Re)wire any onFromUI subscriptions onto the new view's webContents.
@@ -408,6 +417,15 @@ export class UiViewManager implements IViewManager {
     // Best-effort fire-and-forget: before WorkspaceFrames mounts the hook is
     // undefined, and a mid-load UI rejects executeJavaScript.
     this.viewLayer.executeJavaScript(this.uiViewHandle, RELOAD_FRAMES).catch(() => {
+      // UI may be mid-load
+    });
+  }
+
+  reloadFrame(frameKey: string): void {
+    if (!this.uiViewHandle || !this.isUIAvailable()) return;
+    // Same best-effort contract as reloadFrames. The key is JSON-encoded, so
+    // it reaches the renderer as a string literal whatever it contains.
+    this.viewLayer.executeJavaScript(this.uiViewHandle, reloadFrameScript(frameKey)).catch(() => {
       // UI may be mid-load
     });
   }

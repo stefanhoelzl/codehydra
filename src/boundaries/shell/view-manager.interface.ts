@@ -105,6 +105,16 @@ export interface IViewManager {
   reloadFrames(): void;
 
   /**
+   * Asks the renderer to reload one mounted workspace iframe, by its frame key
+   * (the UiState `frames` key). Called when that workspace's IDE went away on
+   * its own and left the frame showing a dead workbench.
+   *
+   * Best-effort, like reloadFrames: an unknown key or a UI that is mid-load is
+   * silently a no-op.
+   */
+  reloadFrame(frameKey: string): void;
+
+  /**
    * Resolve after the UI renderer has committed a paint for the current
    * UiState (waits two animation frames). Used to sequence a screenshot after
    * a state-driven layout change — collapsing the sidebar before a hibernation

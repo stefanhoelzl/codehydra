@@ -242,7 +242,35 @@ export interface PluginServerModuleHandle {
   appendOutput(workspacePath: string, request: AppendOutputRequest): boolean;
   /** Called whenever a workspace's extension connects. Returns an unsubscribe. */
   onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
+  /**
+   * Called when a workspace's current socket drops. Returns an unsubscribe.
+   *
+   * A socket that a newer connection of the same workspace replaced is
+   * reported as ours: the server hangs up on it just before the new one
+   * registers.
+   */
+  onWorkspaceDisconnected(listener: (disconnect: WorkspaceDisconnect) => void): () => void;
 }
+
+/** A workspace's sidekick socket dropping, and whether we are the ones who dropped it. */
+export interface WorkspaceDisconnect {
+  readonly workspacePath: string;
+  /** The Socket.IO disconnect reason, verbatim. */
+  readonly reason: string;
+  /**
+   * True when this side hung up: a teardown (hibernate, delete, project close)
+   * or the server closing. False means the IDE end went away on its own — the
+   * workbench shut down, navigated off, or its extension host died.
+   */
+  readonly initiatedByUs: boolean;
+}
+
+/** Socket.IO disconnect reasons that name this server as the one hanging up. */
+const SERVER_DISCONNECT_REASONS: ReadonlySet<string> = new Set([
+  "server namespace disconnect",
+  "server shutting down",
+  "forced server close",
+]);
 
 export function createPluginServerModule(deps: PluginServerModuleDeps): PluginServerModuleHandle {
   const { portManager, dispatcher, appLayer, logger } = deps;
@@ -1012,6 +1040,22 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
             workspace: workspacePath,
             reason,
           });
+          const disconnect: WorkspaceDisconnect = {
+            workspacePath,
+            reason,
+            initiatedByUs:
+              SERVER_DISCONNECT_REASONS.has(reason) || closingWorkspaces.has(workspacePath),
+          };
+          for (const listener of disconnectListeners) {
+            try {
+              listener(disconnect);
+            } catch (error) {
+              logger.warn("A workspace-disconnected listener threw", {
+                workspace: workspacePath,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
         }
       });
 
@@ -1443,6 +1487,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
   /** Notified when a workspace's extension connects, so buffered work can flush. */
   const connectListeners = new Set<(workspacePath: string) => void>();
+  /** Notified when a workspace's current socket drops. */
+  const disconnectListeners = new Set<(disconnect: WorkspaceDisconnect) => void>();
 
   /**
    * Push lines into an output channel in one workspace's IDE.
@@ -1652,6 +1698,10 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     onWorkspaceConnected: (listener) => {
       connectListeners.add(listener);
       return () => connectListeners.delete(listener);
+    },
+    onWorkspaceDisconnected: (listener) => {
+      disconnectListeners.add(listener);
+      return () => disconnectListeners.delete(listener);
     },
   };
 }
