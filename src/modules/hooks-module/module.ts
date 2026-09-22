@@ -1,6 +1,6 @@
 /**
  * HooksModule — lets a repository attach its own scripts to CodeHydra's
- * lifecycle, and replaces `.keepfiles` entirely.
+ * lifecycle.
  *
  * A repository declares hooks by dropping executable files into
  * `.codehydra/hooks/` in its worktree. An `on-` entry reports something that
@@ -37,7 +37,6 @@ import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import { storeBoolean, storeCustom } from "../../boundaries/platform/store-definition";
 import { Path } from "../../utils/path/path";
-import { FileSystemError } from "../../shared/errors/service-errors";
 import { getErrorMessage } from "../../shared/error-utils";
 import { TAGS_METADATA_KEY_PREFIX, TITLE_METADATA_KEY } from "../../shared/api/types";
 import {
@@ -198,39 +197,6 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     sink: deps.sink,
   };
 
-  /** Projects already told their `.keepfiles` is dead. One notice, not one per workspace. */
-  const keepFilesWarned = new Set<string>();
-
-  /**
-   * `.keepfiles` was replaced outright, and stopping silently would look
-   * exactly like data loss — the files it used to copy simply stop appearing.
-   * So the file's continued presence is reported once per project, naming what
-   * to do instead.
-   */
-  async function warnAboutStaleKeepFiles(projectPath: string): Promise<void> {
-    if (keepFilesWarned.has(projectPath)) return;
-    keepFilesWarned.add(projectPath);
-
-    const path = new Path(projectPath, ".keepfiles");
-    try {
-      await deps.fileSystem.readFile(path);
-    } catch (error) {
-      // Absent is the expected case and says nothing.
-      if (error instanceof FileSystemError && error.fsCode === "ENOENT") return;
-      return;
-    }
-
-    deps.logger.warn(".keepfiles is no longer supported", { path: path.toNative() });
-    deps.ui.notification({
-      type: "warning",
-      title: ".keepfiles is no longer supported",
-      message:
-        "Nothing was copied. Move it to .codehydra/hooks/after-worktree-created — " +
-        "a script that copies the files you want into the new worktree.",
-      dismissible: true,
-    });
-  }
-
   // ---------------------------------------------------------------------------
   // after-worktree-created
   // ---------------------------------------------------------------------------
@@ -241,10 +207,8 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
 
     // Activating a discovered workspace is not a creation. Re-running a setup
     // script for every workspace at every project open would be both surprising
-    // and slow — and it is the rule `.keepfiles` already followed.
+    // and slow.
     if (intent.payload.existingWorkspace !== undefined) return { result: {} };
-
-    await warnAboutStaleKeepFiles(input.projectPath);
 
     if (!allowed()) return { result: {} };
 
