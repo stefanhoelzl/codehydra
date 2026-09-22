@@ -291,6 +291,46 @@ describe("CreationModule", () => {
       expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
     });
 
+    it("re-seeds an untouched form with the project of the workspace the panel was opened from", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+
+      // Work in a PROJECT_B workspace, then show the panel (the deselect).
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_B));
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+
+      // Same session (nothing reset it), now on PROJECT_B with its bases fetched.
+      expect(currentPanel(s)).toBe(panel);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      const fetched = s.dispatcher.byType(INTENT_GET_PROJECT_BASES).at(-1);
+      expect((fetched?.payload as { projectPath: string }).projectPath).toBe(PROJECT_B.path);
+    });
+
+    it("keeps a touched form's project when the panel is opened from another project", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+      panel.emitChange("name", { name: "half-typed" });
+      await flush();
+
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_B));
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "name")["initialValue"]).toBe("half-typed");
+    });
+
+    it("does not re-fetch bases when the panel is opened from the same project", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
+      await s.start();
+      const before = s.dispatcher.byType(INTENT_GET_PROJECT_BASES).length;
+
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_A));
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+
+      expect(s.dispatcher.byType(INTENT_GET_PROJECT_BASES)).toHaveLength(before);
+    });
+
     it("falls back to the first project when the last active project is no longer open", async () => {
       const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: PROJECT_A.id });
       const panel = await s.start();
