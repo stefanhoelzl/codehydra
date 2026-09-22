@@ -63,6 +63,12 @@ export interface PluginAdapterOptions {
   readonly registry: OperationRegistry;
   /** Workspace this connection is scoped to, or null for a workspace-less client. */
   readonly workspacePath: WorkspacePath | null;
+  /**
+   * Why `workspacePath` is null although the client named a workspace — an
+   * unknown or ambiguous `--workspace`. Raised instead of the generic
+   * `no-workspace` by any operation that requires a workspace.
+   */
+  readonly workspaceError?: ApiError | null;
   /** Directory the client is running in, when it is a shell that has one. */
   readonly cwd?: string | null;
   readonly logger: Logger;
@@ -135,7 +141,7 @@ function splitArgs(args: readonly unknown[]): {
 }
 
 export function attachPluginAdapter(options: PluginAdapterOptions): void {
-  const { socket, registry, workspacePath, logger, kind, map } = options;
+  const { socket, registry, workspacePath, workspaceError, logger, kind, map } = options;
 
   // One per connection, not per call: a handler may tie state to its caller
   // beyond its own return (`lock.hold`), and a caller still waiting (a queued
@@ -183,8 +189,14 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
 
       logger.debug("API call", { event: mount.channel, workspace: workspacePath });
 
-      void registry
-        .invoke(entry, ctx, request ?? {}, mount.shaping)
+      // A workspace the client named but that did not resolve fails the
+      // commands that need one with the real reason, not "no workspace".
+      const invocation =
+        entry.requiresWorkspace && workspaceError
+          ? Promise.reject(workspaceError)
+          : registry.invoke(entry, ctx, request ?? {}, mount.shaping);
+
+      void invocation
         .then((data) => {
           ack?.({ success: true, data });
         })

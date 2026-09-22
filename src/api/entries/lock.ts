@@ -4,10 +4,11 @@
  *
  * The table itself lives in the lock module and is reached through
  * `deps.locks`; these entries only turn a caller and its arguments into a lock
- * key and shape the answer. The holder is always the caller's workspace — a lock
- * cannot be taken or released on another workspace's behalf, which is what
- * makes "open THAT workspace's terminal and release it there" the one way to
- * break someone else's lock.
+ * key and shape the answer. The holder is always the connection's workspace —
+ * the one `ch` resolved from its working directory, or the one it was told with
+ * `--workspace`. Naming the holder is therefore how someone else's lock is
+ * broken: `ch lock release <name> --workspace <holder>` releases it from any
+ * shell. Nothing takes a lock implicitly; that explicit release is the only way.
  */
 
 import { z } from "zod/v4";
@@ -91,9 +92,10 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "run `ch lock ls` to see who holds it and who is queued.\n\n" +
       "Taking a lock this workspace already holds succeeds immediately and changes nothing.\n\n" +
       "The lock releases when you run `ch lock release`, when the workspace hibernates, and " +
-      "when it is deleted. Closing the agent terminal does not release it. Nothing else takes " +
-      "it from you — there is no steal. To break someone else's lock, open THAT workspace's " +
-      "terminal and release it there.",
+      "when it is deleted. Closing the agent terminal does not release it. Nothing takes it " +
+      "from you implicitly — a waiter never steals it. To break a lock someone else holds " +
+      "(its holder is stuck or gone), release it on the holder's behalf: " +
+      "`ch lock release <name> --workspace <holder>`.",
     input: takeInput,
     requiresWorkspace: true,
     handler: async (ctx, input) => {
@@ -147,7 +149,9 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Releasing hands the lock to the next waiter immediately. Releasing a lock this " +
       "workspace does not hold is an error, not a silent success: it almost always means the " +
       "hold ended earlier than you thought — the workspace hibernated, or a `ch lock run` " +
-      "that held it was killed — and somebody else has been using the resource since.",
+      "that held it was killed — and somebody else has been using the resource since.\n\n" +
+      "`--workspace <holder>` releases as that workspace: the way to break a lock whose holder " +
+      "is stuck. It does not stop whatever the holder is running, so make sure it is done.",
     input: z.object({
       name: lockName
         .optional()

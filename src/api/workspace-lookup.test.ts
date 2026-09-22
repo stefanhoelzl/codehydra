@@ -108,11 +108,13 @@ describe("resolveWorkspaceReference", () => {
 
     expect(result).toHaveProperty("error");
     expect((result as { error: string }).error).toContain("2 open workspaces");
+    expect(result).toHaveProperty("category", "usage");
   });
 
   it("reports a name that matches nothing", () => {
     const result = resolveWorkspaceReference(PROJECTS, "absent");
     expect((result as { error: string }).error).toContain('No open workspace named "absent"');
+    expect(result).toHaveProperty("category", "not-found");
   });
 });
 

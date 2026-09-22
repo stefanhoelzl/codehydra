@@ -760,7 +760,7 @@ operations that instance actually has.
 
 |               |                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <path>` overrides; several operations also accept a target so one workspace can act on another.                                                                                                                                                                                                                           |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides; an unknown name fails the first command that needs a workspace with exit `6`, an ambiguous one with exit `2`. Several operations also accept a target so one workspace can act on another.                                                                                                       |
 | **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                              |
 | **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                    | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
 | **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview. |
@@ -815,8 +815,10 @@ $ ch bg ch lock run device "long session"                 # hold until killed
 - **Names** are free-form (`[A-Za-z0-9-_]+`) and exist while held. `--scope global`
   (default) is shared by every workspace of every open project; `--scope project` only by
   this project's. `ch lock ls` shows both, with the project named for a project lock.
-- **There is no steal.** To break another workspace's lock, run `ch lock release` in that
-  workspace's terminal.
+- **No implicit steal.** A waiter never takes a held lock. To break one whose holder is
+  stuck, release it as the holder from any shell:
+  `ch lock release <name> --workspace <holder>`. That ends the hold, not whatever the
+  holder is still running.
 - **`ch lock run`** ties the lock to its own process: it is released when the command
   exits or `ch` is killed, and only if `run` acquired it — inside an existing hold it
   leaves that hold alone. With no command it holds until killed; start that under
@@ -905,11 +907,11 @@ nothing on PATH.
 
 ### Other subcommands
 
-| Command                          | Purpose                                                                                                        |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `ch bg <cmd…>`                   | Run a command without keeping the workspace busy. Never contacts the app.                                      |
-| `ch lock run <name> [-- <cmd…>]` | Take a lock and run a command, or hold until killed. See [Locks](#locks).                                      |
-| `ch claude` / `ch opencode`      | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. |
+| Command                          | Purpose                                                                                                                                                                       |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ch bg <cmd…>`                   | Run a command without keeping the workspace busy. Never contacts the app. Exits with the command's code, or 128 + the signal number if a signal killed it.                    |
+| `ch lock run <name> [-- <cmd…>]` | Take a lock and run a command, or hold until killed. See [Locks](#locks).                                                                                                     |
+| `ch claude` / `ch opencode`      | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. Extra arguments are passed on to `claude` / `opencode attach`. |
 
 ---
 

@@ -19,6 +19,7 @@ import { stat } from "node:fs/promises";
 
 import type { OperationRegistry } from "../api/registry";
 import { attachPluginAdapter, type ClientKind } from "../api/adapters/plugin";
+import { ApiError } from "../api/errors";
 import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import {
@@ -748,6 +749,15 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     readonly cwd?: string;
   }
 
+  /** The workspace a connection acts on, and why it has none when it asked for one. */
+  interface ResolvedWorkspace {
+    readonly workspacePath: WorkspacePath | null;
+    /** Set when the client named a workspace that could not be resolved. */
+    readonly workspaceError?: ApiError;
+  }
+
+  const NO_WORKSPACE: ResolvedWorkspace = { workspacePath: null };
+
   function readHandshake(auth: unknown): Handshake | { error: string } {
     if (typeof auth !== "object" || auth === null) {
       return { error: "invalid auth" };
@@ -795,21 +805,29 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    * containing it. Resolving to nothing is not an error for a CLI client — that
    * is simply a shell standing outside any worktree, and app-global commands
    * still work there.
+   *
+   * A workspace the client *named* (`ch --workspace <name>`) that cannot be
+   * resolved is different: the caller asked for one and would otherwise get a
+   * misleading "no workspace" on its first workspace command. The error is kept
+   * and raised by the adapter on the first command that needs a workspace,
+   * rather than refusing the connection — commands that need none still work.
    */
-  async function resolveConnectionWorkspace(handshake: Handshake): Promise<WorkspacePath | null> {
+  async function resolveConnectionWorkspace(handshake: Handshake): Promise<ResolvedWorkspace> {
     // A sidekick always presents its own workspace path, and has always been
     // taken at its word — it may name a workspace still being opened.
     if (handshake.kind === "sidekick") {
-      if (handshake.workspacePath === undefined) return null;
+      if (handshake.workspacePath === undefined) return NO_WORKSPACE;
       try {
-        return workspacePathSchema.parse(new Path(handshake.workspacePath).toString());
+        return {
+          workspacePath: workspacePathSchema.parse(new Path(handshake.workspacePath).toString()),
+        };
       } catch {
-        return null;
+        return NO_WORKSPACE;
       }
     }
 
     const reference = handshake.workspacePath;
-    if (reference === undefined && handshake.cwd === undefined) return null;
+    if (reference === undefined && handshake.cwd === undefined) return NO_WORKSPACE;
 
     // Deliberately NOT workspace:resolve: that intent throws when the path is
     // not a workspace, and the dispatcher logs the rejection at error level —
@@ -827,7 +845,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       logger.debug("Could not list projects to resolve a client's workspace", {
         error: getErrorMessage(error),
       });
-      return null;
+      return NO_WORKSPACE;
     }
 
     if (reference !== undefined) {
@@ -837,13 +855,16 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
           reference,
           error: resolved.error,
         });
-        return null;
+        return {
+          workspacePath: null,
+          workspaceError: new ApiError(resolved.category, resolved.error),
+        };
       }
-      return workspacePathSchema.parse(resolved.path);
+      return { workspacePath: workspacePathSchema.parse(resolved.path) };
     }
 
     const match = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd!);
-    return match === null ? null : workspacePathSchema.parse(match);
+    return match === null ? NO_WORKSPACE : { workspacePath: workspacePathSchema.parse(match) };
   }
 
   // ---------------------------------------------------------------------------
@@ -871,7 +892,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       return;
     }
 
-    const resolved = await resolveConnectionWorkspace(handshake);
+    const { workspacePath: resolved, workspaceError } = await resolveConnectionWorkspace(handshake);
 
     // The socket may have gone while we were resolving.
     if (socket.disconnected) return;
@@ -883,6 +904,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
         registry: deps.registry,
         workspacePath: resolved,
+        workspaceError: workspaceError ?? null,
         cwd: handshake.cwd ?? null,
         logger,
         kind: handshake.kind,
