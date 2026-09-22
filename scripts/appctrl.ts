@@ -1,8 +1,8 @@
 /**
  * AppCtrl — a Playwright driver for a CodeHydra Electron app, in two guises.
  *
- * Executed (`npx tsx scripts/appctrl.ts`), it is an MCP server: agents get
- * appctrl_* tools for launching, screenshotting, and inspecting a running app.
+ * Executed (`pnpm -s appctrl <command>`), it is a CLI: agents launch,
+ * screenshot, and inspect a running app from the shell.
  *
  * Imported, it is a library: `createDriver()` hands back the same behavior as
  * plain functions, which is what the e2e suite drives. One implementation, two
@@ -13,21 +13,34 @@
  * - The app has a single WebContentsView (the UI page); workspaces are
  *   VSCodium iframes inside it. Workspace targeting resolves a Playwright
  *   Frame within the UI page (OOPIFs are fully scriptable through CDP).
+ * - The CLI is stateless, the driver is not: `start` spawns a detached daemon
+ *   that owns the driver, and every later command is an HTTP call to it on
+ *   127.0.0.1. The daemon lives exactly as long as the app.
  *
  * Usage:
- *   MCP:  registered in .mcp.json — agents get the tools automatically.
+ *   CLI:  pnpm -s appctrl --help
  *   Lib:  import { createDriver } from "../scripts/appctrl.ts";
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
 import { _electron, type Frame, type Page, type ElectronApplication } from "playwright";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFile, readdir, stat, access } from "node:fs/promises";
-import { realpathSync } from "node:fs";
-import { join, dirname } from "node:path";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 
 /** Repo root — this file lives in <root>/scripts/. */
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -129,7 +142,7 @@ function descendantPids(root: number): number[] {
 /**
  * Kill the app's leftovers. Quitting CodeHydra does not reap its VSCodium reh-web
  * server, and that orphan holds the Electron process's inherited stdio pipes open —
- * which is enough to keep a Playwright worker (or an MCP server) from ever exiting.
+ * which is enough to keep a Playwright worker (or the appctrl daemon) from ever exiting.
  */
 function killTree(rootPid: number, descendants: number[]): void {
   if (process.platform === "win32") {
@@ -193,6 +206,8 @@ export interface LaunchOptions {
   timeout?: number;
   /** Default timeout for Playwright actions (ms). Default 2_000. */
   actionTimeout?: number;
+  /** Called for every console message, alongside the in-memory buffer. */
+  onConsole?: (entry: ConsoleEntry) => void;
 }
 
 /** A native Electron dialog the app tried to show while under test. */
@@ -211,7 +226,71 @@ export interface ReadLogsOptions {
   logsDir?: string;
 }
 
+export interface WaitForOptions {
+  target?: string;
+  state?: "attached" | "detached" | "visible" | "hidden";
+  /** Milliseconds. Defaults to the driver's action timeout. */
+  timeout?: number;
+}
+
 export type AppDriver = ReturnType<typeof createDriver>;
+
+/** Read + filter the most recent JSONL log file. Returns formatted lines plus a header. */
+export async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
+  const {
+    scope,
+    level = "debug",
+    limit = 50,
+    order = "desc",
+    logsDir = join(process.cwd(), "app-data", "logs"),
+  } = options;
+
+  const files = await readdir(logsDir).catch(() => [] as string[]);
+  const logFiles = files.filter((f) => f.endsWith(".log"));
+  if (logFiles.length === 0) throw new Error("No log files found in " + logsDir);
+
+  // Find most recent by mtime
+  const withStats = await Promise.all(
+    logFiles.map(async (f) => ({ name: f, mtime: (await stat(join(logsDir, f))).mtimeMs }))
+  );
+  withStats.sort((a, b) => b.mtime - a.mtime);
+  const latest = withStats[0]!;
+
+  const content = await readFile(join(logsDir, latest.name), "utf-8");
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
+
+  // Parse JSONL — emit a synthetic error entry on parse failure
+  const entries: LogEntry[] = [];
+  for (const line of lines) {
+    try {
+      entries.push(JSON.parse(line) as LogEntry);
+    } catch {
+      entries.push({
+        timestamp: "",
+        level: "error",
+        scope: "appctrl",
+        message: `Failed to parse log line: ${line}`,
+      });
+    }
+  }
+
+  let filtered = entries;
+  if (scope) filtered = filtered.filter((e) => e.scope === scope);
+  if (level) {
+    const minPriority = LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]);
+    if (minPriority >= 0) {
+      filtered = filtered.filter(
+        (e) => LOG_LEVELS.indexOf(e.level as (typeof LOG_LEVELS)[number]) >= minPriority
+      );
+    }
+  }
+
+  if (order === "desc") filtered.reverse();
+  const result = filtered.slice(0, limit);
+  const formatted = result.map(formatLogEntry).join("\n");
+  const header = `${result.length} of ${filtered.length} entries (file: ${latest.name})`;
+  return `${header}\n\n${formatted}`;
+}
 
 // =============================================================================
 // Driver
@@ -225,22 +304,20 @@ export type AppDriver = ReturnType<typeof createDriver>;
 export function createDriver() {
   let electronApp: ElectronApplication | null = null;
   const consoleBuffer: ConsoleEntry[] = [];
+  let consoleSink: ((entry: ConsoleEntry) => void) | undefined;
 
   function subscribePageConsole(page: Page): void {
     page.on("console", (msg) => {
-      consoleBuffer.push({
-        level: msg.type(),
-        text: msg.text(),
-        ts: Date.now(),
-        source: page.url(),
-      });
+      const entry = { level: msg.type(), text: msg.text(), ts: Date.now(), source: page.url() };
+      consoleBuffer.push(entry);
       if (consoleBuffer.length > MAX_CONSOLE) consoleBuffer.shift();
+      consoleSink?.(entry);
     });
   }
 
   /** The running app, or throw. */
   function electron(): ElectronApplication {
-    if (!electronApp) throw new Error("App not started. Call appctrl_start first.");
+    if (!electronApp) throw new Error("App not started.");
     return electronApp;
   }
 
@@ -278,6 +355,7 @@ export function createDriver() {
     }
 
     const appArgs = [...DRIVER_APP_ARGS, ...args];
+    consoleSink = options.onConsole;
 
     if (appPath !== null) {
       try {
@@ -519,6 +597,31 @@ export function createDriver() {
     return frame.evaluate(code);
   }
 
+  /** Wait until the first element matching `selector` reaches `state` (default visible). */
+  async function waitFor(selector: string, options: WaitForOptions = {}): Promise<void> {
+    const { frame } = await findTarget(options.target);
+    await frame
+      .locator(selector)
+      .first()
+      .waitFor({
+        ...(options.state !== undefined && { state: options.state }),
+        ...(options.timeout !== undefined && { timeout: options.timeout }),
+      });
+  }
+
+  /**
+   * Expand the sidebar. It is 20px and overflow-clipped until hovered, and a
+   * headless run has no cursor to hover with.
+   */
+  async function expandSidebar(): Promise<void> {
+    const found = await uiPage().evaluate(() => {
+      const nav = document.querySelector("nav.sidebar");
+      nav?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      return nav !== null;
+    });
+    if (!found) throw new Error("nav.sidebar not found");
+  }
+
   /** Mock Electron's folder picker so it auto-returns `paths`. */
   async function mockDialog(paths: string[]): Promise<void> {
     await electron().evaluate(({ dialog }, p) => {
@@ -594,63 +697,6 @@ export function createDriver() {
     return list;
   }
 
-  /** Read + filter the most recent JSONL log file. Returns formatted lines plus a header. */
-  async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
-    const {
-      scope,
-      level = "debug",
-      limit = 50,
-      order = "desc",
-      logsDir = join(process.cwd(), "app-data", "logs"),
-    } = options;
-
-    const files = await readdir(logsDir).catch(() => [] as string[]);
-    const logFiles = files.filter((f) => f.endsWith(".log"));
-    if (logFiles.length === 0) throw new Error("No log files found in " + logsDir);
-
-    // Find most recent by mtime
-    const withStats = await Promise.all(
-      logFiles.map(async (f) => ({ name: f, mtime: (await stat(join(logsDir, f))).mtimeMs }))
-    );
-    withStats.sort((a, b) => b.mtime - a.mtime);
-    const latest = withStats[0]!;
-
-    const content = await readFile(join(logsDir, latest.name), "utf-8");
-    const lines = content.split("\n").filter((l) => l.trim().length > 0);
-
-    // Parse JSONL — emit a synthetic error entry on parse failure
-    const entries: LogEntry[] = [];
-    for (const line of lines) {
-      try {
-        entries.push(JSON.parse(line) as LogEntry);
-      } catch {
-        entries.push({
-          timestamp: "",
-          level: "error",
-          scope: "appctrl",
-          message: `Failed to parse log line: ${line}`,
-        });
-      }
-    }
-
-    let filtered = entries;
-    if (scope) filtered = filtered.filter((e) => e.scope === scope);
-    if (level) {
-      const minPriority = LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]);
-      if (minPriority >= 0) {
-        filtered = filtered.filter(
-          (e) => LOG_LEVELS.indexOf(e.level as (typeof LOG_LEVELS)[number]) >= minPriority
-        );
-      }
-    }
-
-    if (order === "desc") filtered.reverse();
-    const result = filtered.slice(0, limit);
-    const formatted = result.map(formatLogEntry).join("\n");
-    const header = `${result.length} of ${filtered.length} entries (file: ${latest.name})`;
-    return `${header}\n\n${formatted}`;
-  }
-
   return {
     launch,
     stop,
@@ -670,6 +716,8 @@ export function createDriver() {
     type,
     key,
     evaluate,
+    waitFor,
+    expandSidebar,
     mockDialog,
     silenceNativeDialogs,
     nativeDialogs,
@@ -681,625 +729,736 @@ export function createDriver() {
 }
 
 // =============================================================================
-// MCP tool-result helpers
+// CLI: files, daemon protocol
 // =============================================================================
 
-function textResult(data: unknown): { content: Array<{ type: "text"; text: string }> } {
-  return { content: [{ type: "text", text: JSON.stringify(data) ?? "null" }] };
+/**
+ * Everything the CLI keeps on disk lives in the dev data root the launched app
+ * uses too (`<cwd>/app-data`, gitignored) — so each worktree has its own daemon,
+ * and parallel workspaces never find each other's app.
+ */
+const DATA_DIR = join(process.cwd(), "app-data");
+const STATE_FILE = join(DATA_DIR, "appctrl.json");
+const CONSOLE_FILE = join(DATA_DIR, "appctrl-console.jsonl");
+const DAEMON_LOG = join(DATA_DIR, "appctrl-daemon.log");
+const SCREENSHOT_DIR = join(DATA_DIR, "screenshots");
+
+/** How long a daemon waits for its `start` request before giving up. */
+const DAEMON_IDLE_TIMEOUT_MS = 120_000;
+
+/** Where a running daemon listens. Written by the daemon, read by the CLI. */
+interface DaemonState {
+  port: number;
+  pid: number;
 }
 
-function errorResult(message: string): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
+/** Status the daemon reports about the app it owns. */
+interface AppStatus {
+  pid: number | undefined;
+  headless: boolean;
+  packaged: string | null;
 }
+
+/** Request bodies, per daemon command. The CLI parses and validates; the daemon trusts. */
+interface DaemonRequests {
+  start: { headless: boolean; packaged?: string; flags: string[] };
+  stop: Record<string, never>;
+  status: Record<string, never>;
+  screenshot: { target?: string };
+  dom: { selector?: string; target?: string };
+  click: { selector: string; target?: string };
+  type: { text: string; selector?: string; target?: string };
+  key: { key: string; target?: string };
+  eval: { code: string; target?: string };
+  "wait-for": { selector: string } & WaitForOptions;
+  "expand-sidebar": Record<string, never>;
+  dialog: { paths: string[] };
+  resume: Record<string, never>;
+  targets: Record<string, never>;
+}
+
+type DaemonCommand = keyof DaemonRequests;
+
+type DaemonHandlers = {
+  [K in DaemonCommand]: (params: DaemonRequests[K]) => Promise<unknown>;
+};
 
 function asMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: alive, just not ours to signal.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The running daemon, or null. A state file whose pid is dead is a crashed daemon. */
+function readDaemonState(): DaemonState | null {
+  try {
+    const state = JSON.parse(readFileSync(STATE_FILE, "utf-8")) as DaemonState;
+    return isAlive(state.pid) ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+function requireDaemon(): DaemonState {
+  const state = readDaemonState();
+  if (!state) throw new Error("App not running. Start it with `pnpm -s appctrl start`.");
+  return state;
+}
+
+async function callDaemon<K extends DaemonCommand>(
+  state: DaemonState,
+  command: K,
+  params: DaemonRequests[K]
+): Promise<unknown> {
+  const response = await fetch(`http://127.0.0.1:${state.port}/${command}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = (await response.json()) as { result?: unknown; error?: string };
+  if (!response.ok) throw new Error(body.error ?? `daemon answered HTTP ${response.status}`);
+  return body.result;
+}
+
+/** Call the running daemon, or fail with a hint to start one. */
+function send<K extends DaemonCommand>(command: K, params: DaemonRequests[K]): Promise<unknown> {
+  return callDaemon(requireDaemon(), command, params);
+}
+
+/**
+ * Spawn a detached daemon and wait for it to publish its port. Its stdio goes to
+ * a log file, not to us — an inherited pipe would hold the caller's shell open
+ * for as long as the app runs.
+ */
+async function spawnDaemon(): Promise<DaemonState> {
+  mkdirSync(DATA_DIR, { recursive: true });
+  rmSync(STATE_FILE, { force: true });
+
+  const log = openSync(DAEMON_LOG, "w");
+  // Same node, same loader flags (tsx's --import): the daemon is this file again.
+  const child = spawn(
+    process.execPath,
+    [...process.execArgv, fileURLToPath(import.meta.url), "__daemon"],
+    { detached: true, stdio: ["ignore", log, log], windowsHide: true }
+  );
+  closeSync(log);
+  child.unref();
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const state = readDaemonState();
+    if (state && state.pid === child.pid) return state;
+    if (child.exitCode !== null) break;
+    await sleep(100);
+  }
+  throw new Error(`appctrl daemon failed to start — see ${DAEMON_LOG}`);
+}
+
+/** Console entries the daemon persisted, oldest first. Readable after the app is gone. */
+function readConsoleFile(level?: string): ConsoleEntry[] {
+  let content: string;
+  try {
+    content = readFileSync(CONSOLE_FILE, "utf-8");
+  } catch {
+    return [];
+  }
+  const entries: ConsoleEntry[] = [];
+  for (const line of content.split("\n")) {
+    if (line.trim().length === 0) continue;
+    try {
+      entries.push(JSON.parse(line) as ConsoleEntry);
+    } catch {
+      // A line torn by a crash mid-write; the rest is still worth reading.
+    }
+  }
+  const filtered = level ? entries.filter((e) => e.level === level) : entries;
+  return filtered.slice(-MAX_CONSOLE);
+}
+
 // =============================================================================
-// MCP server (only constructed when this file is executed, not imported)
+// CLI: daemon
 // =============================================================================
 
 /**
- * Build the MCP server over a driver. The tool bodies are the driver's API with
- * JSON-shaped results wrapped around them — no behavior lives here.
- *
- * The SDK is imported statically (the repo bans inline dynamic import), but nothing
- * here runs on import: the server is only constructed, and the transport only
- * connected, behind the isMainModule() guard at the bottom of this file.
+ * The long-lived half: owns one driver, serves the CLI over HTTP on 127.0.0.1,
+ * and exits with the app — on `stop`, on a crash, or when the app is quit from
+ * its own UI — so there is never a daemon without an app to go stale.
  */
-function createServer(driver: AppDriver): McpServer {
-  // Methods are closures, not `this`-bound, so destructuring is safe.
-  const { findTarget, focusTargetFrame } = driver;
+function runDaemon(): void {
+  const driver = createDriver();
+  let status: AppStatus | null = null;
+  let stopping = false;
 
-  const server = new McpServer(
-    { name: "appctrl", version: "1.0.0" },
-    {
-      capabilities: { tools: {}, resources: {} },
-      instructions:
-        "AppCtrl controls a running CodeHydra instance for UI debugging. " +
-        "IMPORTANT: CodeHydra uses shadow DOM web components — always use appctrl_dom " +
-        "to inspect the accessibility tree before interacting. Use role= or text= selectors, " +
-        "not CSS selectors for web components.\n\n" +
-        "SIDEBAR: The sidebar is collapsed (20px) in headless mode. " +
-        "BEFORE clicking any sidebar button, expand it with appctrl_evaluate:\n" +
-        '  target: "ui", code: "(() => { document.querySelector(\'nav.sidebar\')' +
-        "?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })); " +
-        "return 'expanded'; })()\"\n\n" +
-        "IDE SERVER: Workspaces are VSCodium iframes inside the single UI view, NOT VS Code extensions. " +
-        "acquireVsCodeApi is NOT available. dispatchEvent(new KeyboardEvent(...)) does NOT work. " +
-        "Use appctrl_key for shortcuts (Control+p, Control+Shift+p, Enter, Escape) " +
-        "and appctrl_type for text input.\n\n" +
-        "PROJECTS: Do NOT open the user's real projects. Create a temporary git repo, " +
-        "then use appctrl_dialog to mock the folder picker before clicking Open Project in the UI.",
+  function exit(code: number): never {
+    driver.killSync();
+    // Only our own state file: a successor may already have replaced it.
+    if (readDaemonState()?.pid === process.pid) {
+      rmSync(STATE_FILE, { force: true });
     }
-  );
+    process.exit(code);
+  }
 
-  // =============================================================================
-  // Tools
-  // =============================================================================
+  const handlers: DaemonHandlers = {
+    start: async ({ headless, packaged, flags }) => {
+      if (driver.isRunning()) throw new Error(`App already running (PID ${driver.pid()})`);
 
-  // ── appctrl_start ───────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_start",
-    {
-      description:
-        "Launch CodeHydra with CDP enabled. " +
-        "The app runs headless via Electron flags by default. " +
-        "Use the flags parameter to pass additional CLI flags like --log.level=debug. " +
-        "Requires `pnpm build` to be run first (the app is launched from `out/main/index.js`).",
-      inputSchema: z.object({
-        headless: z
-          .boolean()
-          .optional()
-          .describe("Run headless via --ozone-platform=headless. Default: true"),
-        packaged: z
-          .string()
-          .optional()
-          .describe(
-            "Path to a packaged CodeHydra binary to launch instead of the dev build " +
-              "(e.g. dist/win-unpacked/CodeHydra.exe). Use to reproduce a CI failure locally."
-          ),
-        flags: z
-          .string()
-          .optional()
-          .describe(
-            'Additional CLI flags for CodeHydra, e.g. "--log.output=file,console". ' +
-              "Do NOT set log.level, log.format, or log.output — appctrl manages these."
-          ),
-      }),
-    },
-    async ({ headless = true, packaged, flags }) => {
       // App flags go after the app path — processed by CodeHydra's config system.
       // Headless flags are applied via --electron.flags which the app reads
       // and applies via app.commandLine.appendSwitch() before app.whenReady().
-      const appFlags: string[] = ["--log.format=json", "--log.level=silly"];
-      if (headless) {
-        appFlags.push("--electron.flags=--ozone-platform=headless --disable-gpu");
-      }
-      if (flags) {
-        appFlags.push(...flags.split(/\s+/));
-      }
+      const appFlags = ["--log.format=json", "--log.level=silly"];
+      if (headless) appFlags.push("--electron.flags=--ozone-platform=headless --disable-gpu");
+      appFlags.push(...flags);
 
-      try {
-        // A packaged build resolves its own app path; the dev build takes the repo root
-        // so app.getAppPath() isn't out/main/ (which would break asset resolution).
-        const { pid } = await driver.launch({
-          ...(packaged !== undefined && { executablePath: packaged, appPath: null }),
-          args: appFlags,
+      writeFileSync(CONSOLE_FILE, "");
+      // A packaged build resolves its own app path; the dev build takes the repo root
+      // so app.getAppPath() isn't out/main/ (which would break asset resolution).
+      const { pid } = await driver.launch({
+        ...(packaged !== undefined && { executablePath: packaged, appPath: null }),
+        args: appFlags,
+        onConsole: (entry) => appendFileSync(CONSOLE_FILE, JSON.stringify(entry) + "\n"),
+      });
+      driver
+        .electron()
+        .process()
+        .once("exit", () => {
+          if (!stopping) exit(0);
         });
-        return textResult({ pid, headless, packaged: packaged ?? null });
-      } catch (err) {
-        return errorResult(`Failed to start: ${asMessage(err)}`);
-      }
-    }
-  );
+      // Every other command needs the UI page; return once there is one.
+      await driver.waitForUiPage();
 
-  // ── appctrl_stop ────────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_stop",
-    {
-      description: "Stop the running CodeHydra instance and disconnect Playwright.",
-      inputSchema: z.object({}),
+      status = { pid, headless, packaged: packaged ?? null };
+      return status;
     },
-    async () => {
-      if (!driver.isRunning()) {
-        return textResult({ stopped: false, reason: "App not running" });
-      }
-
+    stop: async () => {
+      stopping = true;
       await driver.stop();
-      return textResult({ stopped: true });
-    }
-  );
-
-  // ── appctrl_screenshot ──────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_screenshot",
-    {
-      description:
-        "Capture a screenshot of a CodeHydra view. Returns the image directly. " +
-        'Target: "ui" for the whole window (sidebar + active workspace), ' +
-        '"workspace" (default) for just the active workspace iframe, ' +
-        "or a URL substring to match a specific frame.",
-      inputSchema: z.object({
-        target: z
-          .string()
-          .optional()
-          .describe('View to capture: "ui", "workspace" (default), or URL substring'),
-      }),
+      return null;
     },
-    async ({ target }) => {
-      try {
-        const resolved = await findTarget(target);
-        let buffer: Buffer;
-        if (resolved.isWorkspaceFrame) {
-          // Screenshot the <iframe> element from the host page (clips the page
-          // capture to the frame's box — frames have no direct screenshot API).
-          const el = await resolved.frame.frameElement();
-          buffer = await el.screenshot({ type: "png" });
-          await el.dispose();
-        } else {
-          buffer = await resolved.page.screenshot({ type: "png" });
-        }
-        const base64 = buffer.toString("base64");
-        return {
-          content: [{ type: "image" as const, data: base64, mimeType: "image/png" as const }],
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
+    status: async () => status,
+    screenshot: async ({ target = "workspace" }) => {
+      const buffer = await driver.screenshot(target);
+      mkdirSync(SCREENSHOT_DIR, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const slug = target.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "") || "view";
+      const file = join(SCREENSHOT_DIR, `${stamp}-${slug}.png`);
+      writeFileSync(file, buffer);
+      return file;
+    },
+    dom: ({ selector, target }) => driver.dom(selector, target),
+    click: ({ selector, target }) => driver.click(selector, target),
+    type: ({ text, selector, target }) => driver.type(text, selector, target),
+    key: ({ key, target }) => driver.key(key, target),
+    eval: ({ code, target }) => driver.evaluate(code, target),
+    "wait-for": ({ selector, ...options }) => driver.waitFor(selector, options),
+    "expand-sidebar": () => driver.expandSidebar(),
+    dialog: ({ paths }) => driver.mockDialog(paths),
+    resume: () => driver.resume(),
+    targets: () => driver.targets(),
+  };
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let body = "";
+    req.setEncoding("utf-8");
+    for await (const chunk of req) body += chunk as string;
+
+    const command = (req.url ?? "/").slice(1);
+    const reply = (code: number, payload: unknown, then?: () => void): void => {
+      res.writeHead(code, { "content-type": "application/json" });
+      res.end(JSON.stringify(payload), then);
+    };
+
+    if (!Object.hasOwn(handlers, command)) {
+      reply(404, { error: `Unknown command: ${command}` });
+      return;
+    }
+    const handler = handlers[command as DaemonCommand] as (params: unknown) => Promise<unknown>;
+
+    try {
+      const result = await handler(body ? (JSON.parse(body) as unknown) : {});
+      // A daemon without an app has nothing left to serve.
+      reply(200, { result: result ?? null }, driver.isRunning() ? undefined : () => exit(0));
+    } catch (err) {
+      reply(500, { error: asMessage(err) }, driver.isRunning() ? undefined : () => exit(1));
+    }
+  }
+
+  const server = createServer((req, res) => void handle(req, res));
+  server.listen(0, "127.0.0.1", () => {
+    const { port } = server.address() as AddressInfo;
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(STATE_FILE, JSON.stringify({ port, pid: process.pid } satisfies DaemonState));
+  });
+
+  // The CLI that spawned us died before sending `start`.
+  setTimeout(() => {
+    if (!driver.isRunning()) exit(1);
+  }, DAEMON_IDLE_TIMEOUT_MS).unref();
+
+  process.on("SIGTERM", () => exit(0));
+  process.on("SIGINT", () => exit(0));
+  process.on("uncaughtException", (err) => {
+    process.stderr.write(`appctrl daemon crashed: ${err.stack ?? err.message}\n`);
+    exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    const msg = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    process.stderr.write(`appctrl daemon unhandled rejection: ${msg}\n`);
+    exit(1);
+  });
+}
+
+// =============================================================================
+// CLI: commands
+// =============================================================================
+
+type OptionValues = Record<string, string | boolean | undefined>;
+
+interface Invocation {
+  values: OptionValues;
+  positionals: string[];
+}
+
+interface CliCommand {
+  usage: string;
+  summary: string;
+  options?: Record<string, { type: "string" | "boolean"; short?: string }>;
+  /** Returns what to print on stdout, if anything. */
+  run: (invocation: Invocation) => Promise<string | undefined>;
+}
+
+const TARGET_OPTION = { target: { type: "string", short: "t" } } as const;
+
+const TARGET_HELP =
+  '--target, -t   View: "workspace" (default, the visible workspace iframe), "ui" (the whole\n' +
+  "               window), or a URL substring matching a frame (see `targets`)";
+
+class UsageError extends Error {}
+
+function stringOption(values: OptionValues, name: string): string | undefined {
+  const value = values[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function positional(invocation: Invocation, index: number, name: string): string {
+  const value = invocation.positionals[index];
+  if (value === undefined) throw new UsageError(`missing <${name}>`);
+  return value;
+}
+
+function json(value: unknown): string {
+  return JSON.stringify(value ?? null, null, 2);
+}
+
+function targetOf(values: OptionValues): { target?: string } {
+  const target = stringOption(values, "target");
+  return target === undefined ? {} : { target };
+}
+
+const COMMANDS: Record<string, CliCommand> = {
+  start: {
+    usage: "start [--headed] [--packaged <exe>] [-- <app flag>…]",
+    summary:
+      "Launch CodeHydra (headless unless --headed) and return once its UI is up. Needs\n" +
+      "`pnpm build` first. --packaged launches a packaged binary instead of the dev build\n" +
+      "(e.g. dist/linux-unpacked/codehydra) to reproduce a CI failure. App flags follow `--`\n" +
+      "(e.g. -- --agent=opencode); log.level and log.format are managed by appctrl.\n" +
+      "Prints {pid, headless, packaged}.",
+    options: { headed: { type: "boolean" }, packaged: { type: "string" } },
+    run: async ({ values, positionals }) => {
+      if (readDaemonState()) {
+        throw new Error("App already running — `pnpm -s appctrl stop` it first.");
       }
-    }
-  );
-
-  // ── appctrl_dom ─────────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_dom",
-    {
-      description:
-        "Get the accessibility tree of a CodeHydra view as YAML. " +
-        "Shows roles, names, and structure — use this to find the right selectors " +
-        "before clicking or typing. Output maps directly to Playwright selectors " +
-        "(e.g. a line '- button \"Create\"' means you can use selector 'role=button[name=\"Create\"]')." +
-        "Use the selector parameter to scope to a subtree (e.g. '.dialog' to inspect only the dialog).",
-      inputSchema: z.object({
-        selector: z
-          .string()
-          .optional()
-          .describe("CSS selector to scope the tree (e.g. '.dialog', 'body'). Default: 'body'"),
-        target: z
-          .string()
-          .optional()
-          .describe('View: "ui", "workspace" (default), or URL substring'),
-      }),
+      const packaged = stringOption(values, "packaged");
+      const state = await spawnDaemon();
+      const result = await callDaemon(state, "start", {
+        headless: values["headed"] !== true,
+        ...(packaged !== undefined && { packaged: resolve(packaged) }),
+        flags: positionals,
+      });
+      return json(result);
     },
-    async ({ selector = "body", target }) => {
-      try {
-        const { frame } = await findTarget(target);
-        const snapshot = await frame.locator(selector).ariaSnapshot();
-        return { content: [{ type: "text" as const, text: snapshot }] };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
+  },
+  stop: {
+    usage: "stop",
+    summary: "Quit the app through its own shutdown path. The daemon exits with it.",
+    run: async () => {
+      const state = readDaemonState();
+      if (!state) {
+        process.stderr.write("App not running.\n");
+        return undefined;
       }
-    }
-  );
-
-  // ── appctrl_click ───────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_click",
-    {
-      description:
-        "Click an element in a CodeHydra view. " +
-        "Accepts a CSS selector or Playwright selector (e.g. 'text=New Workspace', '.my-class', '#my-id'). " +
-        "IMPORTANT: CodeHydra uses @vscode-elements web components (vscode-button, vscode-textfield, etc.) " +
-        "which have shadow DOM. Standard selectors won't find their inner elements. " +
-        'Prefer ARIA selectors: role=button[name="Create"], role=combobox, or text= selectors. ' +
-        "Use appctrl_dom first to discover available selectors.",
-      inputSchema: z.object({
-        selector: z
-          .string()
-          .describe("CSS selector or Playwright selector (e.g. 'text=Submit', '.btn-primary')"),
-        target: z
-          .string()
-          .optional()
-          .describe('View to interact with: "ui", "workspace" (default), or URL substring'),
-      }),
+      await callDaemon(state, "stop", {});
+      return undefined;
     },
-    async ({ selector, target }) => {
-      try {
-        const { frame } = await findTarget(target);
-        await frame.click(selector);
-        return textResult({ clicked: selector });
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }
-  );
-
-  // ── appctrl_type ────────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_type",
-    {
-      description:
-        "Type text into an element or the focused element. " +
-        "If selector is provided, fills that element. Otherwise types into whatever is focused. " +
-        "IMPORTANT: vscode-textfield and other @vscode-elements use shadow DOM — " +
-        "the fill selector may not reach the inner <input>. " +
-        "Prefer omitting the selector and typing into the already-focused element, " +
-        "or use appctrl_evaluate to set values via JavaScript (e.g. el.value = '...').",
-      inputSchema: z.object({
-        text: z.string().describe("Text to type"),
-        selector: z
-          .string()
-          .optional()
-          .describe("CSS/Playwright selector to fill. If omitted, types into focused element."),
-        target: z
-          .string()
-          .optional()
-          .describe('View: "ui", "workspace" (default), or URL substring'),
-      }),
+  },
+  status: {
+    usage: "status",
+    summary:
+      "Whether an app is running in this worktree: {running, daemonPid, port, pid, headless, packaged}.",
+    run: async () => {
+      const state = readDaemonState();
+      if (!state) return json({ running: false });
+      const app = (await callDaemon(state, "status", {})) as AppStatus | null;
+      return json({ running: app !== null, daemonPid: state.pid, port: state.port, ...app });
     },
-    async ({ text, selector, target }) => {
-      try {
-        const resolved = await findTarget(target);
-        if (selector) {
-          await resolved.frame.fill(selector, text);
-        } else {
-          // Keyboard input is page-level; route it into workspace frames.
-          await focusTargetFrame(resolved);
-          await resolved.page.keyboard.type(text);
-        }
-        return textResult({ typed: text });
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }
-  );
-
-  // ── appctrl_key ────────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_key",
-    {
-      description:
-        "Press a keyboard shortcut or key in a CodeHydra view. " +
-        "Uses Playwright's keyboard.press() which sends trusted CDP events — " +
-        "unlike dispatchEvent(new KeyboardEvent(...)) which does NOT work in the IDE server. " +
-        "Key format: 'Enter', 'Escape', 'Tab', 'Control+p', 'Control+Shift+p', 'ArrowDown'. " +
-        "Use this for IDE-server shortcuts (Ctrl+P for Quick Open, Ctrl+Shift+P for Command Palette).",
-      inputSchema: z.object({
-        key: z
-          .string()
-          .describe(
-            "Key or combo to press: 'Enter', 'Escape', 'Control+p', 'Control+Shift+p', 'ArrowDown'"
-          ),
-        target: z
-          .string()
-          .optional()
-          .describe('View: "ui", "workspace" (default), or URL substring'),
-      }),
-    },
-    async ({ key, target }) => {
-      try {
-        const resolved = await findTarget(target);
-        // Keyboard input is page-level; route it into workspace frames.
-        await focusTargetFrame(resolved);
-        await resolved.page.keyboard.press(key);
-        return textResult({ pressed: key });
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }
-  );
-
-  // ── appctrl_evaluate ────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_evaluate",
-    {
-      description:
-        "Execute JavaScript in a CodeHydra view and return the result. " +
-        "Best for reading state and inspecting the DOM — for clicking and typing, " +
-        "prefer appctrl_click/appctrl_type with role= or text= selectors from appctrl_dom. " +
-        "The code runs in the view's renderer process. " +
-        "IMPORTANT: Your code MUST return a value — wrap in an IIFE or use an expression. " +
-        "If nothing is returned, the result will be null. " +
-        "NEVER use bare `return` statements — they cause SyntaxError. " +
-        "Use an IIFE: (() => { ...; return result; })(). " +
-        "NOTE: acquireVsCodeApi and VS Code extension APIs are NOT available. " +
-        "The UI view runs Svelte, workspace views run VSCodium. " +
-        "Examples: " +
-        "'document.querySelector(\".dialog\")?.textContent' " +
-        "'document.querySelectorAll(\"vscode-button\").length' " +
-        "'(() => { const el = document.querySelector(\"#my-id\"); return el?.value; })()'",
-      inputSchema: z.object({
-        code: z.string().describe("JavaScript code to evaluate in the view's renderer process"),
-        target: z
-          .string()
-          .optional()
-          .describe('View: "ui", "workspace" (default), or URL substring'),
-      }),
-    },
-    async ({ code, target }) => {
-      try {
-        const { frame } = await findTarget(target);
-        const result = await frame.evaluate(code);
-        return textResult(result);
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    }
-  );
-
-  // ── appctrl_dialog ──────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_dialog",
-    {
-      description:
-        "Mock Electron's folder picker dialog to auto-return specified paths. " +
-        "Call BEFORE triggering any action that opens a folder picker (e.g., Open Project). " +
-        "The mock replaces dialog.showOpenDialog() — it will auto-return the specified paths " +
-        "instead of showing the native OS dialog. Call again to update the mock paths.",
-      inputSchema: z.object({
-        paths: z.array(z.string()).describe("Folder paths the dialog should return"),
-      }),
-    },
-    async ({ paths }) => {
-      try {
-        await driver.mockDialog(paths);
-        return textResult({ mocked: true, paths });
-      } catch (err) {
-        return errorResult(asMessage(err));
-      }
-    }
-  );
-
-  // ── appctrl_resume ──────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_resume",
-    {
-      description:
-        "Simulate a system wake by emitting Electron's powerMonitor 'resume' event " +
-        "in the main process. This drives the same code path as waking the machine " +
-        "from sleep (dispatches the app:resume intent). Use to test resume handling " +
-        "without actually suspending the host.",
-      inputSchema: z.object({}),
-    },
-    async () => {
-      try {
-        await driver.resume();
-        return textResult({ resumed: true });
-      } catch (err) {
-        return errorResult(asMessage(err));
-      }
-    }
-  );
-
-  // ── appctrl_console ─────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_console",
-    {
-      description:
-        "Get buffered console messages from all views. " +
-        "Captures console.log/warn/error/info/debug from renderer processes since app start. " +
-        "Buffer holds the last 500 messages.",
-      inputSchema: z.object({
-        level: z
-          .string()
-          .optional()
-          .describe('Filter by level: "error", "warning", "log", "info", "debug"'),
-        clear: z.boolean().optional().describe("Clear the buffer after reading. Default: false"),
-      }),
-    },
-    async ({ level, clear }) => {
-      return textResult(
-        driver.consoleMessages({
-          ...(level !== undefined && { level }),
-          ...(clear !== undefined && { clear }),
-        })
+  },
+  screenshot: {
+    usage: "screenshot [--target <view>]",
+    summary: "Capture a PNG into ./app-data/screenshots/ and print its path — then Read it.",
+    options: TARGET_OPTION,
+    run: async ({ values }) => String(await send("screenshot", targetOf(values))),
+  },
+  dom: {
+    usage: "dom [<selector>] [--target <view>]",
+    summary:
+      "Print the accessibility tree as YAML, scoped to <selector> (default body). A line\n" +
+      '`- button "Create"` means the selector `role=button[name="Create"]` works.',
+    options: TARGET_OPTION,
+    run: async ({ values, positionals }) => {
+      const selector = positionals[0];
+      return String(
+        await send("dom", { ...(selector !== undefined && { selector }), ...targetOf(values) })
       );
-    }
-  );
-
-  // ── appctrl_logs ──────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_logs",
-    {
-      description:
-        "Read and filter structured JSONL logs from the most recent CodeHydra session. " +
-        "Log files are at ./app-data/logs/ in dev mode. " +
-        "Supports filtering by scope (exact match) and minimum level " +
-        "(silly < debug < info < warn < error). Returns formatted, human-readable log lines.",
-      inputSchema: z.object({
-        scope: z
-          .string()
-          .optional()
-          .describe('Filter by logger scope (exact match, e.g. "git", "fs", "dispatcher", "app")'),
-        level: z
-          .string()
-          .optional()
-          .describe(
-            "Minimum log level to include. Hierarchy: silly < debug < info < warn < error. " +
-              'E.g. level="info" returns info, warn, and error entries.'
-          ),
-        limit: z.number().optional().describe("Maximum number of entries to return. Default: 50"),
-        order: z
-          .enum(["asc", "desc"])
-          .optional()
-          .describe('Sort order: "asc" (oldest first) or "desc" (newest first). Default: "desc"'),
-      }),
     },
-    async ({ scope, level = "debug", limit = 50, order = "desc" }) => {
-      try {
-        const text = await driver.readLogs({
-          ...(scope !== undefined && { scope }),
-          level,
-          limit,
-          order,
-        });
-        return { content: [{ type: "text" as const, text }] };
-      } catch (err) {
-        return errorResult(asMessage(err));
+  },
+  click: {
+    usage: "click <selector> [--target <view>]",
+    summary:
+      "Click an element. Prefer role= and text= selectors: @vscode-elements components\n" +
+      "have shadow DOM that CSS selectors cannot reach.",
+    options: TARGET_OPTION,
+    run: async (inv) => {
+      await send("click", { selector: positional(inv, 0, "selector"), ...targetOf(inv.values) });
+      return undefined;
+    },
+  },
+  type: {
+    usage: "type <text> [--selector <selector>] [--target <view>]",
+    summary:
+      "Type into the focused element, or fill <selector>. Filling rarely reaches the inner\n" +
+      "<input> of a vscode-textfield — prefer focusing it and typing without --selector.",
+    options: { ...TARGET_OPTION, selector: { type: "string", short: "s" } },
+    run: async (inv) => {
+      const selector = stringOption(inv.values, "selector");
+      await send("type", {
+        text: positional(inv, 0, "text"),
+        ...(selector !== undefined && { selector }),
+        ...targetOf(inv.values),
+      });
+      return undefined;
+    },
+  },
+  key: {
+    usage: "key <combo> [--target <view>]",
+    summary:
+      "Press a key or shortcut as a trusted input event: Enter, Escape, ArrowDown, Control+p,\n" +
+      "Control+Shift+p. Synthetic KeyboardEvents do not work in the IDE; this does.",
+    options: TARGET_OPTION,
+    run: async (inv) => {
+      await send("key", { key: positional(inv, 0, "combo"), ...targetOf(inv.values) });
+      return undefined;
+    },
+  },
+  eval: {
+    usage: "eval <code | -> [--target <view>]",
+    summary:
+      "Evaluate a JavaScript expression in the view's renderer and print the result as JSON.\n" +
+      "`-` reads the code from stdin (no shell quoting). It must be an expression — wrap\n" +
+      "statements in an IIFE: (() => { …; return x; })(). A bare `return` is a SyntaxError.",
+    options: TARGET_OPTION,
+    run: async (inv) => {
+      const arg = positional(inv, 0, "code");
+      const code = arg === "-" ? readFileSync(0, "utf-8") : arg;
+      return json(await send("eval", { code, ...targetOf(inv.values) }));
+    },
+  },
+  "wait-for": {
+    usage: "wait-for <selector> [--state <state>] [--timeout <ms>] [--target <view>]",
+    summary:
+      "Block until the first match of <selector> is visible (or --state attached, detached,\n" +
+      "hidden). --timeout defaults to 10000.",
+    options: {
+      ...TARGET_OPTION,
+      state: { type: "string" },
+      timeout: { type: "string" },
+    },
+    run: async (inv) => {
+      const state = stringOption(inv.values, "state");
+      if (state !== undefined && !["attached", "detached", "visible", "hidden"].includes(state)) {
+        throw new UsageError(`--state must be attached, detached, visible or hidden`);
       }
-    }
-  );
-
-  // ── appctrl_targets ─────────────────────────────────────────────────────
-
-  server.registerTool(
-    "appctrl_targets",
-    {
-      description:
-        "List the UI view and all workspace iframes in the running CodeHydra instance. " +
-        "The UI is the single page (file:// URL); workspaces are VSCodium iframes " +
-        'inside it (URLs with "folder=" or "workspace=" parameter; `active` marks the visible one).',
-      inputSchema: z.object({}),
-    },
-    async () => {
-      try {
-        return textResult(await driver.targets());
-      } catch (err) {
-        return errorResult(asMessage(err));
+      const timeout = Number(stringOption(inv.values, "timeout") ?? "10000");
+      if (!Number.isFinite(timeout) || timeout < 0) {
+        throw new UsageError("--timeout must be milliseconds");
       }
-    }
-  );
-
-  // =============================================================================
-  // Resource
-  // =============================================================================
-
-  server.registerResource(
-    "guide",
-    "appctrl://guide",
-    {
-      title: "AppCtrl Debugging Guide",
-      description: "Detailed guide for debugging CodeHydra with AppCtrl tools",
-      mimeType: "text/markdown",
+      await send("wait-for", {
+        selector: positional(inv, 0, "selector"),
+        timeout,
+        ...(state !== undefined && { state: state as NonNullable<WaitForOptions["state"]> }),
+        ...targetOf(inv.values),
+      });
+      return undefined;
     },
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "text/markdown",
-          text: [
-            "# AppCtrl Debugging Guide",
-            "",
-            "## Views",
-            "The app has a single WebContentsView (the UI page); workspaces are",
-            "VSCodium iframes inside it, addressed as Playwright Frames:",
-            '- **UI**: `file://` URL — the Svelte app, hosts everything (target: "ui")',
-            '- **Workspace**: `http://127.0.0.1:{port}/?workspace=...` — a VSCodium iframe (target: "workspace" = the visible one)',
-            "- All non-hibernated workspaces have mounted iframes; only the active one is visible",
-            '- `appctrl_screenshot target="ui"` captures the whole window; target="workspace" clips to the active iframe',
-            "",
-            "## Typical Workflow",
-            "1. `appctrl_start` — launches app (headless by default). Requires `pnpm build` first.",
-            "2. `appctrl_screenshot` — see what's on screen",
-            "3. `appctrl_dom` — inspect the accessibility tree to find selectors",
-            "4. Interact with `appctrl_click` / `appctrl_type` using selectors from the tree",
-            "5. Investigate issues with evaluate/console/logs",
-            "6. Make code changes, `appctrl_stop` + `pnpm build` + `appctrl_start` to restart",
-            "7. `appctrl_stop` when done",
-            "",
-            "## Shadow DOM — Critical for UI Interaction",
-            "CodeHydra uses `@vscode-elements` web components for form controls:",
-            "`vscode-button`, `vscode-textfield`, `vscode-checkbox`, `vscode-single-select`, etc.",
-            "",
-            "These have **shadow DOM** — standard CSS selectors and Playwright selectors",
-            "CANNOT reach their internal elements. For example:",
-            '- `vscode-textfield[placeholder="..."]` — WILL NOT WORK (shadow boundary)',
-            '- `button:has-text("Create")` — WILL NOT WORK (inner <button> is in shadow DOM)',
-            "",
-            "### What Works",
-            "1. **ARIA/role selectors** (pierce shadow DOM automatically):",
-            '   - `role=button[name="Create"]`',
-            "   - `role=combobox`",
-            "   - `role=dialog`",
-            "2. **Text selectors**: `text=Create`, `text=Cancel`",
-            "3. **Class selectors on wrapper elements**: `.dialog`, `.sidebar`, `.dropdown-option`",
-            "4. **appctrl_evaluate** as fallback for anything complex",
-            "",
-            "### Recommended Strategy",
-            "1. `appctrl_screenshot` first — see the current state",
-            "2. `appctrl_dom` — get the accessibility tree to find correct selectors",
-            "3. Use `appctrl_click` with `role=` or `text=` selectors from the tree",
-            "4. Use `appctrl_type` WITHOUT a selector (type into focused element) for text input",
-            "5. Use `appctrl_evaluate` as fallback for complex interactions or when selectors fail",
-            "",
-            "## Sidebar Behavior",
-            "The sidebar is 20px when collapsed (overflow clipped). It expands to 250px on hover.",
-            "In headless mode, the sidebar stays collapsed since there's no mouse cursor.",
-            "",
-            "Expand before clicking sidebar buttons:",
-            "```",
-            "appctrl_evaluate({ target: \"ui\", code: \"(() => { document.querySelector('nav.sidebar')?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })); return 'expanded'; })()\" })",
-            "```",
-            "",
-            "Collapse after interaction:",
-            "```",
-            "appctrl_evaluate({ target: \"ui\", code: \"(() => { document.querySelector('nav.sidebar')?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, clientX: 100 })); return 'collapsed'; })()\" })",
-            "```",
-            "",
-            "## Opening a Project",
-            "1. Create a temp git repo: `git init /tmp/appctrl-test && cd /tmp/appctrl-test && git commit --allow-empty -m init`",
-            '2. Mock the folder picker: `appctrl_dialog({ paths: ["/tmp/appctrl-test"] })`',
-            "3. Click the Open Project button in the sidebar UI",
-            "4. The dialog mock auto-returns the path — no native dialog appears",
-            "",
-            "IMPORTANT: Never open the user's real projects. Always create and use temporary git repos.",
-            "",
-            "## Code-Server (Workspace) Views",
-            "- `acquireVsCodeApi` is NOT available — this is the IDE server, not a VS Code extension",
-            "- `document.dispatchEvent(new KeyboardEvent(...))` does NOT work — these are untrusted events",
-            "- Use Playwright keyboard instead: `appctrl_type` for text, `appctrl_key` for shortcuts",
-            "- Ctrl+P (Quick Open), Ctrl+Shift+P (Command Palette) work via `appctrl_key`",
-            "- To open a file: appctrl_key Ctrl+P → appctrl_type filename → appctrl_key Enter",
-            "",
-            "## Using appctrl_evaluate",
-            "The code parameter runs in the browser. You MUST return a value.",
-            "NEVER use bare `return` — it causes SyntaxError. Use an IIFE instead.",
-            "",
-            "**Good**: `(() => { const el = document.querySelector('#my-id'); return el?.value; })()`",
-            "**Good**: `document.querySelector('.dialog')?.textContent ?? 'not found'`",
-            "**Bad**: `return document.querySelector('#my-id').value` (bare return = SyntaxError!)",
-            "**Bad**: `const el = document.querySelector('#my-id'); el.value;` (no return!)",
-            "",
-            "## Key UI Selectors",
-            "| Element | Selector |",
-            "|---------|----------|",
-            "| Dialog | `role=dialog` or `.dialog` |",
-            '| Dialog overlay | `[data-testid="dialog-overlay"]` |',
-            '| Buttons | `text=Create`, `text=Cancel`, `role=button[name="..."]` |',
-            "| Text fields | By label: `#workspace-name`, `#initial-prompt` |",
-            "| Dropdowns | `role=combobox` |",
-            "| Dropdown options | `role=option` or `.dropdown-option` |",
-            "| Sidebar | `nav.sidebar` |",
-            "| Project items | `.project-item` |",
-            "",
-            "## Tips",
-            '- Use `appctrl_logs({ scope: "git", level: "info" })` to filter app logs',
-            '- Use `appctrl_evaluate({ target: "ui", code: "..." })` to inspect sidebar state',
-            "- Console errors often reveal the root cause",
-            '- Use `appctrl_targets` to see the UI page + workspace iframes if "workspace" target fails',
-          ].join("\n"),
-        },
-      ],
-    })
-  );
+  },
+  "expand-sidebar": {
+    usage: "expand-sidebar",
+    summary:
+      "Expand the sidebar. It is 20px and clipped until hovered, and headless has no\n" +
+      "cursor — do this before clicking anything in it.",
+    run: async () => {
+      await send("expand-sidebar", {});
+      return undefined;
+    },
+  },
+  dialog: {
+    usage: "dialog <path>…",
+    summary:
+      "Make Electron's folder picker return <path>… instead of opening. Run it before the\n" +
+      "action that opens the picker (e.g. Open Project); again to change the paths.",
+    run: async ({ positionals }) => {
+      if (positionals.length === 0) throw new UsageError("missing <path>");
+      await send("dialog", { paths: positionals.map((p) => resolve(p)) });
+      return undefined;
+    },
+  },
+  resume: {
+    usage: "resume",
+    summary:
+      "Emit powerMonitor 'resume' in the main process — the app:resume path a wake from\n" +
+      "sleep takes, without suspending the host.",
+    run: async () => {
+      await send("resume", {});
+      return undefined;
+    },
+  },
+  targets: {
+    usage: "targets",
+    summary:
+      "List the UI page and every workspace iframe (`active` marks the visible one), as JSON.",
+    run: async () => json(await send("targets", {})),
+  },
+  console: {
+    usage: "console [--level <level>] [--clear]",
+    summary:
+      "Print renderer console messages since `start` as JSON (last 500), filtered to one\n" +
+      "level (error, warning, log, info, debug). Works after the app is gone, crash included.\n" +
+      "--clear empties the log after reading.",
+    options: { level: { type: "string" }, clear: { type: "boolean" } },
+    run: async ({ values }) => {
+      const messages = readConsoleFile(stringOption(values, "level"));
+      if (values["clear"] === true && existsSync(CONSOLE_FILE)) writeFileSync(CONSOLE_FILE, "");
+      return json(messages);
+    },
+  },
+  logs: {
+    usage: "logs [--scope <scope>] [--level <level>] [--limit <n>] [--order asc|desc]",
+    summary:
+      "Print the most recent app log (./app-data/logs), newest first. --scope matches a\n" +
+      "logger exactly (git, fs, dispatcher, app, …); --level is a minimum (silly < debug <\n" +
+      "info < warn < error, default debug); --limit defaults to 50. Needs no running app.",
+    options: {
+      scope: { type: "string" },
+      level: { type: "string" },
+      limit: { type: "string" },
+      order: { type: "string" },
+    },
+    run: async ({ values }) => {
+      const order = stringOption(values, "order") ?? "desc";
+      if (order !== "asc" && order !== "desc") throw new UsageError("--order must be asc or desc");
+      const limit = Number(stringOption(values, "limit") ?? "50");
+      if (!Number.isInteger(limit) || limit < 1) throw new UsageError("--limit must be a count");
+      const scope = stringOption(values, "scope");
+      return readLogs({
+        ...(scope !== undefined && { scope }),
+        level: stringOption(values, "level") ?? "debug",
+        limit,
+        order,
+        logsDir: join(DATA_DIR, "logs"),
+      });
+    },
+  },
+  guide: {
+    usage: "guide",
+    summary: "Print the debugging guide: views, selectors, shadow DOM, the sidebar, recipes.",
+    run: async () => GUIDE,
+  },
+};
 
-  return server;
+const GUIDE = `# AppCtrl Debugging Guide
+
+Every command below is \`pnpm -s appctrl <command>\`; \`--help\` after any command
+explains its flags.
+
+## Views
+The app has a single WebContentsView (the UI page); workspaces are VSCodium
+iframes inside it, addressed as Playwright frames:
+- **UI**: \`file://\` URL — the Svelte app, hosts everything (\`--target ui\`)
+- **Workspace**: \`http://127.0.0.1:{port}/?workspace=...\` — a VSCodium iframe
+  (\`--target workspace\`, the default, is the visible one)
+- Every non-hibernated workspace has a mounted iframe; only the active one is visible
+- \`screenshot --target ui\` captures the whole window; the default clips to the active iframe
+
+## Typical workflow
+1. \`start\` — launches the app headless. Needs \`pnpm build\` first.
+2. \`screenshot\` — see what is on screen (Read the printed path)
+3. \`dom\` — the accessibility tree, to find selectors
+4. \`click\` / \`type\` / \`key\` with selectors from the tree
+5. Investigate with \`eval\`, \`console\`, \`logs\`
+6. After a code change: \`stop\`, \`pnpm build\`, \`start\`
+7. \`stop\` when done
+
+## Shadow DOM — critical for UI interaction
+CodeHydra uses \`@vscode-elements\` web components for form controls:
+\`vscode-button\`, \`vscode-textfield\`, \`vscode-checkbox\`, \`vscode-single-select\`, …
+
+They have **shadow DOM** — CSS selectors cannot reach their internals:
+- \`vscode-textfield[placeholder="..."]\` — WILL NOT WORK (shadow boundary)
+- \`button:has-text("Create")\` — WILL NOT WORK (the inner <button> is in shadow DOM)
+
+What works:
+1. **ARIA/role selectors** (pierce shadow DOM): \`role=button[name="Create"]\`,
+   \`role=combobox\`, \`role=dialog\`
+2. **Text selectors**: \`text=Create\`, \`text=Cancel\`
+3. **Class selectors on wrapper elements**: \`.dialog\`, \`.sidebar\`, \`.dropdown-option\`
+4. **eval** as the fallback for anything complex
+
+For text input, focus the field and \`type\` without \`--selector\`.
+
+## Sidebar
+The sidebar is 20px when collapsed (overflow clipped) and expands to 250px on hover.
+Headless there is no cursor, so it stays collapsed. Run \`expand-sidebar\` before
+clicking anything in it. To collapse it again:
+
+    pnpm -s appctrl eval --target ui "document.querySelector('nav.sidebar')?.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, clientX: 100 })) ?? null"
+
+## Opening a project
+1. Create a temp git repo:
+   \`git init /tmp/appctrl-test && git -C /tmp/appctrl-test commit --allow-empty -m init\`
+2. Mock the folder picker: \`dialog /tmp/appctrl-test\`
+3. \`expand-sidebar\`, then click Open Project
+4. The mock returns the path — no native dialog appears
+
+IMPORTANT: never open the user's real projects. Always use temporary git repos.
+
+## Workspace (IDE) views
+- \`acquireVsCodeApi\` is NOT available — this is the IDE server, not a VS Code extension
+- \`document.dispatchEvent(new KeyboardEvent(...))\` does NOT work — untrusted events
+- Use \`type\` for text and \`key\` for shortcuts: Control+p (Quick Open),
+  Control+Shift+p (Command Palette)
+- To open a file: \`key Control+p\`, \`type <filename>\`, \`key Enter\`
+
+## eval
+The code is an expression, and its value is printed as JSON. NEVER use a bare
+\`return\` — it is a SyntaxError. Wrap statements in an IIFE. Use \`eval -\` with a
+heredoc to avoid shell quoting:
+
+    pnpm -s appctrl eval --target ui - <<'JS'
+    (() => { const el = document.querySelector('#my-id'); return el?.value; })()
+    JS
+
+**Good**: \`document.querySelector('.dialog')?.textContent ?? 'not found'\`
+**Bad**: \`return document.querySelector('#my-id').value\` (bare return)
+**Bad**: \`const el = document.querySelector('#my-id'); el.value;\` (not an expression)
+
+## Key UI selectors
+| Element          | Selector                                                |
+|------------------|---------------------------------------------------------|
+| Dialog           | \`role=dialog\` or \`.dialog\`                              |
+| Dialog overlay   | \`[data-testid="dialog-overlay"]\`                        |
+| Buttons          | \`text=Create\`, \`text=Cancel\`, \`role=button[name="..."]\` |
+| Text fields      | By id: \`#workspace-name\`, \`#initial-prompt\`             |
+| Dropdowns        | \`role=combobox\`                                         |
+| Dropdown options | \`role=option\` or \`.dropdown-option\`                     |
+| Sidebar          | \`nav.sidebar\`                                           |
+| Project items    | \`.project-item\`                                         |
+
+## Tips
+- \`wait-for <selector>\` after an action instead of polling with \`dom\`
+- \`logs --scope git --level info\` filters the app log
+- Console errors often reveal the root cause: \`console --level error\`
+- \`targets\` lists the UI page and workspace iframes if \`--target workspace\` fails
+- The app, its logs, the console log and screenshots all live in ./app-data of this
+  worktree; the daemon's own output is ./app-data/appctrl-daemon.log
+`;
+
+function firstSentence(text: string): string {
+  return text.replace(/\n/g, " ").split(/(?<=\.)\s/)[0]!;
+}
+
+function usage(): string {
+  const width = Math.max(...Object.keys(COMMANDS).map((name) => name.length));
+  const lines = Object.entries(COMMANDS).map(
+    ([name, command]) => `  ${name.padEnd(width)}  ${firstSentence(command.summary)}`
+  );
+  return (
+    "Usage: pnpm -s appctrl <command> [args]\n\n" +
+    "Drive a CodeHydra app for UI debugging. One app per worktree.\n\n" +
+    `Commands:\n${lines.join("\n")}\n\n` +
+    "Run `pnpm -s appctrl <command> --help` for a command's flags, `guide` for the full guide."
+  );
+}
+
+function commandHelp(command: CliCommand): string {
+  const targeted = command.options !== undefined && "target" in command.options;
+  return (
+    `Usage: pnpm -s appctrl ${command.usage}\n\n${command.summary}` +
+    (targeted ? `\n\n${TARGET_HELP}` : "")
+  );
+}
+
+/** Exit codes: 0 ok, 1 failed, 2 usage. */
+async function runCli(argv: string[]): Promise<number> {
+  const [name, ...rest] = argv;
+
+  if (name === "__daemon") {
+    runDaemon();
+    return -1;
+  }
+  if (name === undefined || name === "help" || name === "--help" || name === "-h") {
+    process.stdout.write(usage() + "\n");
+    return name === undefined ? 2 : 0;
+  }
+
+  const command = COMMANDS[name];
+  if (!command) {
+    process.stderr.write(`appctrl: unknown command "${name}"\n\n${usage()}\n`);
+    return 2;
+  }
+
+  try {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { ...command.options, help: { type: "boolean", short: "h" } },
+      allowPositionals: true,
+      strict: true,
+    });
+    if (values["help"] === true) {
+      process.stdout.write(commandHelp(command) + "\n");
+      return 0;
+    }
+    const output = await command.run({ values: values as OptionValues, positionals });
+    if (output !== undefined) process.stdout.write(output.endsWith("\n") ? output : output + "\n");
+    return 0;
+  } catch (err) {
+    const usageFailure =
+      err instanceof UsageError ||
+      (err instanceof Error && (err as NodeJS.ErrnoException).code?.startsWith("ERR_PARSE_ARGS"));
+    process.stderr.write(`appctrl ${name}: ${asMessage(err)}\n`);
+    if (usageFailure) process.stderr.write(`\n${commandHelp(command)}\n`);
+    return usageFailure ? 2 : 1;
+  }
 }
 
 // =============================================================================
@@ -1307,10 +1466,10 @@ function createServer(driver: AppDriver): McpServer {
 // =============================================================================
 
 /**
- * Only start the MCP server when this file is *executed*. When it is imported
- * (by the e2e suite), nothing here runs: no stdio transport, and — importantly —
- * no process-level signal handlers, which would otherwise hijack the lifecycle of
- * whatever test runner is hosting us.
+ * Only run the CLI when this file is *executed*. When it is imported (by the
+ * e2e suite), nothing here runs — in particular no process-level signal
+ * handlers, which would otherwise hijack the lifecycle of whatever test runner
+ * is hosting us.
  */
 function isMainModule(): boolean {
   const entry = process.argv[1];
@@ -1323,35 +1482,7 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const driver = createDriver();
-  const server = createServer(driver);
-
-  await server.connect(new StdioServerTransport());
-
-  process.on("SIGTERM", () => {
-    driver.killSync();
-    process.exit(0);
-  });
-
-  process.on("SIGINT", () => {
-    driver.killSync();
-    process.exit(0);
-  });
-
-  process.on("uncaughtException", (err) => {
-    process.stderr.write(`appctrl crashed: ${err.stack ?? err.message}\n`);
-    driver.killSync();
-    process.exit(1);
-  });
-
-  process.on("unhandledRejection", (reason) => {
-    const msg = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
-    process.stderr.write(`appctrl unhandled rejection: ${msg}\n`);
-    driver.killSync();
-    process.exit(1);
-  });
-
-  process.on("exit", () => {
-    driver.killSync();
-  });
+  const code = await runCli(process.argv.slice(2));
+  // The daemon keeps running on its server; everything else is done.
+  if (code >= 0) process.exit(code);
 }

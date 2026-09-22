@@ -16,6 +16,7 @@
     "build:extensions": "tsx scripts/build-extensions.ts",
     "build": "pnpm build:wrappers && pnpm build:extensions && electron-vite build",
     "preview": "pnpm build && tsx scripts/preview.ts",
+    "appctrl": "tsx scripts/appctrl.ts",
     "test": "vitest run --no-color",
     "test:canary": "vitest run --no-color --no-file-parallelism",
     "test:related": "vitest run --no-color --passWithNoTests",

@@ -2,9 +2,9 @@
   "permissions": {
     "allow": [
       "mcp__codehydra",
-      "mcp__appctrl",
       "mcp__plugin_posthog_posthog__exec",
       "mcp__posthog__update-issue-status",
+      "Bash(pnpm -s appctrl:*)",
       "Bash(pnpm test:*)",
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
@@ -16,6 +16,5 @@
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true
-  },
-  "enabledMcpjsonServers": ["appctrl"]
+  }
 }
