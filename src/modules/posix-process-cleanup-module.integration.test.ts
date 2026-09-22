@@ -322,12 +322,19 @@ describe("PosixProcessCleanupModule Integration", () => {
       expect(killProc.$.args).toEqual(["-TERM", "1234"]);
     });
 
-    it("skips when force=true", async () => {
+    it("still kills CWD-blocking processes when force=true", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: (_command, args) =>
+          args.includes("+D")
+            ? { stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }
+            : { exitCode: 0 },
+      });
+
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      // No processes spawned
-      expect(() => runner.$.spawned(0)).toThrow();
+      expect(runner.$.spawned(0).$.command).toBe("lsof");
+      expect(runner.$.spawned(1).$.args).toEqual(["-TERM", "1234"]);
     });
 
     it("swallows errors from detection", async () => {

@@ -17,7 +17,6 @@ import type { Logger } from "../boundaries/platform/logging-types";
 import type { ProcessRunner, ProcessResult } from "../boundaries/platform/process";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
-  type DeleteWorkspaceIntent,
   type DeletePipelineHookInput,
   type ReleaseHookResult,
 } from "../intents/delete-workspace";
@@ -158,13 +157,10 @@ export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleD
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
           handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
+            // Runs in force mode too — see windows-file-lock-module. Here the
+            // removal succeeds regardless, but a process left in the worktree
+            // would otherwise outlive the workspace it belonged to.
             const { workspacePath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            if (payload.force) {
-              return { result: {} };
-            }
-
             await runCwdReleaseKill(deps, workspacePath, "deletion");
             return { result: {} };
           },
