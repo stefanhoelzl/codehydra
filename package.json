@@ -82,6 +82,7 @@
     "@copilotkit/aimock": "^1.39.0",
     "@eslint/compat": "^2.0.3",
     "@eslint/js": "^10.0.1",
+    "@lydell/node-pty": "1.2.0-beta.15",
     "@playwright/test": "^1.58.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@testing-library/jest-dom": "^6.9.1",

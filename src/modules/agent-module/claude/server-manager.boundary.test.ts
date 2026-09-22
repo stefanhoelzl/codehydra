@@ -25,7 +25,13 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { chBgPathEntry, runScenario, seen, type ScenarioRun } from "./boundary-test-utils";
+import {
+  chBgPathEntry,
+  runScenario,
+  seen,
+  type HookRecord,
+  type ScenarioRun,
+} from "./boundary-test-utils";
 
 /** A whole scenario is ~0.7s; the slowest (a background shell's full life) ~3s. */
 const SCENARIO_TIMEOUT_MS = 90_000;
@@ -160,5 +166,32 @@ describe("a turn that dies on max_tokens", () => {
 
   it("StopFailure surfaces the stuck agent as idle", () => {
     expect(run.statusAfter("StopFailure")).toBe("idle");
+  });
+});
+
+describe("a prompt-suggestion fork while a background sub-agent runs (TUI)", () => {
+  // The report: an agent ended its turn waiting on two background research
+  // agents; the hidden fork that guesses the user's next prompt answered with
+  // an AskUserQuestion; its PreToolUse reached the bridge as the agent's own,
+  // parked the workspace idle, and — no Post hook ever following the denied
+  // call — every busy signal from the still-working sub-agents was swallowed.
+  // The fork only runs in the interactive TUI, hence the mode.
+  let run: ScenarioRun;
+  const isForkAsk = (record: HookRecord): boolean =>
+    record.hook === "PreToolUse" && record.toolName === "AskUserQuestion";
+  beforeAll(async () => {
+    run = await runScenario("suggestionfork", {
+      mode: "tui",
+      until: (r) => r.some(isForkAsk),
+    });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("the main Stop stays busy while the sub-agent is still running", () => {
+    expect(run.statusAcross("Stop", 0)).toEqual({ before: "busy", after: "busy" });
+  });
+
+  it("the fork's AskUserQuestion does not park the workspace", () => {
+    const forkAsk = run.records.find(isForkAsk);
+    expect(forkAsk?.after).toBe("busy");
   });
 });
