@@ -21,6 +21,7 @@ import type { ClientEvent } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { lockEntries } from "../api/entries/lock";
 import { createLockModule } from "./lock-module";
 
@@ -352,6 +353,7 @@ describe("locks tied to a CLI connection", () => {
         awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
         registry: () => registry,
         locks,
+        config: createMockConfig(),
       })
     );
     return { registry, locks };

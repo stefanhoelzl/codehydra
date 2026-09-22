@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import { BIN_DIR, CH, ch, chAsync, chSpawn, json } from "./ch.ts";
+import { BIN_DIR, CH, bareEnv, ch, chAsync, chSpawn, json } from "./ch.ts";
 import {
   DATA_ROOT,
   createWorkspace,
@@ -113,6 +113,36 @@ test.describe("ch CLI", () => {
     // subdirectory and the app matched it to the workspace containing it.
     expect(status).toHaveProperty("isDirty");
     expect(status).toHaveProperty("agent");
+  });
+
+  test("sets, reads and resets a config value through config.json", () => {
+    const configFile = join(DATA_ROOT, "config.json");
+    const onDisk = () => JSON.parse(readFileSync(configFile, "utf-8")) as Record<string, unknown>;
+
+    // Warm specs keep config.json, so whatever this writes must not outlive it.
+    try {
+      const row = json(ch(["config", "set", "sidebar.width", "300"]));
+      expect(row).toMatchObject({ key: "sidebar.width", value: 300, source: "user" });
+      expect(onDisk()["sidebar.width"]).toBe(300);
+
+      expect(json(ch(["config", "get", "sidebar.width"]))).toBe(300);
+
+      const rows = json(ch(["config", "list"])) as { key: string }[];
+      expect(rows.map((r) => r.key)).toContain("sidebar.width");
+      expect(rows.map((r) => r.key)).not.toContain("help");
+    } finally {
+      ch(["config", "reset", "sidebar.width"]);
+    }
+
+    expect(onDisk()).not.toHaveProperty("sidebar.width");
+  });
+
+  test("reports an unknown config key as not found", () => {
+    const run = ch(["config", "get", "no.such.key"]);
+
+    expect(run.status).toBe(6);
+    const error = JSON.parse(run.stderr) as { error: string };
+    expect(error.error).toContain('Unknown config key "no.such.key"');
   });
 
   test("builds its help from the running app's registry", () => {
@@ -261,6 +291,7 @@ test.describe("ch mcp", () => {
 
     const run = spawnSync(CH, ["mcp"], {
       cwd: DATA_ROOT,
+      env: bareEnv(),
       encoding: "utf-8",
       input: requests.map((r) => JSON.stringify(r)).join("\n") + "\n",
       // A stdio MCP server must exit when its agent closes stdin. Without a
@@ -279,6 +310,7 @@ test.describe("ch mcp", () => {
     const names = tools!.map((tool) => tool.name);
     expect(names).toContain("workspace_get_status");
     expect(names).toContain("project_list");
+    expect(names).toContain("config_set");
     // The one event: only the sidekick can witness what it reports.
     expect(names).not.toContain("agent_lifecycle");
   });

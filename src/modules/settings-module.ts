@@ -23,7 +23,7 @@ import type { DomainEvent } from "../intents/lib/types";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { Logger } from "../boundaries/platform/logging";
-import type { Config, ConfigSource } from "../boundaries/platform/config";
+import { isUserSetting, type Config, type ConfigSource } from "../boundaries/platform/config";
 import type {
   PersistedKeyDefinition,
   SettingsControl,
@@ -35,9 +35,6 @@ import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../int
 // =============================================================================
 // Constants
 // =============================================================================
-
-/** Keys that are registered config but not user settings (excluded from the UI). */
-const EXCLUDED_KEYS = new Set(["help"]);
 
 /** Group heading for dotless (top-level) keys. */
 const GENERAL_GROUP = "General";
@@ -128,11 +125,11 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   /** Effective value per key when the dialog opened, for the restart-note diff. */
   let openValues: Record<string, unknown> = {};
 
-  /** Settings-eligible keys (has a control, not excluded, not deprecated), sorted. */
+  /** Settings-eligible keys (see isUserSetting), sorted. */
   function settingKeys(): SettingKey[] {
     const out: SettingKey[] = [];
     for (const [key, def] of config.getDefinitions()) {
-      if (def.deprecated || def.settingsControl === undefined || EXCLUDED_KEYS.has(key)) continue;
+      if (!isUserSetting(key, def) || def.settingsControl === undefined) continue;
       out.push({ key, def, control: def.settingsControl });
     }
     return out.sort((a, b) => a.key.localeCompare(b.key));

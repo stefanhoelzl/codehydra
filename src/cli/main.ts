@@ -13,7 +13,7 @@ import { constants as osConstants } from "node:os";
 import { runClaudeWrapper } from "../modules/agent-module/claude/wrapper";
 import { runOpencodeWrapper } from "../modules/agent-module/opencode/wrapper";
 import { connect } from "./client";
-import { readConnection, resolveDataDir, DiscoveryError, type DiscoveryFs } from "./discovery";
+import { chooseConnection, DiscoveryError, type DiscoveryFs } from "./discovery";
 import { lockRun } from "./lock-run";
 import { serveMcp } from "./mcp";
 import { EXIT, renderError, useJson } from "./output";
@@ -23,15 +23,7 @@ const VERSION = "1.0.0";
 
 const fs: DiscoveryFs = { readFileSync, realpathSync };
 
-/** Read `--data-dir` before anything else: it decides which instance to ask. */
-function dataDirFlag(argv: readonly string[]): string | undefined {
-  const index = argv.indexOf("--data-dir");
-  if (index !== -1) return argv[index + 1];
-  const inline = argv.find((token) => token.startsWith("--data-dir="));
-  return inline?.slice("--data-dir=".length);
-}
-
-/** Same for `--workspace`, which the handshake carries. */
+/** Read `--workspace` before anything else: the handshake carries it. */
 function workspaceFlag(argv: readonly string[]): string | undefined {
   const index = argv.indexOf("--workspace");
   if (index !== -1) return argv[index + 1];
@@ -112,24 +104,8 @@ async function main(): Promise<number> {
   // through, and its own `--workspace` is not ours.
   const flagArgv = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
 
-  const dataDir = resolveDataDir(process.argv[1] ?? __filename, fs, dataDirFlag(flagArgv));
-
-  /**
-   * Connection details, preferring what the caller was handed directly.
-   *
-   * An agent config launches `ch mcp` with the port and token in its
-   * environment, which is what lets the shim work with no state file and nothing
-   * on PATH — the situation OpenCode's server runs in. Everything else falls
-   * back to reading the instance's state.json.
-   */
-  const connection = () => {
-    const port = Number(process.env._CH_PLUGIN_PORT);
-    const token = process.env._CH_PLUGIN_TOKEN;
-    if (Number.isInteger(port) && port > 0 && token) {
-      return { port, token, dataDir };
-    }
-    return readConnection(dataDir, fs);
-  };
+  /** See chooseConnection: `_CH_DATA_DIR`, then port + token, then state.json. */
+  const connection = () => chooseConnection(process.argv[1] ?? __filename, process.env, fs);
 
   /**
    * Open a connection, naming a workspace only when one was asked for.

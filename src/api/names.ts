@@ -44,6 +44,10 @@ export const OPERATION_NAMES = [
   "lock.release",
   "lock.list",
   "lock.hold",
+  "config.get",
+  "config.list",
+  "config.set",
+  "config.reset",
   "log",
   "report.issue",
 ] as const;

@@ -492,11 +492,16 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:workspace:previewMarkdown`    | `{ path: string }`                     | `PluginResult<unknown>`                    |
 | `api:project:list`                 | None                                   | `PluginResult<Project[]>`                  |
 | `api:reportIssue`                  | `{ description: string }`              | `PluginResult<{ submitted: true }>`        |
+| `api:config:get`                   | `{ key: string }`                      | `PluginResult<unknown>`                    |
+| `api:config:list`                  | None                                   | `PluginResult<ConfigRow[]>`                |
+| `api:config:set`                   | `{ key: string, value: string }`       | `PluginResult<ConfigRow>`                  |
+| `api:config:reset`                 | `{ key: string }`                      | `PluginResult<ConfigRow>`                  |
 | `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `PluginResult<OperationDescriptor[]>`      |
 
 Everything below `api:log` is new: these operations existed only as MCP tools
 before the registry, and are now on both surfaces. Purely additive — no existing
-channel changed shape.
+channel changed shape. `ConfigRow` is `{ key, value, default, source, applies, validValues, description }`
+(see [Config](#config) below).
 
 **Two behaviour changes to `api:workspace:delete`**, both deliberate:
 
@@ -744,6 +749,7 @@ $ ch project close ohi --remove-local-repo   # also delete its directory (no wor
 $ ch ws notify "build finished" --level warning
 $ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
 $ ch lock take device "smoke test"   # wait for, then hold, a shared resource
+$ ch config set sidebar.width 300    # writes config.json, like the settings dialog
 ```
 
 Run `ch --help` for the command list, or `ch <command> --help` for one command's
@@ -752,12 +758,12 @@ operations that instance actually has.
 
 ### Conventions
 
-|               |                                                                                                                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <path>` overrides; several operations also accept a target so one workspace can act on another.                                                                 |
-| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. |
-| **Output**    | JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. `--json` / `--no-json` force either.                                                                                                                  |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `--data-dir <path>` targets a different instance.                                                                              |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <path>` overrides; several operations also accept a target so one workspace can act on another.                                                                                                                                                                                                                           |
+| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here.                                                                                                                                                           |
+| **Output**    | JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. `--json` / `--no-json` force either.                                                                                                                                                                                                                                                                            |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview. |
 
 ### Exit codes
 
@@ -837,6 +843,31 @@ A client scoped to a workspace receives only that workspace's events. A
 workspace-less client receives instance-wide ones too — which is what makes a
 clone visible, since a clone has no workspace and `project open <url>` is run
 from outside every worktree.
+
+### Config
+
+`ch config get|set|reset|list` reads and writes the running app's settings — the
+same keys, validation and write path as the settings dialog (MCP: `config_get`,
+`config_set`, `config_reset`, `config_list`).
+
+```console
+$ ch config get log.level                   # the bare value in effect
+$ ch config list                            # key, value, default, source, applies, help
+$ ch config set auto-tag.new false          # parsed as --auto-tag.new=false would be
+$ ch config set version.claude ""           # empty clears a nullable key
+$ ch config set electron.flags -- --disable-gpu   # `--` for a value that starts with a dash
+$ ch config reset sidebar.width             # remove from config.json
+```
+
+|               |                                                                                                                                                                                                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Keys**      | Exactly the settings dialog's: every registered key except `help` and deprecated ones. Any other key is not found (exit 6); a value the key rejects is a usage error (exit 2).                                                                                         |
+| **Values**    | Always a string, run through the key's own parser — the one `--key=value` and `CH_*` use.                                                                                                                                                                              |
+| **Rows**      | `set`, `reset` and `list` return `{ key, value, default, source, applies, validValues, description }` (the last two `null` when a key has none). `source` is `default`, `user` (config.json), `env` or `cli`; `applies: restart` means the change waits for a restart. |
+| **Secrets**   | A `redact` key reads as `<redacted>` everywhere. An `omit` key (`auto-workspace.sources`) reads as `<omitted>` in `list`, in the clear from `get`.                                                                                                                     |
+| **Overrides** | A set over an env var or CLI flag applies now, but the override wins again on the next start — `source` stays `env`/`cli` to say so.                                                                                                                                   |
+
+The app must be running: `ch config` never edits config.json on its own.
 
 ### MCP
 

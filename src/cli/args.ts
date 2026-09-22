@@ -19,8 +19,6 @@
 export interface GlobalArgs {
   /** Explicit workspace target, overriding the one derived from cwd. */
   readonly workspace?: string;
-  /** Explicit data directory, selecting which CodeHydra instance to talk to. */
-  readonly dataDir?: string;
   /** Forced output mode; undefined means "decide from whether stdout is a TTY". */
   readonly json?: boolean;
   readonly help: boolean;
@@ -47,7 +45,7 @@ export class UsageError extends Error {
 // Parsing
 // =============================================================================
 
-const GLOBAL_VALUE_FLAGS = new Set(["workspace", "data-dir", "input"]);
+const GLOBAL_VALUE_FLAGS = new Set(["workspace", "input"]);
 
 /** `--keep-branch` names the `keepBranch` field. */
 function toCamelCase(flag: string): string {
@@ -148,7 +146,7 @@ export function parseArgs(
   let input: Record<string, unknown> = {};
   const flags: Record<string, unknown> = {};
   const free: string[] = [];
-  const global: { workspace?: string; dataDir?: string; json?: boolean; help: boolean } = {
+  const global: { workspace?: string; json?: boolean; help: boolean } = {
     help: false,
   };
 
@@ -201,7 +199,6 @@ export function parseArgs(
     if (GLOBAL_VALUE_FLAGS.has(name)) {
       const value = readValue();
       if (name === "workspace") global.workspace = value;
-      else if (name === "data-dir") global.dataDir = value;
       else input = { ...input, ...parseInputFlag(value) };
       continue;
     }

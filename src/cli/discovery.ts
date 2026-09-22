@@ -57,6 +57,42 @@ export function resolveDataDir(selfPath: string, fs: DiscoveryFs, override?: str
   return dirname(dirname(resolved));
 }
 
+/** What `ch` reads from its environment to find an instance. */
+export interface ConnectionEnv {
+  /** Overrides everything: the instance whose data directory this is. */
+  readonly _CH_DATA_DIR?: string | undefined;
+  readonly _CH_PLUGIN_PORT?: string | undefined;
+  readonly _CH_PLUGIN_TOKEN?: string | undefined;
+}
+
+/**
+ * Pick the connection: `_CH_DATA_DIR`, then `_CH_PLUGIN_PORT` +
+ * `_CH_PLUGIN_TOKEN`, then the data directory this copy of `ch` belongs to.
+ *
+ * The port and token exist so `ch mcp` can run with no state file to read, as
+ * it does under OpenCode's server. `_CH_DATA_DIR` beats them because it is the
+ * one deliberate choice: anything launched from inside a CodeHydra agent
+ * inherits that instance's port and token, and `pnpm preview` sets
+ * `_CH_DATA_DIR` so the app it starts — and every terminal and agent in it —
+ * talks to itself rather than to the instance it was launched from.
+ */
+export function chooseConnection(
+  selfPath: string,
+  env: ConnectionEnv,
+  fs: DiscoveryFs
+): Connection {
+  const override = env._CH_DATA_DIR || undefined;
+  const dataDir = resolveDataDir(selfPath, fs, override);
+  if (override === undefined) {
+    const port = Number(env._CH_PLUGIN_PORT);
+    const token = env._CH_PLUGIN_TOKEN;
+    if (Number.isInteger(port) && port > 0 && token) {
+      return { port, token, dataDir };
+    }
+  }
+  return readConnection(dataDir, fs);
+}
+
 /**
  * Read the port and token the running instance published.
  *

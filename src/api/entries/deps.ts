@@ -11,6 +11,7 @@ import type { AppBoundary } from "../../boundaries/shell/app";
 import type { DeletionProgress } from "../../shared/api/types";
 import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 import type { OperationRegistry } from "../registry";
+import type { Config } from "../../boundaries/platform/config";
 
 /**
  * Where a lock name lives.
@@ -104,6 +105,15 @@ export interface EntryDeps {
     readonly outcome: Promise<DeletionProgress>;
     readonly release: () => void;
   };
+  /**
+   * The app's config, for the config entries. Called directly rather than
+   * through an intent: reading and writing a setting has no hooks to run, and
+   * the settings dialog uses the same service the same way.
+   */
+  readonly config: Pick<
+    Config,
+    "getDefinitions" | "getEffective" | "getDefault" | "getSource" | "set" | "reset"
+  >;
   /**
    * The registry itself, for the entry that describes it.
    *

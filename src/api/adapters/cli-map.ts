@@ -67,6 +67,10 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "lock.release": { path: ["lock", "release"], positionals: ["name"] },
   "lock.list": { path: ["lock", "ls"] },
   "lock.hold": { path: ["lock", "hold"], positionals: ["name", "reason"], hidden: true },
+  "config.get": { path: ["config", "get"], positionals: ["key"] },
+  "config.list": { path: ["config", "list"] },
+  "config.set": { path: ["config", "set"], positionals: ["key", "value"] },
+  "config.reset": { path: ["config", "reset"], positionals: ["key"] },
   log: { path: ["log"], positionals: ["level", "message"] },
   "report.issue": { path: ["report-issue"], positionals: ["description"] },
 };

@@ -64,6 +64,10 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   // `ch lock run`'s plumbing. Over MCP the connection is the whole agent
   // session, which is not what a hold tied to a process means.
   "lock.hold": null,
+  "config.get": { tool: "config_get" },
+  "config.list": { tool: "config_list" },
+  "config.set": { tool: "config_set" },
+  "config.reset": { tool: "config_reset" },
   log: { tool: "log" },
   "report.issue": { tool: "report_bug" },
 };

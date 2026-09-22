@@ -24,15 +24,26 @@ export interface Run {
   readonly error?: string;
 }
 
-/** Run `ch` with a deliberately bare environment. */
-export function ch(args: readonly string[], cwd: string = DATA_ROOT): Run {
-  // PATH is kept because the shell needs one; every `_CH_*` variable is dropped
-  // so the CLI has to find its instance and its interpreter the way it would
-  // from a terminal CodeHydra never touched.
+/**
+ * This process's environment minus every `_CH_*` variable.
+ *
+ * PATH is kept because the shell needs one; the rest are dropped so the CLI has
+ * to find its instance and its interpreter the way it would from a terminal
+ * CodeHydra never touched. It also matters when the suite itself runs inside a
+ * CodeHydra workspace: an inherited `_CH_PLUGIN_PORT` would point `ch` at that
+ * instance instead of the app under test.
+ */
+export function bareEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.startsWith("_CH_")) env[key] = value;
   }
+  return env;
+}
+
+/** Run `ch` with a deliberately bare environment. */
+export function ch(args: readonly string[], cwd: string = DATA_ROOT): Run {
+  const env = bareEnv();
 
   const result = isWindows
     ? spawnSync("cmd", ["/c", CH, ...args], { cwd, env, encoding: "utf-8" })
@@ -56,10 +67,7 @@ export function ch(args: readonly string[], cwd: string = DATA_ROOT): Run {
  * Any spec with an in-process server the agent depends on must use this.
  */
 export async function chAsync(args: readonly string[], cwd: string = DATA_ROOT): Promise<Run> {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("_CH_")) env[key] = value;
-  }
+  const env = bareEnv();
 
   const child = isWindows
     ? spawn("cmd", ["/c", CH, ...args], { cwd, env })
@@ -87,13 +95,9 @@ export async function chAsync(args: readonly string[], cwd: string = DATA_ROOT):
  * bundle still finds its instance from its own path, as it does via the wrapper.
  */
 export function chSpawn(args: readonly string[], cwd: string = DATA_ROOT): ChildProcess {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("_CH_")) env[key] = value;
-  }
   return spawn(process.execPath, [join(BIN_DIR, "ch.cjs"), ...args], {
     cwd,
-    env,
+    env: bareEnv(),
     stdio: "ignore",
   });
 }

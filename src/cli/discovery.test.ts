@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import {
+  chooseConnection,
   DiscoveryError,
   readConnection,
   resolveDataDir,
@@ -111,5 +112,44 @@ describe("readConnection", () => {
     });
 
     expect(() => readConnection("/data", fs)).toThrow(/no connection details/);
+  });
+});
+
+describe("chooseConnection", () => {
+  const SELF = "/self/bin/ch.cjs";
+  const state = (dir: string, port: number) => ({
+    [join(dir, "state.json")]: JSON.stringify({
+      [STATE_PORT_KEY]: port,
+      [STATE_TOKEN_KEY]: `token-${port}`,
+    }),
+  });
+  const inherited = { _CH_PLUGIN_PORT: "41000", _CH_PLUGIN_TOKEN: "from-env" };
+
+  it("uses the port and token it was handed, so ch mcp needs no state file", () => {
+    expect(chooseConnection(SELF, inherited, fakeFs({}))).toEqual({
+      port: 41000,
+      token: "from-env",
+      dataDir: "/self",
+    });
+  });
+
+  it("lets _CH_DATA_DIR beat the port and token it inherited", () => {
+    const fs = fakeFs({ ...state("/data", 42000), ...state("/self", 43000) });
+
+    expect(chooseConnection(SELF, { ...inherited, _CH_DATA_DIR: "/data" }, fs)).toEqual({
+      port: 42000,
+      token: "token-42000",
+      dataDir: "/data",
+    });
+  });
+
+  it("falls back to its own data directory when the environment names nothing usable", () => {
+    const fs = fakeFs(state("/self", 43000));
+
+    expect(chooseConnection(SELF, { _CH_PLUGIN_PORT: "41000", _CH_DATA_DIR: "" }, fs)).toEqual({
+      port: 43000,
+      token: "token-43000",
+      dataDir: "/self",
+    });
   });
 });

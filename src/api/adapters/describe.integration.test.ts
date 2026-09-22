@@ -8,6 +8,7 @@ import { describe as suite, it, expect } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../../modules/lock-module";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createRegistry } from "../entries";
 import { OPERATION_NAMES, type OperationName } from "../names";
 import { MCP_MAP } from "./mcp-map";
@@ -21,6 +22,7 @@ function registry() {
       appLayer: { openPath: async () => undefined },
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
+      config: createMockConfig(),
     },
     SILENT_LOGGER
   );

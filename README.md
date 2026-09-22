@@ -101,6 +101,7 @@ server - there is nothing to configure. Through it, an agent can:
 | Workspace lifecycle | `workspace_create` (optionally with a prompt), `workspace_delete`, `workspace_hibernate`, `workspace_wake`, `workspace_restart_agent_server` |
 | Status and metadata | `workspace_get_status`, `workspace_get_metadata`, `workspace_set_metadata`, `workspace_get_agent_session`, `project_list`                    |
 | Editor and UI       | `workspace_execute_command`, `ui_show_message`, `log`                                                                                        |
+| Settings            | `config_get`, `config_set`, `config_reset`, `config_list`                                                                                    |
 | Diagnostics         | `report_bug`                                                                                                                                 |
 
 `workspace_execute_command` accepts any VS Code command identifier, so an agent can
