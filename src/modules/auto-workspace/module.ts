@@ -82,6 +82,8 @@ import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../../boundaries/platform/process";
+import type { UiPresenter } from "../presentation/presentation-module";
+import type { NotificationHandle } from "../presentation/sessions";
 import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
@@ -158,6 +160,7 @@ export interface AutoWorkspaceModuleDeps {
   readonly processRunner: ProcessRunner;
   readonly configService: Config;
   readonly stateService: StateService;
+  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 // =============================================================================
@@ -246,31 +249,69 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   // ------ Workspace lifecycle ------
 
   /**
+   * Raise an error card for a per-item failure the log alone would hide. Every
+   * poll re-reports it, and the NotificationManager collapses a repeat of the
+   * same text into the live card with a count; dismissing retires the card, and
+   * the next failing poll raises a fresh one. The handle is shared across those
+   * collapsed opens, so its dismiss listener is wired only once.
+   */
+  const wiredHandles = new WeakSet<NotificationHandle>();
+  function notifyItemError(title: string, message: string): void {
+    const handle = deps.ui.notification({ type: "error", title, message, dismissible: true });
+    if (wiredHandles.has(handle)) return;
+    wiredHandles.add(handle);
+    handle.onEvent(() => {
+      handle.close();
+    });
+  }
+
+  /**
    * Open (cloning if needed) the project a rendered definition points at, and
    * return its path. Null when the template names neither `project` nor `git`,
-   * when project:open yields nothing, or when it fails.
+   * when `project` is not an absolute path, when project:open yields nothing,
+   * or when it fails.
    *
    * Failure is swallowed rather than thrown because this is the first step of
    * handling one item, and one item must never take the cycle down with it: a
    * bad `project` path or an unreachable clone URL would otherwise abandon every
    * later item AND every later source. Null leaves a workspaces-mode item
    * unrecorded (retried next tick) and drops an event (there is no retry).
+   *
+   * A template mistake would otherwise retry silently forever, so it also
+   * raises an error notification. A failed clone does not: the clone's own card
+   * already turns into "Clone failed".
    */
   async function resolveProjectPath(
+    source: ParsedSource,
     definition: WorkspaceDefinition,
     key: string
   ): Promise<ProjectPath | null> {
-    try {
-      let projectPayload: OpenProjectIntent["payload"] | null = null;
-      if (definition.project)
+    const title = `Auto-workspace source "${source.name}" cannot open its project`;
+    let projectPayload: OpenProjectIntent["payload"];
+    if (definition.project) {
+      try {
         // A user-authored template value: normalize, then mint the brand by parsing.
-        projectPayload = { path: projectPathSchema.parse(new Path(definition.project).toString()) };
-      else if (definition.git) projectPayload = { git: definition.git };
-      if (!projectPayload) {
-        deps.logger.warn("Skipping auto-workspace (no project/git in template)", { key });
+        projectPayload = {
+          path: projectPathSchema.parse(new Path(definition.project).toString()),
+        };
+      } catch {
+        // The value itself stays out of the log: a URL put here may carry a token.
+        deps.logger.warn("Skipping auto-workspace (project is not an absolute path)", { key });
+        notifyItemError(
+          title,
+          `${source.name}: project must be an absolute path — use git: for a URL (got "${definition.project}")`
+        );
         return null;
       }
+    } else if (definition.git) {
+      projectPayload = { git: definition.git };
+    } else {
+      deps.logger.warn("Skipping auto-workspace (no project/git in template)", { key });
+      notifyItemError(title, `${source.name}: the template needs a project: path or a git: URL`);
+      return null;
+    }
 
+    try {
       const project = await deps.dispatcher.dispatch<OpenProjectIntent>({
         type: INTENT_OPEN_PROJECT,
         payload: projectPayload,
@@ -285,6 +326,9 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         key,
         error: getErrorMessage(error),
       });
+      if (projectPayload.path !== undefined) {
+        notifyItemError(title, `${source.name}: ${getErrorMessage(error)}`);
+      }
       return null;
     }
   }
@@ -453,7 +497,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   async function applyEvent(source: ParsedSource, definition: WorkspaceDefinition): Promise<void> {
     const key = stateKey(source.name, definition.name);
     try {
-      const projectPath = await resolveProjectPath(definition, key);
+      const projectPath = await resolveProjectPath(source, definition, key);
       if (!projectPath) return;
 
       const workspacePath = await findWorkspaceByName(projectPath, definition.name);
@@ -601,7 +645,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
     // Create workspaces for new items — or adopt, when the name is already taken.
     for (const { key, definition } of newItems) {
-      const projectPath = await resolveProjectPath(definition, key);
+      const projectPath = await resolveProjectPath(source, definition, key);
       if (!projectPath) continue;
 
       // An entry can go missing while its workspace stays: a legacy entry the

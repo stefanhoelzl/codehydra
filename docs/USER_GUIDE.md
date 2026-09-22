@@ -422,10 +422,15 @@ and a created one gets the blue **new** tag.
 ### When something goes wrong
 
 Most problems only reach the log, at `warn`: a failing or timed-out command,
-bad JSON, a template that does not render, a project that cannot be opened, a
-failed event. A clone that fails shows a "Clone failed" notification. A
-workspace that cannot be created (an invalid branch name, a bad `tracking`)
-shows an error notification and is retried every poll.
+bad JSON, a template that does not render, a failed event. A clone that fails
+shows a "Clone failed" notification. A bad project shows an error notification
+naming the source and the fix: a `project` that is not an absolute path (a git
+URL belongs under `git`, not `project`), a `project` that cannot be opened, or a
+template with neither. A workspace that cannot be created (an invalid branch
+name, a bad `tracking`) shows an error notification too. A `mode: workspaces`
+item that fails either way is retried every poll (an event is still dropped),
+and a repeat of the same error adds to its notification's count instead of
+stacking a new one.
 
 ### Example
 
