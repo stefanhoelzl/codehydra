@@ -184,7 +184,7 @@ main()
   .catch((error: unknown) => {
     // Only reached by a failure outside run()'s own handling — `ch mcp` startup,
     // or discovery for it.
-    const json = useJson(undefined, process.stdout.isTTY === true);
+    const json = useJson("auto", process.stdout.isTTY === true);
     const code = error instanceof DiscoveryError ? EXIT.UNREACHABLE : EXIT.FAILED;
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${renderError(message, code, json)}\n`);

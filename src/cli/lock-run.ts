@@ -18,7 +18,7 @@
 
 import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/plugin";
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
-import { parseArgs, UsageError } from "./args";
+import { parseArgs, readFormat, UsageError } from "./args";
 import { CallError, type Client } from "./client";
 import { EXIT, renderError, useJson } from "./output";
 import { exitCodeFor } from "./run";
@@ -56,7 +56,7 @@ export interface LockRunOptions {
 
 export async function lockRun(options: LockRunOptions): Promise<number> {
   const { argv } = options;
-  const json = useJson(argv.includes("--json") ? true : undefined, options.isTty);
+  let json = useJson("auto", options.isTty);
 
   const split = argv.indexOf("--");
   const own = split === -1 ? argv : argv.slice(0, split);
@@ -64,6 +64,7 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
 
   let client: Client | undefined;
   try {
+    json = useJson(readFormat(own), options.isTty);
     const { input, global } = parseArgs(own, SCHEMA, ["name", "reason"]);
     if (typeof input.name !== "string") {
       throw new UsageError(

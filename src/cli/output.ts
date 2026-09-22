@@ -3,9 +3,11 @@
  *
  * Output is TTY-aware: a person at a terminal gets something readable, and a
  * script or an agent's Bash call — never a TTY — gets JSON with no flag to
- * remember. `--json` / `--no-json` force either way, which is what keeps the
- * context-sensitivity from being a trap.
+ * remember. `--format json` / `--format text` force either way, which is what
+ * keeps the context-sensitivity from being a trap.
  */
+
+import type { Format } from "./args";
 
 /**
  * Exit codes.
@@ -32,9 +34,9 @@ export const EXIT = {
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
-/** Whether to emit JSON, given an explicit choice and whether stdout is a TTY. */
-export function useJson(forced: boolean | undefined, isTty: boolean): boolean {
-  return forced ?? !isTty;
+/** Whether to emit JSON, given the chosen format and whether stdout is a TTY. */
+export function useJson(format: Format, isTty: boolean): boolean {
+  return format === "auto" ? !isTty : format === "json";
 }
 
 /**

@@ -174,6 +174,19 @@ describe("ch lock run", () => {
     expect(h.steps.map((s) => s.step)).not.toContain("api:operation:lock.hold");
   });
 
+  it("reports failures in the chosen format, ignoring the command's own --format", async () => {
+    const h = harness({
+      argv: ["device", "--format", "json", "--", "make", "--format", "text"],
+      hold: () => new CallError("'device' is held by 'android' (4m)", "conflict"),
+    });
+
+    await h.run();
+
+    expect(h.err).toEqual([
+      JSON.stringify({ error: "'device' is held by 'android' (4m)", exitCode: EXIT.CONFLICT }),
+    ]);
+  });
+
   it.each([
     [[], "no lock name"],
     [["device", "--"], "nothing after --"],

@@ -152,14 +152,58 @@ describe("run", () => {
       expect(result.stdout).toBe("dirty  true");
     });
 
-    it("honours a forced mode against the TTY default", async () => {
+    it("honours --format json against the TTY default", async () => {
       const result = await runWith(
-        ["ws", "status", "--json"],
+        ["ws", "status", "--format", "json"],
         fakeClient(() => ({ a: 1 })),
         true
       );
 
       expect(result.stdout).toBe('{"a":1}');
+    });
+
+    it("honours --format text when piped", async () => {
+      const result = await runWith(
+        ["ws", "status", "--format=text"],
+        fakeClient(() => ({ a: 1 }))
+      );
+
+      expect(result.stdout).toBe("a  1");
+    });
+
+    it("lets a later --format auto undo an earlier choice", async () => {
+      const result = await runWith(
+        ["ws", "status", "--format", "json", "--format", "auto"],
+        fakeClient(() => ({ a: 1 })),
+        true
+      );
+
+      expect(result.stdout).toBe("a  1");
+    });
+
+    it("reports an unknown format as a usage error without calling anything", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["ws", "status", "--format", "yaml"],
+        fakeClient(() => null, calls)
+      );
+
+      expect(result.exitCode).toBe(EXIT.USAGE);
+      expect(JSON.parse(result.stderr)).toMatchObject({ exitCode: EXIT.USAGE });
+      expect(calls).toEqual([]);
+    });
+
+    it("rejects the removed --json flag", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["ws", "status", "--json"],
+        fakeClient(() => null, calls),
+        true
+      );
+
+      expect(result.exitCode).toBe(EXIT.USAGE);
+      expect(result.stderr).toContain('unknown flag "--json"');
+      expect(calls).toEqual([]);
     });
   });
 

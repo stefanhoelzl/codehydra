@@ -8,16 +8,16 @@ import { EXIT, render, renderError, renderHuman, useJson } from "./output";
 describe("useJson", () => {
   it("defaults to JSON when stdout is not a TTY", () => {
     // An agent's Bash call and a shell pipeline both land here.
-    expect(useJson(undefined, false)).toBe(true);
+    expect(useJson("auto", false)).toBe(true);
   });
 
   it("defaults to human output at an interactive terminal", () => {
-    expect(useJson(undefined, true)).toBe(false);
+    expect(useJson("auto", true)).toBe(false);
   });
 
-  it("lets an explicit choice win in both directions", () => {
-    expect(useJson(true, true)).toBe(true);
-    expect(useJson(false, false)).toBe(false);
+  it("lets an explicit format win in both directions", () => {
+    expect(useJson("json", true)).toBe(true);
+    expect(useJson("text", false)).toBe(false);
   });
 });
 
