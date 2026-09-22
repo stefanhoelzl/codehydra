@@ -10,6 +10,7 @@ import {
   type Event as SdkEvent,
   type SessionStatus as SdkSessionStatus,
 } from "@opencode-ai/sdk";
+import type { Event as SdkV2Event } from "@opencode-ai/sdk/v2";
 import { OpenCodeError, getErrorMessage } from "../../../shared/errors/service-errors";
 import type { Logger } from "../../../boundaries/platform/logging";
 import {
@@ -21,8 +22,9 @@ import {
   type ClientStatus,
   type IDisposable,
   type Unsubscribe,
-  type PermissionUpdatedEvent,
-  type PermissionRepliedEvent,
+  type UserRequestKind,
+  type UserRequestAskedEvent,
+  type UserRequestResolvedEvent,
 } from "./types";
 
 /**
@@ -37,34 +39,37 @@ export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
 const defaultSdkFactory: SdkClientFactory = (baseUrl: string) => createOpencodeClient({ baseUrl });
 
 /**
- * Type guard for PermissionUpdatedEvent.
- * Validates the structure of a permission.updated SSE event.
+ * An event from the server's `/event` stream.
+ *
+ * The v1 SDK still types that stream, but the server is newer: since OpenCode
+ * 1.1.1 permissions go through `permission.asked` / `permission.replied` with a
+ * `requestID`, and its `question` tool parks a session the same way. Those only
+ * exist in the SDK's v2 types.
  */
-export function isPermissionUpdatedEvent(value: unknown): value is PermissionUpdatedEvent {
+type ServerEvent = SdkEvent | SdkV2Event;
+
+/**
+ * Type guard for the `{ id, sessionID }` a `permission.asked` or
+ * `question.asked` event carries.
+ */
+export function isUserRequestAsked(value: unknown): value is { id: string; sessionID: string } {
   if (typeof value !== "object" || value === null) return false;
 
   const obj = value as Record<string, unknown>;
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.sessionID === "string" &&
-    typeof obj.type === "string" &&
-    typeof obj.title === "string"
-  );
+  return typeof obj.id === "string" && typeof obj.sessionID === "string";
 }
 
 /**
- * Type guard for PermissionRepliedEvent.
- * Validates the structure of a permission.replied SSE event.
+ * Type guard for the `{ sessionID, requestID }` a `permission.replied`,
+ * `question.replied` or `question.rejected` event carries.
  */
-export function isPermissionRepliedEvent(value: unknown): value is PermissionRepliedEvent {
+export function isUserRequestResolved(
+  value: unknown
+): value is { sessionID: string; requestID: string } {
   if (typeof value !== "object" || value === null) return false;
 
   const obj = value as Record<string, unknown>;
-  return (
-    typeof obj.sessionID === "string" &&
-    typeof obj.permissionID === "string" &&
-    (obj.response === "once" || obj.response === "always" || obj.response === "reject")
-  );
+  return typeof obj.sessionID === "string" && typeof obj.requestID === "string";
 }
 
 /**
@@ -78,16 +83,16 @@ export type SessionEventCallback = (event: SessionStatus) => void;
 export type StatusChangedCallback = (status: ClientStatus) => void;
 
 /**
- * Permission event payload.
+ * A session started or stopped waiting on the user.
  */
-export type PermissionEvent =
-  | { type: "permission.updated"; event: PermissionUpdatedEvent }
-  | { type: "permission.replied"; event: PermissionRepliedEvent };
+export type UserRequestEvent =
+  | { type: "asked"; event: UserRequestAskedEvent }
+  | { type: "resolved"; event: UserRequestResolvedEvent };
 
 /**
- * Callback for permission events.
+ * Callback for user request events.
  */
-export type PermissionEventCallback = (event: PermissionEvent) => void;
+export type UserRequestEventCallback = (event: UserRequestEvent) => void;
 
 /**
  * Type guard for SessionStatusValue.
@@ -139,7 +144,7 @@ export class OpenCodeClient implements IDisposable {
   private readonly sdk: OpencodeClient;
   private readonly logger: Logger;
   private readonly listeners = new Set<SessionEventCallback>();
-  private readonly permissionListeners = new Set<PermissionEventCallback>();
+  private readonly userRequestListeners = new Set<UserRequestEventCallback>();
   private readonly statusListeners = new Set<StatusChangedCallback>();
   private eventSubscription: SdkEventSubscription | null = null;
   private disposed = false;
@@ -152,7 +157,7 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Map of child session ID to its root session ID.
-   * Used to emit permission events for subagents under their root session.
+   * Used to emit user request events for subagents under their root session.
    */
   private readonly childToRootSession = new Map<string, string>();
 
@@ -193,11 +198,12 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Subscribe to permission events.
+   * Subscribe to user request events: a root or tracked child session asking
+   * for permission or asking a question, and that request being resolved.
    */
-  onPermissionEvent(callback: PermissionEventCallback): Unsubscribe {
-    this.permissionListeners.add(callback);
-    return () => this.permissionListeners.delete(callback);
+  onUserRequestEvent(callback: UserRequestEventCallback): Unsubscribe {
+    this.userRequestListeners.add(callback);
+    return () => this.userRequestListeners.delete(callback);
   }
 
   /**
@@ -365,7 +371,7 @@ export class OpenCodeClient implements IDisposable {
     this.disposed = true;
     this.disconnect();
     this.listeners.clear();
-    this.permissionListeners.clear();
+    this.userRequestListeners.clear();
     this.statusListeners.clear();
     this.rootSessionIds.clear();
     this.childToRootSession.clear();
@@ -389,7 +395,7 @@ export class OpenCodeClient implements IDisposable {
   /**
    * Handle an SDK event and dispatch to appropriate handlers.
    */
-  private handleSdkEvent(event: SdkEvent): void {
+  private handleSdkEvent(event: ServerEvent): void {
     switch (event.type) {
       case "session.status":
         this.handleSessionStatus(event.properties);
@@ -403,11 +409,18 @@ export class OpenCodeClient implements IDisposable {
       case "session.deleted":
         this.handleSessionDeleted(event.properties);
         break;
-      case "permission.updated":
-        this.handlePermissionUpdated(event.properties);
+      case "permission.asked":
+        this.handleUserRequestAsked("permission", event.properties);
         break;
       case "permission.replied":
-        this.handlePermissionReplied(event.properties);
+        this.handleUserRequestResolved("permission", event.properties);
+        break;
+      case "question.asked":
+        this.handleUserRequestAsked("question", event.properties);
+        break;
+      case "question.replied":
+      case "question.rejected":
+        this.handleUserRequestResolved("question", event.properties);
         break;
     }
   }
@@ -523,50 +536,38 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
-   * Handle permission.updated events.
+   * Handle permission.asked / question.asked events.
    * Emits for root sessions and tracked child sessions.
    */
-  private handlePermissionUpdated(properties?: {
-    id?: string;
-    sessionID?: string;
-    type?: string;
-    title?: string;
-  }): void {
-    if (!isPermissionUpdatedEvent(properties)) return;
+  private handleUserRequestAsked(kind: UserRequestKind, properties: unknown): void {
+    if (!isUserRequestAsked(properties) || !this.isTrackedSession(properties.sessionID)) return;
 
-    // Emit for root sessions OR child sessions mapped to a root
-    const isTracked =
-      this.rootSessionIds.has(properties.sessionID) ||
-      this.childToRootSession.has(properties.sessionID);
-
-    if (!isTracked) return;
-
-    for (const listener of this.permissionListeners) {
-      listener({ type: "permission.updated", event: properties });
+    const event = { kind, id: properties.id, sessionID: properties.sessionID };
+    for (const listener of this.userRequestListeners) {
+      listener({ type: "asked", event });
     }
   }
 
   /**
-   * Handle permission.replied events.
+   * Handle permission.replied / question.replied / question.rejected events.
    * Emits for root sessions and tracked child sessions.
    */
-  private handlePermissionReplied(properties?: {
-    sessionID?: string;
-    permissionID?: string;
-    response?: string;
-  }): void {
-    if (!isPermissionRepliedEvent(properties)) return;
-
-    // Emit for root sessions OR child sessions mapped to a root
-    const isTracked =
-      this.rootSessionIds.has(properties.sessionID) ||
-      this.childToRootSession.has(properties.sessionID);
-
-    if (!isTracked) return;
-
-    for (const listener of this.permissionListeners) {
-      listener({ type: "permission.replied", event: properties });
+  private handleUserRequestResolved(kind: UserRequestKind, properties: unknown): void {
+    if (!isUserRequestResolved(properties) || !this.isTrackedSession(properties.sessionID)) {
+      return;
     }
+
+    const event = { kind, requestID: properties.requestID, sessionID: properties.sessionID };
+    for (const listener of this.userRequestListeners) {
+      listener({ type: "resolved", event });
+    }
+  }
+
+  /**
+   * A root session, or a child session mapped to one.
+   */
+  private isTrackedSession(sessionId: string): boolean {
+    return this.rootSessionIds.has(sessionId) || this.childToRootSession.has(sessionId);
   }
 
   /**

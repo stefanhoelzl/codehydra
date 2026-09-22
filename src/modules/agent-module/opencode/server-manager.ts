@@ -225,9 +225,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    */
   private async spawnServerOnPort(workspacePath: string, port: number): Promise<SpawnedProcess> {
     // OPENCODE_CONFIG_CONTENT is merged into the resolved config last, so these
-    // values win over the user's opencode.json. Note that arrays are replaced,
-    // not concatenated (only `plugin` is special-cased to union): a user's own
-    // `instructions` entries do not survive this merge.
+    // values win over the user's opencode.json. `instructions` is the exception
+    // that merges rather than wins: OpenCode unions it across every config
+    // source, so CodeHydra's prompt is added to the user's own entries.
     //
     // Use Path.toString() for paths (already POSIX format). Backslashes would
     // become invalid escape sequences in JSON.
@@ -255,9 +255,10 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     }
     // OpenCode's server is spawned from the Electron main process, which does
     // not have CodeHydra's bin directory on PATH — so without this, its bash
-    // tool can reach neither `ch` nor `ch-bg`, and a background shell it starts
-    // has no way to opt out of keeping the workspace busy. Prepended so a
-    // CodeHydra script wins over a same-named one elsewhere on PATH.
+    // tool cannot reach `ch`. (`ch-bg` is there too but changes nothing under
+    // OpenCode: its status tracking never looks at background shells.)
+    // Prepended so a CodeHydra script wins over a same-named one elsewhere on
+    // PATH.
     const binDir = this.pathProvider.dataPath("bin").toNative();
     const existingPath = process.env.PATH ?? process.env.Path ?? "";
     const env: NodeJS.ProcessEnv = {

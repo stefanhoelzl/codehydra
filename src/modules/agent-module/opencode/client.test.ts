@@ -8,8 +8,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   OpenCodeClient,
-  isPermissionUpdatedEvent,
-  isPermissionRepliedEvent,
+  isUserRequestAsked,
+  isUserRequestResolved,
   isValidSessionStatus,
   isSessionStatusResponse,
 } from "./client";
@@ -925,36 +925,56 @@ describe("OpenCodeClient", () => {
       });
     });
 
-    describe("permission.updated events", () => {
-      it("emits for root sessions with valid structure", async () => {
+    describe("user request events", () => {
+      it.each([
+        ["permission.asked", "permission"],
+        ["question.asked", "question"],
+      ] as const)("%s emits asked for root sessions", (type, kind) => {
         mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
         mockFactory = createSdkFactoryMock(mockSdk);
 
         const listener = vi.fn();
         client = createClient(8080);
         registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
+        client.onUserRequestEvent(listener);
 
         const event = {
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "ses-123",
-            type: "bash",
-            title: "Run command",
-          },
+          type,
+          properties: { id: "req-456", sessionID: "ses-123", permission: "bash", questions: [] },
         } as unknown as SdkEvent;
 
         client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({
-          type: "permission.updated",
-          event: {
-            id: "perm-456",
-            sessionID: "ses-123",
-            type: "bash",
-            title: "Run command",
-          },
+          type: "asked",
+          event: { kind, id: "req-456", sessionID: "ses-123" },
+        });
+      });
+
+      it.each([
+        ["permission.replied", "permission", { reply: "once" }],
+        ["permission.replied", "permission", { reply: "reject" }],
+        ["question.replied", "question", { answers: [["yes"]] }],
+        ["question.rejected", "question", {}],
+      ] as const)("%s emits resolved (%s)", (type, kind, extra) => {
+        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
+        mockFactory = createSdkFactoryMock(mockSdk);
+
+        const listener = vi.fn();
+        client = createClient(8080);
+        registerSessions(client, [{ id: "ses-123" }]);
+        client.onUserRequestEvent(listener);
+
+        const event = {
+          type,
+          properties: { sessionID: "ses-123", requestID: "req-456", ...extra },
+        } as unknown as SdkEvent;
+
+        client["handleSdkEvent"](event);
+
+        expect(listener).toHaveBeenCalledWith({
+          type: "resolved",
+          event: { kind, requestID: "req-456", sessionID: "ses-123" },
         });
       });
 
@@ -969,30 +989,26 @@ describe("OpenCodeClient", () => {
         client = createClient(8080);
         // Register parent as root and child mapped to parent
         registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-        client.onPermissionEvent(listener);
+        client.onUserRequestEvent(listener);
 
-        const event = {
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "child-1",
-            type: "bash",
-            title: "Run command",
-          },
-        } as unknown as SdkEvent;
+        client["handleSdkEvent"]({
+          type: "permission.asked",
+          properties: { id: "req-456", sessionID: "child-1" },
+        } as unknown as SdkEvent);
+        client["handleSdkEvent"]({
+          type: "permission.replied",
+          properties: { sessionID: "child-1", requestID: "req-456", reply: "once" },
+        } as unknown as SdkEvent);
 
-        client["handleSdkEvent"](event);
-
-        // Child sessions are now tracked and emit permission events
-        expect(listener).toHaveBeenCalledWith({
-          type: "permission.updated",
-          event: {
-            id: "perm-456",
-            sessionID: "child-1",
-            type: "bash",
-            title: "Run command",
-          },
-        });
+        expect(listener.mock.calls).toEqual([
+          [{ type: "asked", event: { kind: "permission", id: "req-456", sessionID: "child-1" } }],
+          [
+            {
+              type: "resolved",
+              event: { kind: "permission", requestID: "req-456", sessionID: "child-1" },
+            },
+          ],
+        ]);
       });
 
       it("ignores untracked sessions", async () => {
@@ -1004,19 +1020,16 @@ describe("OpenCodeClient", () => {
         const listener = vi.fn();
         client = createClient(8080);
         registerSessions(client, [{ id: "other-session" }]); // Different session
-        client.onPermissionEvent(listener);
+        client.onUserRequestEvent(listener);
 
-        const event = {
-          type: "permission.updated",
-          properties: {
-            id: "perm-456",
-            sessionID: "unknown-session",
-            type: "bash",
-            title: "Run command",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
+        client["handleSdkEvent"]({
+          type: "question.asked",
+          properties: { id: "req-456", sessionID: "unknown-session" },
+        } as unknown as SdkEvent);
+        client["handleSdkEvent"]({
+          type: "question.replied",
+          properties: { sessionID: "unknown-session", requestID: "req-456" },
+        } as unknown as SdkEvent);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -1028,190 +1041,56 @@ describe("OpenCodeClient", () => {
         const listener = vi.fn();
         client = createClient(8080);
         registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
+        client.onUserRequestEvent(listener);
 
-        // Missing required fields
-        const event = {
+        client["handleSdkEvent"]({
+          type: "permission.asked",
+          properties: { id: "req-456" },
+        } as unknown as SdkEvent);
+        client["handleSdkEvent"]({
+          type: "permission.replied",
+          properties: { sessionID: "ses-123" },
+        } as unknown as SdkEvent);
+        client["handleSdkEvent"]({
+          type: "question.asked",
+          properties: undefined,
+        } as unknown as SdkEvent);
+
+        expect(listener).not.toHaveBeenCalled();
+      });
+
+      it("ignores the pre-1.1 permission.updated event", async () => {
+        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
+        mockFactory = createSdkFactoryMock(mockSdk);
+
+        const listener = vi.fn();
+        client = createClient(8080);
+        registerSessions(client, [{ id: "ses-123" }]);
+        client.onUserRequestEvent(listener);
+
+        client["handleSdkEvent"]({
           type: "permission.updated",
-          properties: { id: "perm-456" },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("permission.replied events", () => {
-      it("handles once response", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
-
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({
-          type: "permission.replied",
-          event: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        });
-      });
-
-      it("handles always response", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
-
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "always",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({
-          type: "permission.replied",
-          event: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "always",
-          },
-        });
-      });
-
-      it("handles reject response", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
-
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "reject",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({
-          type: "permission.replied",
-          event: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "reject",
-          },
-        });
-      });
-
-      it("emits for tracked child sessions", async () => {
-        mockSdk = createSdkWithSessions([
-          createTestSession({ id: "parent-1", directory: "/test" }),
-          createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-        ]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        // Register parent as root and child mapped to parent
-        registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-        client.onPermissionEvent(listener);
-
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "child-1",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        // Child sessions are now tracked and emit permission events
-        expect(listener).toHaveBeenCalledWith({
-          type: "permission.replied",
-          event: {
-            sessionID: "child-1",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        });
-      });
-
-      it("ignores untracked sessions", async () => {
-        mockSdk = createSdkWithSessions([
-          createTestSession({ id: "parent-1", directory: "/test" }),
-        ]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "other-session" }]); // Different session
-        client.onPermissionEvent(listener);
-
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "unknown-session",
-            permissionID: "perm-456",
-            response: "once",
-          },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
+          properties: { id: "perm-456", sessionID: "ses-123", type: "bash", title: "Run" },
+        } as unknown as SdkEvent);
 
         expect(listener).not.toHaveBeenCalled();
       });
 
-      it("ignores invalid response types", async () => {
+      it("clears listeners on dispose", async () => {
         mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
         mockFactory = createSdkFactoryMock(mockSdk);
 
         const listener = vi.fn();
         client = createClient(8080);
         registerSessions(client, [{ id: "ses-123" }]);
-        client.onPermissionEvent(listener);
+        client.onUserRequestEvent(listener);
 
-        const event = {
-          type: "permission.replied",
-          properties: {
-            sessionID: "ses-123",
-            permissionID: "perm-456",
-            response: "invalid",
-          },
-        } as unknown as SdkEvent;
+        client.dispose();
 
-        client["handleSdkEvent"](event);
+        client["handleSdkEvent"]({
+          type: "permission.asked",
+          properties: { id: "req-456", sessionID: "ses-123" },
+        } as unknown as SdkEvent);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -1219,137 +1098,41 @@ describe("OpenCodeClient", () => {
   });
 });
 
-describe("isPermissionUpdatedEvent", () => {
-  it("validates correct permission.updated event structure", () => {
-    const validEvent = {
-      id: "perm-123",
-      sessionID: "ses-456",
-      type: "bash",
-      title: "Run shell command",
-    };
-
-    expect(isPermissionUpdatedEvent(validEvent)).toBe(true);
+describe("isUserRequestAsked", () => {
+  it("accepts an id and a sessionID", () => {
+    expect(isUserRequestAsked({ id: "req-1", sessionID: "ses-1", permission: "bash" })).toBe(true);
   });
 
-  it("rejects event missing id", () => {
-    const invalid = {
-      sessionID: "ses-456",
-      type: "bash",
-      title: "Run shell command",
-    };
-
-    expect(isPermissionUpdatedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing sessionID", () => {
-    const invalid = {
-      id: "perm-123",
-      type: "bash",
-      title: "Run shell command",
-    };
-
-    expect(isPermissionUpdatedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing type", () => {
-    const invalid = {
-      id: "perm-123",
-      sessionID: "ses-456",
-      title: "Run shell command",
-    };
-
-    expect(isPermissionUpdatedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing title", () => {
-    const invalid = {
-      id: "perm-123",
-      sessionID: "ses-456",
-      type: "bash",
-    };
-
-    expect(isPermissionUpdatedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects null", () => {
-    expect(isPermissionUpdatedEvent(null)).toBe(false);
+  it("rejects a missing id or sessionID", () => {
+    expect(isUserRequestAsked({ sessionID: "ses-1" })).toBe(false);
+    expect(isUserRequestAsked({ id: "req-1" })).toBe(false);
+    expect(isUserRequestAsked({ id: 1, sessionID: "ses-1" })).toBe(false);
   });
 
   it("rejects non-object values", () => {
-    expect(isPermissionUpdatedEvent("string")).toBe(false);
-    expect(isPermissionUpdatedEvent(123)).toBe(false);
-    expect(isPermissionUpdatedEvent(undefined)).toBe(false);
+    expect(isUserRequestAsked(null)).toBe(false);
+    expect(isUserRequestAsked("string")).toBe(false);
+    expect(isUserRequestAsked(undefined)).toBe(false);
   });
 });
 
-describe("isPermissionRepliedEvent", () => {
-  it("validates correct permission.replied event structure", () => {
-    const validEvent = {
-      sessionID: "ses-456",
-      permissionID: "perm-123",
-      response: "once",
-    };
-
-    expect(isPermissionRepliedEvent(validEvent)).toBe(true);
-  });
-
-  it("validates all response types", () => {
-    expect(isPermissionRepliedEvent({ sessionID: "s", permissionID: "p", response: "once" })).toBe(
+describe("isUserRequestResolved", () => {
+  it("accepts a sessionID and a requestID", () => {
+    expect(isUserRequestResolved({ sessionID: "ses-1", requestID: "req-1", reply: "once" })).toBe(
       true
     );
+  });
+
+  it("rejects the pre-1.1 permissionID shape", () => {
     expect(
-      isPermissionRepliedEvent({ sessionID: "s", permissionID: "p", response: "always" })
-    ).toBe(true);
-    expect(
-      isPermissionRepliedEvent({ sessionID: "s", permissionID: "p", response: "reject" })
-    ).toBe(true);
-  });
-
-  it("rejects invalid response types", () => {
-    const invalid = {
-      sessionID: "ses-456",
-      permissionID: "perm-123",
-      response: "invalid",
-    };
-
-    expect(isPermissionRepliedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing sessionID", () => {
-    const invalid = {
-      permissionID: "perm-123",
-      response: "once",
-    };
-
-    expect(isPermissionRepliedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing permissionID", () => {
-    const invalid = {
-      sessionID: "ses-456",
-      response: "once",
-    };
-
-    expect(isPermissionRepliedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects event missing response", () => {
-    const invalid = {
-      sessionID: "ses-456",
-      permissionID: "perm-123",
-    };
-
-    expect(isPermissionRepliedEvent(invalid)).toBe(false);
-  });
-
-  it("rejects null", () => {
-    expect(isPermissionRepliedEvent(null)).toBe(false);
+      isUserRequestResolved({ sessionID: "ses-1", permissionID: "perm-1", response: "once" })
+    ).toBe(false);
   });
 
   it("rejects non-object values", () => {
-    expect(isPermissionRepliedEvent("string")).toBe(false);
-    expect(isPermissionRepliedEvent(123)).toBe(false);
-    expect(isPermissionRepliedEvent(undefined)).toBe(false);
+    expect(isUserRequestResolved(null)).toBe(false);
+    expect(isUserRequestResolved("string")).toBe(false);
+    expect(isUserRequestResolved(undefined)).toBe(false);
   });
 });
 
@@ -1450,275 +1233,5 @@ describe("isSessionStatusResponse", () => {
     expect(isSessionStatusResponse("string")).toBe(false);
     expect(isSessionStatusResponse(123)).toBe(false);
     expect(isSessionStatusResponse(undefined)).toBe(false);
-  });
-});
-
-describe("Permission Event Emission", () => {
-  let client: OpenCodeClient;
-  let mockSdk: MockSdkClient;
-  let mockFactory: SdkClientFactory;
-
-  function createSdkWithSessions(
-    sessions: Array<{ id: string; directory: string; parentID?: string }>
-  ): MockSdkClient {
-    return createSdkClientMock({
-      sessions: sessions.map((s) => ({
-        ...s,
-        status: { type: "idle" as const },
-      })),
-    });
-  }
-
-  function createClient(factory: SdkClientFactory): OpenCodeClient {
-    return new OpenCodeClient(8080, SILENT_LOGGER, factory as unknown as RealSdkClientFactory);
-  }
-
-  /**
-   * Helper to register sessions for event filtering.
-   */
-  function registerSessions(
-    c: OpenCodeClient,
-    sessions: Array<{ id: string; parentID?: string }>
-  ): void {
-    for (const session of sessions) {
-      const info: { id: string; parentID?: string } = { id: session.id };
-      if (session.parentID !== undefined) {
-        info.parentID = session.parentID;
-      }
-      c["handleSessionCreated"]({ info });
-    }
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockSdk = createSdkClientMock();
-    mockFactory = createSdkFactoryMock(mockSdk);
-  });
-
-  afterEach(() => {
-    client?.dispose();
-  });
-
-  describe("permission.updated", () => {
-    it("emits event for root session", async () => {
-      // Register root session first
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      // Simulate permission.updated event via internal handler
-      client["handlePermissionUpdated"]({
-        id: "perm-456",
-        sessionID: "ses-123",
-        type: "bash",
-        title: "Run command",
-      });
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.updated",
-        event: {
-          id: "perm-456",
-          sessionID: "ses-123",
-          type: "bash",
-          title: "Run command",
-        },
-      });
-    });
-
-    it("emits for tracked child sessions", async () => {
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "parent-1", directory: "/test" }),
-        createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      // Register parent as root and child mapped to parent
-      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-      client.onPermissionEvent(listener);
-
-      // Permission event for tracked child session should be emitted
-      client["handlePermissionUpdated"]({
-        id: "perm-456",
-        sessionID: "child-1",
-        type: "bash",
-        title: "Run command",
-      });
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.updated",
-        event: {
-          id: "perm-456",
-          sessionID: "child-1",
-          type: "bash",
-          title: "Run command",
-        },
-      });
-    });
-
-    it("ignores untracked sessions", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "parent-1", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "other-session" }]); // Different session
-      client.onPermissionEvent(listener);
-
-      // Permission event for unknown session should be ignored
-      client["handlePermissionUpdated"]({
-        id: "perm-456",
-        sessionID: "unknown-session",
-        type: "bash",
-        title: "Run command",
-      });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores malformed events", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      // Send malformed event (missing required fields)
-      client["handlePermissionUpdated"]({ id: "perm-456" });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores undefined properties", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      client["handlePermissionUpdated"](undefined);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("permission.replied", () => {
-    it("emits event for root session", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      client["handlePermissionReplied"]({
-        sessionID: "ses-123",
-        permissionID: "perm-456",
-        response: "once",
-      });
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.replied",
-        event: {
-          sessionID: "ses-123",
-          permissionID: "perm-456",
-          response: "once",
-        },
-      });
-    });
-
-    it("emits for tracked child sessions", async () => {
-      mockSdk = createSdkWithSessions([
-        createTestSession({ id: "parent-1", directory: "/test" }),
-        createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-      ]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      // Register parent as root and child mapped to parent
-      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-      client.onPermissionEvent(listener);
-
-      client["handlePermissionReplied"]({
-        sessionID: "child-1",
-        permissionID: "perm-456",
-        response: "once",
-      });
-
-      expect(listener).toHaveBeenCalledWith({
-        type: "permission.replied",
-        event: {
-          sessionID: "child-1",
-          permissionID: "perm-456",
-          response: "once",
-        },
-      });
-    });
-
-    it("ignores untracked sessions", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "parent-1", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "other-session" }]); // Different session
-      client.onPermissionEvent(listener);
-
-      client["handlePermissionReplied"]({
-        sessionID: "unknown-session",
-        permissionID: "perm-456",
-        response: "once",
-      });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores malformed events", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      client["handlePermissionReplied"]({ sessionID: "ses-123" });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("subscription", () => {
-    it("clears listeners on dispose", async () => {
-      mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      const listener = vi.fn();
-      client = createClient(mockFactory);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onPermissionEvent(listener);
-
-      client.dispose();
-
-      client["handlePermissionUpdated"]({
-        id: "perm-456",
-        sessionID: "ses-123",
-        type: "bash",
-        title: "Run command",
-      });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
   });
 });

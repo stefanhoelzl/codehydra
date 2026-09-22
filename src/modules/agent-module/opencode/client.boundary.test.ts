@@ -13,7 +13,7 @@
  * @group boundary
  */
 
-import { describe, it, expect, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, vi, onTestFinished } from "vitest";
 import { OpenCodeClient } from "./client";
 import { withOpencode } from "./boundary-test-utils";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
@@ -26,6 +26,10 @@ import {
   BINARY_WARM_TIMEOUT_MS,
 } from "../../../utils/testing/ensure-binaries";
 import type { ClientStatus } from "./types";
+import type { UserRequestEvent } from "./client";
+import { OpenCodeProvider } from "./provider";
+import type { AgentStatus } from "../types";
+import { createOpencodeClient as createV2Client } from "@opencode-ai/sdk/v2";
 
 describe("OpenCodeClient boundary tests", () => {
   let binaryPath: string;
@@ -525,20 +529,11 @@ describe("OpenCodeClient boundary tests", () => {
           permission: { bash: "ask", edit: "allow", webfetch: "allow" },
         },
         async ({ client, sdk }) => {
-          // Track permission events
-          type PermissionEvent =
-            | {
-                type: "permission.updated";
-                event: { id: string; sessionID: string; type: string; title: string };
-              }
-            | {
-                type: "permission.replied";
-                event: { sessionID: string; permissionID: string; response: string };
-              };
-          const permissionEvents: PermissionEvent[] = [];
+          // Track permission requests
+          const requestEvents: UserRequestEvent[] = [];
 
-          client.onPermissionEvent((event) => {
-            permissionEvents.push(event);
+          client.onUserRequestEvent((event) => {
+            requestEvents.push(event);
           });
 
           // Track status changes
@@ -561,23 +556,18 @@ describe("OpenCodeClient boundary tests", () => {
             body: { parts: [{ type: "text", text: "Run a command" }] },
           });
 
-          // Wait for permission.updated event
+          // Wait for the permission request
           await vi.waitFor(
             () => {
-              const hasPermissionUpdated = permissionEvents.some(
-                (e) => e.type === "permission.updated"
-              );
-              expect(hasPermissionUpdated).toBe(true);
+              expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
             },
             { timeout: CI_TIMEOUT_MS }
           );
 
-          // Get the permission event details
-          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated");
-          expect(permissionUpdated).toBeDefined();
-          expect(permissionUpdated!.type).toBe("permission.updated");
-
-          const permissionId = permissionUpdated!.event.id;
+          const asked = requestEvents.find((e) => e.type === "asked");
+          if (asked?.type !== "asked") throw new Error("unreachable");
+          expect(asked.event.kind).toBe("permission");
+          const permissionId = asked.event.id;
 
           // Respond with approval using SDK top-level method
           await sdk.postSessionIdPermissionsPermissionId({
@@ -585,21 +575,16 @@ describe("OpenCodeClient boundary tests", () => {
             body: { response: "once" },
           });
 
-          // Wait for permission.replied event
+          // Wait for the request to be resolved
           await vi.waitFor(
             () => {
-              const hasPermissionReplied = permissionEvents.some(
-                (e) => e.type === "permission.replied"
-              );
-              expect(hasPermissionReplied).toBe(true);
+              expect(requestEvents).toContainEqual({
+                type: "resolved",
+                event: { kind: "permission", requestID: permissionId, sessionID: sessionId },
+              });
             },
             { timeout: CI_TIMEOUT_MS }
           );
-
-          // Verify permission.replied has approval response
-          const permissionReplied = permissionEvents.find((e) => e.type === "permission.replied");
-          expect(permissionReplied).toBeDefined();
-          expect(permissionReplied!.event.response).toBe("once");
 
           // Wait for prompt to complete
           await promptPromise;
@@ -630,20 +615,11 @@ describe("OpenCodeClient boundary tests", () => {
           permission: { bash: "ask", edit: "allow", webfetch: "allow" },
         },
         async ({ client, sdk }) => {
-          // Track permission events
-          type PermissionEvent =
-            | {
-                type: "permission.updated";
-                event: { id: string; sessionID: string; type: string; title: string };
-              }
-            | {
-                type: "permission.replied";
-                event: { sessionID: string; permissionID: string; response: string };
-              };
-          const permissionEvents: PermissionEvent[] = [];
+          // Track permission requests
+          const requestEvents: UserRequestEvent[] = [];
 
-          client.onPermissionEvent((event) => {
-            permissionEvents.push(event);
+          client.onUserRequestEvent((event) => {
+            requestEvents.push(event);
           });
 
           // Track status changes
@@ -666,23 +642,18 @@ describe("OpenCodeClient boundary tests", () => {
             body: { parts: [{ type: "text", text: "Run a command" }] },
           });
 
-          // Wait for permission.updated event
+          // Wait for the permission request
           await vi.waitFor(
             () => {
-              const hasPermissionUpdated = permissionEvents.some(
-                (e) => e.type === "permission.updated"
-              );
-              expect(hasPermissionUpdated).toBe(true);
+              expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
             },
             { timeout: CI_TIMEOUT_MS }
           );
 
-          // Get the permission event details
-          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated");
-          expect(permissionUpdated).toBeDefined();
-          expect(permissionUpdated!.type).toBe("permission.updated");
-
-          const permissionId = permissionUpdated!.event.id;
+          const asked = requestEvents.find((e) => e.type === "asked");
+          if (asked?.type !== "asked") throw new Error("unreachable");
+          expect(asked.event.kind).toBe("permission");
+          const permissionId = asked.event.id;
 
           // Respond with rejection using SDK top-level method
           await sdk.postSessionIdPermissionsPermissionId({
@@ -690,21 +661,16 @@ describe("OpenCodeClient boundary tests", () => {
             body: { response: "reject" },
           });
 
-          // Wait for permission.replied event
+          // Wait for the request to be resolved
           await vi.waitFor(
             () => {
-              const hasPermissionReplied = permissionEvents.some(
-                (e) => e.type === "permission.replied"
-              );
-              expect(hasPermissionReplied).toBe(true);
+              expect(requestEvents).toContainEqual({
+                type: "resolved",
+                event: { kind: "permission", requestID: permissionId, sessionID: sessionId },
+              });
             },
             { timeout: CI_TIMEOUT_MS }
           );
-
-          // Verify permission.replied has rejection response
-          const permissionReplied = permissionEvents.find((e) => e.type === "permission.replied");
-          expect(permissionReplied).toBeDefined();
-          expect(permissionReplied!.event.response).toBe("reject");
 
           // Wait for prompt to complete
           await promptPromise;
@@ -723,7 +689,117 @@ describe("OpenCodeClient boundary tests", () => {
   );
 
   it(
-    "subagent permission request emits permission.updated event",
+    "question tool request emits asked and resolved events",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "question" }, async ({ client, port }) => {
+        // Reply goes through the v2 client: the v1 SDK has no question endpoints.
+        const v2 = createV2Client({ baseUrl: `http://127.0.0.1:${port}` });
+
+        const requestEvents: UserRequestEvent[] = [];
+        client.onUserRequestEvent((event) => {
+          requestEvents.push(event);
+        });
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => {
+          statuses.push(status);
+        });
+
+        await client.connect();
+
+        const sessionResult = await client.createSession();
+        expect(sessionResult.ok).toBe(true);
+        const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+        // Parks on the question tool until it is answered
+        const promptPromise = v2.session.prompt({
+          sessionID: sessionId,
+          parts: [{ type: "text", text: "Ask me something" }],
+        });
+
+        await vi.waitFor(
+          () => {
+            expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+        const asked = requestEvents.find((e) => e.type === "asked");
+        if (asked?.type !== "asked") throw new Error("unreachable");
+        expect(asked.event).toMatchObject({ kind: "question", sessionID: sessionId });
+
+        await v2.question.reply({ requestID: asked.event.id, answers: [["A"]] });
+
+        await vi.waitFor(
+          () => {
+            expect(requestEvents).toContainEqual({
+              type: "resolved",
+              event: { kind: "question", requestID: asked.event.id, sessionID: sessionId },
+            });
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+
+        await promptPromise;
+        await vi.waitFor(
+          () => {
+            expect(statuses.includes("idle")).toBe(true);
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "provider reports idle while a question waits on the user",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "question" }, async ({ port, cwd }) => {
+        const v2 = createV2Client({ baseUrl: `http://127.0.0.1:${port}` });
+        const provider = new OpenCodeProvider(cwd, SILENT_LOGGER);
+        onTestFinished(() => provider.dispose());
+
+        const statuses: AgentStatus[] = [];
+        provider.onStatusChange((status) => statuses.push(status));
+
+        await provider.connect(port);
+        provider.markActive();
+        const sessionId = provider.getSession()!.sessionId;
+
+        const promptPromise = v2.session.prompt({
+          sessionID: sessionId,
+          parts: [{ type: "text", text: "Ask me something" }],
+        });
+
+        // The session goes busy, then parks on the question: still busy to
+        // OpenCode, idle to the user.
+        await vi.waitFor(
+          () => {
+            expect(statuses).toContain("busy");
+            expect(statuses.at(-1)).toBe("idle");
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+        const pending = (await v2.question.list()).data ?? [];
+        expect(pending.map((q) => q.sessionID)).toEqual([sessionId]);
+        const sessionStatus = (await v2.session.status()).data ?? {};
+        expect(sessionStatus[sessionId]?.type).toBe("busy");
+
+        await v2.question.reply({ requestID: pending[0]!.id, answers: [["A"]] });
+        await promptPromise;
+
+        await vi.waitFor(
+          () => {
+            expect(provider.getEffectiveCounts()).toEqual({ idle: 1, busy: 0 });
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "subagent permission request emits an asked event",
     async () => {
       await withOpencode(
         {
@@ -732,20 +808,11 @@ describe("OpenCodeClient boundary tests", () => {
           permission: { bash: "ask", edit: "allow", webfetch: "allow" },
         },
         async ({ client, sdk }) => {
-          // Track permission events
-          type PermissionEvent =
-            | {
-                type: "permission.updated";
-                event: { id: string; sessionID: string; type: string; title: string };
-              }
-            | {
-                type: "permission.replied";
-                event: { sessionID: string; permissionID: string; response: string };
-              };
-          const permissionEvents: PermissionEvent[] = [];
+          // Track permission requests
+          const requestEvents: UserRequestEvent[] = [];
 
-          client.onPermissionEvent((event) => {
-            permissionEvents.push(event);
+          client.onUserRequestEvent((event) => {
+            requestEvents.push(event);
           });
 
           // Connect first to receive SSE events
@@ -771,23 +838,22 @@ describe("OpenCodeClient boundary tests", () => {
             body: { parts: [{ type: "text", text: "Run a command" }] },
           });
 
-          // Wait for permission.updated event from child session
-          // BUG: Currently fails because child session permission events are filtered out
+          // Wait for the permission request from the child session
           await vi.waitFor(
             () => {
-              const hasPermission = permissionEvents.some((e) => e.type === "permission.updated");
-              expect(hasPermission).toBe(true);
+              expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
             },
             { timeout: CI_TIMEOUT_MS }
           );
 
           // Verify the event has the child session ID (not remapped to root)
-          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated")!;
-          expect(permissionUpdated.event.sessionID).toBe(childSessionId);
+          const asked = requestEvents.find((e) => e.type === "asked");
+          if (asked?.type !== "asked") throw new Error("unreachable");
+          expect(asked.event.sessionID).toBe(childSessionId);
 
           // Approve permission using child session ID
           await sdk.postSessionIdPermissionsPermissionId({
-            path: { id: childSessionId, permissionID: permissionUpdated.event.id },
+            path: { id: childSessionId, permissionID: asked.event.id },
             body: { response: "once" },
           });
 

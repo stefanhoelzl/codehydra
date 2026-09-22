@@ -5,12 +5,12 @@
  * - Client connection lifecycle
  * - Session creation and tracking
  * - Status aggregation (idle/busy counts)
- * - Permission tracking for status display
+ * - Pending user request tracking (permissions, questions) for status display
  */
 
 import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
-import { OpenCodeClient, type PermissionEvent } from "./client";
+import { OpenCodeClient, type UserRequestEvent } from "./client";
 import { OpenCodeError } from "../../../shared/errors/service-errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
@@ -48,16 +48,17 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   private tuiAttached = false;
 
   /**
-   * Session to port mapping for permission correlation.
+   * Session to port mapping for user request correlation.
    * Map<sessionId, port>
    */
   private readonly sessionToPort = new Map<string, number>();
   /**
-   * Pending permissions per session.
-   * Map<sessionId, Set<permissionId>>
-   * Ports with pending permissions should display as idle (green indicator).
+   * Requests each session is waiting on the user for: a permission prompt or a
+   * question from OpenCode's `question` tool.
+   * Map<sessionId, Set<requestId>>
+   * A session waiting on the user should display as idle (green indicator).
    */
-  private readonly pendingPermissions = new Map<string, Set<string>>();
+  private readonly pendingRequests = new Map<string, Set<string>>();
   /**
    * Callbacks to notify when status changes.
    */
@@ -121,8 +122,8 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   }
 
   /**
-   * Get effective counts accounting for permission state.
-   * Ports with pending permissions count as idle (waiting for user).
+   * Get effective counts accounting for pending user requests.
+   * A session waiting on the user counts as idle.
    * Returns { idle: 0, busy: 0 } if TUI has not attached yet (no MCP request received).
    */
   getEffectiveCounts(): { idle: number; busy: number } {
@@ -137,12 +138,12 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       return { idle: 1, busy: 0 };
     }
 
-    // Check if any session has pending permission
-    const hasPermissionPending = [...this.sessionToPort.keys()].some((sessionId) =>
-      this.pendingPermissions.has(sessionId)
+    // Check if any session is waiting on the user
+    const hasRequestPending = [...this.sessionToPort.keys()].some((sessionId) =>
+      this.pendingRequests.has(sessionId)
     );
 
-    if (hasPermissionPending) {
+    if (hasRequestPending) {
       return { idle: 1, busy: 0 };
     }
 
@@ -169,10 +170,10 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
 
     // Subscribe to status changes from client
     client.onStatusChanged((status) => this.handleStatusChanged(status));
-    // Subscribe to session events for permission correlation
+    // Subscribe to session events for user request correlation
     client.onSessionEvent((event) => this.handleSessionEvent(port, event));
-    // Subscribe to permission events
-    client.onPermissionEvent((event) => this.handlePermissionEvent(event));
+    // Subscribe to user request events
+    client.onUserRequestEvent((event) => this.handleUserRequestEvent(event));
 
     this.client = client;
 
@@ -299,7 +300,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     }
     this.clientStatus = "idle";
     this.sessionToPort.clear();
-    this.pendingPermissions.clear();
+    this.pendingRequests.clear();
     // Note: _port and _primarySessionId are preserved for reconnect
     // tuiAttached is preserved so we don't lose status visibility
   }
@@ -328,7 +329,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     // Subscribe to events
     client.onStatusChanged((status) => this.handleStatusChanged(status));
     client.onSessionEvent((event) => this.handleSessionEvent(this._port!, event));
-    client.onPermissionEvent((event) => this.handlePermissionEvent(event));
+    client.onUserRequestEvent((event) => this.handleUserRequestEvent(event));
 
     this.client = client;
 
@@ -358,7 +359,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     this.clientStatus = "idle";
     this.tuiAttached = false;
     this.sessionToPort.clear();
-    this.pendingPermissions.clear();
+    this.pendingRequests.clear();
     this.statusChangeListeners.clear();
   }
 
@@ -372,17 +373,17 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
 
   /**
    * Handle session events from a client.
-   * Updates sessionToPort mapping for permission correlation.
+   * Updates sessionToPort mapping for user request correlation.
    * Notifies listeners on session add/delete as this affects getEffectiveCounts().
    */
   private handleSessionEvent(port: number, event: { type: string; sessionId: string }): void {
     if (event.type === "deleted") {
       this.sessionToPort.delete(event.sessionId);
-      this.pendingPermissions.delete(event.sessionId);
+      this.pendingRequests.delete(event.sessionId);
       // Notify: session count changed (could transition from "idle" to "none")
       this.notifyStatusChange();
     } else {
-      // Map session to port for permission correlation
+      // Map session to port for user request correlation
       this.sessionToPort.set(event.sessionId, port);
       // Notify: session count changed (could transition from "none" to "idle")
       this.notifyStatusChange();
@@ -390,38 +391,28 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   }
 
   /**
-   * Handle permission events from clients.
-   * Tracks pending permissions to override busy status.
+   * Handle user request events from clients.
+   * Tracks pending requests to override busy status.
    */
-  private handlePermissionEvent(event: PermissionEvent): void {
-    if (event.type === "permission.updated") {
-      // Add permission to pending set
-      const sessionId = event.event.sessionID;
-      const permissionId = event.event.id;
-
-      if (!this.pendingPermissions.has(sessionId)) {
-        this.pendingPermissions.set(sessionId, new Set());
+  private handleUserRequestEvent(event: UserRequestEvent): void {
+    const sessionId = event.event.sessionID;
+    if (event.type === "asked") {
+      if (!this.pendingRequests.has(sessionId)) {
+        this.pendingRequests.set(sessionId, new Set());
       }
-      this.pendingPermissions.get(sessionId)?.add(permissionId);
-
-      // Notify listeners that status may have changed
-      this.notifyStatusChange();
-    } else if (event.type === "permission.replied") {
-      // Remove permission from pending set
-      const sessionId = event.event.sessionID;
-      const permissionId = event.event.permissionID;
-
-      const permissions = this.pendingPermissions.get(sessionId);
-      if (permissions) {
-        permissions.delete(permissionId);
-        if (permissions.size === 0) {
-          this.pendingPermissions.delete(sessionId);
+      this.pendingRequests.get(sessionId)?.add(event.event.id);
+    } else {
+      const requests = this.pendingRequests.get(sessionId);
+      if (requests) {
+        requests.delete(event.event.requestID);
+        if (requests.size === 0) {
+          this.pendingRequests.delete(sessionId);
         }
       }
-
-      // Notify listeners that status may have changed
-      this.notifyStatusChange();
     }
+
+    // Notify listeners that status may have changed
+    this.notifyStatusChange();
   }
 
   /**

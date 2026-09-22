@@ -11,7 +11,7 @@ import { assertWindowsX64 } from "../../../utils/binary-download";
 /**
  * Current version of OpenCode to download.
  */
-export const OPENCODE_VERSION = "1.0.223";
+export const OPENCODE_VERSION = "1.18.32";
 
 /**
  * Resolve the bundle directory holding the extracted OpenCode binary for a
@@ -37,7 +37,7 @@ const OPENCODE_ARCH: Record<SupportedArch, string> = {
 /**
  * Get the download URL for OpenCode for a specific version.
  *
- * @param version - Version string (e.g., "1.0.223")
+ * @param version - Version string (e.g., "1.18.32")
  * @param platform - Operating system platform
  * @param arch - CPU architecture
  * @returns Download URL for the OpenCode release

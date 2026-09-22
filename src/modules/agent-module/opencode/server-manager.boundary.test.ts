@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
+import { OPENCODE_VERSION } from "./setup-info";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
@@ -18,7 +19,7 @@ import {
   BINARY_WARM_TIMEOUT_MS,
 } from "../../../utils/testing/ensure-binaries";
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
@@ -80,7 +81,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
+        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -103,7 +104,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
+        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -126,7 +127,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
+        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -166,7 +167,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
+        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -189,6 +190,41 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
       // Still no ports.json after stopping
       expect(existsSync(portsJsonPath)).toBe(false);
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "a user's own instructions survive alongside CodeHydra's system prompt",
+    async () => {
+      manager = new OpenCodeServerManager(
+        processRunner,
+        networkLayer,
+        networkLayer,
+        pathProvider,
+        createMockAccessor("version.opencode", OPENCODE_VERSION),
+        SILENT_LOGGER,
+        { healthCheckTimeoutMs: CI_TIMEOUT_MS }
+      );
+
+      // The user's project config. OPENCODE_CONFIG_CONTENT is merged over it,
+      // and before OpenCode 1.1.1 its `instructions` array replaced this one.
+      const workspacePath = join(testDir, "workspace-instructions");
+      await mkdir(workspacePath, { recursive: true });
+      await writeFile(
+        join(workspacePath, "opencode.json"),
+        JSON.stringify({ instructions: ["USER_RULES.md"] })
+      );
+
+      const port = await manager.startServer(workspacePath);
+
+      const response = await networkLayer.fetch(`http://127.0.0.1:${port}/config`, {
+        timeout: 5000,
+      });
+      const config = (await response.json()) as { instructions?: string[] };
+      expect(config.instructions).toEqual(
+        expect.arrayContaining(["USER_RULES.md", manager.getSystemPromptPath().toString()])
+      );
     },
     CI_TIMEOUT_MS
   );

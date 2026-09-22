@@ -247,16 +247,18 @@ interface AgentSessionInfo {
 }
 ```
 
-### Permission State Override
+### Pending Request Override
 
-For agents like OpenCode, sessions waiting for user permission are displayed as "idle" (green indicator) rather than "busy". The provider tracks `pendingPermissions: Map<sessionId, Set<permissionId>>`; any pending permission makes `getEffectiveCounts()` report idle.
+For agents like OpenCode, sessions waiting on the user are displayed as "idle" (green indicator) rather than "busy", though OpenCode itself still reports them busy. A session waits on the user for a permission prompt or for its `question` tool; `OpenCodeClient` normalizes both into `UserRequestEvent`s (`asked` / `resolved`, with a `kind`). The provider tracks `pendingRequests: Map<sessionId, Set<requestId>>`; any pending request makes `getEffectiveCounts()` report idle.
 
 **Event handling:**
 
-- `permission.updated`: Adds permission to `pendingPermissions`
-- `permission.replied`: Removes permission from `pendingPermissions`
-- `session.deleted`: Clears pending permissions for that session
-- Disconnect: Clears all pending permissions (reconnection safety)
+- `permission.asked`, `question.asked`: Adds the request to `pendingRequests`
+- `permission.replied`, `question.replied`, `question.rejected`: Removes it from `pendingRequests`
+- `session.deleted`: Clears pending requests for that session
+- Disconnect: Clears all pending requests (reconnection safety)
+
+These are the event names since OpenCode 1.1.1; the older `permission.updated` is ignored. The v1 SDK the client uses does not type them, so `handleSdkEvent` accepts the SDK's v2 `Event` union too.
 
 ### Open Modal Override
 
@@ -341,7 +343,7 @@ Every agent session is given a shipped description of the environment it runs in
 
 **Composition.** Sources live in `resources/prompts/`: `shared.md` plus a per-agent appendix. A plugin in `vite.config.bin.ts` concatenates them into `dist/bin/codehydra-prompt-claude.md` and `codehydra-prompt-opencode.md`, alongside the compiled wrappers, and the main build copies `dist/bin` into `assets/bin`. It runs with the wrappers rather than in the main build so that `pnpm build:wrappers` produces it — CI runs that before `pnpm test`, which is what lets a boundary test assert on the shipped artifacts. Composition happens at build rather than launch because Claude accepts exactly one prompt source: `--append-system-prompt-file` is last-wins, and combining it with `--append-system-prompt` is rejected outright. Only Claude gets the `ch-bg` appendix — that wrapper is detectable only in Claude's `background_tasks`; on OpenCode's PATH it just runs the command.
 
-**Delivery.** Claude: the provider passes `_CH_CLAUDE_SYSTEM_PROMPT` and `ch-claude` turns it into `--append-system-prompt-file`. The wrapper treats it as required — a missing variable fails startup like a missing settings path, because a session without it is a broken setup rather than a session with less context. OpenCode: the server manager puts the path in the `instructions` array of `OPENCODE_CONFIG_CONTENT`, which opencode merges last and renders into the system prompt as `Instructions from: <path>`. Note that opencode replaces arrays on merge (only `plugin` is unioned), so a user's own `instructions` entries do not survive.
+**Delivery.** Claude: the provider passes `_CH_CLAUDE_SYSTEM_PROMPT` and `ch-claude` turns it into `--append-system-prompt-file`. The wrapper treats it as required — a missing variable fails startup like a missing settings path, because a session without it is a broken setup rather than a session with less context. OpenCode: the server manager puts the path in the `instructions` array of `OPENCODE_CONFIG_CONTENT`, which opencode merges last and renders into the system prompt as `Instructions from: <path>`. Opencode unions `instructions` across config sources (since 1.1.1), so a user's own entries survive alongside it; `server-manager.boundary.test.ts` pins that against the real binary.
 
 It is the counterpart of the MCP `SERVER_INSTRUCTIONS`: the system prompt carries what is always true about the environment, the MCP instructions carry cross-tool facts no single tool schema can express. Mechanics documented in a tool's own description are not repeated in either.
 
@@ -395,8 +397,11 @@ data: {"type":"session.status","properties":{"sessionID":"...","status":{"type":
 | `session.created`    | New root session tracking        |
 | `session.idle`       | Explicit idle notification       |
 | `session.deleted`    | Session cleanup                  |
-| `permission.updated` | Permission request added         |
+| `permission.asked`   | Permission request added         |
 | `permission.replied` | Permission response received     |
+| `question.asked`     | Question tool waiting on user    |
+| `question.replied`   | Question answered                |
+| `question.rejected`  | Question dismissed               |
 
 ### OpenCode SDK Integration
 
