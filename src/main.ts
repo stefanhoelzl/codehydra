@@ -76,7 +76,6 @@ import { AppReadyOperation, INTENT_APP_READY } from "./intents/app-ready";
 // ConfigSetValuesOperation removed — config is now a plain service
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
-import type { AppShutdownIntent } from "./intents/app-shutdown";
 import type { AgentInfo } from "./shared/ipc";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
 import { SetMetadataOperation } from "./intents/set-metadata";
@@ -1114,20 +1113,5 @@ void dispatcher
     app.quit();
   });
 
-// 11. App lifecycle handlers
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    void dispatcher.dispatch<AppShutdownIntent>({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    });
-  }
-});
-
-app.on("before-quit", () => {
-  void dispatcher.dispatch<AppShutdownIntent>({
-    type: INTENT_APP_SHUTDOWN,
-    payload: {},
-  });
-});
+// 11. App lifecycle handlers: `window-all-closed` and `before-quit` lead into
+// app:shutdown from electron-lifecycle-module, which also owns the final quit.
