@@ -7,6 +7,8 @@
  * - "start" hook on app:start (power monitor resume handler + the wall-clock
  *   heartbeat whose gap becomes `sleptMs` on the app:resume payload)
  * - "quit" hook on app:shutdown (calls app.quit())
+ * - the two ways into app:shutdown: the last window closing (not on macOS), and
+ *   `before-quit`, which it holds until app:shutdown has run its stop hooks
  */
 
 import type { PathProvider } from "../boundaries/platform/path-provider";
@@ -20,7 +22,11 @@ import type { AppBoundary } from "../boundaries/shell/app";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { storeString } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import {
+  APP_SHUTDOWN_OPERATION_ID,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../intents/app-shutdown";
 import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
 
 // =============================================================================
@@ -141,6 +147,8 @@ export interface ElectronLifecycleModuleDeps {
   readonly app: {
     whenReady(): Promise<void>;
     quit(): void;
+    on(event: "before-quit", listener: (event: { preventDefault(): void }) => void): void;
+    on(event: "window-all-closed", listener: () => void): void;
     commandLine: { appendSwitch(key: string, value?: string): void };
     setPath(name: string, path: string): void;
   };
@@ -225,6 +233,42 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
     lastAwakeAt = now;
     return sleptMs;
   }
+
+  // ---------------------------------------------------------------------------
+  // Shutdown entry points
+  //
+  // Closing the last window shuts the app down, except on macOS, where an app
+  // stays running windowless until the user quits it. Electron does not quit on
+  // its own while this listener exists, so the shutdown runs to its "quit" hook.
+  //
+  // Electron does not wait for `before-quit` listeners: an async shutdown started
+  // from one is cut off when the process exits. Every `app.quit()` that did not
+  // come from the shutdown itself (Cmd+Q, a relaunch, a test driver) used to leave
+  // the stop hooks half-run, the IDE server tree kill included, so the IDE server,
+  // its terminals and the agents in them outlived the app. So a quit is held until
+  // app:shutdown reaches its "quit" hook, which releases it and quits for real.
+  // A repeat quit meanwhile is held too; the idempotency interceptor drops its
+  // duplicate shutdown.
+  // ---------------------------------------------------------------------------
+
+  let quitReleased = false;
+
+  function shutdown(): void {
+    void deps.dispatcher.dispatch<AppShutdownIntent>({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    });
+  }
+
+  deps.app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") shutdown();
+  });
+
+  deps.app.on("before-quit", (event) => {
+    if (quitReleased) return;
+    event.preventDefault();
+    shutdown();
+  });
 
   return {
     name: "electron-lifecycle",
@@ -318,6 +362,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
         quit: {
           handler: async () => {
             stopHeartbeat();
+            quitReleased = true;
             deps.app.quit();
           },
         },

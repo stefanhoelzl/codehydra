@@ -533,7 +533,7 @@ The multi-phase design ensures config is loaded before Electron ready, servers a
 
 The `app-shutdown` operation uses a single hook point:
 
-- **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across `window-all-closed` and `before-quit` entry points.
+- **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across the `window-all-closed` and `before-quit` entry points, both registered by `electron-lifecycle-module`. Electron does not wait for async `before-quit` listeners, so that module holds every quit (`preventDefault`) until app:shutdown reaches its `quit` hook, which releases it.
 
 ---
 

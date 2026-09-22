@@ -6,7 +6,7 @@
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, onTestFinished } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
@@ -24,7 +24,11 @@ import {
   configureResultSchema,
 } from "../intents/app-start";
 import type { AppStartIntent, ConfigureResult } from "../intents/app-start";
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import {
+  AppShutdownOperation,
+  APP_SHUTDOWN_OPERATION_ID,
+  INTENT_APP_SHUTDOWN,
+} from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import {
   createElectronLifecycleModule,
@@ -78,6 +82,7 @@ function createMockApp(): ElectronLifecycleModuleDeps["app"] {
   return {
     whenReady: vi.fn().mockResolvedValue(undefined),
     quit: vi.fn(),
+    on: vi.fn(),
     commandLine: { appendSwitch: vi.fn() },
     setPath: vi.fn(),
   };
@@ -174,6 +179,105 @@ describe("ElectronLifecycleModule Integration", () => {
     });
 
     expect(mockApp.quit).toHaveBeenCalledOnce();
+  });
+
+  // ---------------------------------------------------------------------------
+  // before-quit gate
+  // ---------------------------------------------------------------------------
+  describe("shutdown entry points", () => {
+    type Listener = (event: { preventDefault(): void }) => void;
+
+    /** Wire the module to a real shutdown whose stop hook finishes only when told to. */
+    function setup() {
+      const mockApp = createMockApp();
+      const listeners = new Map<string, Listener>();
+      mockApp.on = vi.fn((event: string, listener: Listener) => {
+        listeners.set(event, listener);
+      });
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerOperation(new AppShutdownOperation());
+
+      let finishStop!: () => void;
+      const stopFinished = new Promise<void>((resolve) => {
+        finishStop = resolve;
+      });
+      dispatcher.registerModule({
+        name: "slow-stop",
+        hooks: { [APP_SHUTDOWN_OPERATION_ID]: { stop: { handler: () => stopFinished } } },
+      });
+      dispatcher.registerModule(
+        createElectronLifecycleModule(createDeps({ app: mockApp, dispatcher }))
+      );
+
+      const emit = (name: string): { preventDefault: ReturnType<typeof vi.fn> } => {
+        const listener = listeners.get(name);
+        if (!listener) throw new Error(`no ${name} listener registered`);
+        const event = { preventDefault: vi.fn() };
+        listener(event);
+        return event;
+      };
+      return { mockApp, quit: () => emit("before-quit"), emit, finishStop };
+    }
+
+    function onPlatform(platform: NodeJS.Platform): void {
+      const original = process.platform;
+      Object.defineProperty(process, "platform", { value: platform });
+      onTestFinished(() => {
+        Object.defineProperty(process, "platform", { value: original });
+      });
+    }
+
+    it("shuts down and quits when the last window closes", async () => {
+      onPlatform("win32");
+      const { mockApp, emit, finishStop } = setup();
+
+      emit("window-all-closed");
+      finishStop();
+
+      await vi.waitFor(() => expect(mockApp.quit).toHaveBeenCalledOnce());
+    });
+
+    it("keeps running windowless on macOS when the last window closes", async () => {
+      onPlatform("darwin");
+      const { mockApp, emit, finishStop } = setup();
+
+      emit("window-all-closed");
+      finishStop();
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(mockApp.quit).not.toHaveBeenCalled();
+    });
+
+    it("holds an outside quit until app:shutdown has run its stop hooks", async () => {
+      const { mockApp, quit, finishStop } = setup();
+
+      expect(quit().preventDefault).toHaveBeenCalledOnce();
+      // Give the shutdown every chance to run ahead of its stop hook.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(mockApp.quit).not.toHaveBeenCalled();
+
+      finishStop();
+      await vi.waitFor(() => expect(mockApp.quit).toHaveBeenCalledOnce());
+    });
+
+    it("lets the shutdown's own quit through", async () => {
+      const { mockApp, quit, finishStop } = setup();
+
+      quit();
+      finishStop();
+      await vi.waitFor(() => expect(mockApp.quit).toHaveBeenCalledOnce());
+
+      // The quit hook's app.quit() re-enters before-quit; that one must proceed.
+      expect(quit().preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("holds a repeat quit while the shutdown is still running", () => {
+      const { quit } = setup();
+
+      quit();
+
+      expect(quit().preventDefault).toHaveBeenCalledOnce();
+    });
   });
 
   // ---------------------------------------------------------------------------
