@@ -2,7 +2,8 @@
  * Error Notification Module - Shows error notifications for failed operations.
  *
  * Subscribes to failure domain events and shows dismissible error notifications
- * via NotificationManager. Currently handles workspace creation failures.
+ * through `notification:show`. A dismiss closes the card on its own, so nothing
+ * here keeps track of what it raised.
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -11,10 +12,11 @@ import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { AppResumeFailedEvent } from "../intents/app-resume";
 import { EVENT_APP_RESUME_FAILED } from "../intents/app-resume";
-import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { notify } from "./presentation/notification-card";
 
 export interface ErrorNotificationModuleDeps {
-  readonly ui: Pick<UiPresenter, "notification">;
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }
 
 export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps): IntentModule {
@@ -23,28 +25,22 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
       handler: async (event: DomainEvent): Promise<void> => {
         const { workspaceName, error, source } = (event as WorkspaceCreateFailedEvent).payload;
         if (source === "mcp") return;
-        const handle = deps.ui.notification({
+        notify(deps.dispatcher, {
           type: "error",
           title: `Failed to create "${workspaceName}"`,
           message: error,
           dismissible: true,
-        });
-        handle.onEvent(() => {
-          handle.close();
         });
       },
     },
     [EVENT_APP_RESUME_FAILED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const { error } = (event as AppResumeFailedEvent).payload;
-        const handle = deps.ui.notification({
+        notify(deps.dispatcher, {
           type: "error",
           title: "Failed to recover after system resume",
           message: error,
           dismissible: true,
-        });
-        handle.onEvent(() => {
-          handle.close();
         });
       },
     },

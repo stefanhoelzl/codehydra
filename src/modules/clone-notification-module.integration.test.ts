@@ -56,11 +56,12 @@ describe("CloneNotificationModule", () => {
 
   beforeEach(() => {
     notifications = createMockNotificationManager();
-    module = createCloneNotificationModule({ ui: notifications.ui });
+    module = createCloneNotificationModule({ dispatcher: notifications.dispatcher });
   });
 
   const emit = async (event: CloneProgressEvent | ProjectOpenedEvent): Promise<void> => {
     await module.events![event.type]!.handler(event);
+    await notifications.settle();
   };
 
   it("titles the card with the URL the user entered", async () => {

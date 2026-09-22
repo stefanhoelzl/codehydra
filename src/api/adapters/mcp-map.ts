@@ -54,6 +54,8 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "vscode.goto": { tool: "workspace_goto" },
   "vscode.preview": { tool: "workspace_preview_markdown" },
   "system.open": { tool: "system_open_path" },
+  "notification.show": { tool: "notification_show" },
+  "notification.close": { tool: "notification_close" },
 
   "project.list": { tool: "project_list" },
   "project.open": { tool: "project_open" },

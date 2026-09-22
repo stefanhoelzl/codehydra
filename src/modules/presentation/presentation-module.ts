@@ -139,6 +139,7 @@ import {
   type SidebarLabelScroll,
   type UiDeletionProgress,
   type UiMainView,
+  type UiNotification,
   type UiProjectRow,
   type UiState,
   type UiWorkspaceRow,
@@ -151,9 +152,9 @@ import {
   NotificationManager,
   type DialogHandle,
   type DialogOpenOptions,
-  type NotificationHandle,
+  type NotificationSnapshot,
 } from "./sessions";
-import type { NotificationConfig } from "../../shared/notification-types";
+import { createNotificationHooks } from "./notification-hooks";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ProjectPath, WorkspacePath } from "../../intents/contract";
 
@@ -197,11 +198,12 @@ export interface PresentationModuleDeps {
 const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
 /**
- * The UI presenter: an IntentModule that also exposes the imperative
- * dialog/notification command surface for any module to inject. It is the sole
- * owner of ui:state and of the UI-view IPC (both directions, via ViewManager),
- * and privately owns the Dialog/Notification managers whose state it folds into
- * the snapshot.
+ * The UI presenter: an IntentModule that also exposes the imperative dialog
+ * command surface for any module to inject. It is the sole owner of ui:state
+ * and of the UI-view IPC (both directions, via ViewManager), and privately owns
+ * the Dialog/Notification managers whose state it folds into the snapshot.
+ * Sidebar notifications are not on that surface: they are raised through the
+ * `notification:show` / `notification:close` intents, whose hooks it handles.
  */
 export interface UiPresenter extends IntentModule {
   /**
@@ -212,8 +214,6 @@ export interface UiPresenter extends IntentModule {
    * the dialog is waiting on an answer.
    */
   dialog(config: DialogConfig, options?: DialogOpenOptions): DialogHandle;
-  /** Open a sidebar notification. Returns a handle. */
-  notification(config: NotificationConfig): NotificationHandle;
   /** True while a blocking modal dialog (kind === "modal") is open (the shortcut-module Alt+X guard). */
   isModalOpen(): boolean;
   /**
@@ -1165,8 +1165,32 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       mode: buildMode(main.kind === "creation"),
       capturing,
       dialogs: dialogs.getSnapshot(),
-      notifications: notifications.getSnapshot(),
+      notifications: notifications.getSnapshot().map(toUiNotification),
     };
+  }
+
+  /**
+   * Render-ready card: the attached workspace's path becomes its row key and
+   * display name. A card whose workspace has no row (mid-teardown) renders as
+   * unattached rather than carrying a key nothing would answer to.
+   */
+  function toUiNotification(card: NotificationSnapshot): UiNotification {
+    const base: UiNotification = { id: card.id, config: card.config, count: card.count };
+    if (card.workspacePath === undefined) return base;
+    for (const project of projects.values()) {
+      for (const workspace of project.workspaces.values()) {
+        if (workspace.path === card.workspacePath) {
+          return {
+            ...base,
+            workspace: {
+              key: workspaceKey(project.id, workspace.name),
+              name: workspace.title ?? workspace.name,
+            },
+          };
+        }
+      }
+    }
+    return base;
   }
 
   function scheduleUpdate(): void {
@@ -1724,6 +1748,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         framesReleased.delete(p.workspacePath);
         agentStatuses.delete(p.workspacePath);
         screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+        // A card about a workspace that is gone has nothing left to point at.
+        notifications.closeWorkspace(p.workspacePath);
         scheduleUpdate();
       },
     },
@@ -2013,7 +2039,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     name: "presentation",
     dialog: (config: DialogConfig, options?: DialogOpenOptions): DialogHandle =>
       dialogs.open(config, options),
-    notification: (config: NotificationConfig): NotificationHandle => notifications.open(config),
     isModalOpen: (): boolean => dialogs.isModalOpen(),
     deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
       deletions.get(workspacePath),
@@ -2048,6 +2073,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           handler: appStartStart,
         },
       },
+      ...createNotificationHooks(notifications),
       [SETUP_OPERATION_ID]: {
         "show-ui": { handler: setupShowUi },
         "hide-ui": { handler: setupHideUi },

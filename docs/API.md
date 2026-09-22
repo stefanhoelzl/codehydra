@@ -496,6 +496,8 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:config:list`                  | None                                   | `PluginResult<ConfigRow[]>`                |
 | `api:config:set`                   | `{ key: string, value: string }`       | `PluginResult<ConfigRow>`                  |
 | `api:config:reset`                 | `{ key: string }`                      | `PluginResult<ConfigRow>`                  |
+| `api:notification:show`            | `NotificationShowRequest`              | `PluginResult<{ id } \| { choice }>`       |
+| `api:notification:close`           | `{ id: string }`                       | `PluginResult<{ closed: true }>`           |
 | `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `PluginResult<OperationDescriptor[]>`      |
 
 Everything below `api:log` is new: these operations existed only as MCP tools
@@ -827,6 +829,42 @@ $ ch bg ch lock run device "long session"                 # hold until killed
   your project to enforce, e.g. a hook that checks `ch lock ls --format json`.
 - **Sidebar.** A holder shows a `🔒 <names>` tag and a waiter `⏳ <names>`, with the
   reasons as the tooltip. Locks live in memory and are all gone after a restart.
+
+### Sidebar notifications
+
+`ch notification show|close` (MCP `notification_show` / `notification_close`, plugin
+`api:notification:show` / `api:notification:close`) raises cards in CodeHydra's own
+sidebar — the ones CodeHydra uses for clone progress and errors — through the
+`notification:show` / `notification:close` intents. Unlike `ch ws notify` (a toast in one
+workspace's editor) they need no workspace.
+
+```console
+$ ch notification show "Nightly build finished"
+$ ch notification show "Building" --type spinner --percent 20 --format json
+{"id":"ntf-3"}
+$ ch notification show "Building" --id ntf-3 --type spinner --percent 80
+$ ch notification close ntf-3
+$ ch notification show "Deploy?" --actions Deploy --actions Skip --wait --attach
+choice  Deploy
+```
+
+`NotificationShowRequest` is `{ title, message?, type? ("info" default | "warning" |
+"error" | "spinner"), percent? (0–100), dismissible? (true), actions?: string[], id?,
+attach?, workspacePath?, wait?, timeout? (seconds) }`.
+
+- **Ids** are minted by CodeHydra. `id` updates that card; a card that is no longer open
+  (dismissed) is exit `6`. `close` of a card that is gone does nothing.
+- **Collapsing.** A show whose text (title, message, type, dismissible, actions) and
+  attached workspace match an open card joins it — the card shows a counter and the
+  call gets its id — and the card closes once every show holding it has closed it.
+  Progress is not part of the match.
+- **Attachment.** `attach` ties the card to the caller's workspace, `workspacePath` to a
+  named one: the card names the workspace, clicking its title switches there, and
+  `workspace:deleted` closes it. Otherwise it is app-wide.
+- **Waiting.** `wait` blocks and returns `{ choice }`: the clicked action, or `null` on
+  dismiss, `timeout`, or the workspace going away. A choice or dismiss closes the card
+  and answers every caller waiting on it. A waiter whose connection drops gives up its
+  hold, so the question goes away with its last waiter.
 
 ### Progress events
 

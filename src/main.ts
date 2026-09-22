@@ -140,6 +140,8 @@ import { ShortcutKeyOperation } from "./intents/shortcut-key";
 import { SetShortcutActiveOperation } from "./intents/set-shortcut-active";
 import { SubmitBugReportOperation } from "./intents/submit-bug-report";
 import { VscodeShowMessageOperation } from "./intents/vscode-show-message";
+import { ShowNotificationOperation } from "./intents/show-notification";
+import { CloseNotificationOperation } from "./intents/close-notification";
 import { VscodeModalChangedOperation } from "./intents/vscode-modal-changed";
 import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
 import { ResolveWorkspaceOperation } from "./intents/resolve-workspace";
@@ -491,8 +493,8 @@ const helpModule = createHelpModule({
   logger: loggingService.createLogger("help"),
 });
 openHelp = helpModule.openHelp;
-const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
-const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
+const cloneNotificationModule = createCloneNotificationModule({ dispatcher });
+const errorNotificationModule = createErrorNotificationModule({ dispatcher });
 
 // Owns the transient per-workspace facts contributed to workspace:resolve:
 // which teardown holds a workspace (`closing`), and which workspace is active.
@@ -714,7 +716,6 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   dispatcher,
   configService,
   stateService,
-  ui: presentationModule,
 });
 // State module — loads state.json in app:start/init.
 const stateModule = createStateModule({ stateService });
@@ -723,6 +724,7 @@ const localProjectModule = createLocalProjectModule({
   fs: fileSystemLayer,
   gitWorktreeProvider,
   ui: presentationModule,
+  dispatcher,
   gitClient,
   logger: lifecycleLogger,
 });
@@ -731,13 +733,14 @@ const remoteProjectModule = createRemoteProjectModule({
   gitClient,
   pathProvider,
   logger: lifecycleLogger,
-  ui: presentationModule,
+  dispatcher,
 });
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,
   pathProvider,
   apiLogger,
-  presentationModule
+  presentationModule,
+  dispatcher
 );
 const badgeModule = createBadgeModule({
   platformInfo,
@@ -777,7 +780,6 @@ const autoWorkspaceModule = createAutoWorkspaceModule({
   processRunner,
   configService,
   stateService,
-  ui: presentationModule,
 });
 const autoTaggingModule = createAutoTaggingModule({
   dispatcher,
@@ -871,7 +873,7 @@ const devtoolsModule = createDevtoolsModule({
   viewManager,
 });
 
-const debugModule = createDebugModule({ configService, ui: presentationModule });
+const debugModule = createDebugModule({ configService, dispatcher });
 
 const errorReportModule = createErrorReportModule({
   ui: presentationModule,
@@ -925,6 +927,8 @@ dispatcher.registerOperation(new ShortcutKeyOperation());
 dispatcher.registerOperation(new SetShortcutActiveOperation());
 dispatcher.registerOperation(new SubmitBugReportOperation());
 dispatcher.registerOperation(new VscodeShowMessageOperation());
+dispatcher.registerOperation(new ShowNotificationOperation());
+dispatcher.registerOperation(new CloseNotificationOperation());
 dispatcher.registerOperation(new VscodeModalChangedOperation());
 dispatcher.registerOperation(new VscodeCommandOperation());
 

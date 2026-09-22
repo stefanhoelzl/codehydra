@@ -6,10 +6,12 @@
   cell at the right edge]. Collapsing the sidebar hides the label content,
   leaving the type icon as the whole entry.
   Newest notifications appear on top.
+  A card attached to a workspace names it under the title, and clicking the
+  card's title row switches to that workspace.
 -->
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { sendNotificationEvent } from "$lib/api";
+  import { emitEvent, sendNotificationEvent } from "$lib/api";
   import type { UiNotification } from "@shared/ui-state";
   import type { NotificationConfig } from "@shared/notification-types";
   import type { DialogButton } from "@shared/dialog-types";
@@ -32,6 +34,10 @@
   function handleAction(notificationId: string, action: DialogButton): void {
     if (action.disabled || action.busy) return;
     sendNotificationEvent({ notificationId, actionId: action.id });
+  }
+
+  function handleOpen(entry: UiNotification): void {
+    if (entry.workspace) emitEvent({ kind: "switch-workspace", key: entry.workspace.key });
   }
 
   function progressPercent(config: NotificationConfig): number | null {
@@ -67,7 +73,21 @@
         <vscode-divider class="expanded-only"></vscode-divider>
         <div class="notification-row">
           <div class="ch-label-cell notification-label">
-            <span class="notification-title" title={config.title}>{config.title}</span>
+            {#if entry.workspace}
+              <button
+                type="button"
+                class="notification-title notification-open"
+                title={`${config.title} (${entry.workspace.name})`}
+                onclick={() => handleOpen(entry)}
+              >
+                {config.title}
+              </button>
+            {:else}
+              <span class="notification-title" title={config.title}>{config.title}</span>
+            {/if}
+            {#if repeat}
+              <span class="notification-count">{repeat}</span>
+            {/if}
             {#if config.dismissible}
               <button
                 type="button"
@@ -85,11 +105,13 @@
             {:else}
               <Icon name={config.type} size={14} />
             {/if}
-            {#if repeat}
-              <span class="notification-count">{repeat}</span>
-            {/if}
           </span>
         </div>
+        {#if entry.workspace}
+          <div class="notification-detail notification-workspace expanded-only">
+            {entry.workspace.name}
+          </div>
+        {/if}
         {#if config.message}
           <div class="notification-detail expanded-only">{config.message}</div>
         {/if}
@@ -136,6 +158,9 @@
   .notification-stack.expanded {
     max-height: 280px;
     overflow-y: auto;
+    /* overflow-y: auto makes the x axis scrollable too; nothing in a card is
+       meant to scroll sideways, so an overhang must never grow a scrollbar. */
+    overflow-x: hidden;
   }
 
   .notification-entry {
@@ -180,25 +205,44 @@
     white-space: nowrap;
   }
 
-  .notification-indicator {
-    opacity: 0.7;
-    position: relative;
+  /* The title of an attached card is the way to its workspace: a bare button
+     that reads like the plain title until hovered. */
+  .notification-open {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
   }
 
-  /* Repeat badge. Rides the type icon's lower-right corner rather than sitting
-     in the label, so it survives the sidebar collapsing to the icon cell —
-     which is exactly where a stack of identical cards was least readable. */
+  .notification-open:hover {
+    text-decoration: underline;
+  }
+
+  .notification-workspace {
+    font-style: italic;
+  }
+
+  .notification-indicator {
+    opacity: 0.7;
+  }
+
+  /* Repeat badge: a count pill after the title, in the label cell. It used to
+     ride the type icon's corner so it would survive the collapsed rail, but in
+     a 20px cell it covered the icon and overhung the sidebar's edge. The rail
+     shows the icon alone; the count is for the expanded card. */
   .notification-count {
-    position: absolute;
-    right: -2px;
-    bottom: -2px;
-    min-width: 12px;
-    padding: 0 2px;
-    border-radius: 6px;
+    flex-shrink: 0;
+    min-width: 16px;
+    padding: 0 5px;
+    border-radius: 8px;
     background: var(--ch-badge-background, var(--vscode-badge-background, #4d4d4d));
     color: var(--ch-badge-foreground, var(--vscode-badge-foreground, #ffffff));
-    font-size: 9px;
-    line-height: 12px;
+    font-size: 11px;
+    line-height: 16px;
     text-align: center;
     font-variant-numeric: tabular-nums;
   }

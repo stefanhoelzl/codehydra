@@ -374,9 +374,9 @@ function createSetup(options?: {
     processRunner,
     configService: mockConfig,
     stateService: state,
-    ui: notificationManager.ui,
   });
   dispatcher.registerModule(module);
+  notificationManager.register(dispatcher);
 
   return {
     dispatcher,
@@ -678,6 +678,7 @@ ${sourceYaml("good")}`,
     cmd.items = [{ id: "1" }];
 
     await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
 
     // The later source still ran: one bad item must not abandon the cycle.
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
@@ -703,6 +704,7 @@ template:
     cmd.items = [{ id: "1" }];
 
     await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
 
     expect(openProjectOp.dispatched).toHaveLength(0);
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
@@ -717,12 +719,14 @@ template:
     expect(card.opened.message).toContain(url);
 
     await tick(); // still broken: retried, and the repeat collapses into the same card
+    await notificationManager.settle();
     expect(notificationManager.notifications).toHaveLength(1);
     expect(card.count).toBe(2);
 
     notificationManager.emitEvent(0, { actionId: "dismiss" }); // dismiss retires the card
     expect(card.closed).toBe(true);
     await tick(); // the next failing poll raises a fresh one
+    await notificationManager.settle();
     expect(notificationManager.notifications).toHaveLength(2);
     expect(notificationManager.lastNotification!.closed).toBe(false);
   });
@@ -742,6 +746,7 @@ template:
     cmd.items = [{ id: "1" }];
 
     await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
 
     expect(entriesOf(state)).not.toHaveProperty("local/1");
     expect(notificationManager.notifications).toHaveLength(1);

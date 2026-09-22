@@ -21,6 +21,7 @@ import { BIN_DIR, CH, bareEnv, ch, chAsync, chSpawn, json } from "./ch.ts";
 import {
   DATA_ROOT,
   createWorkspace,
+  expandSidebar,
   openProject,
   useApp,
   waitForConnectionDetails,
@@ -263,6 +264,84 @@ test.describe("ch lock", () => {
     expect(run.stdout).toContain("lock take");
     expect(run.stdout).toContain("lock run <name>");
     expect(run.stdout).not.toContain("lock hold");
+  });
+});
+
+test.describe("ch notification", () => {
+  /**
+   * The sidebar card a command raised, found by its title. The card's
+   * aria-label is the title plus a repeat count, so match its start.
+   */
+  const card = (title: string) =>
+    app()
+      .uiPage()
+      .getByRole("status", { name: new RegExp(`^${title}`) });
+
+  test.beforeAll(async () => {
+    await waitForConnectionDetails();
+    // Collapsed, the rail hides every card's label and detail rows.
+    await expandSidebar(app().uiPage());
+  });
+
+  test("shows a progress card and updates it by id", async () => {
+    // `--percent`, not `--progress`: the latter is a global `ch` flag, and it
+    // silently swallowed the value when this option was first named after it.
+    const { id } = json(
+      ch(["notification", "show", "Building", "--type", "spinner", "--percent", "40"])
+    ) as { id: string };
+    await expect(card("Building").locator(".notification-pct")).toHaveText("40%");
+
+    json(
+      ch(["notification", "show", "Building", "--id", id, "--type", "spinner", "--percent", "80"])
+    );
+    await expect(card("Building").locator(".notification-pct")).toHaveText("80%");
+
+    expect(json(ch(["notification", "close", id]))).toEqual({ closed: true });
+    await expect(card("Building")).toHaveCount(0);
+
+    // The card is gone, so changing it is "not found".
+    const stale = ch(["notification", "show", "Building", "--id", id]);
+    expect(stale.status).toBe(6);
+  });
+
+  test("collapses a repeat into a counted card that fits the sidebar", async () => {
+    const first = json(ch(["notification", "show", "Heads up"])) as { id: string };
+    const again = json(ch(["notification", "show", "Heads up"])) as { id: string };
+    expect(again.id).toBe(first.id);
+
+    const repeated = card("Heads up");
+    await expect(repeated).toHaveAccessibleName("Heads up (2)");
+    // The badge sits in the label, clear of the type icon — on the icon it
+    // covered the icon and overhung the sidebar's edge.
+    await expect(repeated.locator(".notification-label .notification-count")).toHaveText("2");
+    const overflow = await app()
+      .uiPage()
+      .locator(".notification-stack")
+      .evaluate((stack) => stack.scrollWidth - stack.clientWidth);
+    expect(overflow, "the notification stack must not scroll sideways").toBeLessThanOrEqual(0);
+
+    ch(["notification", "close", first.id]);
+    ch(["notification", "close", first.id]);
+    await expect(repeated).toHaveCount(0);
+  });
+
+  test("waits for the clicked action and closes the card", async () => {
+    const answer = chAsync([
+      "notification",
+      "show",
+      "Deploy?",
+      "--actions",
+      "Deploy",
+      "--actions",
+      "Skip",
+      "--wait",
+    ]);
+
+    const question = card("Deploy\\?");
+    await question.locator("vscode-button", { hasText: "Deploy" }).click();
+
+    expect(json(await answer)).toEqual({ choice: "Deploy" });
+    await expect(question).toHaveCount(0);
   });
 });
 

@@ -37,6 +37,8 @@ export const OPERATION_NAMES = [
   "vscode.goto",
   "vscode.preview",
   "system.open",
+  "notification.show",
+  "notification.close",
   "project.list",
   "project.open",
   "project.close",

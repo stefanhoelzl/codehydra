@@ -13,6 +13,8 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../../modules/lock-module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createRegistry } from "./index";
+import { GLOBAL_FLAG_NAMES, toKebabCase } from "../../cli/args";
+import { CLI_MAP } from "../adapters/cli-map";
 import { OPERATION_NAMES } from "../names";
 import type { AnyOperationEntry } from "../types";
 import { schemas as openWorkspaceSchemas } from "../../intents/open-workspace";
@@ -206,6 +208,23 @@ describe("registry contents", () => {
       );
     });
 
+    it("names no input field after a global ch flag, which would swallow it", () => {
+      // `progress` on notification.show did exactly this: `ch notification show
+      // --progress 0.5` set the global stderr-progress switch, and the card
+      // never got a bar. A positional is still reachable, and an entry the CLI
+      // does not carry has no flags to lose.
+      const clashes = entries().flatMap((entry) => {
+        const cli = CLI_MAP[entry.name];
+        if (cli === null) return [];
+        const shape = (entry.input as unknown as { shape?: Record<string, unknown> }).shape ?? {};
+        return Object.keys(shape)
+          .filter((field) => !(cli.positionals ?? []).includes(field))
+          .filter((field) => GLOBAL_FLAG_NAMES.includes(toKebabCase(field)))
+          .map((field) => `${entry.name}.${field}`);
+      });
+      expect(clashes).toEqual([]);
+    });
+
     it("lets app-global entries run without a workspace", () => {
       const global = entries()
         .filter((e) => !e.requiresWorkspace)
@@ -221,6 +240,8 @@ describe("registry contents", () => {
         "guide",
         "lock.list",
         "log",
+        "notification.close",
+        "notification.show",
         "project.close",
         "project.list",
         "project.open",

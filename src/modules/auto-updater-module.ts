@@ -9,13 +9,14 @@
  * - app:shutdown -> "quit": quitAndInstall if installUpdate flag is set.
  *
  * Behavior:
- * - All update flow happens via a single mutating sidebar notification that
+ * - All update flow happens via one sidebar card (`notification:show`) that
  *   always reflects the latest pending version (electron-updater only ever
  *   reports feed-latest, so any detected version that differs from the one we
  *   are currently showing is treated as newer).
  * - First detected version surfaces "Update available" notification.
- * - User clicks "Install" → notification mutates into a progress bar while
- *   download runs → on completion mutates into "Update ready / Restart Now".
+ * - User clicks "Install" → the card is replaced by a progress bar while the
+ *   download runs → on completion by "Update ready / Restart Now". A click
+ *   closes a card, so each stage that asks something is a fresh question.
  * - Download failures swap to an error notification with a Retry action.
  * - Re-checks (periodic timer, app:resume, immediately after a download
  *   completes) keep running. When a newer version is detected, the single
@@ -38,9 +39,8 @@ import type { Config } from "../boundaries/platform/config";
 import type { StateService } from "../boundaries/platform/state-service";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { NotificationHandle } from "./presentation/sessions";
-import type { UiPresenter } from "./presentation/presentation-module";
-import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
+import { NotificationCard } from "./presentation/notification-card";
+import type { NotificationConfig } from "../shared/notification-types";
 
 /** How often to re-check for updates while the app is running. */
 const PERIODIC_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -51,8 +51,6 @@ interface AutoUpdaterModuleDeps {
   readonly configService: Config;
   /** Persisted app state (state.json) — owns the dismissed-version bookkeeping. */
   readonly stateService: StateService;
-  /** Registry the state module drains to migrate dismissed-version out of config.json. */
-  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 function availableConfig(version: string): NotificationConfig {
@@ -108,7 +106,14 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   let checkInProgress = false;
   let downloadInProgress = false;
   let periodicTimer: NodeJS.Timeout | null = null;
-  let notification: NotificationHandle | null = null;
+  // The one sidebar card the whole flow runs through. A button click closes it,
+  // so each stage that asks something (available, ready, error) is a fresh
+  // question on it; the download stage between them is a plain progress card.
+  const card = new NotificationCard(deps.dispatcher);
+  // Bumped on every question, so an answer to a question the card has since
+  // replaced (a newer version arrived while it was up) is ignored. The
+  // replaced question's waiter is answered by the same click as the new one.
+  let questionSeq = 0;
 
   // Register config keys
   const updateNotificationConfig = deps.configService.register("update.notification", {
@@ -131,14 +136,25 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     return updateNotificationConfig.get();
   }
 
-  function handleNotificationEvent(event: NotificationUserEvent): void {
-    if (event.actionId === "install" || event.actionId === "retry") {
+  /** Put a question on the card and act on the answer (unless it is superseded). */
+  function ask(config: NotificationConfig): void {
+    const seq = ++questionSeq;
+    void card.ask(config).then((choice) => {
+      if (seq === questionSeq) handleChoice(choice);
+    });
+  }
+
+  /**
+   * The user answered the card. `null` is the dismiss: nothing else closes this
+   * card without an answer — it is not attached to a workspace, has no timeout,
+   * and every replaced question is filtered out above.
+   */
+  function handleChoice(choice: string | null): void {
+    if (choice === "install" || choice === "retry") {
       if (targetVersion !== null) startDownload(targetVersion);
       return;
     }
-    if (event.actionId === "restart") {
-      notification?.close();
-      notification = null;
+    if (choice === "restart") {
       notificationState = "none";
       void deps.dispatcher.dispatch({
         type: INTENT_APP_SHUTDOWN,
@@ -146,9 +162,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       });
       return;
     }
-    if (event.actionId === "dismiss") {
-      notification?.close();
-      notification = null;
+    if (choice === null) {
       notificationState = "none";
       dismissedVersion = targetVersion;
       void dismissedVersionState.set(targetVersion);
@@ -160,17 +174,12 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     downloadInProgress = true;
     notificationState = "downloading";
 
-    if (notification === null) {
-      notification = deps.ui.notification(downloadingConfig(version, 0));
-      notification.onEvent(handleNotificationEvent);
-    } else {
-      notification.update(downloadingConfig(version, 0));
-    }
-
-    const handle = notification;
+    // A plain card: nothing to answer while the download runs.
+    questionSeq++;
+    card.show(downloadingConfig(version, 0));
 
     const unsubProgress = deps.autoUpdater.onDownloadProgress((info) => {
-      handle.update(downloadingConfig(version, info.percent));
+      card.show(downloadingConfig(version, info.percent));
     });
 
     deps.autoUpdater.downloadUpdate().then(
@@ -178,7 +187,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
         unsubProgress();
         downloadInProgress = false;
         notificationState = "ready";
-        handle.update(readyConfig(version));
+        ask(readyConfig(version));
         // Catch a version released while this download was running.
         void runCheck();
       },
@@ -186,7 +195,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
         unsubProgress();
         downloadInProgress = false;
         notificationState = "error";
-        handle.update(errorConfig(version));
+        ask(errorConfig(version));
       }
     );
   }
@@ -198,12 +207,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
    */
   function showAvailableNotification(version: string): void {
     notificationState = "available";
-    if (notification === null) {
-      notification = deps.ui.notification(availableConfig(version));
-      notification.onEvent(handleNotificationEvent);
-    } else {
-      notification.update(availableConfig(version));
-    }
+    ask(availableConfig(version));
   }
 
   /**

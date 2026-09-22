@@ -65,6 +65,8 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "vscode.goto": { path: ["ws", "goto"], positionals: ["location"] },
   "vscode.preview": { path: ["ws", "preview"], positionals: ["path"] },
   "system.open": { path: ["ws", "open"], positionals: ["path"] },
+  "notification.show": { path: ["notification", "show"], positionals: ["title"] },
+  "notification.close": { path: ["notification", "close"], positionals: ["id"] },
 
   "project.list": { path: ["project", "list"] },
   "project.open": { path: ["project", "open"], positionals: ["target"] },

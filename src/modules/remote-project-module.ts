@@ -30,7 +30,8 @@ import type {
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { streamProgress } from "../intents/lib/hook-helpers";
 import type { CloseHookInput, CloseHookResult } from "../intents/close-project";
-import type { UiPresenter } from "./presentation/presentation-module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import { notify } from "./presentation/notification-card";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 
@@ -62,9 +63,9 @@ export function createRemoteProjectModule(deps: {
   readonly gitClient: Pick<IGitClient, "clone">;
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly logger: Logger;
-  readonly ui: Pick<UiPresenter, "notification">;
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }): IntentModule {
-  const { fs, gitClient, pathProvider, logger, ui } = deps;
+  const { fs, gitClient, pathProvider, logger, dispatcher } = deps;
 
   return {
     name: "remote-project",
@@ -163,14 +164,11 @@ export function createRemoteProjectModule(deps: {
             } catch (error: unknown) {
               const message = getErrorMessage(error);
               logger.warn("Failed to remove clone directory", { cloneDir, error: message });
-              const handle = ui.notification({
+              notify(dispatcher, {
                 type: "error",
                 title: "Could not remove the cloned repository",
                 message: `${cloneDir} is still on disk: ${message}`,
                 dismissible: true,
-              });
-              handle.onEvent(() => {
-                handle.close();
               });
             }
 

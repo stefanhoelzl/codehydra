@@ -450,13 +450,15 @@ function createMockUi(): {
   dialogs: MockDialogManager;
   notifications: MockNotificationManager;
   ui: Parameters<typeof createGitWorktreeWorkspaceModule>[3];
+  notify: Parameters<typeof createGitWorktreeWorkspaceModule>[4];
 } {
   const dialogs = createMockDialogManager();
   const notifications = createMockNotificationManager();
   return {
     dialogs,
     notifications,
-    ui: { dialog: dialogs.ui.dialog, notification: notifications.ui.notification },
+    ui: { dialog: dialogs.ui.dialog },
+    notify: notifications.dispatcher,
   };
 }
 
@@ -481,12 +483,13 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(listProjectsOperation);
 
   // Wire the module under test
-  const { dialogs, notifications, ui } = createMockUi();
+  const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
     SILENT_LOGGER,
-    ui
+    ui,
+    notify
   );
   dispatcher.registerModule(module);
 
@@ -524,12 +527,13 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   dispatcher.registerOperation(minimalPreflightOperation);
   dispatcher.registerOperation(minimalResolveWorkspaceOperation);
 
-  const { dialogs, notifications, ui } = createMockUi();
+  const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
     pathProvider,
     SILENT_LOGGER,
-    ui
+    ui,
+    notify
   );
   dispatcher.registerModule(module);
 
@@ -1300,13 +1304,14 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       });
       const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(openWorkspaceFinalizeOperation);
-      const { ui } = createMockUi();
+      const { ui, notify } = createMockUi();
       dispatcher.registerModule(
         createGitWorktreeWorkspaceModule(
           provider as unknown as GitWorktreeProvider,
           pathProvider,
           SILENT_LOGGER,
-          ui
+          ui,
+          notify
         )
       );
       return { dispatcher, provider };
@@ -1936,13 +1941,14 @@ describe("Add-project worktree picker", () => {
     const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(prepareOperation);
 
-    const { dialogs, notifications, ui } = createMockUi();
+    const { dialogs, notifications, ui, notify } = createMockUi();
     dispatcher.registerModule(
       createGitWorktreeWorkspaceModule(
         provider as unknown as GitWorktreeProvider,
         pathProvider,
         SILENT_LOGGER,
-        ui
+        ui,
+        notify
       )
     );
 
@@ -2217,6 +2223,7 @@ describe("Add-project worktree picker", () => {
 
     // The add still goes through — only the adoption failed.
     expect(await pending).toEqual({});
+    await notifications.settle();
     expect(notifications.lastNotification?.latestConfig).toMatchObject({
       type: "error",
       message: expect.stringContaining("repo-login") as unknown as string,

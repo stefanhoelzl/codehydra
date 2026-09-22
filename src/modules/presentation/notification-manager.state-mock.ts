@@ -1,128 +1,136 @@
 /**
- * State mock for NotificationManager. Mirrors the production API and tracks
- * all opened/updated/closed notifications plus their event listeners so tests
- * can drive the user-event side via emitEvent().
+ * Test harness for modules that raise sidebar notifications.
  *
- * Collapsing is mirrored too, using the production `dedupKey`: an open that
- * matches a live card returns that card's handle and bumps its count instead of
- * pushing a new entry. A mock that stacked duplicates would show tests a
- * notification-per-occurrence the real sidebar never renders.
+ * Producers raise cards by dispatching `notification:show` / `notification:close`,
+ * so the harness is the real thing end to end: the two operations, the same
+ * hook handlers the presenter registers (`createNotificationHooks`), and a real
+ * NotificationManager behind them. Collapsing, holds, dismiss-closes and waits
+ * therefore behave exactly as in the app.
+ *
+ * What it adds is a record per card for assertions, kept in step with the
+ * manager's snapshot on every change: the config it opened with, every config
+ * it was updated to, its hold count, and whether it has closed.
+ *
+ * Dispatches are asynchronous, so a test awaits `settle()` after the action
+ * that raises a card and before asserting on it.
  */
-import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
-import { dedupKey } from "./sessions";
-import type { NotificationHandle, NotificationManager } from "./sessions";
-import type { UiPresenter } from "./presentation-module";
+import type { NotificationConfig } from "../../shared/notification-types";
+import type { Dispatcher } from "../../intents/lib/dispatcher";
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { ShowNotificationOperation } from "../../intents/show-notification";
+import { CloseNotificationOperation } from "../../intents/close-notification";
+import { NotificationManager } from "./sessions";
+import { createNotificationHooks } from "./notification-hooks";
 
-/** Per-notification state exposed for assertions. */
+/** Per-card state exposed for assertions. */
 export interface MockNotification {
   readonly id: string;
-  /** The config passed to open(). */
+  /** The config the card opened with. */
   readonly opened: NotificationConfig;
-  /** All configs passed to handle.update(), in order. */
+  /** Every config the card was updated to, in order. */
   updates: NotificationConfig[];
-  /** Latest config — initial open + any updates applied. */
+  /** Latest config — the open plus any updates applied. */
   latestConfig: NotificationConfig;
-  /** Opens that collapsed into this card. */
+  /** Opens (and waits) holding the card. */
   count: number;
-  /** True once the last hold on the card was released. */
+  /** True once the card has closed. */
   closed: boolean;
-  /** Internal: listeners registered via handle.onEvent(). */
-  listeners: Set<(event: NotificationUserEvent) => void>;
-  /** Internal: current identity, kept in step with latestConfig. */
-  key: string;
-  /** Internal: the handle every open of this card shares. */
-  handle: NotificationHandle;
+  /** The workspace the card is attached to, if any. */
+  readonly workspacePath: string | undefined;
 }
 
 export interface MockNotificationManager {
-  /** The real NotificationManager-shaped object to inject into the SUT. */
-  readonly manager: NotificationManager;
-  /** UiPresenter notification surface to inject into modules (`ui.notification()`). */
-  readonly ui: Pick<UiPresenter, "notification">;
-  /** All notifications opened so far, in order. Mutates live. */
+  /** A dispatcher carrying just the notification operations, for modules that only raise cards. */
+  readonly dispatcher: Dispatcher;
+  /** Carry the notification operations on a test's own dispatcher instead. */
+  register(dispatcher: Dispatcher): void;
+  /** Every card opened so far, in order. Mutates live. */
   readonly notifications: MockNotification[];
-  /** Convenience accessor for the most recently opened notification, or null. */
+  /** The most recently opened card, or null. */
   readonly lastNotification: MockNotification | null;
   /**
-   * Deliver a user event to a notification's listeners.
-   * @param indexOrId notification index (0-based) or its id
+   * Deliver a user interaction to a card: "dismiss", or a button id.
+   * @param indexOrId card index (0-based) or its id
    */
-  emitEvent(indexOrId: number | string, event: Omit<NotificationUserEvent, "notificationId">): void;
+  emitEvent(indexOrId: number | string, event: { readonly actionId: string }): void;
+  /**
+   * Let in-flight dispatches finish. A dispatch is a chain of microtasks, so
+   * this drains the microtask queue rather than waiting on a timer — it works
+   * the same under `vi.useFakeTimers()`.
+   */
+  settle(): Promise<void>;
 }
 
-export function createMockNotificationManager(): MockNotificationManager {
-  const items: MockNotification[] = [];
+/**
+ * Microtask turns `settle()` yields. Comfortably more than the deepest chain a
+ * producer starts (a NotificationCard step: queue, dispatch, interceptors,
+ * operation, hook, result), and still microseconds.
+ */
+const SETTLE_TURNS = 200;
 
-  const manager: NotificationManager = {
-    open(config: NotificationConfig): NotificationHandle {
-      const key = dedupKey(config);
-      const live = items.find((n) => !n.closed && n.key === key);
-      if (live) {
-        live.count += 1;
-        return live.handle;
+export function createMockNotificationManager(): MockNotificationManager {
+  const records: MockNotification[] = [];
+  const byId = new Map<string, MockNotification>();
+
+  const manager: NotificationManager = new NotificationManager(() => sync());
+
+  /** Fold the manager's snapshot into the records. Runs on every mutation. */
+  function sync(): void {
+    const open = new Set<string>();
+    for (const card of manager.getSnapshot()) {
+      open.add(card.id);
+      const record = byId.get(card.id);
+      if (!record) {
+        const created: MockNotification = {
+          id: card.id,
+          opened: card.config,
+          updates: [],
+          latestConfig: card.config,
+          count: card.count,
+          closed: false,
+          workspacePath: card.workspacePath,
+        };
+        records.push(created);
+        byId.set(card.id, created);
+        continue;
       }
-      const id = `ntf-${items.length + 1}`;
-      const handle: NotificationHandle = {
-        id,
-        update(next: NotificationConfig) {
-          if (slot.closed) return;
-          slot.updates.push(next);
-          slot.latestConfig = next;
-          slot.key = dedupKey(next);
-        },
-        close() {
-          if (slot.closed) return;
-          if (slot.count > 1) {
-            slot.count -= 1;
-            return;
-          }
-          slot.closed = true;
-        },
-        onEvent(handler) {
-          slot.listeners.add(handler);
-          return () => {
-            slot.listeners.delete(handler);
-          };
-        },
-      };
-      const slot: MockNotification = {
-        id,
-        opened: config,
-        updates: [],
-        latestConfig: config,
-        count: 1,
-        closed: false,
-        listeners: new Set(),
-        key,
-        handle,
-      };
-      items.push(slot);
-      return handle;
-    },
-    routeEvent() {},
-    // The mock has no buffering — notifications are tracked immediately.
-    markUIReady() {},
-  } as unknown as NotificationManager;
+      if (record.latestConfig !== card.config) {
+        record.updates.push(card.config);
+        record.latestConfig = card.config;
+      }
+      record.count = card.count;
+    }
+    for (const record of records) {
+      if (!record.closed && !open.has(record.id)) record.closed = true;
+    }
+  }
+
+  function register(dispatcher: Dispatcher): void {
+    dispatcher.registerOperation(new ShowNotificationOperation());
+    dispatcher.registerOperation(new CloseNotificationOperation());
+    dispatcher.registerModule({
+      name: "notifications-mock",
+      hooks: createNotificationHooks(manager),
+    });
+  }
+
+  const own = createMockDispatcher();
+  register(own);
 
   return {
-    manager,
-    ui: {
-      notification: (config: NotificationConfig) => manager.open(config),
-    },
-    notifications: items,
+    dispatcher: own,
+    register,
+    notifications: records,
     get lastNotification() {
-      return items[items.length - 1] ?? null;
+      return records[records.length - 1] ?? null;
     },
     emitEvent(indexOrId, event) {
-      const slot =
-        typeof indexOrId === "number" ? items[indexOrId] : items.find((n) => n.id === indexOrId);
-      if (!slot) {
-        throw new Error(`No notification matching ${String(indexOrId)}`);
-      }
-      // A dismiss retires the whole card, however many opens it stands for.
-      if (event.actionId === "dismiss") slot.count = 1;
-      const full: NotificationUserEvent = { notificationId: slot.id, ...event };
-      for (const handler of slot.listeners) handler(full);
+      const record = typeof indexOrId === "number" ? records[indexOrId] : byId.get(indexOrId);
+      if (!record) throw new Error(`No notification matching ${String(indexOrId)}`);
+      manager.routeEvent({ notificationId: record.id, actionId: event.actionId });
+    },
+    settle: async () => {
+      for (let i = 0; i < SETTLE_TURNS; i++) await Promise.resolve();
     },
   };
 }

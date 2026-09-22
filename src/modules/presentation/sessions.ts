@@ -9,9 +9,10 @@
  *
  * The shared registry mechanics (id minting, the handle map, snapshot
  * projection, routing) live in `SessionRegistry`. Dialogs and notifications
- * differ only in their handle richness: a dialog carries a `kind` and a
+ * differ in how they are addressed: a dialog hands its opener a handle with a
  * full action/change/dismiss/await contract; a notification is a lightweight
- * sidebar indicator with a single event channel.
+ * sidebar indicator addressed by id through `notification:show` /
+ * `notification:close`, and hands out no handle at all.
  */
 
 import type {
@@ -23,9 +24,10 @@ import type {
   DialogDismissEvent,
 } from "../../shared/dialog-types";
 import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
-import type { UiDialog, UiNotification } from "../../shared/ui-state";
+import type { UiDialog } from "../../shared/ui-state";
 import type { Logger } from "../../boundaries/platform/logging";
 import { Path } from "../../utils/path/path";
+import { ApiError } from "../../api/errors";
 
 // =============================================================================
 // Shared registry core
@@ -381,22 +383,31 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
 // =============================================================================
 
 /**
- * Handle to an open notification. Allows updating, closing, and receiving user events.
+ * A card as the registry projects it: the render config plus the domain facts
+ * the presenter turns into render-ready fields (the workspace path becomes the
+ * row key and display name — paths never reach the renderer).
  */
-export interface NotificationHandle {
+export interface NotificationSnapshot {
   readonly id: string;
-  /** Replace notification config (full state replacement). */
-  update(config: NotificationConfig): void;
-  /**
-   * Release this opener's hold on the card. Opens that collapsed into one card
-   * each hold it, so the card disappears on the last close, not the first — a
-   * clone finishing must not take another clone's indicator with it. A user
-   * dismiss overrides that and drops the count to one, so the owner's close
-   * finishes the card off.
-   */
-  close(): void;
-  /** Subscribe to user events. Returns unsubscribe function. */
-  onEvent(handler: (event: NotificationUserEvent) => void): () => void;
+  readonly config: NotificationConfig;
+  readonly count: number;
+  readonly workspacePath?: string;
+}
+
+/** What `notification:show` asks the registry for. */
+export interface NotificationShowRequest {
+  readonly config: NotificationConfig;
+  /** Card to update; omit to open (or join) one. */
+  readonly id?: string;
+  /** Workspace the card is about. Only read when a card is opened. */
+  readonly workspacePath?: string;
+}
+
+/** How a wait may end without the user answering. */
+export interface NotificationWaitOptions {
+  readonly timeoutMs?: number;
+  /** Token that `releaseWaiter` can end this wait with. */
+  readonly waiter?: string;
 }
 
 /**
@@ -407,55 +418,162 @@ export interface NotificationHandle {
  * every frame. Two callers that describe the same thing the same way are saying
  * the same thing, so they share a card and a count.
  *
+ * The attached workspace is part of the identity: a card is about one
+ * workspace (it names it and a click switches there), so the same words from
+ * two workspaces are two cards. Unattached cards collapse among themselves.
+ *
  * Structural, so a caller with a distinction its visible text does not carry has
  * no way to express it — the fix is to put the distinction in the text, as the
  * clone card does with the URL the user typed.
  */
-export function dedupKey(config: NotificationConfig): string {
+export function dedupKey(config: NotificationConfig, workspacePath?: string): string {
   return JSON.stringify([
     config.title,
     config.message ?? null,
     config.type,
     config.dismissible ?? false,
     config.actions ?? null,
+    workspacePath ?? null,
   ]);
 }
 
+/** One blocked `notification:show { wait }`. */
+interface Waiter {
+  readonly resolve: (choice: string | null) => void;
+  readonly token: string | undefined;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
 /**
- * NotificationManager tracks open notification sessions and exposes a
- * render-ready snapshot. User events arrive via the presenter (notification
- * ui:events) and are routed to handles. Mirrors DialogManager but for
- * lightweight, non-modal sidebar indicators (no surface, single event channel).
+ * NotificationManager tracks open sidebar cards and exposes a snapshot the
+ * presenter folds into ui:state. It is the state behind `notification:show` /
+ * `notification:close`, addressed by the ids it mints — no handles leave it.
  *
- * Opens whose configs are identical collapse into one card with a count, so a
- * condition that repeats does not fill the sidebar with copies of itself.
+ * Holds: every open that lands on a card (a fresh open, or one that collapsed
+ * into an identical card) holds it, and the card closes when the last hold is
+ * released — a clone finishing must not take another clone's indicator with it.
+ *
+ * Waits: a waiting show holds the card for as long as it waits. The user
+ * answering (a button, or dismiss) closes the card outright and answers every
+ * waiter with the same choice; a waiter that times out or is released gives up
+ * only its own hold.
  */
-export class NotificationManager extends SessionRegistry<UiNotification, NotificationHandleImpl> {
+export class NotificationManager extends SessionRegistry<NotificationSnapshot, NotificationCard> {
   /** Open cards by identity, so a repeat collapses instead of stacking. */
-  private readonly byKey = new Map<string, NotificationHandleImpl>();
+  private readonly byKey = new Map<string, NotificationCard>();
+  /** Waits that can be released by token (the registry's disconnect path). */
+  private readonly byToken = new Map<string, { card: NotificationCard; waiter: Waiter }>();
 
   constructor(notifyChange: () => void, logger?: Logger) {
     super("ntf", notifyChange, logger);
   }
 
   /**
-   * Open a notification, or collapse into the open card that already says this.
+   * Open a card, collapse into the open card that already says this, or — with
+   * `id` — replace an open card's content. Returns the card's id.
    *
-   * Returns a handle either way, so a caller cannot tell the difference — which
-   * is the point: a condition that repeats once a minute (an auto-workspace
-   * create that keeps failing) yields one card with a count, not a stack that
-   * fills the sidebar.
+   * @throws ApiError `not-found` when `id` names no open card
    */
-  open(config: NotificationConfig): NotificationHandle {
-    const key = dedupKey(config);
+  show(request: NotificationShowRequest): string {
+    return this.land(request).id;
+  }
+
+  /**
+   * `show`, then block until the card is answered.
+   *
+   * With `id` the waiter takes the card over: its hold replaces every other,
+   * so the card is the waiter's question and goes when the waiter does.
+   *
+   * @returns the clicked button's id, or null (dismiss, timeout, release, the
+   *   card closing for any other reason)
+   * @throws ApiError `not-found` when `id` names no open card
+   */
+  showAndWait(
+    request: NotificationShowRequest,
+    options: NotificationWaitOptions
+  ): Promise<string | null> {
+    const card = this.land(request);
+    if (request.id !== undefined) card.takeOver();
+    return new Promise((resolve) => {
+      const waiter: Waiter = { resolve, token: options.waiter, timer: undefined };
+      card.addWaiter(waiter);
+      if (waiter.token !== undefined) this.byToken.set(waiter.token, { card, waiter });
+      if (options.timeoutMs !== undefined) {
+        waiter.timer = setTimeout(() => this.leave(card, waiter), options.timeoutMs);
+      }
+    });
+  }
+
+  /** Whether `id` names an open card. */
+  isOpen(id: string): boolean {
+    return this.lookup(id) !== undefined;
+  }
+
+  /** Release one hold on a card. No-op for an id that is not open. */
+  close(id: string): void {
+    this.lookup(id)?.release();
+  }
+
+  /** End the wait registered under `token` (choice null). No-op when it already ended. */
+  releaseWaiter(token: string): void {
+    const entry = this.byToken.get(token);
+    if (entry) this.leave(entry.card, entry.waiter);
+  }
+
+  /** Close every card attached to a workspace that is gone. */
+  closeWorkspace(workspacePath: string): void {
+    for (const card of [...this.openSessions]) {
+      if (card.workspacePath === workspacePath) card.finish(null);
+    }
+  }
+
+  /**
+   * Route a user interaction. "dismiss" closes the card with no choice; a
+   * button closes it with that button's id. Either way every waiter is told.
+   */
+  routeEvent(event: NotificationUserEvent): void {
+    const card = this.lookup(event.notificationId);
+    if (!card) {
+      this.logger?.debug("Notification event for unknown notification", {
+        notificationId: event.notificationId,
+        actionId: event.actionId,
+      });
+      return;
+    }
+    if (event.actionId === "dismiss") {
+      card.finish(null);
+      return;
+    }
+    if (card.config.actions?.some((action) => action.id === event.actionId)) {
+      card.finish(event.actionId);
+      return;
+    }
+    this.logger?.debug("Notification event for unknown action", {
+      notificationId: event.notificationId,
+      actionId: event.actionId,
+    });
+  }
+
+  /** Resolve a request to the card it lands on, taking a hold on a fresh or joined card. */
+  private land(request: NotificationShowRequest): NotificationCard {
+    if (request.id !== undefined) {
+      const card = this.lookup(request.id);
+      if (!card) {
+        throw new ApiError("not-found", `No open notification "${request.id}".`);
+      }
+      card.update(request.config);
+      return card;
+    }
+
+    const key = dedupKey(request.config, request.workspacePath);
     const existing = this.byKey.get(key);
     if (existing) {
       existing.absorb();
       return existing;
     }
-    const handle = this.register(
+    const card = this.register(
       (id, onRemove) =>
-        new NotificationHandleImpl(id, config, key, this.notifyChange, {
+        new NotificationCard(id, request.config, request.workspacePath, this.notifyChange, {
           // Re-file a card whose config changed, so it is matched by what it now
           // says rather than by what it said when it opened — otherwise a card
           // that has moved on would still swallow a fresh open of its old text.
@@ -465,122 +583,117 @@ export class NotificationManager extends SessionRegistry<UiNotification, Notific
           },
           release: (self) => {
             if (this.byKey.get(self.key) === self) this.byKey.delete(self.key);
+            for (const [token, entry] of this.byToken) {
+              if (entry.card === self) this.byToken.delete(token);
+            }
             onRemove();
           },
         })
     );
-    this.byKey.set(key, handle);
-    return handle;
+    this.byKey.set(key, card);
+    return card;
   }
 
-  /**
-   * Route an incoming user event to the correct handle.
-   * Called by the presenter when a notification ui:event arrives.
-   */
-  routeEvent(event: NotificationUserEvent): void {
-    const handle = this.lookup(event.notificationId);
-    if (handle) {
-      handle.emit(event);
-    } else {
-      this.logger?.debug("Notification event for unknown notification", {
-        notificationId: event.notificationId,
-        actionId: event.actionId,
-      });
-    }
+  /** A waiter gives up (timeout or release): answer it null, drop its hold. */
+  private leave(card: NotificationCard, waiter: Waiter): void {
+    if (!card.removeWaiter(waiter)) return;
+    if (waiter.token !== undefined) this.byToken.delete(waiter.token);
+    waiter.resolve(null);
+    card.release();
   }
 }
 
-/** How the registry re-files and retires a handle as its identity changes. */
+/** How the registry re-files and retires a card as its identity changes. */
 interface NotificationRegistryHooks {
-  rekey(from: string, to: string, self: NotificationHandleImpl): void;
-  release(self: NotificationHandleImpl): void;
+  rekey(from: string, to: string, self: NotificationCard): void;
+  release(self: NotificationCard): void;
 }
 
-/**
- * Internal implementation of NotificationHandle.
- */
-class NotificationHandleImpl implements NotificationHandle, RegistrySession<UiNotification> {
-  readonly id: string;
-
-  /** Current render config — read by toSnapshot(). */
-  config: NotificationConfig;
-
+/** One open sidebar card. Internal to NotificationManager. */
+class NotificationCard implements RegistrySession<NotificationSnapshot> {
   /** Current identity, kept in step with `config` — read by the registry. */
   key: string;
 
-  /** Opens that collapsed into this card; the card retires when it hits zero. */
-  private count = 1;
-
-  private readonly notifyChange: () => void;
-  private readonly hooks: NotificationRegistryHooks;
-  private readonly listeners = new Set<(event: NotificationUserEvent) => void>();
+  /** Opens (and waits) holding this card; it retires when this hits zero. */
+  private holds = 1;
+  private readonly waiters = new Set<Waiter>();
   private isClosed = false;
 
   constructor(
-    id: string,
-    config: NotificationConfig,
-    key: string,
-    notifyChange: () => void,
-    hooks: NotificationRegistryHooks
+    readonly id: string,
+    public config: NotificationConfig,
+    readonly workspacePath: string | undefined,
+    private readonly notifyChange: () => void,
+    private readonly hooks: NotificationRegistryHooks
   ) {
-    this.id = id;
-    this.config = config;
-    this.key = key;
-    this.notifyChange = notifyChange;
-    this.hooks = hooks;
+    this.key = dedupKey(config, workspacePath);
   }
 
-  toSnapshot(): UiNotification {
-    return { id: this.id, config: this.config, count: this.count };
+  toSnapshot(): NotificationSnapshot {
+    return {
+      id: this.id,
+      config: this.config,
+      count: this.holds,
+      ...(this.workspacePath !== undefined && { workspacePath: this.workspacePath }),
+    };
   }
 
   /** Another open said exactly this. Take it on rather than stacking a duplicate. */
   absorb(): void {
     if (this.isClosed) return;
-    this.count += 1;
+    this.holds += 1;
+    this.notifyChange();
+  }
+
+  /** A waiter claims the card for itself: its hold is now the only one. */
+  takeOver(): void {
+    if (this.isClosed) return;
+    this.holds = 1;
     this.notifyChange();
   }
 
   update(config: NotificationConfig): void {
     if (this.isClosed) return;
     this.config = config;
-    const next = dedupKey(config);
+    const next = dedupKey(config, this.workspacePath);
     this.hooks.rekey(this.key, next, this);
     this.key = next;
     this.notifyChange();
   }
 
-  close(): void {
+  addWaiter(waiter: Waiter): void {
+    this.waiters.add(waiter);
+  }
+
+  /** @returns whether the waiter was still waiting */
+  removeWaiter(waiter: Waiter): boolean {
+    if (!this.waiters.delete(waiter)) return false;
+    if (waiter.timer !== undefined) clearTimeout(waiter.timer);
+    return true;
+  }
+
+  /** Drop one hold; the last one closes the card. */
+  release(): void {
     if (this.isClosed) return;
-    if (this.count > 1) {
-      // One of several opens is done with this card; the others still hold it.
-      this.count -= 1;
+    if (this.holds > 1) {
+      this.holds -= 1;
       this.notifyChange();
       return;
     }
+    this.finish(null);
+  }
+
+  /** Close the card outright, answering every waiter with `choice`. */
+  finish(choice: string | null): void {
+    if (this.isClosed) return;
     this.isClosed = true;
     this.hooks.release(this);
-    this.listeners.clear();
+    const waiters = [...this.waiters];
+    this.waiters.clear();
+    for (const waiter of waiters) {
+      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
+      waiter.resolve(choice);
+    }
     this.notifyChange();
-  }
-
-  onEvent(handler: (event: NotificationUserEvent) => void): () => void {
-    this.listeners.add(handler);
-    return () => {
-      this.listeners.delete(handler);
-    };
-  }
-
-  /** Called by NotificationManager when a user event arrives for this notification. */
-  emit(event: NotificationUserEvent): void {
-    if (event.actionId === "dismiss") {
-      // The user is done with the whole card, however many opens it stands for.
-      // Dropping to one lets the owner's close() finish it off, rather than
-      // peeling off a single hold and leaving the card sitting there.
-      this.count = 1;
-    }
-    for (const listener of this.listeners) {
-      listener(event);
-    }
   }
 }
