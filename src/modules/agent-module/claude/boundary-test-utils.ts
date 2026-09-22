@@ -250,7 +250,7 @@ const SUGGESTION_ASK_CALL = {
       }),
     },
   ],
-} as const;
+};
 
 /** Claude's session-naming call, which is not a turn of the conversation. */
 function isNamingCall(req: ChatCompletionRequest): boolean {
