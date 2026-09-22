@@ -350,6 +350,25 @@ the shipped chain into a real `ClaudeCodeServerManager`.
   - A background task finishing makes Claude re-invoke the agent with a fresh
     `UserPromptSubmit`. A fixture that answers that with another background shell loops
     forever, so the one-shot fixture in `bgcomplete` is load-bearing.
+- **`mode: "tui"`** runs the interactive TUI in a pseudo-terminal (`@lydell/node-pty`, prebuilt
+  per platform) for behavior headless mode cannot reach. It waits for the input box's `❯`
+  glyph, types the prompt and presses Enter, and is otherwise the same chain (~1.5s a
+  scenario). `thenEndSession` is headless-only. What it exists for:
+  - **The prompt-suggestion fork.** After each turn (from the second assistant message on)
+    Claude forks a hidden agent to guess the user's next prompt. The fork has the parent's
+    tools, denies every call, writes no transcript — and runs the session's hooks, so a
+    tool call it makes reaches the bridge as the agent's own (with an `agent_id`, and
+    nothing after `PreToolUse`). Headless never forks (`non_interactive`), and the feature
+    sits behind a server-side flag the mock cannot serve, so the TUI spawn forces it with
+    `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=true`. Its calls reuse the parent's system prompt
+    and history; the `[SUGGESTION MODE:` user message is the only thing that tells them
+    apart, and a fixture for the fork must precede every other one.
+  - Readiness is the `❯` glyph, not the footer hint: that changes with the permission mode
+    (`? for shortcuts` vs `bypass permissions on`). The config also pre-accepts the folder
+    trust dialog, which print mode never shows.
+- The agent's environment drops inherited `CLAUDE_CODE_*` / `CLAUDECODE`. Run from inside a
+  Claude session, the suite would otherwise hand the agent that session's markers —
+  `CLAUDE_CODE_CHILD_SESSION` alone turns transcript saving off.
 
 ### Unit Tests (\*.test.ts) - DEPRECATED
 

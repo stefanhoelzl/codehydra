@@ -14,24 +14,34 @@
  * ships, so a Claude release that changes what it emits shows up here as a
  * wrong `AgentStatus` rather than as a silent regression in production.
  *
- * `claude` runs headless rather than in the interactive TUI CodeHydra actually
- * launches. The hook payloads are built by the same code either way, and a
- * headless scenario costs under a second against a TUI that would have to be
- * driven through a PTY. What headless cannot reach stays covered by the
- * synthetic tests in `server-manager.integration.test.ts`: `PermissionRequest`
- * never fires, `AskUserQuestion` is refused outright ("disabled for this
- * session, in subagents as well as here"), there is no idle prompt for
- * `idle_prompt` to follow, and `!cmd` is a TUI input mode with no headless
- * equivalent.
+ * By default `claude` runs headless rather than in the interactive TUI
+ * CodeHydra actually launches. The hook payloads are built by the same code
+ * either way, and a headless scenario costs under a second. What headless
+ * cannot reach stays covered by the synthetic tests in
+ * `server-manager.integration.test.ts`: `PermissionRequest` never fires,
+ * `AskUserQuestion` is refused outright ("disabled for this session, in
+ * subagents as well as here"), there is no idle prompt for `idle_prompt` to
+ * follow, and `!cmd` is a TUI input mode with no headless equivalent.
  *
- * It is a **stream-json session on stdin**, not a one-shot `-p "prompt"`. See
- * {@link sendPrompt}: an open stdin keeps Claude alive past the end of a turn,
- * and without that its hooks lose a race against its own teardown.
+ * A headless run is a **stream-json session on stdin**, not a one-shot
+ * `-p "prompt"`. See {@link sendStreamJsonPrompt}: an open stdin keeps Claude
+ * alive past the end of a turn, and without that its hooks lose a race against
+ * its own teardown.
+ *
+ * `mode: "tui"` runs the interactive TUI in a pseudo-terminal instead, for what
+ * only happens there. The motivating case is the prompt-suggestion fork: after
+ * every turn Claude forks a hidden agent to guess the user's next prompt, and
+ * that fork runs the session's hooks — so a tool call it makes reaches the
+ * bridge as if the agent had made it, with no transcript entry to show for it.
+ * Headless mode never forks (`non_interactive` disables it). A TUI scenario
+ * waits for the input prompt to render, types the prompt and presses Enter,
+ * and is otherwise the same chain.
  */
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { spawn as spawnPty, type IPty } from "@lydell/node-pty";
 import { createServer, type Server } from "node:http";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { LLMock, type ChatCompletionRequest, type ChatMessage } from "@copilotkit/aimock";
 import { DefaultFileSystemBoundary } from "../../../boundaries/platform/filesystem";
@@ -58,6 +68,11 @@ export interface HookRecord {
   readonly before: AgentStatus;
   /** Status immediately after — the bridge handles a hook before it responds. */
   readonly after: AgentStatus;
+  /**
+   * The payload's `tool_name`, for the tool hooks. Only for telling one record
+   * from another (which `PreToolUse` is the fork's) — assertions stay on status.
+   */
+  readonly toolName: string | undefined;
 }
 
 /** The recording one `claude` run produced. */
@@ -94,12 +109,27 @@ export interface ScenarioOptions {
    *
    * The only way to observe `SessionEnd`: while stdin is open Claude stays
    * available for another turn, so the session never ends on its own.
+   * Headless only.
    */
   readonly thenEndSession?: boolean;
+  /**
+   * `headless` (default): `claude -p` on a stream-json stdin.
+   * `tui`: the interactive TUI in a pseudo-terminal — for behavior only the
+   * TUI has, such as the prompt-suggestion fork. Slower: it waits for the TUI
+   * to render before it can type.
+   */
+  readonly mode?: "headless" | "tui";
 }
 
 /** Every scenario the boundary tests drive, and the fixtures that produce it. */
-export type ScenarioName = "plain" | "tool" | "bgcomplete" | "chbg" | "subagent" | "maxtokens";
+export type ScenarioName =
+  | "plain"
+  | "tool"
+  | "bgcomplete"
+  | "chbg"
+  | "subagent"
+  | "maxtokens"
+  | "suggestionfork";
 
 /** The prompt every scenario sends. Content is irrelevant — fixtures match on the system prompt. */
 const PROMPT = "do the thing";
@@ -117,7 +147,7 @@ const PROMPT = "do the thing";
  * Reading stdin, Claude stays alive after the turn, so every hook completes.
  * The scenario ends when the recording says so and we kill the agent ourselves.
  */
-function sendPrompt(child: ChildProcess): void {
+function sendStreamJsonPrompt(child: ChildProcess): void {
   child.stdin?.write(
     JSON.stringify({
       type: "user",
@@ -150,13 +180,77 @@ const NAMING_FIXTURE = {
   response: { content: "Boundary probe" },
 } as const;
 
-/** The text of a request's system message, whichever shape it arrived in. */
-function systemText(req: ChatCompletionRequest): string {
-  const content = req.messages.find((message: ChatMessage) => message.role === "system")?.content;
+/** The text of a message, whichever shape it arrived in. */
+function messageText(message: ChatMessage | undefined): string {
+  const content = message?.content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map((part) => part.text ?? "").join("");
   return "";
 }
+
+/** The text of a request's system message. */
+function systemText(req: ChatCompletionRequest): string {
+  return messageText(req.messages.find((message: ChatMessage) => message.role === "system"));
+}
+
+/**
+ * How the prompt-suggestion fork's prompt opens (checked on 2.1.280). The fork
+ * reuses the parent's system prompt and history — it has to, to share the
+ * parent's prompt cache — so this user message is the only thing that tells
+ * its calls apart from the agent's own.
+ */
+const SUGGESTION_MARKER = "[SUGGESTION MODE:";
+
+function isSuggestionPrompt(message: ChatMessage): boolean {
+  return message.role === "user" && messageText(message).includes(SUGGESTION_MARKER);
+}
+
+/** Any call of the prompt-suggestion fork. */
+function isSuggestionFork(req: ChatCompletionRequest): boolean {
+  return req.messages.some(isSuggestionPrompt);
+}
+
+/**
+ * The fork's opening call: nothing answered since its prompt. By shape, not by
+ * counting (see {@link installFixtures}) — the call after the fork's denied
+ * tool carries an assistant turn past the marker and must get plain text, or
+ * the fork would keep calling the tool.
+ */
+function isSuggestionForkOpening(req: ChatCompletionRequest): boolean {
+  const marker = req.messages.findLastIndex(isSuggestionPrompt);
+  const answered = req.messages.findLastIndex((message) => message.role === "assistant");
+  return marker !== -1 && marker > answered;
+}
+
+/**
+ * The call the fork makes in the report this scenario reproduces: a model deep
+ * in an interview answers "what will the user type next?" with a question of
+ * its own. Claude denies it ("No tools needed for suggestion") — but only after
+ * `PreToolUse` has run, and nothing follows it: no `PostToolUse`, no
+ * `PostToolUseFailure`.
+ */
+const SUGGESTION_ASK_CALL = {
+  reasoning: "Asking which option to take.",
+  toolCalls: [
+    {
+      id: "call_ask",
+      name: "AskUserQuestion",
+      arguments: JSON.stringify({
+        questions: [
+          {
+            question: "Which option should we take?",
+            header: "Option",
+            multiSelect: false,
+            options: [
+              { label: "A", description: "The first option" },
+              { label: "B", description: "The second option" },
+            ],
+          },
+        ],
+      }),
+    },
+  ],
+} as const;
 
 /** Claude's session-naming call, which is not a turn of the conversation. */
 function isNamingCall(req: ChatCompletionRequest): boolean {
@@ -244,6 +338,28 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     });
   }
 
+  if (scenario === "suggestionfork") {
+    // The fork first: it carries the parent's system prompt and history, so any
+    // fixture below would answer it as though it were the agent.
+    mock.addFixture({
+      match: { predicate: isSuggestionForkOpening },
+      response: SUGGESTION_ASK_CALL,
+    });
+    mock.addFixture({ match: { predicate: isSuggestionFork }, response: { content: "" } });
+    // A background sub-agent that is still working when the fork runs — the
+    // report's two research agents. The fork's hook lands within a second of
+    // the main Stop, so 5s outlasts the scenario; and no longer, because Claude
+    // runs the shell in a process group of its own, which outlives the kill.
+    mock.addFixture({
+      match: { systemMessage: "You are an agent", hasToolResult: false },
+      response: bashCall("sleep 5", "long research", false),
+    });
+    mock.addFixture({
+      match: { systemMessage: "You are an agent" },
+      response: { content: "Sub-agent done." },
+    });
+  }
+
   // The follow-up turn, and (for `subagent`) the parent's turn after the Agent
   // tool returns. Matched first so it beats the tool-call fixture below.
   mock.addFixture({ match: { hasToolResult: true }, response: { content: "Done." } });
@@ -272,6 +388,29 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
       // a running shell and opts it out on the marker rather than on an empty
       // background_tasks — which would pass for the wrong reason.
       mock.addFixture({ match: {}, response: bashCall("ch-bg sleep 30", "opted-out sleep", true) });
+      break;
+    case "suggestionfork":
+      // Delegate in the background, then end the turn waiting on it. Two
+      // assistant messages (the call and the reply) are what the fork needs
+      // before it runs at all ("early_conversation" otherwise).
+      mock.addFixture({
+        match: {},
+        response: {
+          reasoning: "Delegating to a background sub-agent.",
+          toolCalls: [
+            {
+              id: "call_agent",
+              name: "Task",
+              arguments: JSON.stringify({
+                subagent_type: "general-purpose",
+                description: "research",
+                prompt: "research the thing",
+                run_in_background: true,
+              }),
+            },
+          ],
+        },
+      });
       break;
     case "subagent":
       mock.addFixture({
@@ -400,27 +539,46 @@ async function runScenarioInner(
   const tap = await startRecordingTap(bridgePort, records, () => status);
   disposables.cleanups.push(() => tap.close());
 
-  writeAgentConfig(agentConfig.path);
+  const mode = options.mode ?? "headless";
+  if (mode === "tui" && options.thenEndSession === true) {
+    throw new Error("thenEndSession is headless-only");
+  }
+  writeAgentConfig(agentConfig.path, repo.path);
 
-  const child = spawnAgent({
+  const spawnOptions: SpawnAgentOptions = {
     cwd: repo.path,
     settingsPath,
     bridgePort: tap.port,
     mockUrl,
     configDir: agentConfig.path,
     pathPrefix: options.pathPrefix ?? [],
-  });
-  disposables.cleanups.push(() => killAgent(child));
-  sendPrompt(child);
+  };
+  const agent = mode === "tui" ? spawnTuiAgent(spawnOptions) : spawnHeadlessAgent(spawnOptions);
+  disposables.cleanups.push(() => agent.kill());
+  await agent.sendPrompt();
 
-  await waitForRecording(records, options.until, child);
+  await waitForRecording(records, options.until, agent);
 
   if (options.thenEndSession === true) {
-    child.stdin?.end();
-    await waitForRecording(records, (entries) => seen(entries, "SessionEnd"), child);
+    agent.endSession();
+    await waitForRecording(records, (entries) => seen(entries, "SessionEnd"), agent);
   }
 
   return buildRun(records);
+}
+
+/** A running `claude`, however it was started. */
+interface AgentHandle {
+  /** Deliver {@link PROMPT}. Resolves once it has been handed over. */
+  sendPrompt(): Promise<void>;
+  /** End the session the way its user would. */
+  endSession(): void;
+  /** Stop it. Scenarios never need a clean exit — only the hooks it already sent. */
+  kill(): Promise<void>;
+  /** Whether it is gone, and why if it never started. */
+  readonly state: { exited: boolean; spawnError: Error | undefined };
+  /** Its most recent output, for a failure message. */
+  diagnostics(): string;
 }
 
 /**
@@ -442,6 +600,7 @@ async function startRecordingTap(
     req.on("end", () => {
       void (async () => {
         const hook = /^\/hook\/([^/]+)$/.exec(req.url ?? "")?.[1];
+        const toolName = readToolName(body);
         const before = readStatus();
         let upstream: Response | undefined;
         try {
@@ -454,7 +613,7 @@ async function startRecordingTap(
           // The bridge is already down (teardown raced a trailing hook).
         }
         if (hook !== undefined && isValidHookName(hook)) {
-          records.push({ hook, before, after: readStatus() });
+          records.push({ hook, before, after: readStatus(), toolName });
         }
         res.writeHead(upstream?.status ?? 502, { "Content-Type": "application/json" });
         res.end(upstream === undefined ? "{}" : await upstream.text());
@@ -473,11 +632,29 @@ async function startRecordingTap(
   };
 }
 
+/** The hook payload's `tool_name`, if it has one. */
+function readToolName(body: string): string | undefined {
+  try {
+    const payload: unknown = JSON.parse(body);
+    if (typeof payload === "object" && payload !== null && "tool_name" in payload) {
+      return typeof payload.tool_name === "string" ? payload.tool_name : undefined;
+    }
+  } catch {
+    // Not JSON: no tool name to report.
+  }
+  return undefined;
+}
+
 /**
  * Claude's own config for this run: past onboarding, past the
- * bypass-permissions warning, and isolated from the developer's ~/.claude.
+ * bypass-permissions warning, past the workspace trust dialog, and isolated
+ * from the developer's ~/.claude.
  */
-function writeAgentConfig(configDir: string): void {
+function writeAgentConfig(configDir: string, workspacePath: string): void {
+  // The TUI asks whether to trust the folder before it takes any input (print
+  // mode skips the dialog). Keyed by path, so both spellings of a symlinked
+  // temp dir (macOS /var -> /private/var) are trusted.
+  const trusted = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true };
   writeFileSync(
     join(configDir, ".claude.json"),
     JSON.stringify({
@@ -486,6 +663,7 @@ function writeAgentConfig(configDir: string): void {
       // `--permission-mode bypassPermissions` otherwise stops on a one-time
       // warning screen, which in print mode means it stops for good.
       bypassPermissionsModeAccepted: true,
+      projects: { [workspacePath]: trusted, [realpathSync(workspacePath)]: trusted },
     })
   );
 }
@@ -544,12 +722,55 @@ function resolveClaudeCommand(): { command: string; useShell: boolean } {
   );
 }
 
-/** Spawn the real `claude`, pointed at the mock and at the recording tap. */
-function spawnAgent(options: SpawnAgentOptions): ChildProcess {
-  const path = [...options.pathPrefix, process.env.PATH ?? ""].join(delimiter);
+/** The environment `claude` runs in: pointed at the mock and at the recording tap. */
+function agentEnv(options: SpawnAgentOptions): Record<string, string | undefined> {
+  // Run from inside a Claude session (a developer's agent running the suite),
+  // the environment carries that session's markers — CLAUDE_CODE_CHILD_SESSION
+  // alone turns transcript saving off. Nothing of the parent's may leak in.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !key.startsWith("CLAUDE_CODE_") && key !== "CLAUDECODE"
+    )
+  );
+  return {
+    ...inherited,
+    PATH: [...options.pathPrefix, process.env.PATH ?? ""].join(delimiter),
+    // Read by the shipped hook handler; the two together are what make it
+    // POST anything at all.
+    _CH_BRIDGE_PORT: String(options.bridgePort),
+    _CH_WORKSPACE_PATH: options.cwd,
+    ANTHROPIC_BASE_URL: options.mockUrl,
+    // A bearer token rather than ANTHROPIC_API_KEY: an API key makes Claude
+    // ask the user to approve it once, and nobody is there to answer.
+    ANTHROPIC_AUTH_TOKEN: "codehydra-boundary-test",
+    ANTHROPIC_MODEL: "claude-sonnet-4-5",
+    CLAUDE_CONFIG_DIR: options.configDir,
+    // Keep the run to the turn under test, and keep a version check or a
+    // crash report from reaching the network mid-test.
+    DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
+    DISABLE_AUTOUPDATER: "1",
+    DISABLE_TELEMETRY: "1",
+    DISABLE_ERROR_REPORTING: "1",
+  };
+}
+
+/** The flags every run shares. */
+function agentArgs(options: SpawnAgentOptions): string[] {
+  return [
+    "--settings",
+    options.settingsPath,
+    // Without this Claude parks on a permission prompt nobody is there to
+    // answer.
+    "--permission-mode",
+    "bypassPermissions",
+  ];
+}
+
+/** Spawn `claude -p` on a stream-json stdin. */
+function spawnHeadlessAgent(options: SpawnAgentOptions): AgentHandle {
   const { command, useShell } = resolveClaudeCommand();
   const quote = (value: string): string => (useShell ? quoteForCmd(value) : value);
-  return spawn(
+  const child = spawn(
     quote(command),
     [
       "-p",
@@ -559,39 +780,153 @@ function spawnAgent(options: SpawnAgentOptions): ChildProcess {
       "--output-format",
       "stream-json",
       "--verbose",
-      "--settings",
-      options.settingsPath,
-      // Without this Claude parks on a permission prompt that print mode gives
-      // nobody a way to answer.
-      "--permission-mode",
-      "bypassPermissions",
+      ...agentArgs(options),
     ].map(quote),
-    {
-      cwd: options.cwd,
-      shell: useShell,
-      env: {
-        ...process.env,
-        PATH: path,
-        // Read by the shipped hook handler; the two together are what make it
-        // POST anything at all.
-        _CH_BRIDGE_PORT: String(options.bridgePort),
-        _CH_WORKSPACE_PATH: options.cwd,
-        ANTHROPIC_BASE_URL: options.mockUrl,
-        // A bearer token rather than ANTHROPIC_API_KEY: an API key makes Claude
-        // ask the user to approve it once, and nobody is there to answer.
-        ANTHROPIC_AUTH_TOKEN: "codehydra-boundary-test",
-        ANTHROPIC_MODEL: "claude-sonnet-4-5",
-        CLAUDE_CONFIG_DIR: options.configDir,
-        // Keep the run to the turn under test, and keep a version check or a
-        // crash report from reaching the network mid-test.
-        DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
-        DISABLE_AUTOUPDATER: "1",
-        DISABLE_TELEMETRY: "1",
-        DISABLE_ERROR_REPORTING: "1",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    }
+    { cwd: options.cwd, shell: useShell, env: agentEnv(options), stdio: ["pipe", "pipe", "pipe"] }
   );
+
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+  const state: AgentHandle["state"] = { exited: false, spawnError: undefined };
+  child.on("exit", () => (state.exited = true));
+  // Without this a failed spawn is invisible: no "exit" fires, so the wait
+  // would sit out the full timeout and report "timed out" for what is really
+  // "the binary could not be started".
+  child.on("error", (error: Error) => {
+    state.spawnError = error;
+    state.exited = true;
+  });
+
+  return {
+    state,
+    sendPrompt: () => {
+      sendStreamJsonPrompt(child);
+      return Promise.resolve();
+    },
+    endSession: () => child.stdin?.end(),
+    diagnostics: () => `stderr: ${stderr.slice(-800)}`,
+    kill: () => {
+      if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      return new Promise<void>((done) => {
+        child.once("exit", () => done());
+        child.kill("SIGKILL");
+        // A process that refuses to die must not hang the suite.
+        setTimeout(done, 2_000).unref?.();
+      });
+    },
+  };
+}
+
+/**
+ * The input box's prompt glyph, drawn once the TUI takes input (checked on
+ * 2.1.280). Typed any earlier, the keystrokes land on the startup screen and
+ * are lost. Not the footer's hint text: that changes with the permission mode
+ * ("? for shortcuts" vs "bypass permissions on").
+ */
+const TUI_READY_MARKER = "\u276f";
+
+/** How long the TUI may take to render its input box. */
+const TUI_READY_TIMEOUT_MS = 30_000;
+
+const ESC = 0x1b;
+const BEL = 0x07;
+
+/**
+ * Terminal output as plain text, so markers can be searched: CSI sequences
+ * (`ESC [ … final`), OSC strings (`ESC ] … BEL` or `ESC \`) and two-byte
+ * escapes are dropped. A scanner rather than a regex, which would have to
+ * spell out the very control characters `no-control-regex` rejects.
+ */
+function stripAnsi(output: string): string {
+  let text = "";
+  let i = 0;
+  while (i < output.length) {
+    if (output.charCodeAt(i) !== ESC) {
+      text += output[i];
+      i++;
+      continue;
+    }
+    const kind = output[i + 1];
+    i += 2;
+    if (kind === "[") {
+      // Parameters and intermediates, up to the final byte (0x40-0x7e).
+      while (i < output.length && !(output.charCodeAt(i) >= 0x40 && output.charCodeAt(i) <= 0x7e))
+        i++;
+      i++;
+    } else if (kind === "]") {
+      while (i < output.length && output.charCodeAt(i) !== BEL && output.charCodeAt(i) !== ESC) i++;
+      // BEL ends it in one byte, ESC \ in two.
+      i += output.charCodeAt(i) === ESC ? 2 : 1;
+    }
+  }
+  return text;
+}
+
+/**
+ * Spawn the interactive TUI in a pseudo-terminal.
+ *
+ * The prompt-suggestion fork only runs here, and only when the feature is on:
+ * it is gated on a server-side flag the mock cannot serve, so the env override
+ * forces it.
+ */
+function spawnTuiAgent(options: SpawnAgentOptions): AgentHandle {
+  const { command, useShell } = resolveClaudeCommand();
+  const args = agentArgs(options);
+  // ConPTY launches a file, not a command line: a `.cmd` needs cmd.exe in front.
+  const [file, argv] = useShell
+    ? [process.env.ComSpec ?? "cmd.exe", ["/c", command, ...args]]
+    : [command, args];
+  const pty: IPty = spawnPty(file, argv, {
+    name: "xterm-256color",
+    cols: 120,
+    rows: 40,
+    cwd: options.cwd,
+    env: { ...agentEnv(options), CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true" },
+  });
+
+  let output = "";
+  pty.onData((data) => {
+    // Keep a bounded tail: a TUI redraws constantly, and only the end matters.
+    output = (output + data).slice(-200_000);
+  });
+  const state: AgentHandle["state"] = { exited: false, spawnError: undefined };
+  pty.onExit(() => (state.exited = true));
+
+  const screen = (): string => stripAnsi(output);
+
+  return {
+    state,
+    sendPrompt: async () => {
+      const deadline = Date.now() + TUI_READY_TIMEOUT_MS;
+      while (!screen().includes(TUI_READY_MARKER)) {
+        if (state.exited || Date.now() > deadline) {
+          throw new Error(
+            `the TUI never showed its input prompt ("${TUI_READY_MARKER}").\n` +
+              `screen: ${screen().slice(-1500)}`
+          );
+        }
+        await new Promise((done) => setTimeout(done, 100));
+      }
+      pty.write(PROMPT);
+      // Typed text and Enter in one write read as a paste, which the TUI
+      // inserts rather than submits.
+      await new Promise((done) => setTimeout(done, 300));
+      pty.write("\r");
+    },
+    endSession: () => {
+      throw new Error("thenEndSession is headless-only");
+    },
+    diagnostics: () => `screen: ${screen().slice(-1500)}`,
+    kill: () => {
+      if (state.exited) return Promise.resolve();
+      return new Promise<void>((done) => {
+        pty.onExit(() => done());
+        pty.kill(process.platform === "win32" ? undefined : "SIGKILL");
+        // A process that refuses to die must not hang the suite.
+        setTimeout(done, 2_000).unref?.();
+      });
+    },
+  };
 }
 
 /** How long one scenario may take before it is called a failure. */
@@ -604,30 +939,17 @@ const POST_EXIT_GRACE_MS = 3_000;
 async function waitForRecording(
   records: readonly HookRecord[],
   until: (records: readonly HookRecord[]) => boolean,
-  child: ChildProcess
+  agent: AgentHandle
 ): Promise<void> {
   const deadline = Date.now() + SCENARIO_TIMEOUT_MS;
-  let stderr = "";
-  child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-
-  let exited = false;
-  child.on("exit", () => (exited = true));
-
-  // Without this a failed spawn is invisible: no "exit" fires, so the loop below
-  // would sit out the full timeout and report "timed out" for what is really
-  // "the binary could not be started".
-  let spawnError: Error | undefined;
-  child.on("error", (error: Error) => {
-    spawnError = error;
-    exited = true;
-  });
+  const hooksSeen = (): string => records.map((entry) => entry.hook).join(", ") || "(none)";
 
   while (Date.now() < deadline) {
     if (until(records)) return;
-    if (spawnError !== undefined) {
-      throw new Error(`could not start claude: ${spawnError.message}`);
+    if (agent.state.spawnError !== undefined) {
+      throw new Error(`could not start claude: ${agent.state.spawnError.message}`);
     }
-    if (exited) {
+    if (agent.state.exited) {
       // A hook is a separate process Claude spawns, so the last few can still be
       // in flight — or not yet started — when Claude itself has gone. `Stop` and
       // `SessionEnd` routinely land after exit. Give them room before calling it
@@ -636,28 +958,15 @@ async function waitForRecording(
       if (until(records)) return;
       throw new Error(
         `claude exited before the scenario completed.\n` +
-          `hooks seen: ${records.map((entry) => entry.hook).join(", ") || "(none)"}\n` +
-          `stderr: ${stderr.slice(-800)}`
+          `hooks seen: ${hooksSeen()}\n${agent.diagnostics()}`
       );
     }
     await new Promise((done) => setTimeout(done, 50));
   }
   throw new Error(
     `scenario timed out after ${SCENARIO_TIMEOUT_MS}ms.\n` +
-      `hooks seen: ${records.map((entry) => entry.hook).join(", ") || "(none)"}\n` +
-      `stderr: ${stderr.slice(-800)}`
+      `hooks seen: ${hooksSeen()}\n${agent.diagnostics()}`
   );
-}
-
-/** Stop the agent. Scenarios never need a clean exit — only the hooks it already sent. */
-function killAgent(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return new Promise<void>((done) => {
-    child.once("exit", () => done());
-    child.kill("SIGKILL");
-    // A process that refuses to die must not hang the suite.
-    setTimeout(done, 2_000).unref?.();
-  });
 }
 
 /** Wrap the raw records in the lookups the assertions use. */
