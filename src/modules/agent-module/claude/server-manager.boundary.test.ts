@@ -180,18 +180,30 @@ describe("a prompt-suggestion fork while a background sub-agent runs (TUI)", () 
   const isForkAsk = (record: HookRecord): boolean =>
     record.hook === "PreToolUse" && record.toolName === "AskUserQuestion";
   beforeAll(async () => {
+    // Both, in either order: the fork starts the moment the turn ends, and each
+    // hook is a process of its own, so the fork's PreToolUse can reach the
+    // bridge before the Stop that preceded it (it does, now and then, on
+    // Windows, where process startup is slow).
     run = await runScenario("suggestionfork", {
       mode: "tui",
-      until: (r) => r.some(isForkAsk),
+      until: (r) => seen(r, "Stop") && r.some(isForkAsk),
     });
   }, SCENARIO_TIMEOUT_MS);
 
-  it("the main Stop stays busy while the sub-agent is still running", () => {
-    expect(run.statusAcross("Stop", 0)).toEqual({ before: "busy", after: "busy" });
+  it("the main Stop does not end the busy state while the sub-agent runs", () => {
+    // Not "busy before and after": if the fork's hook overtook it, the Stop
+    // lands on whatever the fork left. What it must never do is flip busy to
+    // idle itself.
+    const { before, after } = run.statusAcross("Stop", 0);
+    expect(after).toBe(before);
   });
 
   it("the fork's AskUserQuestion does not park the workspace", () => {
     const forkAsk = run.records.find(isForkAsk);
     expect(forkAsk?.after).toBe("busy");
+  });
+
+  it("the workspace is still busy once both have landed", () => {
+    expect(run.finalStatus).toBe("busy");
   });
 });

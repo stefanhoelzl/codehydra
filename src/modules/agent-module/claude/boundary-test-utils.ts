@@ -903,7 +903,14 @@ function spawnTuiAgent(options: SpawnAgentOptions): AgentHandle {
     cols: 120,
     rows: 40,
     cwd: options.cwd,
-    env: { ...agentEnv(options), CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true" },
+    env: {
+      ...agentEnv(options),
+      CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true",
+      // The TUI picks what it draws from TERM — with none (a GitHub Actions
+      // step) or "dumb" there is no "\u276f" to wait for. node-pty sets TERM from
+      // `name` on Unix only; on Windows the child inherits ours.
+      TERM: "xterm-256color",
+    },
   });
 
   let output = "";
