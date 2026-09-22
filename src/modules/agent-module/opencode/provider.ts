@@ -92,6 +92,8 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     const envVars: Record<string, string> = {
       _CH_OPENCODE_PORT: String(session.port),
       _CH_OPENCODE_SESSION_ID: session.sessionId,
+      // Also how the sidekick recognises a running agent terminal after an
+      // extension host restart (findRunningAgentTerminal) — keep it set.
       _CH_WORKSPACE_PATH: this.workspacePath,
     };
     return envVars;

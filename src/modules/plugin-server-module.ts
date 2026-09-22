@@ -1025,6 +1025,12 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         resetWorkspace,
       };
       socket.emit("config", config);
+      // A new workspace's layout is reset once, by the first sidekick. A later
+      // one — a new extension host after a crash or restart, in the same window
+      // — must not close the editors around the agent that is still running.
+      if (storedConfig?.resetWorkspace) {
+        storedConfig.resetWorkspace = false;
+      }
       logger.debug("Config sent", {
         workspace: workspacePath,
         isDevelopment,

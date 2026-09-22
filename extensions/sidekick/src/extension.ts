@@ -158,8 +158,32 @@ function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefin
 }
 
 /**
+ * Find an agent terminal that outlived the extension host that created it.
+ *
+ * Terminals belong to the window, not the extension host: when the extension
+ * host restarts (a crash, or "Restart Extension Host") the agent terminal and
+ * the agent in it keep running, but this module's state starts empty. A new
+ * extension host still sees the terminal, with `creationOptions` rebuilt from
+ * its launch config — including the env we passed. Only the agent terminal is
+ * created with that env (config.env, see the agent providers'
+ * getEnvironmentVariables), so `_CH_WORKSPACE_PATH` in it identifies the agent
+ * terminal. The workspace env (applyWorkspaceEnv) does not interfere: VS Code
+ * applies the environment variable collection when the process launches, and
+ * it never appears in `creationOptions.env`. Should there be several, the first
+ * one wins.
+ */
+function findRunningAgentTerminal(): vscode.Terminal | undefined {
+  return vscode.window.terminals.find((t) => {
+    const opts = t.creationOptions as vscode.TerminalOptions | undefined;
+    return opts?.env?._CH_WORKSPACE_PATH !== undefined;
+  });
+}
+
+/**
  * Open agent terminal in the editor area.
- * Creates a new terminal if none exists, otherwise focuses the existing one.
+ * Adopts a still-running agent terminal if there is one (see
+ * findRunningAgentTerminal), creates a new terminal if none exists, and
+ * otherwise focuses the existing one.
  * On reopened workspaces (show=false), disposes any stale restored terminals
  * (which have lost their name/env after code-server restart) and creates a
  * fresh terminal with correct name, env vars, and command.
@@ -173,6 +197,18 @@ function openAgentTerminal(
   env: Record<string, string>,
   show: boolean = true
 ): void {
+  if (!agentTerminal) {
+    const running = findRunningAgentTerminal();
+    if (running) {
+      // The agent is already running and reporting its own status: no launch
+      // line, and no "open" lifecycle event (it would reset a busy agent to
+      // idle). Its shell ran the launch line long ago, so a close sends Ctrl+C.
+      agentTerminal = running;
+      launchedTerminal = running;
+      codehydraApi.log.debug("Adopted running agent terminal", { agentType });
+    }
+  }
+
   if (agentTerminal) {
     if (show) agentTerminal.show();
     return;
