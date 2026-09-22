@@ -652,9 +652,22 @@ function readToolName(body: string): string | undefined {
  */
 function writeAgentConfig(configDir: string, workspacePath: string): void {
   // The TUI asks whether to trust the folder before it takes any input (print
-  // mode skips the dialog). Keyed by path, so both spellings of a symlinked
-  // temp dir (macOS /var -> /private/var) are trusted.
+  // mode skips the dialog). Keyed by path, and Claude's spelling of it is not
+  // ours, so every spelling is trusted: a symlinked temp dir (macOS /var ->
+  // /private/var), an 8.3 short name (GitHub's Windows TEMP is
+  // C:\Users\RUNNER~1\..., which only the native realpath expands), and either
+  // separator.
   const trusted = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true };
+  const spellings = [
+    workspacePath,
+    realpathSync(workspacePath),
+    realpathSync.native(workspacePath),
+  ];
+  const projects = Object.fromEntries(
+    spellings
+      .flatMap((spelling) => [spelling, spelling.replaceAll("\\", "/")])
+      .map((key) => [key, trusted])
+  );
   writeFileSync(
     join(configDir, ".claude.json"),
     JSON.stringify({
@@ -663,7 +676,7 @@ function writeAgentConfig(configDir: string, workspacePath: string): void {
       // `--permission-mode bypassPermissions` otherwise stops on a one-time
       // warning screen, which in print mode means it stops for good.
       bypassPermissionsModeAccepted: true,
-      projects: { [workspacePath]: trusted, [realpathSync(workspacePath)]: trusted },
+      projects,
     })
   );
 }
@@ -825,6 +838,15 @@ function spawnHeadlessAgent(options: SpawnAgentOptions): AgentHandle {
  */
 const TUI_READY_MARKER = "\u276f";
 
+/**
+ * A dialog's footer (checked on 2.1.280). A dialog draws the same glyph as its
+ * selection cursor ("\u276f No, exit"), and Enter would pick that option — so while
+ * this is on screen, the TUI is not ready, it is waiting on a question the
+ * scenario never meant to answer (the folder trust dialog, when the trust
+ * seeded in {@link writeAgentConfig} did not match).
+ */
+const TUI_DIALOG_MARKER = "Enter to confirm";
+
 /** How long the TUI may take to render its input box. */
 const TUI_READY_TIMEOUT_MS = 30_000;
 
@@ -890,19 +912,31 @@ function spawnTuiAgent(options: SpawnAgentOptions): AgentHandle {
     output = (output + data).slice(-200_000);
   });
   const state: AgentHandle["state"] = { exited: false, spawnError: undefined };
-  pty.onExit(() => (state.exited = true));
+  let exitCode: number | undefined;
+  pty.onExit((event) => {
+    state.exited = true;
+    exitCode = event.exitCode;
+  });
 
   const screen = (): string => stripAnsi(output);
+  // An empty screen says nothing on its own: this says what was launched and
+  // whether it is still there.
+  const describe = (): string =>
+    `launched: ${[file, ...argv].join(" ")}\n` +
+    `exited: ${state.exited ? `yes, code ${String(exitCode)}` : "no"}; ` +
+    `output: ${output.length} bytes`;
 
   return {
     state,
     sendPrompt: async () => {
       const deadline = Date.now() + TUI_READY_TIMEOUT_MS;
-      while (!screen().includes(TUI_READY_MARKER)) {
+      const ready = (text: string): boolean =>
+        text.includes(TUI_READY_MARKER) && !text.includes(TUI_DIALOG_MARKER);
+      while (!ready(screen())) {
         if (state.exited || Date.now() > deadline) {
           throw new Error(
-            `the TUI never showed its input prompt ("${TUI_READY_MARKER}").\n` +
-              `screen: ${screen().slice(-1500)}`
+            `the TUI never showed its input prompt ("${TUI_READY_MARKER}" without a dialog).\n` +
+              `${describe()}\nscreen: ${screen().slice(-1500)}`
           );
         }
         await new Promise((done) => setTimeout(done, 100));
@@ -916,7 +950,7 @@ function spawnTuiAgent(options: SpawnAgentOptions): AgentHandle {
     endSession: () => {
       throw new Error("thenEndSession is headless-only");
     },
-    diagnostics: () => `screen: ${screen().slice(-1500)}`,
+    diagnostics: () => `${describe()}\nscreen: ${screen().slice(-1500)}`,
     kill: () => {
       if (state.exited) return Promise.resolve();
       return new Promise<void>((done) => {
