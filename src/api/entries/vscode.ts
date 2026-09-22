@@ -95,7 +95,9 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "blocks until clicked or dismissed); status updates the status bar and supports codicon " +
       'syntax "$(icon-name) text", with a null message clearing it; select shows a quick pick ' +
       "when options are given and a free-text input when they are not. Returns { result }: the " +
-      "selected option, clicked button, entered text, or null if dismissed.",
+      "selected option, clicked button, entered text, or null if dismissed. Notifications, " +
+      "quick picks and inputs are modal: the workspace shows as waiting on the user until " +
+      "they are dismissed, even after a notification without options has returned.",
     input: z.object({
       workspacePath: targetWorkspace,
       type: z.enum(["info", "warning", "error", "status", "select"]),

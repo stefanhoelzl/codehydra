@@ -451,6 +451,118 @@ describe("createClaudeModuleProvider", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Open-modal overlay
+  // ---------------------------------------------------------------------------
+
+  describe("modal overlay", () => {
+    const IDLE = { status: "idle", counts: { idle: 1, busy: 0 } };
+    const BUSY = { status: "busy", counts: { idle: 0, busy: 1 } };
+    const NONE = { status: "none", counts: { idle: 0, busy: 0 } };
+
+    async function startedProvider() {
+      const provider = createProvider();
+      provider.initialize({
+        nodePath: testPath("/ide/node").toNative(),
+        cliPath: testPath("/data/bin/ch.cjs").toNative(),
+        port: 9999,
+        token: "test-token",
+      });
+      const statusChanges: AggregatedAgentStatus[] = [];
+      provider.onStatusChange((_wp, status) => statusChanges.push(status));
+      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as (workspacePath: string, port: number) => void;
+      await onStartedCb(WS_PATH, 8080);
+      statusChanges.length = 0;
+      return { provider, statusChanges };
+    }
+
+    it("parks a busy workspace on idle until the modal closes", async () => {
+      const { provider, statusChanges } = await startedProvider();
+      capturedStatusCallback!("busy");
+
+      provider.setModalOpen(WS_PATH, true);
+      expect(provider.getStatus(WS_PATH)).toEqual(IDLE);
+
+      provider.setModalOpen(WS_PATH, false);
+      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
+      expect(statusChanges).toEqual([BUSY, IDLE, BUSY]);
+    });
+
+    it("records agent changes while parked without reporting them", async () => {
+      const { provider, statusChanges } = await startedProvider();
+      capturedStatusCallback!("busy");
+      provider.setModalOpen(WS_PATH, true);
+      statusChanges.length = 0;
+
+      capturedStatusCallback!("idle");
+      capturedStatusCallback!("busy");
+      expect(statusChanges).toEqual([]);
+
+      provider.setModalOpen(WS_PATH, false);
+      expect(statusChanges).toEqual([BUSY]);
+    });
+
+    it("parks a workspace with no agent session, and returns it to none", async () => {
+      const provider = createProvider();
+      const statusChanges: AggregatedAgentStatus[] = [];
+      provider.onStatusChange((_wp, status) => statusChanges.push(status));
+
+      provider.setModalOpen(WS_PATH, true);
+      expect(provider.getStatus(WS_PATH)).toEqual(IDLE);
+
+      provider.setModalOpen(WS_PATH, false);
+      expect(provider.getStatus(WS_PATH)).toEqual(NONE);
+      expect(statusChanges).toEqual([IDLE, NONE]);
+    });
+
+    it("re-reports on every edge, even when the status did not change", async () => {
+      const { provider, statusChanges } = await startedProvider();
+      capturedStatusCallback!("idle");
+      statusChanges.length = 0;
+
+      provider.setModalOpen(WS_PATH, true);
+      provider.setModalOpen(WS_PATH, false);
+
+      // An agent.status.set nudge bypasses the core, so the last report here is
+      // not necessarily what the UI shows — each edge corrects it.
+      expect(statusChanges).toEqual([IDLE, IDLE]);
+    });
+
+    it("stays parked when the provider is removed mid-modal", async () => {
+      const { provider, statusChanges } = await startedProvider();
+      capturedStatusCallback!("busy");
+      provider.setModalOpen(WS_PATH, true);
+      statusChanges.length = 0;
+
+      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
+      onStoppedCb(WS_PATH, false);
+
+      expect(statusChanges).toEqual([IDLE]);
+    });
+
+    it("clearWorkspaceTracking drops the park", async () => {
+      const { provider } = await startedProvider();
+      capturedStatusCallback!("busy");
+      provider.setModalOpen(WS_PATH, true);
+
+      provider.clearWorkspaceTracking(WS_PATH);
+
+      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
+    });
+
+    it("parks only the workspace showing the modal", async () => {
+      const { provider } = await startedProvider();
+      capturedStatusCallback!("busy");
+
+      provider.setModalOpen(WS_PATH_B, true);
+
+      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
+      expect(provider.getStatus(WS_PATH_B)).toEqual(IDLE);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Query methods
   // ---------------------------------------------------------------------------
 

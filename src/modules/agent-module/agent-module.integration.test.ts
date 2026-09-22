@@ -70,6 +70,10 @@ import {
   AGENT_LIFECYCLE_OPERATION_ID,
   INTENT_AGENT_LIFECYCLE,
 } from "../../intents/agent-lifecycle";
+import {
+  VSCODE_MODAL_CHANGED_OPERATION_ID,
+  INTENT_VSCODE_MODAL_CHANGED,
+} from "../../intents/vscode-modal-changed";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import type { McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
@@ -116,6 +120,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     stopWorkspace: vi.fn().mockResolvedValue({ success: true }),
     restartWorkspace: vi.fn().mockResolvedValue({ success: true, port: 8081 }),
     applyTerminalLifecycle: vi.fn(),
+    setModalOpen: vi.fn(),
     getStatus: vi.fn().mockReturnValue({
       status: "none",
       counts: { idle: 0, busy: 0 },
@@ -1409,6 +1414,57 @@ describe("createAgentModule", () => {
       });
 
       expect(mockProvider.applyTerminalLifecycle).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // modal (vscode:modal-changed)
+  // ---------------------------------------------------------------------------
+
+  describe("modal", () => {
+    function registerModalOp(dispatcher: Dispatcher, agent: string): void {
+      dispatcher.registerOperation(
+        createMinimalOperation<void>(
+          VSCODE_MODAL_CHANGED_OPERATION_ID,
+          INTENT_VSCODE_MODAL_CHANGED,
+          "modal",
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
+              open: (ctx.intent.payload as { open: boolean }).open,
+              capabilities: { agent },
+            }),
+          }
+        )
+      );
+    }
+
+    it("forwards the edge to provider.setModalOpen", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerModalOp(dispatcher, "claude");
+
+      await dispatcher.dispatch({
+        type: INTENT_VSCODE_MODAL_CHANGED,
+        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+      });
+
+      expect(mockProvider.setModalOpen).toHaveBeenCalledWith(
+        testPath("/test/workspace").toNative(),
+        true
+      );
+    });
+
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerModalOp(dispatcher, "opencode");
+
+      await dispatcher.dispatch({
+        type: INTENT_VSCODE_MODAL_CHANGED,
+        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+      });
+
+      expect(mockProvider.setModalOpen).not.toHaveBeenCalled();
     });
   });
 

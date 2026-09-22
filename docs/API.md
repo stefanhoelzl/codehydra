@@ -520,7 +520,7 @@ It also gained `ignoreWarnings`, which the MCP tool already had.
 | `config`              | `PluginConfig`            | (none)                                   | Configuration sent after connection             |
 | `command`             | `CommandRequest`          | `PluginResult<unknown>`                  | Execute VS Code command                         |
 | `shutdown`            | None                      | `PluginResult<void>`                     | Terminate extension host for workspace deletion |
-| `ui:showNotification` | `ShowNotificationRequest` | `PluginResult<ShowNotificationResponse>` | Show a notification in VS Code                  |
+| `ui:showNotification` | `ShowNotificationRequest` | `PluginResult<ShowNotificationResponse>` | Show a modal notification; acked on dismissal   |
 | `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `PluginResult<void>`                     | Create or update a status bar item              |
 | `ui:statusBarDispose` | `StatusBarDisposeRequest` | `PluginResult<void>`                     | Dispose a status bar item                       |
 | `ui:showQuickPick`    | `ShowQuickPickRequest`    | `PluginResult<ShowQuickPickResponse>`    | Show a quick pick list                          |

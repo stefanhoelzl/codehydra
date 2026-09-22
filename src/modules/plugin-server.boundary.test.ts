@@ -25,6 +25,7 @@ import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
+import { INTENT_VSCODE_MODAL_CHANGED } from "../intents/vscode-modal-changed";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
@@ -1238,6 +1239,122 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
       expect(elapsed).toBeLessThan(2000);
+    });
+  });
+
+  // A modal blocks the workspace's editor on the user until the sidekick acks its
+  // dismissal; the server reports the 0↔1 edges so the workspace reads idle.
+  describe("modal tracking", () => {
+    const WS = wsPath("/test/workspace");
+
+    /** The `open` flags of every vscode:modal-changed the module dispatched. */
+    function modalEdges(): boolean[] {
+      return env.mockDispatch.mock.calls
+        .map(([intent]) => intent as Intent)
+        .filter((intent) => intent.type === INTENT_VSCODE_MODAL_CHANGED)
+        .map((intent) => (intent.payload as { open: boolean }).open);
+    }
+
+    it("reports open on emit and closed on the dismissal ack", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      let dismiss: (() => void) | undefined;
+      client.on("ui:showNotification", (_request, ack) => {
+        dismiss = () => ack({ success: true, data: { action: "OK" } });
+      });
+
+      const shown = env.showNotification(WS, { severity: "info", message: "Hi", actions: ["OK"] });
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
+
+      await vi.waitFor(() => expect(dismiss).toBeDefined());
+      dismiss!();
+      await expect(shown).resolves.toBe("OK");
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+    });
+
+    it("returns at once without actions but stays open until dismissed", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      let dismiss: (() => void) | undefined;
+      client.on("ui:showNotification", (_request, ack) => {
+        dismiss = () => ack({ success: true, data: { action: null } });
+      });
+
+      await expect(env.showNotification(WS, { severity: "info", message: "Hi" })).resolves.toBe(
+        null
+      );
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
+
+      await vi.waitFor(() => expect(dismiss).toBeDefined());
+      dismiss!();
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+    });
+
+    it("keeps a timed-out modal open until its late ack", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      let dismiss: (() => void) | undefined;
+      client.on("ui:showNotification", (_request, ack) => {
+        dismiss = () => ack({ success: true, data: { action: "OK" } });
+      });
+
+      await expect(
+        env.showNotification(WS, { severity: "info", message: "Hi", actions: ["OK"] }, 50)
+      ).rejects.toThrow("UI event timed out");
+      expect(modalEdges()).toEqual([true]);
+
+      await vi.waitFor(() => expect(dismiss).toBeDefined());
+      dismiss!();
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+    });
+
+    it("reports one edge each way for overlapping modals", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      const acks: Array<() => void> = [];
+      client.on("ui:showNotification", (_request, ack) => {
+        acks.push(() => ack({ success: true, data: { action: null } }));
+      });
+      client.on("ui:showQuickPick", (_request, ack) => {
+        acks.push(() => ack({ success: true, data: { selected: null } }));
+      });
+
+      await env.showNotification(WS, { severity: "info", message: "Hi" });
+      const picked = env.showQuickPick(WS, { items: [{ label: "A" }] });
+      await vi.waitFor(() => expect(acks).toHaveLength(2));
+
+      acks[0]!();
+      await delay(20);
+      expect(modalEdges()).toEqual([true]);
+
+      acks[1]!();
+      await picked;
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+    });
+
+    it("closes the modal and fails the waiting call when the socket drops", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      client.on("ui:showInputBox", () => {
+        // Never acked: the extension host goes away with the input box open.
+      });
+
+      const asked = env.showInputBox(WS, { prompt: "Name" });
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
+
+      client.disconnect();
+      await expect(asked).rejects.toThrow("Workspace disconnected");
+      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+    });
+
+    it("does not count a status bar update", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      client.on("ui:statusBarUpdate", (_request, ack) => ack({ success: true, data: undefined }));
+
+      await env.updateStatusBar(WS, { text: "Building" });
+
+      expect(modalEdges()).toEqual([]);
     });
   });
 

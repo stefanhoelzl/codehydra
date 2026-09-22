@@ -107,6 +107,10 @@ import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/vscode-show-message";
+import {
+  INTENT_VSCODE_MODAL_CHANGED,
+  type VscodeModalChangedIntent,
+} from "../intents/vscode-modal-changed";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
@@ -535,13 +539,23 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   // UI event sending
   // ---------------------------------------------------------------------------
 
+  /**
+   * Send a UI event and wait for its ack.
+   *
+   * With `modal`, the event shows a modal the sidekick acks on dismissal, and it
+   * is tracked in `openModals` until then. `timeoutMs` bounds only the caller's
+   * wait (0 = none): VS Code cannot close a modal from code, so a timed-out modal
+   * stays up and stays counted. A socket that drops takes its modals with it, and
+   * fails a call still waiting on one.
+   */
   async function sendUiEvent<TReq, TRes>(
     workspacePath: WorkspacePath,
     event: keyof ServerToClientEvents,
     request: TReq,
-    timeoutMs: number = COMMAND_TIMEOUT_MS
+    timeoutMs: number = COMMAND_TIMEOUT_MS,
+    options?: { readonly modal?: boolean }
   ): Promise<PluginResult<TRes>> {
-    const normalized = new Path(workspacePath).toString();
+    const normalized = workspacePathSchema.parse(new Path(workspacePath).toString());
     const socket = connections.get(normalized);
 
     if (!socket) {
@@ -555,6 +569,24 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
     return new Promise((resolve) => {
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      let modalOpen = options?.modal === true;
+
+      const closeModal = (): void => {
+        if (!modalOpen) return;
+        modalOpen = false;
+        socket.off("disconnect", onDisconnect);
+        modalClosed(normalized);
+      };
+
+      const onDisconnect = (): void => {
+        closeModal();
+        resolve({ success: false, error: "Workspace disconnected" });
+      };
+
+      if (modalOpen) {
+        modalOpened(normalized);
+        socket.on("disconnect", onDisconnect);
+      }
 
       if (timeoutMs > 0) {
         timeoutId = setTimeout(() => {
@@ -566,6 +598,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate generic event dispatch
       socket.emit(event, request, (result: PluginResult<TRes>) => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
+        closeModal();
         logger.debug("UI event result", {
           workspace: normalized,
           event,
@@ -576,12 +609,73 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Modals
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Open modals per workspace (notifications, quick picks, input boxes), counted
+   * from emit until the sidekick acks the dismissal or the socket drops.
+   *
+   * A modal blocks the workspace's editor on the user whoever raised it, so the
+   * 0↔1 edges are reported as `vscode:modal-changed` and the agent module parks
+   * the workspace on idle in between. The count follows the modal, not the call:
+   * a call that timed out, or a notification without actions whose call returned
+   * at once, still holds the workspace until the user dismisses it.
+   */
+  const openModals = new Map<WorkspacePath, number>();
+
+  /**
+   * The last edge report per workspace. Each report waits for the previous one,
+   * so an open and its close cannot overtake each other in the dispatcher and
+   * leave the workspace parked.
+   */
+  const modalReports = new Map<WorkspacePath, Promise<void>>();
+
+  function reportModalEdge(workspacePath: WorkspacePath, open: boolean): void {
+    const previous = modalReports.get(workspacePath) ?? Promise.resolve();
+    const report = previous.then(async () => {
+      try {
+        await dispatcher.dispatch<VscodeModalChangedIntent>({
+          type: INTENT_VSCODE_MODAL_CHANGED,
+          payload: { workspacePath, open },
+        });
+      } catch (error) {
+        logger.warn("Failed to report modal change", {
+          workspace: workspacePath,
+          open,
+          error: getErrorMessage(error),
+        });
+      }
+    });
+    modalReports.set(workspacePath, report);
+    void report.finally(() => {
+      if (modalReports.get(workspacePath) === report) modalReports.delete(workspacePath);
+    });
+  }
+
+  function modalOpened(workspacePath: WorkspacePath): void {
+    const count = (openModals.get(workspacePath) ?? 0) + 1;
+    openModals.set(workspacePath, count);
+    if (count === 1) reportModalEdge(workspacePath, true);
+  }
+
+  function modalClosed(workspacePath: WorkspacePath): void {
+    const count = (openModals.get(workspacePath) ?? 0) - 1;
+    if (count > 0) {
+      openModals.set(workspacePath, count);
+      return;
+    }
+    openModals.delete(workspacePath);
+    reportModalEdge(workspacePath, false);
+  }
+
   async function showNotification(
     workspacePath: WorkspacePath,
     request: ShowNotificationRequest,
-    timeoutMs: number = COMMAND_TIMEOUT_MS
+    timeoutMs: number = 0
   ): Promise<PluginResult<ShowNotificationResponse>> {
-    return sendUiEvent(workspacePath, "ui:showNotification", request, timeoutMs);
+    return sendUiEvent(workspacePath, "ui:showNotification", request, timeoutMs, { modal: true });
   }
 
   async function updateStatusBar(
@@ -603,7 +697,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     request: ShowQuickPickRequest,
     timeoutMs: number = 0
   ): Promise<PluginResult<ShowQuickPickResponse>> {
-    return sendUiEvent(workspacePath, "ui:showQuickPick", request, timeoutMs);
+    return sendUiEvent(workspacePath, "ui:showQuickPick", request, timeoutMs, { modal: true });
   }
 
   async function showInputBox(
@@ -611,7 +705,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     request: ShowInputBoxRequest,
     timeoutMs: number = 0
   ): Promise<PluginResult<ShowInputBoxResponse>> {
-    return sendUiEvent(workspacePath, "ui:showInputBox", request, timeoutMs);
+    return sendUiEvent(workspacePath, "ui:showInputBox", request, timeoutMs, { modal: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -1254,6 +1348,22 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     }
 
     if (type === "info" || type === "warning" || type === "error") {
+      if (options === undefined || options.length === 0) {
+        // Nothing to answer, so the caller is not held up. The sidekick still
+        // acks only on dismissal, which is what the modal tracking waits for.
+        if (!isConnected(workspacePath)) throw new Error("Workspace not connected");
+        void showNotification(workspacePath, { severity: type, message: message! }).then(
+          (result) => {
+            if (!result.success) {
+              logger.debug("Notification ended without dismissal", {
+                workspace: workspacePath,
+                error: result.error,
+              });
+            }
+          }
+        );
+        return null;
+      }
       const result = await showNotification(
         workspacePath,
         {

@@ -43,6 +43,10 @@ import {
   AGENT_LIFECYCLE_OPERATION_ID,
   type AgentLifecycleHookInput,
 } from "../intents/agent-lifecycle";
+import {
+  VSCODE_MODAL_CHANGED_OPERATION_ID,
+  type ModalHookInput,
+} from "../intents/vscode-modal-changed";
 
 const AGENT_METADATA_KEY = "agent";
 
@@ -171,6 +175,9 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
           deps,
           (ctx) => (ctx as AgentLifecycleHookInput).workspacePath
         ),
+      },
+      [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
+        modal: makeResolverHandler(deps, (ctx) => (ctx as ModalHookInput).workspacePath),
       },
     },
   };
