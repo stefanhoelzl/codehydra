@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "appctrl": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["tsx", "scripts/appctrl.ts"]
-    }
-  }
-}

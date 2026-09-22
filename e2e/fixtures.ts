@@ -1,8 +1,8 @@
 /**
  * Launching the app under test, and the per-spec lifecycle helper.
  *
- * The driver comes from `scripts/appctrl.ts` — the same module the appctrl MCP
- * server exposes to agents, so what you debug interactively is what CI runs.
+ * The driver comes from `scripts/appctrl.ts` — the same module the appctrl CLI
+ * (`pnpm -s appctrl`) exposes to agents, so what you debug interactively is what CI runs.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { existsSync, readFileSync, readdirSync } from "node:fs";

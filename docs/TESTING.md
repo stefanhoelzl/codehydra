@@ -234,7 +234,7 @@ produces — on Linux, Windows, and macOS. Run with `pnpm test:e2e` (needs `pnpm
 first, or `CH_E2E_EXE=<binary>`), or `pnpm test:e2e:dev` against the unpackaged build.
 
 The driver is `createDriver()` from `scripts/appctrl.ts` — the same module the appctrl
-MCP server exposes to agents, so what you debug interactively is what CI runs.
+CLI (`pnpm -s appctrl`) exposes to agents, so what you debug interactively is what CI runs.
 
 **Root.** `_CH_ROOT_DIR` relocates the app's data root _and_ its bundles root together, in
 either build flavor (`path-provider.ts`). `e2e/env.ts` defaults it under the OS temp dir and

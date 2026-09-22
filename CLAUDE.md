@@ -115,18 +115,42 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ### Essential Commands
 
-| Command             | Purpose                                                                    |
-| ------------------- | -------------------------------------------------------------------------- |
-| `pnpm dev`          | Start development mode                                                     |
-| `pnpm validate:fix` | Fix lint/format issues, run tests                                          |
-| `pnpm test`         | Run all tests                                                              |
-| `pnpm build`        | Build for production                                                       |
-| `pnpm dist`         | Create distributable for current OS                                        |
-| `pnpm dist:linux`   | Create Linux AppImage                                                      |
-| `pnpm dist:win`     | Create Windows portable exe                                                |
-| `pnpm site:dev`     | Start landing page dev server                                              |
-| `pnpm site:build`   | Build landing page for production                                          |
-| `appctrl_*` MCP     | Control running app for UI debugging (via `scripts/appctrl.ts` MCP server) |
+| Command             | Purpose                                                  |
+| ------------------- | -------------------------------------------------------- |
+| `pnpm dev`          | Start development mode                                   |
+| `pnpm validate:fix` | Fix lint/format issues, run tests                        |
+| `pnpm test`         | Run all tests                                            |
+| `pnpm build`        | Build for production                                     |
+| `pnpm dist`         | Create distributable for current OS                      |
+| `pnpm dist:linux`   | Create Linux AppImage                                    |
+| `pnpm dist:win`     | Create Windows portable exe                              |
+| `pnpm site:dev`     | Start landing page dev server                            |
+| `pnpm site:build`   | Build landing page for production                        |
+| `pnpm -s appctrl`   | Drive a running app for UI debugging (see AppCtrl below) |
+
+### AppCtrl (UI debugging)
+
+`pnpm -s appctrl <command>` (`scripts/appctrl.ts`) launches and drives this worktree's app through Playwright. `start` spawns a background daemon that owns the app and exits with it; every other command talks to it. One app per worktree; everything lands in `./app-data` (logs, `appctrl-console.jsonl`, `screenshots/`, `appctrl-daemon.log`). `pnpm -s appctrl --help` lists commands, `<command> --help` their flags, `guide` the full guide — read it before a first session.
+
+| Command                                                    | Does                                                                       |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `start [--headed] [-- <app flag>…]` / `stop` / `status`    | Launch headless (needs `pnpm build`), quit, check                          |
+| `screenshot [-t ui]`                                       | Write a PNG to `./app-data/screenshots/` and print the path — then Read it |
+| `dom [selector]`                                           | Accessibility tree as YAML — find selectors here first                     |
+| `click <sel>` / `type <text>` / `key <combo>`              | Trusted input (`key Control+Shift+p`)                                      |
+| `wait-for <sel> [--state hidden]` / `eval <code \| ->`     | Wait for an element; evaluate an expression (`-` = stdin), result as JSON  |
+| `expand-sidebar` / `dialog <path>…` / `resume` / `targets` | Hover the sidebar open; mock the folder picker; simulate wake; list frames |
+| `console [--level error]` / `logs [--scope git]`           | Renderer console / app log — both work after the app is gone               |
+
+Views: `--target workspace` (default, the visible VSCodium iframe), `ui` (the whole window), or a URL substring.
+
+**Must-know:**
+
+- `@vscode-elements` components have shadow DOM: CSS selectors cannot reach inside. Use `role=button[name="Create"]` / `text=Create` selectors from `dom`; type into a focused field rather than `type --selector`.
+- The sidebar is 20px and clipped until hovered, and headless has no cursor: `expand-sidebar` before clicking anything in it.
+- In workspace views use `key` / `type`; synthetic `KeyboardEvent`s and `acquireVsCodeApi` do not work there.
+- `eval` takes an expression: wrap statements in an IIFE, never a bare `return`.
+- **Never open the user's real projects** — create a temp git repo and `dialog` it before clicking Open Project.
 
 ### Key Documents
 
