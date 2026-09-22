@@ -199,16 +199,21 @@ describe("what counts as a hook", () => {
     );
   });
 
-  it.skipIf(isWindows)("names a missing interpreter without blaming the file", async () => {
-    const entry = await writeHook(
-      "bad-shebang",
-      "#!/nonexistent/interpreter\necho '{}'\n",
-      OK_WINDOWS
-    );
-    await expect(run(entry)).rejects.toThrow(
-      /exit 127: a command was not found \(the shebang interpreter, or one the script ran\)/
-    );
-  });
+  // Linux only: macOS's /bin/sh reports a missing shebang interpreter as 126
+  // ("bad interpreter"), not 127, and Windows has no shebang at all.
+  it.skipIf(process.platform !== "linux")(
+    "names a missing interpreter without blaming the file",
+    async () => {
+      const entry = await writeHook(
+        "bad-shebang",
+        "#!/nonexistent/interpreter\necho '{}'\n",
+        OK_WINDOWS
+      );
+      await expect(run(entry)).rejects.toThrow(
+        /exit 127: a command was not found \(the shebang interpreter, or one the script ran\)/
+      );
+    }
+  );
 
   it("runs the file pinned to this platform beside an unsuffixed one", async () => {
     const dir = nodePath.join(worktree, HOOKS_ROOT, HOOKS_DIR);
@@ -264,6 +269,7 @@ describe("cancel", () => {
     const running = run(entry, {}, controller.signal);
     await new Promise((resolve) => setTimeout(resolve, 200));
     controller.abort();
-    await expect(running).rejects.toThrow(/slow was canceled/);
+    // The entry is the file's name, so on Windows it carries its `.cmd`.
+    await expect(running).rejects.toThrow(`${entry} was canceled`);
   }, 10_000);
 });
