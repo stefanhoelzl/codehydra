@@ -39,6 +39,7 @@ const TITLE = "Hooked Alpha";
 const REFUSAL = "e2e gate says no";
 const EVENT_MARKER = ".on-workspace-opened-ran";
 const OPEN_MARKER = ".before-workspace-opened-ran";
+const GATE_MARKER = ".before-worktree-deleted-running";
 
 let repo: { path: string; cleanup: () => Promise<void> };
 
@@ -64,11 +65,26 @@ function markAndPrintScript(marker: string, json: string): string {
 /**
  * A hook that swallows stdin and then never finishes on its own (ten minutes is
  * far past every timeout here). Cancel is the only thing that ends it.
+ *
+ * With `marker`, it first touches that file in its worktree — the only outside
+ * evidence that the hook has actually started.
  */
-function hangingScript(): string {
+function hangingScript(marker?: string): string {
   return isWindows
-    ? ["@echo off", "more > nul", "ping -n 600 127.0.0.1 > nul", ""].join("\r\n")
-    : ["#!/bin/sh", "cat > /dev/null", "sleep 600", ""].join("\n");
+    ? [
+        "@echo off",
+        "more > nul",
+        ...(marker ? [`type nul > ${marker}`] : []),
+        "ping -n 600 127.0.0.1 > nul",
+        "",
+      ].join("\r\n")
+    : [
+        "#!/bin/sh",
+        "cat > /dev/null",
+        ...(marker ? [`touch ${marker}`] : []),
+        "sleep 600",
+        "",
+      ].join("\n");
 }
 
 /** A hook that swallows stdin and touches a file in the worktree it runs in. */
@@ -285,7 +301,7 @@ test("Cancel on the deletion panel stops a gate that never finishes, and fails i
   // An uncommitted edit in the worktree is what runs: the gate is read from the
   // workspace being deleted, as it stands.
   const worktree = join(workspacesDir(), "gamma");
-  await writeHookScript("before-worktree-deleted", hangingScript(), worktree);
+  await writeHookScript("before-worktree-deleted", hangingScript(GATE_MARKER), worktree);
 
   await expandSidebar(ui);
   const row = ui
@@ -308,7 +324,13 @@ test("Cancel on the deletion panel stops a gate that never finishes, and fails i
     }
   }
 
-  // The deletion switches away from `gamma`; selecting it brings its panel back.
+  // The deletion switches away from `gamma` before its gate runs, so wait for
+  // the gate itself: selecting `gamma` any earlier can land before that switch
+  // (Windows tears a workspace down slowly enough for it to), and the switch
+  // then takes the panel away again.
+  await expect.poll(() => existsSync(join(worktree, GATE_MARKER)), { timeout: 60_000 }).toBe(true);
+
+  // Selecting `gamma` brings its deletion panel back.
   await expandSidebar(ui);
   await workspaceRow(ui, "gamma").click();
   const panel = ui.getByRole("region", { name: "Removing workspace" });
