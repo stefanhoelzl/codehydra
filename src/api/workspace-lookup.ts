@@ -77,17 +77,26 @@ export function allWorkspaces(projects: readonly ProjectLocation[]): readonly Wo
  * discovered yet. A name is matched against the open workspaces, and an
  * ambiguous name (the same workspace name in two projects) resolves to nothing
  * rather than guessing which was meant.
+ *
+ * A failure says which of the two it was: a name that matches nothing is
+ * `not-found`, one that matches several is `usage` — the caller has to write
+ * the reference differently, as a path.
  */
 export function resolveWorkspaceReference(
   projects: readonly ProjectLocation[],
   reference: string
-): { readonly path: string } | { readonly error: string } {
+):
+  | { readonly path: string }
+  | { readonly error: string; readonly category: "not-found" | "usage" } {
   if (looksLikePath(reference)) return { path: new Path(reference).toString() };
 
   const matches = allWorkspaces(projects).filter((workspace) => workspace.name === reference);
   if (matches.length === 1) return { path: new Path(matches[0]!.path).toString() };
-  if (matches.length === 0) return { error: `No open workspace named "${reference}"` };
+  if (matches.length === 0) {
+    return { error: `No open workspace named "${reference}"`, category: "not-found" };
+  }
   return {
+    category: "usage",
     error:
       `"${reference}" matches ${matches.length} open workspaces. ` +
       `Pass a path instead: ${matches.map((match) => match.path).join(", ")}`,

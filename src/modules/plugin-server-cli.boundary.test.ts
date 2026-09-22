@@ -24,6 +24,8 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { lockEntries } from "../api/entries/lock";
 import { createLockModule } from "./lock-module";
+import { IntentHandle } from "../intents/lib/dispatcher";
+import type { ProjectLocation } from "../api/workspace-lookup";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
 const TOKEN = "test-token";
@@ -80,6 +82,29 @@ function call(
     emit(channel, request, resolve);
   });
 }
+
+/** Answer the server's project listing — what a named workspace resolves against. */
+function listProjectsReturns(projects: readonly ProjectLocation[]): void {
+  env!.mockDispatch.mockImplementation(() => {
+    const handle = new IntentHandle();
+    handle.signalAccepted(true);
+    handle.resolve(projects);
+    return handle;
+  });
+}
+
+const PROJECTS: readonly ProjectLocation[] = [
+  { name: "repo", path: "/repo", workspaces: [{ name: "feature", path: WS }] },
+  {
+    name: "other",
+    path: "/other",
+    workspaces: [
+      { name: "shared", path: "/other/wt/shared" },
+      { name: "twin", path: "/other/wt/twin" },
+    ],
+  },
+  { name: "third", path: "/third", workspaces: [{ name: "twin", path: "/third/wt/twin" }] },
+];
 
 describe("CLI clients on the plugin wire", () => {
   describe("authentication", () => {
@@ -256,6 +281,69 @@ describe("CLI clients on the plugin wire", () => {
       expect(result.error).toContain("workspace");
     });
   });
+
+  describe("a named workspace (`ch --workspace <name>`)", () => {
+    it("acts on the workspace the name resolves to", async () => {
+      const seen: { workspacePath: unknown }[] = [];
+      env = await createPluginServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "feature" });
+      cli.connect();
+      await waitForConnect(cli);
+
+      await expect(call(cli, "api:operation:workspace.status")).resolves.toMatchObject({
+        success: true,
+      });
+      expect(seen).toEqual([{ workspacePath: WS }]);
+    });
+
+    it("reports an unknown name as not-found on the first workspace command", async () => {
+      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "absent" });
+      cli.connect();
+      await waitForConnect(cli);
+
+      const result = await call(cli, "api:operation:workspace.status");
+
+      expect(result).toMatchObject({ success: false, category: "not-found" });
+      expect(result.error).toContain('No open workspace named "absent"');
+    });
+
+    it("reports an ambiguous name as a usage error that asks for a path", async () => {
+      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "twin" });
+      cli.connect();
+      await waitForConnect(cli);
+
+      const result = await call(cli, "api:operation:workspace.status");
+
+      expect(result).toMatchObject({ success: false, category: "usage" });
+      expect(result.error).toContain("Pass a path instead");
+    });
+
+    it("still runs commands that need no workspace", async () => {
+      const seen: { workspacePath: unknown }[] = [];
+      env = await createPluginServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "absent" });
+      cli.connect();
+      await waitForConnect(cli);
+
+      await expect(call(cli, "api:operation:project.list")).resolves.toEqual({
+        success: true,
+        data: [],
+      });
+      expect(seen).toEqual([{ workspacePath: null }]);
+    });
+  });
 });
 
 describe("forwarded events", () => {
@@ -392,6 +480,28 @@ describe("locks tied to a CLI connection", () => {
 
     // Held by the workspace, not by the process that asked.
     expect(locks.list()).toHaveLength(1);
+  });
+
+  it("releases another workspace's lock for a client that names that workspace", async () => {
+    // The documented way to break a stuck lock: `ch lock release <name>
+    // --workspace <holder>`, run from anywhere.
+    const { registry, locks } = lockRegistry();
+    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    const holder = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    holder.connect();
+    await waitForConnect(holder);
+    await call(holder, "api:operation:lock.take", { name: "device" });
+    holder.disconnect();
+    await waitForDisconnect(holder);
+
+    const breaker = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    breaker.connect();
+    await waitForConnect(breaker);
+
+    await expect(
+      call(breaker, "api:operation:lock.release", { name: "device" })
+    ).resolves.toMatchObject({ success: true, data: { released: ["device"] } });
+    expect(locks.list()).toEqual([]);
   });
 
   it("drops a queued waiter whose socket disconnects", async () => {

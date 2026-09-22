@@ -8,12 +8,12 @@
 
 import { readFileSync, realpathSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { constants as osConstants } from "node:os";
 
 import { runClaudeWrapper } from "../modules/agent-module/claude/wrapper";
 import { runOpencodeWrapper } from "../modules/agent-module/opencode/wrapper";
 import { connect } from "./client";
 import { chooseConnection, DiscoveryError, type DiscoveryFs } from "./discovery";
+import { childExitCode } from "./child-exit";
 import { lockRun } from "./lock-run";
 import { serveMcp } from "./mcp";
 import { EXIT, renderError, useJson } from "./output";
@@ -40,7 +40,7 @@ function workspaceFlag(argv: readonly string[]): string | undefined {
  */
 function passthrough(command: string, args: readonly string[]): number {
   const result = spawnSync(command, [...args], { stdio: "inherit" });
-  return result.status ?? 1;
+  return childExitCode(result.status, result.signal);
 }
 
 /**
@@ -72,7 +72,7 @@ function runCommand(command: string, args: readonly string[]): Promise<number> {
       done(127);
     });
     child.on("exit", (code, signal) => {
-      done(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1));
+      done(childExitCode(code, signal));
     });
   });
 }
@@ -86,7 +86,7 @@ async function main(): Promise<number> {
     await runClaudeWrapper();
   }
   if (argv[0] === "opencode") {
-    runOpencodeWrapper();
+    runOpencodeWrapper(argv.slice(1));
   }
 
   // `bg` never touches the app: it is a passthrough, and requiring a running

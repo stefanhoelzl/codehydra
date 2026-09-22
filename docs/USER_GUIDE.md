@@ -259,7 +259,8 @@ Prefix a long-lived background command with `ch bg` (or the equivalent
 ch bg npm run dev
 ```
 
-It runs the command unchanged, with the same output and exit code, and only
+It runs the command unchanged, with the same output and exit code (128 + the
+signal number when a signal kills it, as a shell reports it), and only
 tells CodeHydra to leave the workspace status alone. It matters only for
 Claude Code: OpenCode's background shells never affect its status, so there it
 simply runs the command. A background sub-agent always keeps the workspace busy.
@@ -812,7 +813,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `log <level> <message>`                                            | Write to CodeHydra's log                                                                                         |
 | `report-issue <description>`                                       | File a bug report                                                                                                |
 | `bg <cmd…>`                                                        | Run a command without keeping the workspace busy                                                                 |
-| `mcp`, `claude`, `opencode`                                        | The MCP server and agent launchers CodeHydra itself uses                                                         |
+| `mcp`, `claude`, `opencode`                                        | The MCP server and agent launchers CodeHydra itself uses; extra arguments go to the agent                        |
 
 ```sh
 ch ws status
@@ -825,8 +826,10 @@ ch guide repository-hooks
 
 - `ch` acts on the workspace containing the current directory.
   `--workspace <name|path>` targets another; a name must be unique across open
-  projects, and only an absolute path counts as a path. A name that does not
-  resolve leaves the command with no workspace (exit 4).
+  projects, and only an absolute path counts as a path. A name that matches no
+  open workspace fails the first command that needs a workspace with exit 6; a
+  name that matches several fails it with exit 2 — pass a path instead.
+  Commands that need no workspace still run.
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`, `ws switch`,
   `ws open` and `ws create --project …` work outside a workspace; other
   workspace commands exit 4 there.
@@ -862,6 +865,10 @@ ch lock run device -- npm run e2e   # hold only while the command runs
 - `ch lock run` ties the lock to its own process; without a command it holds
   until killed (run that under `ch bg`, or the workspace stays busy).
 - Releasing a lock the workspace does not hold exits 6.
+- A waiter never takes a held lock. To break one whose holder is stuck or
+  gone, release it as the holder, from any shell:
+  `ch lock release device --workspace <holder>`. That ends the hold, not
+  whatever the holder is still running.
 
 ### MCP
 

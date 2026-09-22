@@ -223,6 +223,30 @@ describe("ch opencode boundary tests", () => {
       expect(output!.args).toContain("http://127.0.0.1:14001");
     });
 
+    it("passes its own arguments on to opencode attach", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_OPENCODE_PORT: "14001",
+          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_SESSION_ID: "ses-abc123",
+        },
+        tempDir.path,
+        ["opencode", "--model", "anthropic/claude-sonnet-5", "--print-logs"]
+      );
+
+      expect(result.status).toBe(0);
+      expect(parseFakeOpencodeOutput(result.stdout)!.args).toEqual([
+        "attach",
+        "http://127.0.0.1:14001",
+        "--session",
+        "ses-abc123",
+        "--model",
+        "anthropic/claude-sonnet-5",
+        "--print-logs",
+      ]);
+    });
+
     it("propagates exit code from opencode binary", async () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,

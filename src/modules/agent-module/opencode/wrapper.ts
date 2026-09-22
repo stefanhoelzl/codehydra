@@ -6,7 +6,8 @@
  *
  * It:
  * 1. Reads environment variables for configuration
- * 2. Spawns the opencode binary with the session ID from environment
+ * 2. Spawns `opencode attach` with the session ID from environment, followed by
+ *    any arguments `ch opencode` was given
  */
 
 import { spawnSync } from "node:child_process";
@@ -23,7 +24,7 @@ const EXIT_SPAWN_FAILED = 2;
  * Agent status (the old WrapperStart notification) is driven by the sidekick via
  * the agent terminal's open/close — this wrapper no longer posts hooks.
  */
-function main(): never {
+function main(userArgs: readonly string[]): never {
   // 1. Read and validate _CH_OPENCODE_PORT
   const portStr = process.env._CH_OPENCODE_PORT;
   if (!portStr) {
@@ -70,6 +71,7 @@ function main(): never {
   if (sessionId) {
     args.push("--session", sessionId);
   }
+  args.push(...userArgs);
 
   // 7. Spawn opencode binary
   // Note: .cmd files on Windows require shell:true to execute
@@ -92,10 +94,13 @@ function main(): never {
  *
  * Exported because `ch opencode` is the entry point — the sidekick types that
  * into the agent terminal. There is no separate script on disk.
+ *
+ * `userArgs` are what followed `ch opencode`; they are passed on to
+ * `opencode attach`.
  */
-export function runOpencodeWrapper(): never {
+export function runOpencodeWrapper(userArgs: readonly string[]): never {
   try {
-    main();
+    main(userArgs);
   } catch (error: unknown) {
     console.error("Fatal error:", error instanceof Error ? error.message : error);
     process.exit(EXIT_ENV_ERROR);
