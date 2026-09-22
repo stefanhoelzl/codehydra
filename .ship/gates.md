@@ -20,7 +20,13 @@ Entries come in two shapes:
 - **Text**: `[timestamp] [error] [scope] message` or `[timestamp] [warn] [scope] message`
 - **JSON**: one object per line, with `"level"` set to `"error"` or `"warn"`
 
-Collect the unique entries — deduplicate repeated messages. For each one, read
+**Skip** these known entries — they are not issues:
+
+- `[warn] [config] Unknown config key (ignored)` with `source=CLI flag` and `key` of `inspect` or
+  `remote-debugging-port`. Playwright's `_electron.launch()` always prepends both flags, so
+  every appctrl or e2e launch logs these. Any other key is not skipped.
+
+Collect the unique remaining entries — deduplicate repeated messages. For each one, read
 `git diff origin/main..HEAD` and decide whether **this** change fixes its underlying cause.
 
 That is the judgment the gate is asking for, so make it honestly: "the entry looks harmless",
