@@ -8,7 +8,9 @@
  * The story is one workspace, in order: trust is asked, the setup hook's
  * title/tags land, the open hook's environment stays out of every file, the
  * deletion hook refuses, and Dismiss escapes the refusal — which is the
- * documented way out of a gate that says no.
+ * documented way out of a gate that says no. Then a second workspace meets
+ * hooks that never finish, and Cancel is the way out of each: the setup hook
+ * on the loading panel, the deletion gate on the deletion panel.
  */
 import { expect, test } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
@@ -59,6 +61,16 @@ function markAndPrintScript(marker: string, json: string): string {
     : ["#!/bin/sh", "cat > /dev/null", `touch ${marker}`, `echo '${json}'`, ""].join("\n");
 }
 
+/**
+ * A hook that swallows stdin and then never finishes on its own (ten minutes is
+ * far past every timeout here). Cancel is the only thing that ends it.
+ */
+function hangingScript(): string {
+  return isWindows
+    ? ["@echo off", "more > nul", "ping -n 600 127.0.0.1 > nul", ""].join("\r\n")
+    : ["#!/bin/sh", "cat > /dev/null", "sleep 600", ""].join("\n");
+}
+
 /** A hook that swallows stdin and touches a file in the worktree it runs in. */
 function markerScript(marker: string): string {
   return isWindows
@@ -66,8 +78,8 @@ function markerScript(marker: string): string {
     : ["#!/bin/sh", "cat > /dev/null", `touch ${marker}`, ""].join("\n");
 }
 
-async function writeHookScript(name: string, body: string): Promise<void> {
-  const dir = join(repo.path, ".codehydra", "hooks");
+async function writeHookScript(name: string, body: string, root = repo.path): Promise<void> {
+  const dir = join(root, ".codehydra", "hooks");
   await mkdir(dir, { recursive: true });
   const file = join(dir, `${name}${HOOK_EXT}`);
   await writeFile(file, body);
@@ -228,4 +240,99 @@ test("Dismiss force-deletes past the refusing hook", async () => {
   await expect
     .poll(() => existsSync(join(workspacesDir(), "alpha")), { timeout: 60_000 })
     .toBe(false);
+});
+
+test("Cancel on the loading panel stops a setup hook that never finishes", async () => {
+  const ui = app().uiPage();
+
+  // Committed, because a new worktree only has the hooks of the branch it is
+  // created from.
+  await writeHookScript("after-worktree-created", hangingScript());
+  const git = simpleGit(repo.path);
+  await git.add(".codehydra");
+  await git.commit("Make the setup hook hang");
+
+  // Settles only once the workspace has opened, which the hook is holding up.
+  const creating = createWorkspace(app(), "gamma");
+
+  await expect(ui.getByText("Running after-worktree-created", { exact: true })).toBeVisible({
+    timeout: 120_000,
+  });
+  // `<vscode-button>` can swallow a click on Windows (see `removeWorkspace`), so
+  // click until the hook's row is gone — the only evidence the click landed.
+  const cancel = ui.getByRole("button", { name: "Cancel", exact: true });
+  for (let attempt = 1; ; attempt++) {
+    await cancel.click();
+    try {
+      await expect(ui.getByText("Running after-worktree-created", { exact: true })).toBeHidden({
+        timeout: 10_000,
+      });
+      break;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
+  }
+
+  // A canceled setup hook is a failed one: loud, but the workspace still opens.
+  await creating;
+  await expandSidebar(ui);
+  await expect(ui.getByText("after-worktree-created was canceled")).toBeVisible();
+});
+
+test("Cancel on the deletion panel stops a gate that never finishes, and fails it closed", async () => {
+  const ui = app().uiPage();
+
+  // An uncommitted edit in the worktree is what runs: the gate is read from the
+  // workspace being deleted, as it stands.
+  const worktree = join(workspacesDir(), "gamma");
+  await writeHookScript("before-worktree-deleted", hangingScript(), worktree);
+
+  await expandSidebar(ui);
+  const row = ui
+    .getByRole("listitem")
+    .filter({ has: workspaceRow(ui, "gamma") })
+    .last();
+  await row.getByRole("button", { name: "Remove workspace" }).click();
+  const confirm = ui.getByRole("dialog", { name: "Remove Workspace" });
+  await expect(confirm).toBeVisible();
+  // Click until the dialog closes: `<vscode-button>` can swallow a click, and
+  // with the dialog still up the sidebar below cannot be reached.
+  const remove = confirm.getByRole("button", { name: "Remove", exact: true });
+  for (let attempt = 1; ; attempt++) {
+    await remove.click();
+    try {
+      await expect(confirm).toBeHidden({ timeout: 5_000 });
+      break;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
+  }
+
+  // The deletion switches away from `gamma`; selecting it brings its panel back.
+  await expandSidebar(ui);
+  await workspaceRow(ui, "gamma").click();
+  const panel = ui.getByRole("region", { name: "Removing workspace" });
+  await expect(panel).toBeVisible({ timeout: 60_000 });
+
+  const cancel = panel.getByRole("button", { name: "Cancel", exact: true });
+  await expect(cancel).toBeVisible({ timeout: 60_000 });
+  const retry = panel.getByRole("button", { name: "Retry", exact: true });
+  for (let attempt = 1; ; attempt++) {
+    await cancel.click();
+    try {
+      await expect(retry).toBeVisible({ timeout: 10_000 });
+      break;
+    } catch (error) {
+      if (attempt === 3) throw error;
+    }
+  }
+
+  // Canceled is a hook failure, and the gate fails closed: the worktree stays.
+  await expect(panel.getByText("before-worktree-deleted was canceled")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Dismiss", exact: true })).toBeVisible();
+  expect(existsSync(worktree)).toBe(true);
+
+  // Leave the project as the earlier tests did: Dismiss force-deletes, hooks skipped.
+  await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await expect(workspaceRow(ui, "gamma")).toBeHidden({ timeout: 120_000 });
 });

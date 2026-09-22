@@ -922,6 +922,11 @@ describe("cancel", () => {
     // Not fatal: the open went on — before-workspace-opened ran after it.
     expect(setup.createdEvents).toHaveLength(1);
     expect(setup.stdin).toHaveLength(2);
+    // A repository's script failing is not CodeHydra failing: warn, never error.
+    expect(setup.logger.getMessagesByLevel("error")).toEqual([]);
+    expect(setup.logger.getMessagesByLevel("warn")).toContainEqual(
+      expect.objectContaining({ message: "Repository hook failed" })
+    );
   });
 
   it("opens a workspace whose before-workspace-opened was canceled, without env", async () => {
