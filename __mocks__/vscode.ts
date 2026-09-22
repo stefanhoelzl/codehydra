@@ -34,6 +34,9 @@ export const createdTerminals: FakeTerminal[] = [];
 /** Callbacks registered via `window.onDidCloseTerminal`, in registration order. */
 export const closeHandlers: Array<(terminal: FakeTerminal) => void> = [];
 
+/** Callbacks registered via `window.onDidStartTerminalShellExecution`. */
+export const shellExecutionStartHandlers: Array<(event: { terminal: FakeTerminal }) => void> = [];
+
 export interface FakeStatusBarItem {
   text: string;
   tooltip: string;
@@ -83,6 +86,12 @@ export const window = {
     closeHandlers.push(callback);
     return { dispose: vi.fn() };
   }),
+  onDidStartTerminalShellExecution: vi.fn(
+    (callback: (event: { terminal: FakeTerminal }) => void) => {
+      shellExecutionStartHandlers.push(callback);
+      return { dispose: vi.fn() };
+    }
+  ),
   terminals: [] as FakeTerminal[],
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
@@ -93,7 +102,9 @@ export const window = {
 };
 
 export const commands = {
-  registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+  registerCommand: vi.fn<
+    (id: string, handler: (...args: unknown[]) => unknown) => { dispose: () => void }
+  >(() => ({ dispose: vi.fn() })),
   executeCommand: vi.fn(() => Promise.resolve()),
 };
 
@@ -117,6 +128,7 @@ export const workspace = {
 export function resetVscodeFake(): void {
   createdTerminals.length = 0;
   closeHandlers.length = 0;
+  shellExecutionStartHandlers.length = 0;
   window.terminals.length = 0;
   mockStatusBarItem.text = "";
   mockStatusBarItem.tooltip = "";
