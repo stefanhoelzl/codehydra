@@ -90,6 +90,16 @@ let agentTerminal: vscode.Terminal | null = null;
 let terminalCloseListener: vscode.Disposable | null = null;
 
 /**
+ * The agent terminal once its shell has started running the launch line, as
+ * reported by shell integration. Until then there is no agent to stop — see
+ * closeAgentTerminal.
+ */
+let launchedTerminal: vscode.Terminal | null = null;
+
+/** Disposable for the shell-integration execution listener */
+let terminalStartListener: vscode.Disposable | null = null;
+
+/**
  * Report an agent terminal lifecycle transition to the main process.
  * Fire-and-forget; no-op when not connected. Drives agent status:
  * "open" → WrapperStart, "close" → WrapperEnd / TUI detach. Replaces the
@@ -207,6 +217,12 @@ function setupTerminalCloseListener(): void {
       emitAgentLifecycle("close");
       codehydraApi.log.debug("Agent terminal closed");
     }
+    if (terminal === launchedTerminal) launchedTerminal = null;
+  });
+
+  // The launch line is the first thing the agent terminal's shell runs.
+  terminalStartListener = vscode.window.onDidStartTerminalShellExecution((event) => {
+    if (event.terminal === agentTerminal) launchedTerminal = event.terminal;
   });
 }
 
@@ -250,6 +266,21 @@ function closeAgentTerminal(): boolean {
   }
 
   const terminal = agentTerminal;
+
+  // No agent yet: its shell has not run the launch line. Ctrl+C now would not
+  // stop an agent — it would reach the shell while it is still starting, where
+  // the tty driver flushes pending input on the interrupt, so the typed launch
+  // line is discarded and the shell sits at its prompt with the terminal open
+  // for good. Dispose instead: there is nothing inside to outlive it.
+  //
+  // A shell without shell integration never reports the start, so it lands
+  // here too even with an agent running. The close is then reported early;
+  // the CWD scan before worktree removal is the backstop for that case.
+  if (terminal !== launchedTerminal) {
+    codehydraApi.log.debug("Agent not started; disposing its terminal");
+    terminal.dispose();
+    return true;
+  }
 
   // Send Ctrl+C repeatedly until the terminal closes on its own.
   terminal.sendText("\x03", false);
@@ -1248,6 +1279,11 @@ export function deactivate(): void {
     terminalCloseListener.dispose();
     terminalCloseListener = null;
   }
+  if (terminalStartListener) {
+    terminalStartListener.dispose();
+    terminalStartListener = null;
+  }
+  launchedTerminal = null;
 
   // Reset terminal reference (don't dispose - let VS Code handle it)
   agentTerminal = null;

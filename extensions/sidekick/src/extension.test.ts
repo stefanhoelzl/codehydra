@@ -9,8 +9,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   createdTerminals,
   closeHandlers,
+  commands,
   env as vscodeEnv,
   resetVscodeFake,
+  shellExecutionStartHandlers,
 } from "../../../__mocks__/vscode";
 
 // ---------------------------------------------------------------------------
@@ -129,6 +131,41 @@ describe("sidekick agent lifecycle emits", () => {
     await socket._handlers.config!(CONFIG);
 
     expect(createdTerminals[0]!.sendText).toHaveBeenCalledWith(line);
+  });
+
+  function closeAgent(): unknown {
+    const registration = vi
+      .mocked(commands.registerCommand)
+      .mock.calls.find(([id]) => id === "codehydra.closeAgent");
+    return registration![1]();
+  }
+
+  // Ctrl+C before the shell has run the launch line flushes that line from the
+  // tty: the agent never starts and the terminal never closes.
+  it("disposes the terminal when the agent has not started yet", async () => {
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+    const terminal = createdTerminals[0]!;
+
+    expect(closeAgent()).toEqual({ closed: true });
+
+    expect(terminal.dispose).toHaveBeenCalled();
+    expect(terminal.sendText).not.toHaveBeenCalledWith("\x03", false);
+  });
+
+  it("sends Ctrl+C once the shell has started the agent", async () => {
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+    const terminal = createdTerminals[0]!;
+    shellExecutionStartHandlers[0]!({ terminal });
+
+    expect(closeAgent()).toEqual({ closed: true });
+
+    expect(terminal.sendText).toHaveBeenCalledWith("\x03", false);
+    expect(terminal.dispose).not.toHaveBeenCalled();
+    closeHandlers.forEach((handler) => handler(terminal));
   });
 
   it("does not emit when the socket is disconnected", async () => {
