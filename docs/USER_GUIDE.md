@@ -205,12 +205,16 @@ changes and commits not merged into its base; confirming deletes anyway. Tick
 **Keep branch** to keep the git branch. (From `ch` or MCP, a workspace with
 uncommitted or unmerged work is refused unless told to ignore warnings.)
 
-While you are looking at the workspace, a progress panel shows the steps:
-terminating processes, stopping the agent server, closing the editor, running
-the repository hook (if the repository has one), removing the worktree. On a
-failure it offers **Retry**, **Kill & Retry** (with a table of the processes
-holding files open) and **Dismiss**, which force-removes the workspace from
-CodeHydra even if files remain on disk (a branch you chose to keep is kept). <kbd>Escape</kbd> on a failed panel means Dismiss.
+Deleting the workspace you are on moves you to another one. Select the
+deleting workspace to watch it: a progress panel shows the steps — terminating
+processes, stopping the agent server, closing the editor, running the
+repository hook (if the repository has one; **Cancel** stops it while it
+runs), removing the worktree. If the deletion finishes while you are on it,
+you are moved away again; if it fails, you stay, and the panel offers
+**Retry**, **Kill & Retry** (with a table of the processes holding files open)
+and **Dismiss**, which force-removes the workspace from CodeHydra even if files
+remain on disk (a branch you chose to keep is kept). <kbd>Escape</kbd> on a
+failed panel means Dismiss.
 
 ### Notifications and updates
 
