@@ -41,6 +41,9 @@ importers:
       liquidjs:
         specifier: ^10.25.0
         version: 10.25.0
+      marked:
+        specifier: ^17.0.4
+        version: 17.0.4
       posthog-node:
         specifier: ^5.28.2
         version: 5.28.2

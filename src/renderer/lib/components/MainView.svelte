@@ -183,6 +183,12 @@
     api.emitEvent({ kind: "open-settings" });
   }
 
+  // Open the user guide dialog (sidebar question mark). Main forwards this to
+  // the help module, which opens the guide in a declarative dialog.
+  function handleOpenHelp(): void {
+    api.emitEvent({ kind: "open-help" });
+  }
+
   // Toggle hiding of hibernated workspaces (bottom sidebar toggle / Alt+X+T).
   // Main flips the persisted `sidebar.hide-hibernated` state and re-pushes.
   function handleToggleHideHibernated(): void {
@@ -206,6 +212,7 @@
     onOpenNewWorkspace={handleOpenNewWorkspace}
     onRemoveWorkspace={handleRemoveWorkspace}
     onOpenSettings={handleOpenSettings}
+    onOpenHelp={handleOpenHelp}
     hideHibernated={ui.sidebar.hideHibernated}
     onToggleHideHibernated={handleToggleHideHibernated}
   />

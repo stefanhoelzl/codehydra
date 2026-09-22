@@ -27,6 +27,7 @@ function registry(dispatcher: Dispatcher = createMockDispatcher()) {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config: createMockConfig(),
+      readUserGuide: async () => "",
     },
     SILENT_LOGGER
   );
@@ -217,6 +218,7 @@ describe("registry contents", () => {
         "config.list",
         "config.reset",
         "config.set",
+        "guide",
         "lock.list",
         "log",
         "project.close",

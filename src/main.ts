@@ -184,6 +184,7 @@ import { createDevtoolsModule } from "./modules/devtools-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createPresentationModule } from "./modules/presentation/presentation-module";
 import { createSettingsModule } from "./modules/settings-module";
+import { createHelpModule } from "./modules/help-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
@@ -457,10 +458,12 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 // UI-view IPC. It privately owns the dialog/notification registries and exposes
 // .dialog()/.notification() for any module to inject. Constructed early so the
 // consumer modules below can take it as `ui`.
-// Forwards the sidebar gear's open-settings ui event to the settings module.
-// Assigned once the settings module is constructed below (it needs the
-// presenter for its dialog), so the presenter closes over a mutable ref.
+// Forwards the sidebar gear's open-settings ui event to the settings module,
+// and the question mark's open-help to the help module. Assigned once those
+// modules are constructed below (they need the presenter for their dialogs),
+// so the presenter closes over mutable refs.
 let openSettings: () => void = () => {};
+let openHelp: () => void = () => {};
 const presentationModule = createPresentationModule({
   loggingService,
   viewManager,
@@ -472,6 +475,7 @@ const presentationModule = createPresentationModule({
   configService,
   stateService,
   onOpenSettings: () => openSettings(),
+  onOpenHelp: () => openHelp(),
 });
 const settingsModule = createSettingsModule({
   ui: presentationModule,
@@ -480,6 +484,13 @@ const settingsModule = createSettingsModule({
   logger: loggingService.createLogger("settings"),
 });
 openSettings = settingsModule.openSettings;
+const helpModule = createHelpModule({
+  ui: presentationModule,
+  fileSystem: fileSystemLayer,
+  pathProvider,
+  logger: loggingService.createLogger("help"),
+});
+openHelp = helpModule.openHelp;
 const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
 const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
 
@@ -568,6 +579,7 @@ const operationRegistry = createRegistry(
     awaitDeletion: (workspacePath) => deletionWaiter.await(workspacePath),
     locks: lockModule.locks,
     config: configService,
+    readUserGuide: () => helpModule.readUserGuide(),
   },
   apiLogger
 );

@@ -57,6 +57,11 @@ describe("composed agent system prompts", () => {
       expect(get()).toContain("the user's call");
     });
 
+    it("points at the user guide", () => {
+      expect(get()).toContain("ch guide");
+      expect(get()).toContain(".codehydra/hooks");
+    });
+
     it("stays within the word budget", () => {
       expect(countWords(get())).toBeLessThanOrEqual(MAX_WORDS);
     });

@@ -21,6 +21,12 @@ export interface CliMapping extends InputShaping {
    * typed by hand it would release the moment `ch` exits.
    */
   readonly hidden?: boolean;
+  /**
+   * The result is a document: printed as-is rather than as JSON when stdout is
+   * not a TTY, since the reader that is never a TTY — an agent — is the one it
+   * is for. `--format json` still forces JSON.
+   */
+  readonly text?: boolean;
 }
 
 export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
@@ -73,6 +79,7 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "config.reset": { path: ["config", "reset"], positionals: ["key"] },
   log: { path: ["log"], positionals: ["level", "message"] },
   "report.issue": { path: ["report-issue"], positionals: ["description"] },
+  guide: { path: ["guide"], positionals: ["section"], text: true },
 };
 
 /** Anything carrying a subcommand path can be resolved against argv. */

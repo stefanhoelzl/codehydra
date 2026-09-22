@@ -37,6 +37,8 @@ export interface OperationDescriptor {
   readonly positionals?: readonly string[];
   /** Callable but left out of help, when describing the CLI view. */
   readonly hidden?: boolean;
+  /** The result is a document, delivered as plain text rather than JSON. */
+  readonly text?: boolean;
 }
 
 /**
@@ -72,6 +74,7 @@ export function describe(
       ...("positionals" in mapping &&
         mapping.positionals !== undefined && { positionals: mapping.positionals }),
       ...("hidden" in mapping && mapping.hidden === true && { hidden: true }),
+      ...(mapping.text === true && { text: true }),
     });
   }
 

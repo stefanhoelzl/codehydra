@@ -7,14 +7,15 @@
  *   ch-claude / ch-opencode shims call.
  * - src/modules/agent-module/claude/hook-handler.ts -> hook-handler.cjs
  *
- * Also copies compiled wrappers to ./dist/bin/ for production packaging, and
- * composes the per-agent system prompts into the same directory.
+ * Also copies compiled wrappers to ./dist/bin/ for production packaging,
+ * composes the per-agent system prompts into the same directory, and ships the
+ * user guide (docs/USER_GUIDE.md) beside them.
  * Runtime copying to app-data/bin/ is handled by setupBinDirectory() from bin-setup.ts.
  */
 
 import { defineConfig, type Plugin } from "vite";
 import { resolve } from "path";
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import { codehydraDefaults } from "./vite.defaults";
 
@@ -63,6 +64,25 @@ function composeAgentPrompts(): Plugin {
   };
 }
 
+/**
+ * Ship the user guide beside the system prompts.
+ *
+ * docs/USER_GUIDE.md is the one source for the site's help page, `ch guide`
+ * and the in-app help dialog. The app reads it from the runtime bin dir (see
+ * getUserGuidePath), so it takes the same route as the prompts: dist/bin ->
+ * assets/bin -> `bin` in extraResources.
+ */
+function copyUserGuide(): Plugin {
+  return {
+    name: "codehydra-copy-user-guide",
+    closeBundle() {
+      const outDir = resolve(__dirname, "dist/bin");
+      mkdirSync(outDir, { recursive: true });
+      copyFileSync(resolve(__dirname, "docs/USER_GUIDE.md"), resolve(outDir, "USER_GUIDE.md"));
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     codehydraDefaults({ nodeBuiltins: true }),
@@ -82,6 +102,7 @@ export default defineConfig({
       hook: "closeBundle",
     }),
     composeAgentPrompts(),
+    copyUserGuide(),
   ],
   build: {
     lib: {

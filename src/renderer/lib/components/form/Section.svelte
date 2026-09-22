@@ -20,6 +20,7 @@
   import FormButton from "./FormButton.svelte";
   import GroupSection from "./GroupSection.svelte";
   import InputSection from "./InputSection.svelte";
+  import MarkdownSection from "./MarkdownSection.svelte";
   import ProgressSection from "./ProgressSection.svelte";
   import RadioSection from "./RadioSection.svelte";
   import SettingRow from "./SettingRow.svelte";
@@ -57,6 +58,8 @@
 
 {#if section.type === "text"}
   <TextSection {section} />
+{:else if section.type === "markdown"}
+  <MarkdownSection {section} />
 {:else if section.type === "progress"}
   <ProgressSection {section} />
 {:else if section.type === "radio"}

@@ -84,4 +84,6 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "config.reset": { channel: "api:config:reset" },
   log: { channel: "api:log", fireAndForget: true },
   "report.issue": { channel: "api:reportIssue" },
+  // For people and agents reading how CodeHydra works; an extension has no use for it.
+  guide: null,
 };

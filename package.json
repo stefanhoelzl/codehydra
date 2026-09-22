@@ -68,6 +68,7 @@
     "execa": "^9.6.1",
     "ignore": "^7.0.5",
     "liquidjs": "^10.25.0",
+    "marked": "^17.0.4",
     "posthog-node": "^5.28.2",
     "simple-git": "^3.33.0",
     "socket.io": "^4.8.3",

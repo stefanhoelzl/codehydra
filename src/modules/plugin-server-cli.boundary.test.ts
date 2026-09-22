@@ -354,6 +354,7 @@ describe("locks tied to a CLI connection", () => {
         registry: () => registry,
         locks,
         config: createMockConfig(),
+        readUserGuide: async () => "",
       })
     );
     return { registry, locks };

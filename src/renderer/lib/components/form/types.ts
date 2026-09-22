@@ -6,6 +6,7 @@
 import type { DialogSection } from "@shared/dialog-types";
 
 export type TextSectionConfig = Extract<DialogSection, { type: "text" }>;
+export type MarkdownSectionConfig = Extract<DialogSection, { type: "markdown" }>;
 export type ProgressSectionConfig = Extract<DialogSection, { type: "progress" }>;
 export type RadioSectionConfig = Extract<DialogSection, { type: "radio" }>;
 export type DropdownSectionConfig = Extract<DialogSection, { type: "dropdown" }>;

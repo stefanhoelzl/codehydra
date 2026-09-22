@@ -869,6 +869,22 @@ $ ch config reset sidebar.width             # remove from config.json
 
 The app must be running: `ch config` never edits config.json on its own.
 
+### Guide
+
+`ch guide [section]` prints the user guide (docs/USER_GUIDE.md, shipped with the
+app) as markdown — the whole guide, or one `##` section by its slug. An unknown
+slug fails with exit 6 and lists the valid ones. MCP: `guide`. It is how agents
+learn how CodeHydra works; their system prompt points here.
+
+```console
+$ ch guide                     # the whole guide
+$ ch guide repository-hooks    # one section
+```
+
+Unlike other commands, the result is printed as-is when stdout is not a TTY:
+`text: true` on the CLI and MCP mappings marks a result as a document. `--format json`
+still wraps it in JSON.
+
 ### MCP
 
 `ch mcp` runs CodeHydra's MCP server over stdio. Both bundled agents launch it

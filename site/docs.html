@@ -6,11 +6,11 @@
     <meta name="theme-color" content="#0d1117" />
     <meta
       name="description"
-      content="Getting started with CodeHydra - Learn about workspaces, keyboard navigation, and MCP server integration."
+      content="The CodeHydra user guide - workspaces, keyboard shortcuts, configuration, automatic workspaces, repository hooks, the ch CLI and MCP."
     />
 
     <!-- Open Graph -->
-    <meta property="og:title" content="CodeHydra Documentation - Getting Started" />
+    <meta property="og:title" content="CodeHydra User Guide" />
     <meta
       property="og:description"
       content="Learn how to use CodeHydra for parallel AI-assisted development with isolated workspaces."
@@ -20,10 +20,17 @@
     <meta property="og:type" content="website" />
 
     <link rel="icon" href="/logo.png" />
-    <title>Getting Started - CodeHydra Documentation</title>
+    <title>User Guide - CodeHydra Documentation</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="header"></div>
+    <main id="main-content" class="docs-main">
+      <div class="container">
+        <!-- The guide is docs/USER_GUIDE.md, rendered here at build time (vite.config.ts). -->
+        <article class="docs-content"><!--user-guide--></article>
+      </div>
+    </main>
+    <div id="footer"></div>
     <script type="module" src="/src/docs.ts"></script>
   </body>
 </html>

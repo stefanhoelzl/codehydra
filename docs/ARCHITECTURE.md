@@ -304,6 +304,18 @@ Rules are declared by the composition root (`src/main.ts`) and run in order, so 
 
 Every rule is best-effort and isolated: a failure is logged at warn and the remaining rules still run. An **absent** target is silent (the normal case); an **unreadable** one is reported, so cleanup never quietly behaves as though there were nothing to clean. One info line summarises what was removed.
 
+### Repository Hooks
+
+What a hook author needs — where hooks live, the JSON exchange, each entry's input and output, trust — is in the user guide ([USER_GUIDE.md](USER_GUIDE.md#repository-hooks)). This section keeps the reasoning behind that shape; the implementation is `src/modules/hooks-module/`.
+
+- **The name is the blocking rule.** An `on-` entry reports something that already happened, so it is fire-and-forget and nothing it does can change the outcome; every other entry runs at a moment CodeHydra is waiting on, blocks, and its output matters. The tense tells an author which one they are writing, with nothing else to learn.
+- **Read from the worktree, not the project root.** A hook must therefore be committed on the branch a workspace is created from. That is the trade for being able to write and test a hook inside a workspace, which is the only place a user ever has the repository open.
+- **One file per entry, git-style.** No subdirectories, no `10-`/`20-` ordering: a repository that wants several steps writes them in one script. The extension never gates (the shebang decides), which is what lets Windows use `.cmd` and a `.py` hook be ordinary. Two files for one entry is almost always a rename that left the old one behind, so it warns rather than failing.
+- **Reported, not silently skipped, when not executable.** Unlike git: a hook the author wrote and that never runs is the hardest failure to notice.
+- **`after-worktree-created` blocks the open** because its `env` has to exist before the agent starts. It fails loud but not fatal: a failed `pnpm install` is something to fix _in_ the workspace, so the workspace still opens. `title`/`tags` are returned rather than set with `ch` during setup, because a `ch` call races the snapshot the workspace-open returns and loses.
+- **`before-worktree-deleted` fails closed.** A refusal (`{"blocked":true}`, exit 0) and a broken hook (non-zero exit) both stop the deletion, but are reported differently: one is a policy decision, the other a hook failure. Dismiss force-deletes and skips hooks entirely, as the escape from a gate that refuses wrongly.
+- **Trust is asked whatever triggered the hook** — the UI, `ch ws delete`, an auto-workspace poll — because a gate that quietly disappears when called from a script is not a gate. The row turns green while the question is open so a question raised while the user looks elsewhere still says where to look (not yet for a workspace still being created: its placeholder row has no path to match). A repository without hooks is never asked.
+
 ### Workspace Session Model
 
 All workspaces share a single global Electron session to enable extension storage (globalState, secrets) to be shared across workspaces.
