@@ -77,12 +77,12 @@ off.
 
 Each workspace reports its agent's status:
 
-| Status    | Meaning                                                         |
-| --------- | --------------------------------------------------------------- |
-| **None**  | No agent running                                                |
-| **Idle**  | Done, or waiting on you (including a pending permission prompt) |
-| **Busy**  | Working on a task                                               |
-| **Mixed** | Several agent sessions, some idle and some busy                 |
+| Status    | Meaning                                                                                        |
+| --------- | ---------------------------------------------------------------------------------------------- |
+| **None**  | No agent running                                                                               |
+| **Idle**  | Done, or waiting on you (including a pending permission prompt or a dialog open in its editor) |
+| **Busy**  | Working on a task                                                                              |
+| **Mixed** | Several agent sessions, some idle and some busy                                                |
 
 You'll hear a sound when an agent goes idle, so you can stay productive
 without constantly checking the screen. On macOS and Windows the app icon
@@ -751,6 +751,11 @@ and `--agent-name`; these need `--agent`.
 Busy and idle come from the agent itself: Claude Code through its hooks,
 OpenCode through its server's events. A pending permission prompt counts as
 idle — the agent is waiting on you.
+
+So does a dialog in the workspace's editor — a notification, pick list or text
+prompt raised by the agent, `ch` or a repository hook. The workspace reads idle
+until you dismiss it, even while the agent keeps working and even with no agent
+running, then returns to its real status.
 
 ### What agents are told
 
