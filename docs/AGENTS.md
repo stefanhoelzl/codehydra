@@ -297,6 +297,18 @@ regardless of background work. `PermissionRequest` → idle is never suppressed.
 A `Stop`/`StopFailure` that carries an `agent_id` is a **sub-agent's** turn end (the main
 agent's `Stop` has none) and is ignored for the workspace status entirely.
 
+So is a `PreToolUse` that carries an `agent_id`. Besides sub-agents, it comes from the
+**prompt-suggestion fork**: after every interactive turn Claude forks a hidden agent to
+guess the user's next prompt, and the fork runs the session's hooks, writes no transcript,
+and denies every tool it tries — after `PreToolUse`, with nothing following. Taken as the
+main agent's, its `AskUserQuestion` parked the workspace idle while background sub-agents
+were still working (the park then swallowing their busy signals until the next prompt),
+and any tool it tried after an idle `Stop` would trip the `PreToolUse`-while-idle rule with
+no `Stop` to follow. Only the main agent's `PreToolUse(AskUserQuestion)` parks, and only its
+`PostToolUse`/`PostToolUseFailure(AskUserQuestion)` unparks; sub-agent tool activity still
+reaches the status through `PostToolUse`. Pinned against a real TUI by the `suggestionfork`
+scenario in `claude/server-manager.boundary.test.ts`.
+
 ### Busy→Idle Edge for Untracked Turns (Claude Code)
 
 Bash-mode turns (`!cmd`) emit **only** a `Stop` — no `UserPromptSubmit` and no

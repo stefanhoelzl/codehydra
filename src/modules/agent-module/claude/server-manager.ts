@@ -807,6 +807,25 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       return;
     }
 
+    // Likewise a PreToolUse carrying an agent_id is not the main agent starting
+    // a tool. Besides sub-agents, it comes from the hidden agent Claude forks
+    // after every interactive turn to suggest the user's next prompt (checked on
+    // 2.1.280): the fork runs the session's hooks, denies every tool it tries,
+    // and emits nothing after PreToolUse. Letting it through would either park
+    // the workspace on an AskUserQuestion nobody sees — idle for as long as
+    // background sub-agents keep working, their busy signals suppressed by the
+    // park — or, after an idle Stop, trip "PreToolUse while idle → busy" with
+    // no Stop ever to follow. A sub-agent's tool activity reaches the status
+    // through PostToolUse; its PreToolUse has nothing to add.
+    if (hookName === "PreToolUse" && payload.agent_id) {
+      this.logger.silly("Ignoring sub-agent PreToolUse for main status", {
+        workspacePath: normalizedPath,
+        agentId: payload.agent_id,
+        toolName: payload.tool_name ?? null,
+      });
+      return;
+    }
+
     // Determine status change for this hook
     let newStatus = getStatusChangeForHook(hookName);
 
@@ -851,8 +870,11 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       newStatus = "idle";
     } else if (
       (hookName === "PostToolUse" || hookName === "PostToolUseFailure") &&
-      payload.tool_name === "AskUserQuestion"
+      payload.tool_name === "AskUserQuestion" &&
+      !payload.agent_id
     ) {
+      // The main agent's answer only: the park is the main agent's (sub-agent
+      // PreToolUse never reaches it, above), so no one else's Post may lift it.
       // Unpark on either outcome (answered or cancelled/errored) so the flag can
       // never get stuck and keep the workspace suppressed to idle.
       state.awaitingUserInputResolution = false;

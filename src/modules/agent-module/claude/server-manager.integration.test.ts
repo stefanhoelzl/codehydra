@@ -1921,6 +1921,67 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
+    // The prompt-suggestion fork: after every interactive turn Claude forks a
+    // hidden agent that runs the session's hooks with an agent_id of its own,
+    // and tools it tries are denied after PreToolUse with nothing following.
+    // Payload shape as captured from 2.1.280.
+    const FORK = "a3a67cfd1366e79fc";
+
+    it("a fork's AskUserQuestion does not park a workspace kept busy by a sub-agent", async () => {
+      const { port, statusChanges } = await start();
+      await sendHook(port, "Stop", stopWith([subagentTask()]));
+      await sendHook(port, "PreToolUse", {
+        workspacePath: WS,
+        agent_id: FORK,
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Nor is anything swallowed afterwards: the sub-agent's work still counts.
+      await sendHook(port, "PostToolUse", { workspacePath: WS, tool_name: "WebFetch" });
+      await sendHook(port, "Notification", {
+        workspacePath: WS,
+        notification_type: "idle_prompt",
+      });
+      expect(statusChanges).toEqual(["idle", "busy"]);
+    });
+
+    it("a fork's AskUserQuestion after an idle Stop leaves the workspace idle", async () => {
+      const { port, statusChanges } = await start();
+      await sendHook(port, "Stop", { workspacePath: WS });
+      await sendHook(port, "PreToolUse", {
+        workspacePath: WS,
+        agent_id: FORK,
+        tool_name: "AskUserQuestion",
+      });
+      // The next real prompt still starts a turn: no park is left behind.
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
+    it("a fork's tool call after an idle Stop does not flip the workspace busy", async () => {
+      const { port, statusChanges } = await start();
+      await sendHook(port, "Stop", { workspacePath: WS });
+      // "PreToolUse while idle → busy" is for the main agent's untracked turns;
+      // no Stop would ever follow the fork's call to end that busy.
+      await sendHook(port, "PreToolUse", { workspacePath: WS, agent_id: FORK, tool_name: "Read" });
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("a sub-agent's PostToolUse(AskUserQuestion) does not lift the main agent's park", async () => {
+      const { port, statusChanges } = await start();
+      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "PostToolUse", {
+        workspacePath: WS,
+        agent_id: "sub-1",
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      await sendHook(port, "PostToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
     it("Stop without sub-agents still transitions to idle normally", async () => {
       const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative());
       const statusChanges: AgentStatus[] = [];
