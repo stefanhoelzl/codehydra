@@ -5,11 +5,12 @@
  * is the workspace it belongs to — so it lands in a `CodeHydra Hooks` output
  * channel in that workspace's IDE.
  *
- * The catch is timing: `after-worktree-created` produces its output *before*
- * the IDE that will show it exists, since it runs during `setup` and the
- * `.code-workspace` file is written at `finalize`. So lines are buffered per
- * workspace and flushed the moment that workspace's sidekick connects, which
- * makes the new workspace open with its own setup log already in the channel.
+ * The catch is timing: the open hooks (`after-worktree-created`,
+ * `before-workspace-opened`) produce their output *before* the IDE that will
+ * show it exists, since they run ahead of `setup` and the `.code-workspace`
+ * file is written at `finalize`. So lines are buffered per workspace and
+ * flushed the moment that workspace's sidekick connects, which makes the
+ * workspace open with its own setup log already in the channel.
  *
  * `before-worktree-deleted` is the opposite case and has no answer: its IDE was
  * torn down in the shutdown stage and is not coming back. Its output reaches

@@ -159,6 +159,42 @@ describe("OpenCodeServerManager integration", () => {
     });
   });
 
+  describe("workspace environment", () => {
+    const WS = testPath("/workspace/feature-a").toNative();
+
+    function lastSpawnEnv(): NodeJS.ProcessEnv {
+      return mockProcessRunner.$.spawned(mockProcessRunner.$.spawnedCount - 1).$.env ?? {};
+    }
+
+    it("starts the server with the workspace environment, so its tools see it", async () => {
+      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+
+      expect(lastSpawnEnv().DATABASE_URL).toBe("postgres://x");
+    });
+
+    it("keeps CodeHydra's own variables over a clashing key", async () => {
+      await serverManager.startServer(WS, { env: { _CH_WORKSPACE_PATH: "/elsewhere" } });
+
+      expect(lastSpawnEnv()._CH_WORKSPACE_PATH).not.toBe("/elsewhere");
+    });
+
+    it("spawns a restart with the same environment", async () => {
+      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+      await serverManager.restartServer(WS);
+
+      expect(mockProcessRunner.$.spawnedCount).toBe(2);
+      expect(lastSpawnEnv().DATABASE_URL).toBe("postgres://x");
+    });
+
+    it("forgets the environment once the server is stopped", async () => {
+      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+      await serverManager.stopServer(WS);
+      await serverManager.startServer(WS);
+
+      expect(lastSpawnEnv().DATABASE_URL).toBeUndefined();
+    });
+  });
+
   describe("restartServer", () => {
     it("restartServer returns same port", async () => {
       // Start server

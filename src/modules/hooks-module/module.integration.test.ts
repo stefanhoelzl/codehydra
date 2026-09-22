@@ -3,10 +3,10 @@
  * Integration tests for the repository-hooks module.
  *
  * Runs against the real OpenWorkspaceOperation and DeleteWorkspaceOperation so
- * the assertions cover the seams that actually matter: a hook's returned
- * environment reaching `envVars`, its title and tags folding into the
- * `workspace:created` snapshot, and a refusal stopping the deletion pipeline
- * before the worktree is removed.
+ * the assertions cover the seams that actually matter: an open hook's
+ * environment reaching the agent's start and the terminals' config, a setup
+ * hook's title and tags folding into the `workspace:created` snapshot, and a
+ * refusal stopping the deletion pipeline before the worktree is removed.
  *
  * The filesystem and the process runner are behavioural mocks — what a hook
  * *is* (a file that gets spawned through a shell) is covered by the boundary
@@ -39,6 +39,8 @@ import {
   type CreateHookResult,
   type FinalizeHookResult,
   type FinalizeHookInput,
+  type SetupHookInput,
+  type SetupHookResult,
   type WorkspaceCreatedEvent,
 } from "../../intents/open-workspace";
 import {
@@ -72,8 +74,12 @@ const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 
 const SETUP_HOOK = "/workspaces/feature-x/.codehydra/hooks/after-worktree-created";
+const OPEN_HOOK = "/workspaces/feature-x/.codehydra/hooks/before-workspace-opened";
 const DELETE_HOOK = "/workspaces/feature-x/.codehydra/hooks/before-worktree-deleted";
-const EVENT_HOOK = "/workspaces/feature-x/.codehydra/hooks/on-workspace-created";
+const EVENT_HOOK = "/workspaces/feature-x/.codehydra/hooks/on-workspace-opened";
+
+/** What the agent module contributes to the agent terminal's environment. */
+const AGENT_ENV = { _CH_WORKSPACE_PATH: WORKSPACE_PATH };
 
 interface SpawnOutcome {
   readonly exitCode?: number;
@@ -85,8 +91,12 @@ interface TestSetup {
   readonly dispatcher: Dispatcher;
   readonly createdEvents: WorkspaceCreatedEvent[];
   readonly progress: WorkspaceDeletionProgressEvent[];
-  /** envVars the finalize hook point saw — i.e. what a hook's `env` produced. */
+  /** envVars the finalize hook point saw — the agent terminal's environment. */
   readonly finalizeEnv: Array<Record<string, string>>;
+  /** workspaceEnv the finalize hook point saw — what the editor's terminals get. */
+  readonly terminalEnv: Array<Record<string, string>>;
+  /** workspaceEnv the setup hook point saw — what the agent server starts with. */
+  readonly agentStartEnv: Array<Record<string, string>>;
   readonly notifications: NotificationConfig[];
   readonly dialogs: DialogConfig[];
   /** The open options each dialog was raised with, in order. */
@@ -115,6 +125,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const createdEvents: WorkspaceCreatedEvent[] = [];
   const progress: WorkspaceDeletionProgressEvent[] = [];
   const finalizeEnv: Array<Record<string, string>> = [];
+  const terminalEnv: Array<Record<string, string>> = [];
+  const agentStartEnv: Array<Record<string, string>> = [];
   const notifications: NotificationConfig[] = [];
   const dialogs: DialogConfig[] = [];
   const dialogOptions: TestSetup["dialogOptions"] = [];
@@ -202,19 +214,44 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     name: "test-open-workspace-host",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
+        // Mirrors GitWorktreeWorkspaceModule: a reopen reports the branch it
+        // was handed (null when detached) and the base its metadata records.
         create: {
-          handler: async (): Promise<HookOutput<CreateHookResult>> => ({
-            result: {
-              workspacePath: WORKSPACE_PATH,
-              branch: "feature-x",
-              metadata: { base: "main" },
-              resolvedBase: "main",
-            },
-          }),
+          handler: async (ctx: HookContext): Promise<HookOutput<CreateHookResult>> => {
+            const existing = (ctx.intent as OpenWorkspaceIntent).payload.existingWorkspace;
+            if (existing) {
+              const recordedBase = existing.metadata["base"];
+              return {
+                result: {
+                  workspacePath: WORKSPACE_PATH,
+                  branch: existing.branch,
+                  metadata: existing.metadata,
+                  ...(recordedBase !== undefined && { resolvedBase: recordedBase }),
+                },
+              };
+            }
+            return {
+              result: {
+                workspacePath: WORKSPACE_PATH,
+                branch: "feature-x",
+                metadata: { base: "main" },
+                resolvedBase: "main",
+              },
+            };
+          },
+        },
+        // Stands in for the agent module: records the environment its server
+        // would start with, and contributes CodeHydra's own terminal variables.
+        setup: {
+          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
+            agentStartEnv.push({ ...(ctx as SetupHookInput).workspaceEnv });
+            return { result: { envVars: AGENT_ENV, agentType: "opencode" } };
+          },
         },
         finalize: {
           handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
             finalizeEnv.push({ ...(ctx as FinalizeHookInput).envVars });
+            terminalEnv.push({ ...(ctx as FinalizeHookInput).workspaceEnv });
             return { result: { workspaceUrl: WORKSPACE_URL } };
           },
         },
@@ -282,6 +319,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     createdEvents,
     progress,
     finalizeEnv,
+    terminalEnv,
+    agentStartEnv,
     notifications,
     dialogs,
     dialogOptions,
@@ -316,6 +355,28 @@ async function openWorkspace(setup: TestSetup): Promise<void> {
   await setup.dispatcher.dispatch<OpenWorkspaceIntent>({
     type: INTENT_OPEN_WORKSPACE,
     payload: openPayload(),
+  });
+}
+
+/**
+ * Reopen the workspace the way app start, project open and wake do: through
+ * `existingWorkspace`, with whatever git reports for it.
+ */
+async function reopenWorkspace(
+  setup: TestSetup,
+  existing?: { branch?: string | null; metadata?: Record<string, string> }
+): Promise<void> {
+  await setup.dispatcher.dispatch<OpenWorkspaceIntent>({
+    type: INTENT_OPEN_WORKSPACE,
+    payload: {
+      ...openPayload(),
+      existingWorkspace: {
+        path: WORKSPACE_PATH,
+        name: "feature-x",
+        branch: existing?.branch === undefined ? "feature-x" : existing.branch,
+        metadata: existing?.metadata ?? { base: "main" },
+      },
+    },
   });
 }
 
@@ -370,7 +431,7 @@ describe("after-worktree-created", () => {
     });
   });
 
-  it("merges returned env into the workspace environment", async () => {
+  it("no longer accepts env — that belongs to before-workspace-opened", async () => {
     const setup = createTestSetup({
       hooks: {
         [SETUP_HOOK]: { stdout: JSON.stringify({ env: { DATABASE_URL: "postgres://x" } }) },
@@ -379,7 +440,10 @@ describe("after-worktree-created", () => {
     });
     await openWorkspace(setup);
 
-    expect(setup.finalizeEnv[0]).toMatchObject({ DATABASE_URL: "postgres://x" });
+    // Rejected loudly rather than dropped: a repository that has not moved its
+    // env yet must find out, not open workspaces quietly without it.
+    expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
+    expect(setup.finalizeEnv[0]).toEqual(AGENT_ENV);
   });
 
   it("persists a returned title and tags as workspace metadata", async () => {
@@ -435,7 +499,7 @@ describe("after-worktree-created", () => {
 
   it("rejects output that is not the declared shape", async () => {
     const setup = createTestSetup({
-      hooks: { [SETUP_HOOK]: { stdout: JSON.stringify({ envs: { A: "1" } }) } },
+      hooks: { [SETUP_HOOK]: { stdout: JSON.stringify({ titel: "Feature X" }) } },
       trusted: { [PROJECT_ROOT]: true },
     });
     await openWorkspace(setup);
@@ -443,7 +507,7 @@ describe("after-worktree-created", () => {
     // A misspelled key must not be dropped in silence — an environment that
     // quietly never arrived is the worst version of this failure.
     expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
-    expect(setup.finalizeEnv[0]).toEqual({});
+    expect(setup.metadataWrites).toEqual([]);
   });
 
   it("does not run for a re-opened workspace", async () => {
@@ -451,18 +515,7 @@ describe("after-worktree-created", () => {
       hooks: { [SETUP_HOOK]: {} },
       trusted: { [PROJECT_ROOT]: true },
     });
-    await setup.dispatcher.dispatch<OpenWorkspaceIntent>({
-      type: INTENT_OPEN_WORKSPACE,
-      payload: {
-        ...openPayload(),
-        existingWorkspace: {
-          path: WORKSPACE_PATH,
-          name: "feature-x",
-          branch: "feature-x",
-          metadata: { base: "main" },
-        },
-      },
-    });
+    await reopenWorkspace(setup);
     expect(setup.stdin).toHaveLength(0);
   });
 
@@ -474,6 +527,117 @@ describe("after-worktree-created", () => {
     await openWorkspace(setup);
 
     expect(setup.sinkLines.map((entry) => entry.line)).toEqual(["copying .env", "installing"]);
+  });
+});
+
+describe("before-workspace-opened", () => {
+  it("runs on a new workspace, after after-worktree-created", async () => {
+    const setup = createTestSetup({
+      hooks: { [SETUP_HOOK]: {}, [OPEN_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+
+    expect(setup.stdin).toHaveLength(2);
+    // Order is the contract: setup work first, then the environment for the
+    // agent that is about to start in the set-up tree.
+    expect(JSON.parse(setup.stdin[0]!)).not.toHaveProperty("reopened");
+    expect(JSON.parse(setup.stdin[1]!)).toEqual({
+      workspaceName: "feature-x",
+      workspacePath: WORKSPACE_PATH,
+      projectPath: PROJECT_ROOT,
+      branch: "feature-x",
+      base: "main",
+      reopened: false,
+    });
+  });
+
+  // App start and project open both reopen discovered workspaces through
+  // project:open; a wake reopens one — all as `existingWorkspace`.
+  it("runs on every reopen — app start, project open, wake", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await reopenWorkspace(setup);
+
+    expect(setup.stdin).toHaveLength(1);
+    expect(JSON.parse(setup.stdin[0]!)).toMatchObject({ reopened: true, base: "main" });
+  });
+
+  it("gives its env to the agent's start, before the agent server is spawned", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: { stdout: JSON.stringify({ env: { DATABASE_URL: "postgres://x" } }) } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+
+    expect(setup.agentStartEnv[0]).toEqual({ DATABASE_URL: "postgres://x" });
+  });
+
+  it("gives its env to the agent terminal and to the editor's terminals", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: { stdout: JSON.stringify({ env: { DATABASE_URL: "postgres://x" } }) } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await reopenWorkspace(setup);
+
+    expect(setup.finalizeEnv[0]).toEqual({ ...AGENT_ENV, DATABASE_URL: "postgres://x" });
+    // The editor's terminals get the workspace's own env, not the agent's.
+    expect(setup.terminalEnv[0]).toEqual({ DATABASE_URL: "postgres://x" });
+  });
+
+  it("cannot override CodeHydra's own variables", async () => {
+    const setup = createTestSetup({
+      hooks: {
+        [OPEN_HOOK]: {
+          stdout: JSON.stringify({ env: { _CH_WORKSPACE_PATH: "/elsewhere", KEEP: "1" } }),
+        },
+      },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+
+    expect(setup.agentStartEnv[0]).toEqual({ KEEP: "1" });
+    expect(setup.terminalEnv[0]).toEqual({ KEEP: "1" });
+    expect(setup.finalizeEnv[0]).toEqual({ ...AGENT_ENV, KEEP: "1" });
+  });
+
+  it("still opens the workspace without env when the hook fails, and says so", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: { exitCode: 1, stderr: "vault unreachable" } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await reopenWorkspace(setup);
+
+    expect(setup.createdEvents).toHaveLength(1);
+    expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
+    expect(setup.terminalEnv[0]).toEqual({});
+  });
+
+  it("rejects output that is not the declared shape", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: { stdout: JSON.stringify({ envs: { A: "1" } }) } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+
+    expect(setup.notifications.map((n) => n.title)).toContain("Repository hook failed");
+    expect(setup.agentStartEnv[0]).toEqual({});
+  });
+
+  it("omits branch on a detached HEAD and base when none is recorded", async () => {
+    const setup = createTestSetup({
+      hooks: { [OPEN_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await reopenWorkspace(setup, { branch: null, metadata: {} });
+
+    // Absent — never "" and never the workspace name standing in.
+    const input = JSON.parse(setup.stdin[0]!) as Record<string, unknown>;
+    expect(input).not.toHaveProperty("branch");
+    expect(input).not.toHaveProperty("base");
+    expect(input).toMatchObject({ workspaceName: "feature-x", reopened: true });
   });
 });
 
@@ -590,7 +754,7 @@ describe("before-worktree-deleted", () => {
   });
 });
 
-describe("on-workspace-created", () => {
+describe("on-workspace-opened", () => {
   it("fires without blocking the open, and reports whether it was a reopen", async () => {
     const setup = createTestSetup({
       hooks: { [EVENT_HOOK]: {} },
@@ -603,6 +767,19 @@ describe("on-workspace-created", () => {
       workspaceName: "feature-x",
       reopened: false,
     });
+  });
+
+  it("fires on a reopen too, with the same branch/base rules", async () => {
+    const setup = createTestSetup({
+      hooks: { [EVENT_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await reopenWorkspace(setup, { branch: null, metadata: { base: "develop" } });
+    await settle();
+
+    const input = JSON.parse(setup.stdin[0]!) as Record<string, unknown>;
+    expect(input).toMatchObject({ reopened: true, base: "develop" });
+    expect(input).not.toHaveProperty("branch");
   });
 
   it("raises no notification when it fails", async () => {

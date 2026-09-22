@@ -262,7 +262,12 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   const connections = new Map<string, TypedSocket>();
   const workspaceConfigs = new Map<
     string,
-    { env: Record<string, string>; agentType: AgentType; resetWorkspace: boolean }
+    {
+      env: Record<string, string>;
+      workspaceEnv: Record<string, string>;
+      agentType: AgentType;
+      resetWorkspace: boolean;
+    }
   >();
   /**
    * Workspaces whose delete "shutdown" handler is currently running.
@@ -716,11 +721,12 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   function setWorkspaceConfig(
     workspacePath: WorkspacePath,
     env: Record<string, string>,
+    workspaceEnv: Record<string, string>,
     agentType: AgentType,
     resetWorkspace: boolean
   ): void {
     const normalized = new Path(workspacePath).toString();
-    workspaceConfigs.set(normalized, { env, agentType, resetWorkspace });
+    workspaceConfigs.set(normalized, { env, workspaceEnv, agentType, resetWorkspace });
   }
 
   function removeWorkspaceConfig(workspacePath: WorkspacePath): void {
@@ -979,12 +985,14 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
       const storedConfig = workspaceConfigs.get(workspacePath);
       const env: Record<string, string> | null = storedConfig?.env ?? null;
+      const workspaceEnv: Record<string, string> | null = storedConfig?.workspaceEnv ?? null;
       const agentTypeValue: AgentType | null = storedConfig?.agentType ?? null;
       const resetWorkspace: boolean = storedConfig?.resetWorkspace ?? true;
 
       const config: PluginConfig = {
         isDevelopment,
         env,
+        workspaceEnv,
         agentType: agentTypeValue,
         resetWorkspace,
       };
@@ -1500,6 +1508,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
               setWorkspaceConfig(
                 finalizeCtx.workspacePath,
                 finalizeCtx.envVars,
+                finalizeCtx.workspaceEnv,
                 finalizeCtx.agentType,
                 resetWs
               );

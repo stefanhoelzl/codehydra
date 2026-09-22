@@ -7,8 +7,13 @@
  * Steps:
  * 1. Dispatch project:resolve to get projectId from projectPath
  * 2. "create" → CreateHookResult — worktree creation (fatal)
- *    "setup" → SetupHookResult — repository hooks (best-effort, internal
- *     try/catch), agent server (fatal)
+ *    "provision" → ProvisionHookResult — a genuinely new worktree's one-time
+ *     setup: the repository's `after-worktree-created` (best-effort, internal
+ *     try/catch)
+ *    "prepare" → PrepareHookResult — the environment the workspace runs in, on
+ *     every open: the repository's `before-workspace-opened` (best-effort)
+ *    "setup" → SetupHookResult — agent server (fatal), started with that
+ *     environment
  *    "finalize" → FinalizeHookResult — workspace URL (fatal)
  *
  * On success, builds a Workspace return value and emits a
@@ -138,21 +143,69 @@ const createInputSchema = hookCtxSchema(openWorkspacePayloadSchema, createEnrich
 export const createResultSchema = z
   .object({
     workspacePath: workspacePathSchema.optional(),
-    branch: z.string().optional(),
+    /** The checked-out branch; null on a detached HEAD. Never a name standing in for one. */
+    branch: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.string()).readonly().optional(),
-    /** The resolved base branch (explicit or auto-detected). Used in the event payload. */
+    /**
+     * The workspace's base: the one a new worktree was created from, or the one
+     * recorded in an existing workspace's metadata. Absent when none is recorded.
+     */
     resolvedBase: z.string().optional(),
   })
   .readonly();
 
-/** Operation-added enrichment for the "setup" hook point (merged create results). */
-const setupEnrichmentSchema = z.object({
+/**
+ * What every hook point after "create" knows about the workspace being opened.
+ *
+ * `branch` and `base` are absent rather than substituted when unknown — a
+ * detached HEAD has no branch, an adopted worktree has no recorded base — so a
+ * consumer that branches on them never mistakes a stand-in for the real thing.
+ */
+const workspaceIdentityShape = {
   workspacePath: workspacePathSchema,
   projectPath: projectPathSchema,
-  /** The workspace's branch, as the create hook reported it. */
-  branch: z.string(),
-  /** The resolved base branch. Absent for a worktree that has none (adopted). */
+  /** The checked-out branch. Absent on a detached HEAD. */
+  branch: z.string().optional(),
+  /** The workspace's recorded base. Absent when none is recorded. */
   base: z.string().optional(),
+};
+
+/** Operation-added enrichment for the "provision" hook point (merged create results). */
+const provisionEnrichmentSchema = z.object(workspaceIdentityShape);
+const provisionInputSchema = hookCtxSchema(
+  openWorkspacePayloadSchema,
+  provisionEnrichmentSchema.shape
+);
+
+/** Result from the "provision" hook point. */
+export const provisionResultSchema = z
+  .object({
+    /** Metadata keys this handler wrote, folded into the workspace:created snapshot. */
+    metadata: z.record(z.string(), z.string()).readonly().optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "prepare" hook point (same as provision's). */
+const prepareEnrichmentSchema = z.object(workspaceIdentityShape);
+const prepareInputSchema = hookCtxSchema(openWorkspacePayloadSchema, prepareEnrichmentSchema.shape);
+
+/** Result from the "prepare" hook point. */
+export const prepareResultSchema = z
+  .object({
+    /**
+     * Environment for everything that runs in the workspace — the agent (its
+     * terminal and its server) and the editor's terminals. Held in memory for
+     * this open only; nothing persists it.
+     */
+    env: z.record(z.string(), z.string()).optional(),
+  })
+  .readonly();
+
+/** Operation-added enrichment for the "setup" hook point (create + prepare results). */
+const setupEnrichmentSchema = z.object({
+  ...workspaceIdentityShape,
+  /** The workspace environment "prepare" produced (`{}` when none). */
+  workspaceEnv: z.record(z.string(), z.string()),
 });
 const setupInputSchema = hookCtxSchema(openWorkspacePayloadSchema, setupEnrichmentSchema.shape);
 
@@ -172,7 +225,10 @@ export const setupResultSchema = z
 /** Operation-added enrichment for the "finalize" hook point (create+setup results). */
 const finalizeEnrichmentSchema = z.object({
   workspacePath: workspacePathSchema,
+  /** The agent terminal's environment: the workspace environment plus the agent's own. */
   envVars: z.record(z.string(), z.string()),
+  /** The workspace environment alone, for terminals that are not the agent's. */
+  workspaceEnv: z.record(z.string(), z.string()),
   agentType: agentTypeSchema.nullable(),
 });
 const finalizeInputSchema = hookCtxSchema(
@@ -200,7 +256,9 @@ const workspaceCreatedSchema = z
     workspaceName: workspaceNameSchema,
     workspacePath: workspacePathSchema,
     projectPath: projectPathSchema,
-    branch: z.string(),
+    /** The checked-out branch. Absent on a detached HEAD. */
+    branch: z.string().optional(),
+    /** The workspace's base. Absent when none is recorded. */
     base: z.string().optional(),
     tracking: z.string().optional(),
     metadata: z.record(z.string(), z.string()).readonly(),
@@ -246,6 +304,8 @@ export const schemas = {
   result: openWorkspaceResultSchema,
   hooks: {
     create: { input: createInputSchema, result: createResultSchema },
+    provision: { input: provisionInputSchema, result: provisionResultSchema },
+    prepare: { input: prepareInputSchema, result: prepareResultSchema },
     setup: { input: setupInputSchema, result: setupResultSchema },
     finalize: { input: finalizeInputSchema, result: finalizeResultSchema },
   },
@@ -265,12 +325,18 @@ export type OpenWorkspaceResult = z.infer<typeof openWorkspaceResultSchema>;
 export type OpenWorkspaceIntent = IntentOf<typeof schemas>;
 
 export type CreateHookResult = z.infer<typeof createResultSchema>;
+export type ProvisionHookResult = z.infer<typeof provisionResultSchema>;
+export type PrepareHookResult = z.infer<typeof prepareResultSchema>;
 export type SetupHookResult = z.infer<typeof setupResultSchema>;
 export type FinalizeHookResult = z.infer<typeof finalizeResultSchema>;
 
 /** Input context for the "create" hook point (enriched with resolved project path). */
 export type CreateHookInput = HookContext & z.infer<typeof createEnrichmentSchema>;
-/** Input context for the "setup" hook point (enriched with merged create results). */
+/** Input context for the "provision" hook point (enriched with merged create results). */
+export type ProvisionHookInput = HookContext & z.infer<typeof provisionEnrichmentSchema>;
+/** Input context for the "prepare" hook point (enriched with merged create results). */
+export type PrepareHookInput = HookContext & z.infer<typeof prepareEnrichmentSchema>;
+/** Input context for the "setup" hook point (enriched with create + prepare results). */
 export type SetupHookInput = HookContext & z.infer<typeof setupEnrichmentSchema>;
 /** Input context for the "finalize" hook point (enriched with create+setup results). */
 export type FinalizeHookInput = HookContext & z.infer<typeof finalizeEnrichmentSchema>;
@@ -444,28 +510,49 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
 
     // Metadata written by later hook points folds into the create snapshot, so the
     // workspace:created event (and the returned Workspace) carry it. Without this a
-    // setup/finalize write would only surface after a restart re-read git config:
-    // its workspace:metadata-changed event lands before the row exists and the
+    // later write would only surface after a restart re-read git config: its
+    // workspace:metadata-changed event lands before the row exists and the
     // presenter drops it (presentation-module.ts, EVENT_METADATA_CHANGED).
     const mergedMetadata: Record<string, string> = { ...metadata };
 
-    // Hook 3b: "setup" — the repository's own hook is best-effort (internal
-    // try/catch), the agent is fatal
-    const setupCtx: SetupHookInput = {
+    const identity = {
       intent: ctx.intent,
       workspacePath,
       projectPath,
-      branch,
+      ...(branch !== null && { branch }),
       ...(resolvedBase !== undefined && { base: resolvedBase }),
     };
+
+    // Hook: "provision" — a new worktree's one-time setup. Best-effort by
+    // contract (the repository hook catches its own failures), so an error here
+    // is a bug and fatal like any other.
+    const provisionResult = await ctx.hooks.collect("provision", identity);
+    throwHookErrors(provisionResult.errors, "workspace:open provision hooks failed");
+    for (const result of provisionResult.results) {
+      mergeMetadata(mergedMetadata, result.metadata);
+    }
+
+    // Hook: "prepare" — the workspace environment, on every open. Runs before
+    // "setup" because that is where the agent server starts, and it must start
+    // with this environment.
+    const prepareResult = await ctx.hooks.collect("prepare", identity);
+    throwHookErrors(prepareResult.errors, "workspace:open prepare hooks failed");
+    const workspaceEnv: Record<string, string> = {};
+    for (const result of prepareResult.results) {
+      if (result.env) Object.assign(workspaceEnv, result.env);
+    }
+
+    // Hook: "setup" — the agent (fatal)
+    const setupCtx: SetupHookInput = { ...identity, workspaceEnv };
     const setupResult = await ctx.hooks.collect("setup", setupCtx);
 
     throwHookErrors(setupResult.errors, "workspace:open setup hooks failed");
 
-    // Accumulate env vars and read agentType from setup hook results. Multiple
-    // modules can contribute env vars; the active agent module contributes agentType
-    // (a result, not a capability — nothing in the hook point requires it).
-    const envVars: Record<string, string> = {};
+    // The agent terminal's environment: the workspace environment, overlaid
+    // with what the agent contributes — CodeHydra's own variables win a clash.
+    // The active agent module also contributes agentType (a result, not a
+    // capability — nothing in the hook point requires it).
+    const envVars: Record<string, string> = { ...workspaceEnv };
     let agentType: AgentType | null = null;
     for (const result of setupResult.results) {
       if (result.envVars) {
@@ -482,6 +569,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       intent: ctx.intent,
       workspacePath,
       envVars,
+      workspaceEnv,
       agentType,
     };
     const { errors: finalizeErrors, results: finalizeResults } = await ctx.hooks.collect(
@@ -520,14 +608,13 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     };
 
     // Build and emit domain event
-    const eventBase = resolvedBase ?? ctx.intent.payload.base;
     const eventPayload: WorkspaceCreatedPayload = {
       projectId,
       workspaceName: resolvedWorkspaceName,
       workspacePath,
       projectPath,
-      branch,
-      ...(eventBase !== undefined && { base: eventBase }),
+      ...(branch !== null && { branch }),
+      ...(resolvedBase !== undefined && { base: resolvedBase }),
       ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
       metadata: mergedMetadata,
       workspaceUrl,

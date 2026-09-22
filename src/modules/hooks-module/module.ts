@@ -14,17 +14,23 @@
  * hook can actually be authored and iterated on; the price, worth documenting,
  * is that a hook must be committed on the branch a workspace is created from.
  *
- * What the three entries do:
- * - `after-worktree-created` runs at `open-workspace : setup`, blocks the open
- *   (it must, to inject environment variables), and is best-effort: a failure
+ * What the four entries do:
+ * - `after-worktree-created` runs at `open-workspace : provision`, only for a
+ *   genuinely new worktree. It blocks the open and is best-effort: a failure
  *   is loud but the workspace still opens. There is no rollback to be had —
  *   the worktree already exists by then — and a failed `pnpm install` is a
  *   thing you fix *in* the workspace.
+ * - `before-workspace-opened` runs at `open-workspace : prepare` on every open
+ *   — new, app start, project open, wake — and supplies the environment the
+ *   agent and the editor's terminals get. Same failure rule. It runs each time
+ *   because that environment lives in memory only and is never written down.
  * - `before-worktree-deleted` runs at `delete-workspace : pre-delete` and can
  *   refuse. It fails closed: a script that breaks stops the deletion too.
- * - `on-workspace-created` observes `workspace:created` and can affect nothing.
+ * - `on-workspace-opened` observes `workspace:created` (every open) and can
+ *   affect nothing.
  */
 
+import type { z } from "zod/v4";
 import type { IntentModule, EventDeclarations, HookDeclarations } from "../../intents/lib/module";
 import type { DomainEvent } from "../../intents/lib/types";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
@@ -43,8 +49,10 @@ import {
   OPEN_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_CREATED,
   type OpenWorkspaceIntent,
-  type SetupHookInput,
-  type SetupHookResult,
+  type PrepareHookInput,
+  type PrepareHookResult,
+  type ProvisionHookInput,
+  type ProvisionHookResult,
   type WorkspaceCreatedEvent,
 } from "../../intents/open-workspace";
 import {
@@ -64,16 +72,21 @@ import type { WorkspacePath } from "../../intents/contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
   AFTER_WORKTREE_CREATED,
+  BEFORE_WORKSPACE_OPENED,
   BEFORE_WORKTREE_DELETED,
-  ON_WORKSPACE_CREATED,
+  ON_WORKSPACE_OPENED,
   afterWorktreeCreatedOutputSchema,
+  beforeWorkspaceOpenedOutputSchema,
   beforeWorktreeDeletedOutputSchema,
   type AfterWorktreeCreatedOutput,
+  type CoreInput,
+  type HookSpec,
 } from "./hook-map";
 import {
   findHook,
   runEventHook,
   runHook,
+  type FoundHook,
   type HookOutputSink,
   type HookRunnerDeps,
 } from "./runner";
@@ -152,21 +165,28 @@ export function toMetadata(output: AfterWorktreeCreatedOutput): Record<string, s
   return metadata;
 }
 
+/** Prefix of CodeHydra's own variables, which a repository's env may not override. */
+const RESERVED_ENV_PREFIX = "_CH_";
+
 /**
- * Fold a setup hook's return value into the shape the operation already merges.
+ * A hook's `env`, minus the keys CodeHydra owns.
  *
- * The metadata is reported here *as well as* being written to git config,
- * because reporting alone would not survive: WorktreeModule's finalize handler
- * re-reads git config and its result folds in last, so a title that exists only
- * as a setup result is superseded by that read a moment later. Writing it first
- * makes the read agree — and makes the value durable, which reporting never was.
+ * Dropped here, once, rather than left to each consumer's merge order: the
+ * environment goes to several places (the agent terminal, the OpenCode server,
+ * the editor's terminals), and one of them getting the precedence wrong would
+ * let a repository point `ch` at another workspace or another instance.
  */
-export function toSetupResult(output: AfterWorktreeCreatedOutput): SetupHookResult {
-  const metadata = toMetadata(output);
-  return {
-    ...(output.env !== undefined && { envVars: output.env }),
-    ...(Object.keys(metadata).length > 0 && { metadata }),
-  };
+export function splitReservedEnv(env: Readonly<Record<string, string>>): {
+  readonly env: Record<string, string>;
+  readonly dropped: readonly string[];
+} {
+  const kept: Record<string, string> = {};
+  const dropped: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith(RESERVED_ENV_PREFIX)) dropped.push(key);
+    else kept[key] = value;
+  }
+  return { env: kept, dropped };
 }
 
 // =============================================================================
@@ -201,58 +221,111 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   // after-worktree-created
   // ---------------------------------------------------------------------------
 
-  async function afterWorktreeCreated(ctx: HookContext): Promise<HookOutput<SetupHookResult>> {
-    const input = ctx as SetupHookInput;
+  async function afterWorktreeCreated(ctx: HookContext): Promise<HookOutput<ProvisionHookResult>> {
+    const input = ctx as ProvisionHookInput;
     const intent = ctx.intent as OpenWorkspaceIntent;
 
     // Activating a discovered workspace is not a creation. Re-running a setup
     // script for every workspace at every project open would be both surprising
-    // and slow.
+    // and slow — that is what `before-workspace-opened` is for.
     if (intent.payload.existingWorkspace !== undefined) return { result: {} };
 
-    if (!allowed()) return { result: {} };
+    const output = await runOpenHook(
+      input,
+      AFTER_WORKTREE_CREATED,
+      coreInput(input, intent),
+      afterWorktreeCreatedOutputSchema
+    );
+    if (output === undefined) return { result: {} };
+
+    const metadata = toMetadata(output);
+    await persistMetadata(input.workspacePath, metadata);
+    return { result: Object.keys(metadata).length > 0 ? { metadata } : {} };
+  }
+
+  // ---------------------------------------------------------------------------
+  // before-workspace-opened
+  // ---------------------------------------------------------------------------
+
+  async function beforeWorkspaceOpened(ctx: HookContext): Promise<HookOutput<PrepareHookResult>> {
+    const input = ctx as PrepareHookInput;
+    const intent = ctx.intent as OpenWorkspaceIntent;
+
+    const output = await runOpenHook(
+      input,
+      BEFORE_WORKSPACE_OPENED,
+      { ...coreInput(input, intent), reopened: intent.payload.existingWorkspace !== undefined },
+      beforeWorkspaceOpenedOutputSchema
+    );
+    if (output?.env === undefined) return { result: {} };
+
+    const { env, dropped } = splitReservedEnv(output.env);
+    if (dropped.length > 0) {
+      deps.logger.warn("Repository hook env may not set CodeHydra's own variables", {
+        entry: BEFORE_WORKSPACE_OPENED.name,
+        dropped: dropped.join(","),
+      });
+    }
+    return { result: { env } };
+  }
+
+  /**
+   * Run one of the blocking open entries, if the repository has it and may.
+   *
+   * Loud, but not fatal: `undefined` means "nothing to apply", whether there was
+   * no hook, trust said skip, or the hook failed. The worktree exists by now, so
+   * failing the open would either strand it or need a teardown path — and a
+   * workspace you can open is where you fix whatever went wrong.
+   */
+  async function runOpenHook<T>(
+    input: ProvisionHookInput | PrepareHookInput,
+    spec: HookSpec,
+    stdin: CoreInput & Record<string, unknown>,
+    schema: z.ZodType<T>
+  ): Promise<T | undefined> {
+    if (!allowed()) return undefined;
 
     const worktree = new Path(input.workspacePath);
-    const found = await findHook(runnerDeps, worktree, AFTER_WORKTREE_CREATED.name);
-    if (!found) return { result: {} };
+    const found = await findHook(runnerDeps, worktree, spec.name);
+    if (!found) return undefined;
 
     const decision = await trust.check({
       projectPath: input.projectPath,
       workspacePath: input.workspacePath,
       entry: found.entry,
     });
-    if (decision === "skip") return { result: {} };
+    if (decision === "skip") return undefined;
 
     try {
-      const output = await runHook(
-        runnerDeps,
-        found,
-        worktree,
-        {
-          workspaceName: intent.payload.workspaceName,
-          workspacePath: input.workspacePath,
-          projectPath: input.projectPath,
-          branch: input.branch,
-          ...(input.base !== undefined && { base: input.base }),
-        },
-        afterWorktreeCreatedOutputSchema
-      );
-      await persistMetadata(input.workspacePath, toMetadata(output));
-      return { result: toSetupResult(output) };
+      return await runHook(runnerDeps, found, worktree, stdin, schema);
     } catch (error) {
-      // Loud, but not fatal. The worktree exists by now, so failing the open
-      // would either strand it or need a teardown path — and a workspace you
-      // can open is where you fix whatever went wrong.
-      const message = getErrorMessage(error);
-      deps.logger.error("Repository hook failed", { entry: found.entry }, toError(error));
-      deps.ui.notification({
-        type: "error",
-        title: "Repository hook failed",
-        message,
-        dismissible: true,
-      });
-      return { result: {} };
+      reportFailure(found, error);
+      return undefined;
     }
+  }
+
+  function reportFailure(found: FoundHook, error: unknown): void {
+    deps.logger.error("Repository hook failed", { entry: found.entry }, toError(error));
+    deps.ui.notification({
+      type: "error",
+      title: "Repository hook failed",
+      message: getErrorMessage(error),
+      dismissible: true,
+    });
+  }
+
+  /** The core every open entry is handed. `branch`/`base` stay absent when unknown. */
+  function coreInput(
+    input: ProvisionHookInput | PrepareHookInput,
+    intent: OpenWorkspaceIntent
+  ): CoreInput {
+    return {
+      workspaceName: intent.payload.existingWorkspace?.name ?? intent.payload.workspaceName,
+      workspacePath: input.workspacePath,
+      projectPath: input.projectPath,
+      ...(input.branch !== undefined && { branch: input.branch }),
+      ...(input.base !== undefined && { base: input.base }),
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -336,10 +409,10 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
   }
 
   // ---------------------------------------------------------------------------
-  // on-workspace-created (fire-and-forget)
+  // on-workspace-opened (fire-and-forget)
   // ---------------------------------------------------------------------------
 
-  function onWorkspaceCreated(event: DomainEvent): void {
+  function onWorkspaceOpened(event: DomainEvent): void {
     const payload = (event as WorkspaceCreatedEvent).payload;
     const worktree = new Path(payload.workspacePath);
 
@@ -347,7 +420,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
       try {
         if (!allowed()) return;
 
-        const found = await findHook(runnerDeps, worktree, ON_WORKSPACE_CREATED.name);
+        const found = await findHook(runnerDeps, worktree, ON_WORKSPACE_OPENED.name);
         if (!found) return;
 
         const decision = await trust.check({
@@ -361,13 +434,13 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
           workspaceName: payload.workspaceName,
           workspacePath: payload.workspacePath,
           projectPath: payload.projectPath,
-          branch: payload.branch,
+          ...(payload.branch !== undefined && { branch: payload.branch }),
           ...(payload.base !== undefined && { base: payload.base }),
           reopened: payload.reopened === true,
         });
       } catch (error) {
         deps.logger.warn("Event hook could not be dispatched", {
-          entry: ON_WORKSPACE_CREATED.name,
+          entry: ON_WORKSPACE_OPENED.name,
           error: getErrorMessage(error),
         });
       }
@@ -447,7 +520,8 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
 
   const hooks: HookDeclarations = {
     [OPEN_WORKSPACE_OPERATION_ID]: {
-      setup: { handler: afterWorktreeCreated },
+      provision: { handler: afterWorktreeCreated },
+      prepare: { handler: beforeWorkspaceOpened },
     },
     [DELETE_WORKSPACE_OPERATION_ID]: {
       preflight: { handler: announceDeleteHook },
@@ -460,7 +534,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
       // Returns immediately: the emitter must never wait on a repository's
       // script, least of all one that may park on a trust dialog.
       handler: async (event: DomainEvent): Promise<void> => {
-        onWorkspaceCreated(event);
+        onWorkspaceOpened(event);
       },
     },
   };

@@ -459,8 +459,8 @@ template:
 ## Repository hooks
 
 A repository can ship scripts that CodeHydra runs at a few points in a
-workspace's life: set a new worktree up, refuse to delete one, or hear that one
-was created. They live in the repository, so everyone who works on it gets them.
+workspace's life: set a new worktree up, give a workspace its environment each
+time it opens, refuse to delete one, or hear that one was opened. They live in the repository, so everyone who works on it gets them.
 (They replace `.keepfiles`, which CodeHydra no longer reads.)
 
 ### Where hooks go
@@ -473,9 +473,10 @@ uncommitted edits included — so an agent in the workspace can change what
 
 ```
 .codehydra/hooks/
-  after-worktree-created      # blocking; may return env, title, tags
+  after-worktree-created      # blocking; new worktrees only; may return title, tags
+  before-workspace-opened     # blocking; every open; may return env
   before-worktree-deleted     # blocking; may refuse the deletion
-  on-workspace-created        # fire-and-forget; output ignored
+  on-workspace-opened         # fire-and-forget; every open; output ignored
 ```
 
 An entry starting with `on-` reports something that already happened: it is
@@ -506,7 +507,7 @@ How a hook is started:
 - **stdin**: one JSON object (below), then stdin is closed.
 - **stdout**: one JSON object, or nothing (empty output is the same as `{}`).
   Anything else — invalid JSON, `null`, an array, an unknown key — is a hook
-  failure. Output shapes are strict for both blocking hooks.
+  failure. Output shapes are strict for every blocking hook.
 - **stderr**: never parsed. It is shown in the **CodeHydra Hooks** output
   channel of the workspace's editor after the hook exits (not live), and logged
   at `info` level.
@@ -520,7 +521,7 @@ How a hook is started:
   CodeHydra's bare clone, which has no working files.
 - **Timeout**: none. A hook runs until it exits.
 
-Every entry receives this core, plus a field or two of its own:
+Every entry receives this core, plus a field of its own:
 
 ```json
 {
@@ -531,6 +532,13 @@ Every entry receives this core, plus a field or two of its own:
   "base": "main"
 }
 ```
+
+`branch` is the checked-out branch; it is absent on a detached HEAD. `base` is
+the base recorded for the workspace (the branch it was created from); it is
+absent when none is recorded, for example for a worktree adopted when the
+project was added. Neither is ever filled in with a stand-in such as the
+workspace name or `""`, and the rule is the same for every entry, whatever
+triggered it.
 
 A minimal hook:
 
@@ -545,20 +553,19 @@ echo '{"title": "Feature X"}'         # the result
 
 ### after-worktree-created
 
-Runs once, on a newly created worktree, before the editor and the agent start.
+Runs once, on a newly created worktree, before the editor and the agent start
+— the place for setup work: installing dependencies, copying untracked config.
 It does not run when a workspace is reopened (app start, project open), woken
 from hibernation, or adopted as an existing worktree when a project is added.
 It blocks the workspace opening — the sidebar row shows as loading until it
-exits, including while the trust question is open — because it can contribute
-the environment the agent runs in.
+exits, including while the trust question is open.
 
-Extra input: none. `branch` and `base` are always present.
+Extra input: none. On a new worktree `branch` and `base` are always present.
 
 Output — every field optional:
 
 ```json
 {
-  "env": { "DATABASE_URL": "postgres://localhost/feature_x" },
   "title": "Feature X",
   "tags": {
     "review": { "color": "#3498db", "description": "Waiting on review" },
@@ -568,13 +575,6 @@ Output — every field optional:
 }
 ```
 
-- `env` (string values) reaches the agent terminal CodeHydra opens, so Claude
-  Code and the commands it runs see it. Terminals you open yourself do not.
-  With OpenCode, the commands the agent runs do not see it either: they run in
-  OpenCode's server, which is started without it. CodeHydra's own `_CH_*`
-  variables win over a key of the same name. It is not persisted: after an app
-  restart or a hibernate/wake the workspace starts without it. The values are
-  also written in plain text to the workspace's `.code-workspace` file.
 - `title` is the sidebar display name; the branch name stays the identity.
 - `tags` are keyed by tag name; `color`, `label` and `description` are optional.
   Each dot-separated part of a tag name must start with a letter and contain
@@ -583,7 +583,8 @@ Output — every field optional:
   restart.
 
 `title` and `tags` are stored in the workspace's git config, so they survive a
-restart like a title set by hand.
+restart like a title set by hand. `env` is not accepted here (it is a hook
+failure): environment belongs to `before-workspace-opened`.
 
 **Failure is loud but not fatal.** A non-zero exit or invalid output shows a
 **Repository hook failed** notification (e.g. `after-worktree-created failed:
@@ -607,6 +608,47 @@ for f in .env config/local.yml; do
   fi
 done
 ```
+
+### before-workspace-opened
+
+Runs every time a workspace opens, before its editor and agent start: when it
+is created (right after `after-worktree-created`), for every non-hibernated
+workspace when CodeHydra starts or a project is opened (adopted worktrees
+included), and when a workspace is woken from hibernation. It blocks that
+workspace's opening until it exits, including while the trust question is open.
+
+Extra input: `"reopened": true | false` — `false` for a newly created
+workspace, `true` for every other open.
+
+Output — optional:
+
+```json
+{ "env": { "DATABASE_URL": "postgres://localhost/feature_x" } }
+```
+
+`env` (string values) is the workspace's environment. It reaches:
+
+- the agent terminal CodeHydra opens, so Claude Code and the commands it runs
+  see it;
+- OpenCode's server, so the commands the OpenCode agent runs see it;
+- terminals you open in the workspace's editor. A terminal that was already
+  open when the workspace opened (for example one restored from the last
+  session) does not have it until it is recreated.
+
+A value replaces any variable of the same name in the environment CodeHydra
+starts things with; there is no appending, so an `env` that sets `PATH` must
+contain the whole path. Keys starting with `_CH_` are CodeHydra's own and are
+dropped (a warning is logged).
+
+The environment is held in memory only: it is never written to a file, and
+nothing of it survives a restart or a hibernation — which is why this hook runs
+on every open, and why it suits short-lived values such as a freshly minted
+token. When it changes between opens, the new values apply from that open on.
+
+**Failure is loud but not fatal**, as for `after-worktree-created`: a
+**Repository hook failed** notification, and the workspace opens without the
+environment. A hook that never exits leaves the workspace unopened (a new one
+keeps loading).
 
 ### before-worktree-deleted
 
@@ -645,21 +687,22 @@ hangs can only be stopped by killing its process (or quitting CodeHydra).
 When closing a project with "remove all", a refused deletion does not stop the
 project from closing; that worktree stays on disk.
 
-### on-workspace-created
+### on-workspace-opened
 
 Started after a workspace is open — its editor and agent already running, so
-it cannot prepare anything for the agent; use `after-worktree-created` for
-that — and forgotten immediately. Nothing waits for it, its stdout is ignored,
-and a failure (including a non-executable file) only logs a warning with the
-exit code; its stderr is logged at `info`, below the default level.
+it cannot prepare anything for them; use `before-workspace-opened` for that —
+and forgotten immediately. Nothing waits for it, its stdout is ignored, and a
+failure (including a non-executable file) only logs a warning with the exit
+code; its stderr is logged at `info`, below the default level.
 
-It also runs for every non-hibernated workspace when CodeHydra starts or a
-project is opened (adopted worktrees included), and when a workspace is woken.
-Extra input: `"reopened": true | false` tells these apart, so a script that
-registers workspaces with something external can skip reopens, while one that
-re-warms a cache will not. On a start or project open, `base` is the recorded
-base or `""`; on a wake it is absent. `branch` is always present (the workspace
-name for a detached HEAD).
+It runs on the same opens as `before-workspace-opened`: creation, app start,
+project open (adopted worktrees included) and wake. Extra input:
+`"reopened": true | false` tells these apart, so a script that registers
+workspaces with something external can skip reopens, while one that re-warms a
+cache will not.
+
+(This entry was called `on-workspace-created`; a file with that name is no
+longer run.)
 
 ### Trust
 
@@ -680,8 +723,14 @@ project, CodeHydra asks:
   the same answer.
 - The operation waits while the question is open, and the workspace's sidebar
   row turns green — during `after-worktree-created` that is the placeholder row
-  of the workspace being created. With an `on-workspace-created` hook, it can
-  appear right at app start.
+  of the workspace being created. With a `before-workspace-opened` or
+  `on-workspace-opened` hook, it can appear right at app start — and until it is
+  answered, the workspace being opened waits.
+- **Once** and **Skip** answer a single hook run, so without **Always** or
+  **Never** the question comes back for each hook that fires: creating a
+  workspace can ask for `after-worktree-created`, then
+  `before-workspace-opened`, then `on-workspace-opened`, and an app start asks
+  per workspace.
 - Skip or Never on a `before-worktree-deleted` lets the deletion proceed
   without the gate.
 - The question is asked whatever triggered the hook — the UI, `ch ws delete`,
@@ -699,7 +748,7 @@ To turn hooks off entirely, set `hooks.enabled` to `false` (settings,
 - Test a hook by hand from the worktree:
   `echo '{"workspaceName":"x","workspacePath":"'"$PWD"'","projectPath":"/path/to/project","branch":"x","base":"main"}' | .codehydra/hooks/after-worktree-created`
   — add `"keepBranch": false` for `before-worktree-deleted`, or
-  `"reopened": false` for `on-workspace-created`.
+  `"reopened": false` for `before-workspace-opened` and `on-workspace-opened`.
 - stderr appears in the **CodeHydra Hooks** output channel once the hook
   exits, each line tagged with the hook's name (up to 500 lines are kept until
   the editor is up; the log keeps them all). `before-worktree-deleted` has no editor left to show it in: only its

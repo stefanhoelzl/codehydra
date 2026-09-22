@@ -1056,6 +1056,27 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(config.env).toEqual({ TEST_VAR: "test-value", ANOTHER_VAR: "another" });
     });
 
+    it("sends the workspace environment for the editor's terminals", async () => {
+      await env.setWorkspaceConfig(
+        wsPath("/test/workspace"),
+        { _CH_WORKSPACE_PATH: "/test/workspace", DATABASE_URL: "postgres://x" },
+        "claude",
+        true,
+        { DATABASE_URL: "postgres://x" }
+      );
+
+      const client = createClient(wsPath("/test/workspace"));
+      const configPromise = new Promise<PluginConfig>((resolve) => {
+        client.on("config", (config) => resolve(config));
+      });
+
+      await waitForConnect(client);
+      const config = await configPromise;
+
+      // Separate from `env`: CodeHydra's agent variables stay in the agent terminal.
+      expect(config.workspaceEnv).toEqual({ DATABASE_URL: "postgres://x" });
+    });
+
     it("sends config with null env when no config stored", async () => {
       const client = createClient(wsPath("/test/workspace"));
       const configPromise = new Promise<PluginConfig>((resolve) => {
@@ -1066,6 +1087,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const config = await configPromise;
 
       expect(config.env).toBeNull();
+      expect(config.workspaceEnv).toBeNull();
     });
 
     it("handles concurrent workspace connections independently", async () => {

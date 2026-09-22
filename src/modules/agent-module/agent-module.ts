@@ -388,6 +388,7 @@ export function createAgentModule(
             const result = await provider.startWorkspace(workspacePath, {
               ...(initialPrompt !== undefined && { initialPrompt }),
               isNewWorkspace,
+              env: setupCtx.workspaceEnv,
             });
 
             return {

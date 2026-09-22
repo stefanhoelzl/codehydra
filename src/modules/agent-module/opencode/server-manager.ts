@@ -90,6 +90,11 @@ export interface StartServerOptions {
     readonly agentName?: string;
     readonly model?: PromptModel;
   };
+  /**
+   * Workspace environment for the server process — and so for every command
+   * its bash tool runs. Kept (in memory) for restarts of this server.
+   */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -116,6 +121,12 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * Key is normalized workspace path (via Path.toString()).
    */
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
+
+  /**
+   * Workspace environment per workspace, so a restart spawns with what the
+   * start was given. Memory only: the open pipeline re-supplies it every time.
+   */
+  private readonly workspaceEnvs = new Map<string, Readonly<Record<string, string>>>();
 
   private mcpConfig: McpConfig | null = null;
 
@@ -161,6 +172,10 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
         options.initialPrompt.agentName,
         options.initialPrompt.model
       );
+    }
+
+    if (options?.env !== undefined) {
+      this.workspaceEnvs.set(workspacePath, options.env);
     }
 
     // Check if already running/starting
@@ -260,9 +275,17 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     // Prepended so a CodeHydra script wins over a same-named one elsewhere on
     // PATH.
     const binDir = this.pathProvider.dataPath("bin").toNative();
-    const existingPath = process.env.PATH ?? process.env.Path ?? "";
-    const env: NodeJS.ProcessEnv = {
+    //
+    // The workspace environment layers over the inherited one, and CodeHydra's
+    // own entries below layer over both: a repository can add to the agent's
+    // world but not re-point it (PATH still gets the bin directory prepended).
+    const baseEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      ...this.workspaceEnvs.get(workspacePath),
+    };
+    const existingPath = baseEnv.PATH ?? baseEnv.Path ?? "";
+    const env: NodeJS.ProcessEnv = {
+      ...baseEnv,
       PATH: existingPath ? `${binDir}${delimiter}${existingPath}` : binDir,
       // The agent's own workspace, so `ch` run from its bash tool resolves the
       // right one without depending on the process's working directory.
@@ -371,6 +394,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const finalEntry = this.servers.get(workspacePath);
     if (finalEntry?.state !== "restarting") {
       this.servers.delete(workspacePath);
+    }
+    if (!isRestart) {
+      this.workspaceEnvs.delete(workspacePath);
     }
 
     // Fire callback with isRestart flag

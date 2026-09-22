@@ -24,6 +24,13 @@ import type { DownloadProgressCallback } from "../../utils/binary-download";
 export interface WorkspaceStartOptions {
   readonly initialPrompt?: AgentPromptConfig;
   readonly isNewWorkspace?: boolean;
+  /**
+   * The workspace environment (from the repository's `before-workspace-opened`
+   * hook). An agent whose tools run in a process CodeHydra spawns — OpenCode's
+   * server — starts that process with it; Claude's tools run in the agent
+   * terminal, which gets it through the sidekick instead.
+   */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /**

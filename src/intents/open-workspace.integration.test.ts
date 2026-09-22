@@ -245,8 +245,11 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               return {
                 result: {
                   workspacePath: existing.path,
-                  branch: existing.branch ?? existing.name,
+                  branch: existing.branch,
                   metadata: existing.metadata,
+                  ...(existing.metadata.base !== undefined && {
+                    resolvedBase: existing.metadata.base,
+                  }),
                 },
               };
             }
@@ -268,6 +271,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
                 workspacePath: wsPath(workspace.path.toString()),
                 branch: workspace.branch,
                 metadata: workspace.metadata,
+                resolvedBase: intent.payload.base!,
               },
             };
           },
@@ -840,8 +844,8 @@ describe("OpenWorkspace Operation", () => {
 
       expect(result).toBeDefined();
       const workspace = result as Workspace;
-      // branch falls back to name when null
-      expect(workspace.branch).toBe("my-ws");
+      // A detached HEAD stays null — never the workspace name standing in for it
+      expect(workspace.branch).toBeNull();
 
       // Event uses the provided projectPath directly
       expect(receivedEvents).toHaveLength(1);

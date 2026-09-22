@@ -273,6 +273,7 @@ class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
       intent: ctx.intent,
       workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
       envVars: { OPENCODE_PORT: "8080" },
+      workspaceEnv: {},
       agentType: "opencode" as const,
       ...this.hookInput,
     });
@@ -1110,6 +1111,39 @@ describe("IdeServerModule", () => {
       expect(writeCall).toBeDefined();
       const written = writeCall![1] as string;
       expect(written).toContain('"chat.agent.enabled": false');
+    });
+
+    it("writes no environment to the workspace file", async () => {
+      const deps = createMockDeps();
+      const dispatcher = createMockDispatcher();
+      dispatcher.registerModule(createPluginPortProvider());
+      const { module } = createIdeServerModule(deps);
+      dispatcher.registerModule(module);
+      dispatcher.registerOperation(new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        new MinimalFinalizeOperation({
+          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          envVars: { _CH_PLUGIN_TOKEN: "secret", DATABASE_URL: "postgres://x" },
+          workspaceEnv: { DATABASE_URL: "postgres://x" },
+        })
+      );
+      await dispatcher.dispatch<OpenWorkspaceIntent>({
+        type: "workspace:open",
+        payload: { workspaceName: "feature-1", projectPath: projPath("/test/project") },
+      });
+
+      // The environment is delivered in memory (the sidekick's config); a
+      // repository's values and CodeHydra's token must never reach disk.
+      const written = vi
+        .mocked(deps.fileSystemLayer.writeFile)
+        .mock.calls.map(([, content]) => String(content))
+        .join("\n");
+      expect(written).toContain("claudeCode.useTerminal");
+      expect(written).not.toContain("environmentVariables");
+      expect(written).not.toContain("postgres://x");
+      expect(written).not.toContain("secret");
     });
 
     it("falls back to folder URL on workspace file error", async () => {
