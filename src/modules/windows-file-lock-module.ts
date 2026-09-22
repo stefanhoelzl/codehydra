@@ -53,7 +53,6 @@ import type { ProcessRunner } from "../boundaries/platform/process";
 import type { BlockingProcess } from "../shared/api/types";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
-  type DeleteWorkspaceIntent,
   type DeletePipelineHookInput,
   type ReleaseHookResult,
   type DetectHookResult,
@@ -337,13 +336,14 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
           handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
+            // Runs in force mode too. Force skips the gates that can refuse
+            // (pre-delete) and ignores errors — it must not skip the cleanup.
+            // The one force deletion that removes the worktree is Dismiss, and
+            // it follows an attempt that stopped before this hook: a refused
+            // pre-delete leaves behind whatever the shutdown could not stop (an
+            // agent terminal that ignored its close), and without this scan it
+            // keeps the directory locked and the force removal fails silently.
             const { workspacePath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            if (payload.force) {
-              return { result: {} };
-            }
-
             const error = await runCwdReleaseKill(deps, workspacePath, "deletion");
             return { result: error === undefined ? {} : { error } };
           },

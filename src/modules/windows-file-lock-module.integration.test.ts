@@ -258,12 +258,25 @@ describe("WindowsFileLockModule Integration", () => {
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("skips when force=true", async () => {
+    it("still kills CWD-blocking processes when force=true", async () => {
+      // Dismiss after a refused pre-delete: that attempt stopped before this
+      // hook, so an agent that ignored its close is still sitting in the
+      // worktree. Skipping the scan here left it holding the directory and the
+      // force removal failing silently (EBUSY, swallowed as a force error).
+      runner = createMockProcessRunner({
+        onSpawn: () => ({
+          stdout: createDetectJson([
+            { pid: 1234, name: "node.exe", commandLine: "claude", cwd: "." },
+          ]),
+          exitCode: 0,
+        }),
+      });
+
       const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      // No processes spawned
-      expect(() => runner.$.spawned(0)).toThrow();
+      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["-Action", "DetectCwd"]));
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("reports a timed-out scan instead of silently passing", async () => {
