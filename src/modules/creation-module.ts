@@ -1201,6 +1201,17 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload !== null) {
           lastActiveProjectPath = payload.projectPath;
+          return;
+        }
+        // The panel is being shown. The session outlives switches (so typed
+        // input survives), which would leave an untouched form on whatever
+        // project it was seeded with — follow the workspace the user came
+        // from instead. A touched form keeps everything, project included.
+        if (handle === null || dirty || resetting || lastActiveProjectPath === null) return;
+        const remembered = new Path(lastActiveProjectPath);
+        const project = projects.find((p) => remembered.equals(new Path(p.path)));
+        if (project !== undefined && project.path !== selectedProjectPath) {
+          selectProject(project.path);
         }
       },
     },
