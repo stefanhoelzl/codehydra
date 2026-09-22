@@ -439,7 +439,6 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
               type: INTENT_OPEN_WORKSPACE,
               payload: {
                 workspaceName: workspace.name,
-                base: workspace.metadata.base ?? "",
                 existingWorkspace,
                 projectPath,
                 stealFocus: false,

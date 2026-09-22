@@ -312,7 +312,10 @@ What a hook author needs — where hooks live, the JSON exchange, each entry's i
 - **Read from the worktree, not the project root.** A hook must therefore be committed on the branch a workspace is created from. That is the trade for being able to write and test a hook inside a workspace, which is the only place a user ever has the repository open.
 - **One file per entry, git-style.** No subdirectories, no `10-`/`20-` ordering: a repository that wants several steps writes them in one script. The extension never gates (the shebang decides), which is what lets Windows use `.cmd` and a `.py` hook be ordinary. Two files for one entry is almost always a rename that left the old one behind, so it warns rather than failing.
 - **Reported, not silently skipped, when not executable.** Unlike git: a hook the author wrote and that never runs is the hardest failure to notice.
-- **`after-worktree-created` blocks the open** because its `env` has to exist before the agent starts. It fails loud but not fatal: a failed `pnpm install` is something to fix _in_ the workspace, so the workspace still opens. `title`/`tags` are returned rather than set with `ch` during setup, because a `ch` call races the snapshot the workspace-open returns and loses.
+- **Setup once, environment every time.** `after-worktree-created` is work on a new tree (install, copy config) and runs once; `before-workspace-opened` supplies the environment and runs on _every_ open — new, app start, project open, wake. The split exists because the environment is never written down: it is delivered in memory (to the agent terminal and the editor's terminals through the sidekick config, directly to OpenCode's server process), so nothing survives a restart or a hibernation for it to rely on, and a hook that mints a short-lived credential gets a fresh one each time. It used to live in `after-worktree-created` and was written into the `.code-workspace` file, which both lost it on every reopen and put a repository's values (next to CodeHydra's own token) on disk.
+- **Both open hooks block, each at its own hook point** (`provision`, `prepare`), ahead of the agents' `setup`, so an agent server never starts against a tree still being set up, nor without its environment — by construction rather than by module registration order. Both fail loud but not fatal: a failed `pnpm install` is something to fix _in_ the workspace, so the workspace still opens (without whatever the hook would have returned). `title`/`tags` are returned rather than set with `ch` during setup, because a `ch` call races the snapshot the workspace-open returns and loses.
+- **CodeHydra's own variables win.** A `_CH_*` key in a hook's `env` is dropped (with a warning) at the source rather than left to each consumer's merge order: the environment reaches three places, and one of them getting precedence wrong would let a repository re-point `ch` at another workspace or instance.
+- **`branch` and `base` never stand in.** Every entry, on every path, gets `branch` only when a branch is checked out and `base` only when one is recorded in the workspace's metadata. A plausible default (the workspace name, `""`) would send a hook that branches on it down the wrong path while looking like it worked.
 - **`before-worktree-deleted` fails closed.** A refusal (`{"blocked":true}`, exit 0) and a broken hook (non-zero exit) both stop the deletion, but are reported differently: one is a policy decision, the other a hook failure. Dismiss force-deletes and skips hooks entirely, as the escape from a gate that refuses wrongly.
 - **Trust is asked whatever triggered the hook** — the UI, `ch ws delete`, an auto-workspace poll — because a gate that quietly disappears when called from a script is not a gate. The row turns green while the question is open so a question raised while the user looks elsewhere still says where to look (not yet for a workspace still being created: its placeholder row has no path to match). A repository without hooks is never asked.
 
@@ -384,19 +387,9 @@ Metadata keys are validated with `/^[A-Za-z][A-Za-z0-9-]*$/` and:
 **Valid keys**: `base`, `note`, `model-name`, `AI-model`
 **Invalid keys**: `_private` (leading underscore), `my_key` (underscore), `123note` (starts with digit), `note-` (trailing hyphen)
 
-#### Base Branch Fallback Logic
+#### Base Branch
 
-The `base` key has special fallback logic for backwards compatibility. This fallback is applied ONLY to the `base` key, not other metadata:
-
-```
-metadata.base = config.base ?? branch ?? name
-```
-
-- First: git config value `codehydra.base` (if set)
-- Second: current branch name (if not detached HEAD)
-- Third: workspace directory name (fallback for detached HEAD)
-
-Other metadata keys return their exact config value or `undefined` if not set.
+`metadata.base` is exactly the `codehydra.base` git config value, and absent when none is recorded (an adopted worktree, or a branch CodeHydra never created). There is no fallback to the branch or the workspace name: consumers — repository hooks included — treat a missing base as unknown rather than guessing one.
 
 ### Shell and Platform Layers
 
@@ -1639,8 +1632,10 @@ User: Click [+], fill dialog, click OK
   → IPC: api:workspace:create → workspace:open intent dispatched
   → OpenWorkspaceOperation runs hook points:
       → "create": GitWorktreeWorkspaceModule creates git worktree
-      → "setup": HooksModule runs .codehydra/hooks/after-worktree-created,
-                   AgentModule starts agent server
+      → "provision": HooksModule runs .codehydra/hooks/after-worktree-created
+      → "prepare": HooksModule runs .codehydra/hooks/before-workspace-opened
+                   (its env goes to the agent and the editor's terminals)
+      → "setup": AgentModule starts agent server (with that env)
       → "finalize": IdeServerModule creates .code-workspace file
   → Operation dispatches workspace:switch to activate the new workspace
   → Emits workspace:created domain event → UiIpcModule → sendToUI → Renderer

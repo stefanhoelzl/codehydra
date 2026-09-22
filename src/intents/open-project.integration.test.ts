@@ -138,6 +138,8 @@ interface TestHarness {
   };
   /** Clone call tracking */
   cloneCalls: Array<{ url: string; path: string }>;
+  /** Every workspace:open payload project:open dispatched, in order. */
+  openPayloads: OpenWorkspaceIntent["payload"][];
 }
 
 function createTestHarness(options?: {
@@ -190,6 +192,7 @@ function createTestHarness(options?: {
   }
 
   const cloneCalls: Array<{ url: string; path: string }> = [];
+  const openPayloads: OpenWorkspaceIntent["payload"][] = [];
 
   // Mock state methods used by hooks
   const appState = {
@@ -467,6 +470,7 @@ function createTestHarness(options?: {
         create: {
           handler: async (ctx: HookContext): Promise<HookOutput<CreateHookResult>> => {
             const intent = ctx.intent as OpenWorkspaceIntent;
+            openPayloads.push(intent.payload);
 
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
@@ -617,6 +621,7 @@ function createTestHarness(options?: {
     validateThrows,
     projectStoreState,
     cloneCalls,
+    openPayloads,
   };
 }
 
@@ -659,6 +664,29 @@ describe("OpenProjectOperation", () => {
 
     // Second workspace preloaded
     expect(harness.preloadedPaths).toContain(WORKSPACE_B_PATH);
+  });
+
+  it("reopens discovered workspaces without inventing a base", async () => {
+    const harness = createTestHarness({
+      discoverResult: [
+        {
+          name: "adopted" as WorkspaceName,
+          path: wsPath(new Path(WORKSPACE_A_PATH).toString()),
+          branch: null,
+          metadata: {},
+        },
+      ],
+    });
+
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
+
+    // The recorded base travels in existingWorkspace.metadata; the payload's own
+    // `base` is for creations and must not carry a "" stand-in.
+    expect(harness.openPayloads).toHaveLength(1);
+    expect(harness.openPayloads[0]).not.toHaveProperty("base");
+    expect(harness.openPayloads[0]!.existingWorkspace?.branch).toBeNull();
   });
 
   it("test 2: clones remote project then opens", async () => {

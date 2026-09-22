@@ -1197,17 +1197,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
             try {
               const workspacePathObj = new Path(finalizeCtx.workspacePath);
-              const envVarsArray = Object.entries(finalizeCtx.envVars).map(([name, value]) => ({
-                name,
-                value,
-              }));
-              // No claudeProcessWrapper: CodeHydra launches Claude itself, via
-              // the sidekick typing `ch claude` into the agent terminal. The
-              // setting existed for the retired panel mode, which nothing has
-              // invoked since the switch to terminal mode.
+              // No claudeProcessWrapper and no claudeCode.environmentVariables:
+              // CodeHydra launches Claude itself, via the sidekick typing
+              // `ch claude` into the agent terminal, and hands that terminal its
+              // environment in memory. Both settings existed for the retired
+              // panel mode — and writing the environment here put a
+              // repository's values (and CodeHydra's token) in a file on disk.
               const agentSettings: Record<string, unknown> = {
                 "claudeCode.useTerminal": true,
-                "claudeCode.environmentVariables": envVarsArray,
                 "chat.agent.enabled": false,
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);

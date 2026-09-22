@@ -56,13 +56,25 @@ vi.mock("vscode");
 import { io } from "socket.io-client";
 import { activate, deactivate } from "./extension";
 
-function makeContext() {
+/** Stands in for VS Code's EnvironmentVariableCollection: what new terminals get. */
+function makeEnvCollection() {
+  const values = new Map<string, string>();
+  return {
+    persistent: true,
+    values,
+    clear: vi.fn(() => values.clear()),
+    replace: vi.fn((name: string, value: string) => values.set(name, value)),
+  };
+}
+
+function makeContext(envCollection = makeEnvCollection()) {
   return {
     subscriptions: { push: vi.fn() },
     workspaceState: {
       get: vi.fn((_key: string, def: unknown) => def),
       update: vi.fn(),
     },
+    environmentVariableCollection: envCollection,
   } as unknown as Parameters<typeof activate>[0];
 }
 
@@ -74,6 +86,7 @@ function getSocket(): FakeSocket {
 const CONFIG = {
   isDevelopment: false,
   env: { _CH_WORKSPACE_PATH: "/workspace/feature-a", _CH_BRIDGE_PORT: "9000" },
+  workspaceEnv: null,
   agentType: "claude" as const,
   resetWorkspace: true,
 };
@@ -182,6 +195,41 @@ describe("sidekick agent lifecycle emits", () => {
     expect(socket.emit).not.toHaveBeenCalledWith("api:workspace:agentLifecycle", {
       event: "close",
     });
+  });
+});
+
+describe("sidekick workspace environment", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_PLUGIN_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_PLUGIN_PORT;
+  });
+
+  it("gives terminals the user opens the workspace environment, without persisting it", async () => {
+    const collection = makeEnvCollection();
+    collection.values.set("STALE", "from-a-previous-open");
+    activate(makeContext(collection));
+    const socket = getSocket();
+
+    await socket._handlers.config!({ ...CONFIG, workspaceEnv: { DATABASE_URL: "postgres://x" } });
+
+    expect(collection.persistent).toBe(false);
+    expect(Object.fromEntries(collection.values)).toEqual({ DATABASE_URL: "postgres://x" });
+  });
+
+  it("gives terminals nothing when the workspace has no environment", async () => {
+    const collection = makeEnvCollection();
+    activate(makeContext(collection));
+    const socket = getSocket();
+
+    await socket._handlers.config!(CONFIG);
+
+    expect(collection.values.size).toBe(0);
   });
 });
 

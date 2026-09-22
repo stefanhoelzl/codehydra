@@ -18,7 +18,7 @@
  * happened, so it is fire-and-forget and its output is ignored; every other
  * entry runs at a moment CodeHydra is waiting on, blocks it, and may return
  * data. One directory, and the tense of the name tells you which you are
- * writing — `after-worktree-created` is a job, `on-workspace-created` is news.
+ * writing — `before-workspace-opened` is a job, `on-workspace-opened` is news.
  */
 
 import { z } from "zod/v4";
@@ -51,7 +51,9 @@ export const HOOKS_DIR = "hooks";
  * Both are optional, and *absent* rather than null when unknown: a workspace on
  * a detached HEAD has no branch, and a worktree the user adopted by hand never
  * had a base. Substituting a plausible default would send a hook that branches
- * on it down the wrong path while looking like it worked.
+ * on it down the wrong path while looking like it worked. The same rule holds
+ * for every entry and every path that fires it — creation, app start, project
+ * open, wake, deletion — so a hook never sees a field change shape by origin.
  */
 export const coreInputSchema = z.object({
   workspaceName: z.string(),
@@ -65,20 +67,25 @@ export type CoreInput = z.infer<typeof coreInputSchema>;
 
 const afterWorktreeCreatedInputSchema = coreInputSchema;
 
+/**
+ * Every entry that fires on an open says which kind of open it is. A genuinely
+ * new workspace is `false`; app start, project open (adopted worktrees
+ * included) and wake from hibernation are `true`. A script that registers a
+ * workspace somewhere external will want to skip reopens, and one that re-warms
+ * a cache or mints a credential will not.
+ */
+const openInputSchema = coreInputSchema.extend({
+  reopened: z.boolean(),
+});
+
+const beforeWorkspaceOpenedInputSchema = openInputSchema;
+
 const beforeWorktreeDeletedInputSchema = coreInputSchema.extend({
   /** The branch survives the deletion — so unmerged commits stay reachable. */
   keepBranch: z.boolean(),
 });
 
-const onWorkspaceCreatedInputSchema = coreInputSchema.extend({
-  /**
-   * The workspace was discovered at project open or woken from hibernation,
-   * rather than genuinely created. The event fires either way; a script that
-   * registers a workspace somewhere external will want to skip these, and one
-   * that re-warms a cache will not.
-   */
-  reopened: z.boolean(),
-});
+const onWorkspaceOpenedInputSchema = openInputSchema;
 
 // =============================================================================
 // Output
@@ -103,19 +110,20 @@ const tagSchema = z
 /**
  * What `after-worktree-created` may contribute back.
  *
- * Three separate fields rather than one metadata map, so the reachable surface
- * is exactly these: a repository cannot write `base`, which the deletion gate's
+ * Separate fields rather than one metadata map, so the reachable surface is
+ * exactly these: a repository cannot write `base`, which the deletion gate's
  * unmerged-commit check reads and which a setup script must not be able to
  * rewrite from under it.
  *
- * Strict on purpose — `{"envs": …}` is a typo that would otherwise be dropped
- * in silence, and a setup hook whose environment quietly never arrived is a
- * miserable thing to debug.
+ * No `env`: environment is not a once-per-worktree thing — it has to be there
+ * on every open, after a restart and a wake too — so it belongs to
+ * `before-workspace-opened`, which runs each time.
+ *
+ * Strict on purpose — `{"titel": …}`, or an `env` left over from before the
+ * split, is a mistake that would otherwise be dropped in silence.
  */
 export const afterWorktreeCreatedOutputSchema = z
   .object({
-    /** Merged into the workspace's environment: the agent and IDE terminals. */
-    env: z.record(z.string(), z.string()).optional(),
     /** Sidebar display title. The branch name stays the identity. */
     title: z.string().optional(),
     /** Tags to attach, keyed by name. */
@@ -124,6 +132,24 @@ export const afterWorktreeCreatedOutputSchema = z
   .strict();
 
 export type AfterWorktreeCreatedOutput = z.infer<typeof afterWorktreeCreatedOutputSchema>;
+
+/**
+ * What `before-workspace-opened` may return: the workspace's environment.
+ *
+ * Delivered in memory to the agent (its terminal and its server) and to the
+ * editor's terminals, and never written to disk — which is why the hook runs on
+ * every open: nothing survives a restart for it to rely on.
+ *
+ * Strict for the same reason as the setup hook: `{"envs": …}` is a typo, and an
+ * environment that quietly never arrived is a miserable thing to debug.
+ */
+export const beforeWorkspaceOpenedOutputSchema = z
+  .object({
+    env: z.record(z.string(), z.string()).optional(),
+  })
+  .strict();
+
+export type BeforeWorkspaceOpenedOutput = z.infer<typeof beforeWorkspaceOpenedOutputSchema>;
 
 /**
  * What `before-worktree-deleted` may return.
@@ -176,15 +202,21 @@ export const AFTER_WORKTREE_CREATED: HookSpec = {
   output: afterWorktreeCreatedOutputSchema,
 };
 
+export const BEFORE_WORKSPACE_OPENED: HookSpec = {
+  name: "before-workspace-opened",
+  input: beforeWorkspaceOpenedInputSchema,
+  output: beforeWorkspaceOpenedOutputSchema,
+};
+
 export const BEFORE_WORKTREE_DELETED: HookSpec = {
   name: "before-worktree-deleted",
   input: beforeWorktreeDeletedInputSchema,
   output: beforeWorktreeDeletedOutputSchema,
 };
 
-export const ON_WORKSPACE_CREATED: EventSpec = {
-  name: "on-workspace-created",
-  input: onWorkspaceCreatedInputSchema,
+export const ON_WORKSPACE_OPENED: EventSpec = {
+  name: "on-workspace-opened",
+  input: onWorkspaceOpenedInputSchema,
 };
 
 // =============================================================================
@@ -195,15 +227,18 @@ export const ON_WORKSPACE_CREATED: EventSpec = {
 type HookPointMap<S extends OperationSchemas> = Readonly<Record<HookPointOf<S>, HookSpec | null>>;
 
 /**
- * `setup` is the only exposed point, and it is the right one: the worktree
- * exists by then (so a script has something to set up), and its result folds
- * into `envVars`/`metadata`, which `finalize` and the `workspace:created`
- * snapshot carry. `create` runs before the worktree exists; `finalize` runs
- * after the environment has already been consumed.
+ * The two points before `setup` exist for this map, one per entry, in the order
+ * a repository needs them: `provision` sets a genuinely new worktree up once,
+ * then `prepare` supplies the environment on every open. Both precede `setup`
+ * because that is where the agent server starts, and it must start in a set-up
+ * tree with the environment already known. `create` runs before the worktree
+ * exists; `finalize` runs after the environment has been consumed.
  */
 export const OPEN_WORKSPACE_HOOKS: HookPointMap<typeof openWorkspaceSchemas> = {
   create: null,
-  setup: AFTER_WORKTREE_CREATED,
+  provision: AFTER_WORKTREE_CREATED,
+  prepare: BEFORE_WORKSPACE_OPENED,
+  setup: null,
   finalize: null,
 };
 
@@ -226,6 +261,7 @@ export const DELETE_WORKSPACE_HOOKS: HookPointMap<typeof deleteWorkspaceSchemas>
 /** Every entry, for diagnostics and docs. */
 export const ALL_ENTRIES: readonly (HookSpec | EventSpec)[] = [
   AFTER_WORKTREE_CREATED,
+  BEFORE_WORKSPACE_OPENED,
   BEFORE_WORKTREE_DELETED,
-  ON_WORKSPACE_CREATED,
+  ON_WORKSPACE_OPENED,
 ];

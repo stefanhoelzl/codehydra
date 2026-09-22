@@ -552,7 +552,7 @@ describe("OpenCode module provider", () => {
       });
     });
 
-    it("calls startServer without options when no initialPrompt", async () => {
+    it("calls startServer without a prompt when no initialPrompt", async () => {
       provider.initialize(null);
 
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
@@ -562,7 +562,22 @@ describe("OpenCode module provider", () => {
 
       await provider.startWorkspace(WS_PATH);
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH);
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {});
+    });
+
+    it("passes the workspace environment to the server", async () => {
+      provider.initialize(null);
+
+      vi.mocked(serverManager.startServer).mockImplementation(async () => {
+        serverManager._triggerStarted(WS_PATH, 8080, undefined);
+        return 8080;
+      });
+
+      await provider.startWorkspace(WS_PATH, { env: { DATABASE_URL: "postgres://x" } });
+
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
+        env: { DATABASE_URL: "postgres://x" },
+      });
     });
 
     it("returns environment variables from provider", async () => {

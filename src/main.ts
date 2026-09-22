@@ -1026,9 +1026,9 @@ dispatcher.registerModule(pluginServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);
-// Before the agent modules on purpose. Handlers on a hook point run in
-// registration order, so a repository's `after-worktree-created` finishes
-// before an agent server is started against the tree it is still setting up.
+// A repository's open hooks run at their own hook points ("provision",
+// "prepare"), which precede the agents' "setup" — so the tree is set up and its
+// environment known before an agent server starts, whatever the order here.
 dispatcher.registerModule(hooksModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

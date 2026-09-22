@@ -3,12 +3,12 @@
  *
  * This is the chain the integration tests deliberately stop short of: a hook
  * committed in a real repository, checked out into a real worktree, spawned
- * through the real platform shell, with what it returns reaching the
- * `.code-workspace` file the agent and the editor's terminals actually read.
+ * through the real platform shell, with what it returns reaching the app.
  *
  * The story is one workspace, in order: trust is asked, the setup hook's
- * environment/title/tags land, the deletion hook refuses, and Dismiss escapes
- * the refusal — which is the documented way out of a gate that says no.
+ * title/tags land, the open hook's environment stays out of every file, the
+ * deletion hook refuses, and Dismiss escapes the refusal — which is the
+ * documented way out of a gate that says no.
  */
 import { expect, test } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
@@ -35,7 +35,8 @@ const ENV_NAME = "CH_HOOK_E2E";
 const ENV_VALUE = "hooked";
 const TITLE = "Hooked Alpha";
 const REFUSAL = "e2e gate says no";
-const EVENT_MARKER = ".on-workspace-created-ran";
+const EVENT_MARKER = ".on-workspace-opened-ran";
+const OPEN_MARKER = ".before-workspace-opened-ran";
 
 let repo: { path: string; cleanup: () => Promise<void> };
 
@@ -49,6 +50,13 @@ function hookScript(json: string): string {
   return isWindows
     ? ["@echo off", "more > nul", `echo ${json}`, ""].join("\r\n")
     : ["#!/bin/sh", "cat > /dev/null", `echo '${json}'`, ""].join("\n");
+}
+
+/** A hook that swallows stdin, touches `marker` in its worktree and prints `json`. */
+function markAndPrintScript(marker: string, json: string): string {
+  return isWindows
+    ? ["@echo off", "more > nul", `type nul > ${marker}`, `echo ${json}`, ""].join("\r\n")
+    : ["#!/bin/sh", "cat > /dev/null", `touch ${marker}`, `echo '${json}'`, ""].join("\n");
 }
 
 /** A hook that swallows stdin and touches a file in the worktree it runs in. */
@@ -76,16 +84,19 @@ test.beforeAll(async () => {
   await writeHook(
     "after-worktree-created",
     JSON.stringify({
-      env: { [ENV_NAME]: ENV_VALUE },
       title: TITLE,
       tags: { e2e: { color: "#3498db", description: "created by a repository hook" } },
     })
   );
+  await writeHookScript(
+    "before-workspace-opened",
+    markAndPrintScript(OPEN_MARKER, JSON.stringify({ env: { [ENV_NAME]: ENV_VALUE } }))
+  );
   await writeHook("before-worktree-deleted", JSON.stringify({ blocked: true, reason: REFUSAL }));
 
-  // Same directory as the two blocking entries: the `on-` prefix is what makes
-  // this one fire-and-forget, not where it lives.
-  await writeHookScript("on-workspace-created", markerScript(EVENT_MARKER));
+  // Same directory as the blocking entries: the `on-` prefix is what makes this
+  // one fire-and-forget, not where it lives.
+  await writeHookScript("on-workspace-opened", markerScript(EVENT_MARKER));
 
   // Hooks are read from the *worktree*, so they only exist in a new workspace if
   // they are committed on the branch it is created from.
@@ -117,18 +128,19 @@ test("asks whether to trust the repository, then runs its setup hook", async () 
   await creating;
 });
 
-test("the hook's environment reaches the file the agent reads", async () => {
+test("the open hook's environment is never written to the workspace file", async () => {
+  // Delivered in memory (to the agent and the editor's terminals) and supplied
+  // afresh on every open, so it has no reason to be on disk — and a repository's
+  // values in a file next to the worktree is exactly what must not happen.
+  // It ran — blocking, so before the open returned — and returned its env.
+  expect(existsSync(join(workspacesDir(), "alpha", OPEN_MARKER))).toBe(true);
+
   const file = join(workspacesDir(), "alpha.code-workspace");
   expect(existsSync(file)).toBe(true);
 
-  const content = JSON.parse(readFileSync(file, "utf8")) as {
-    settings: { "claudeCode.environmentVariables": { name: string; value: string }[] };
-  };
-
-  expect(content.settings["claudeCode.environmentVariables"]).toContainEqual({
-    name: ENV_NAME,
-    value: ENV_VALUE,
-  });
+  const content = readFileSync(file, "utf8");
+  expect(content).not.toContain(ENV_VALUE);
+  expect(content).not.toContain("claudeCode.environmentVariables");
 });
 
 test("the hook's title and tag reach the sidebar", async () => {

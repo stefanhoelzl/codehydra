@@ -140,6 +140,24 @@ function launchLine(command: string): string {
 }
 
 /**
+ * Give every terminal opened in this workspace the workspace environment.
+ *
+ * Through the extension's environment variable collection, which VS Code applies
+ * to each new terminal. Not persistent: the values stay in memory, and the next
+ * open delivers them afresh — they must not end up in the editor's storage.
+ * Replaced wholesale, so a key the hook stopped returning does not linger.
+ */
+function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefined): void {
+  const collection = extensionContext?.environmentVariableCollection;
+  if (!collection) return;
+  collection.persistent = false;
+  collection.clear();
+  for (const [name, value] of Object.entries(workspaceEnv ?? {})) {
+    collection.replace(name, value);
+  }
+}
+
+/**
  * Open agent terminal in the editor area.
  * Creates a new terminal if none exists, otherwise focuses the existing one.
  * On reopened workspaces (show=false), disposes any stale restored terminals
@@ -745,6 +763,8 @@ function connectToPluginServer(port: number, workspacePath: string): void {
         }
       }
     }
+
+    applyWorkspaceEnv(config.workspaceEnv);
 
     // Open agent terminal if env vars and agent type are available
     if (config.env !== null && config.agentType !== null) {

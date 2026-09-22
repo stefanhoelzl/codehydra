@@ -1013,6 +1013,59 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const result = await dispatchCreateWorkspace(dispatcher, createIntent);
         expect(result.resolvedBase).toBe("origin/main");
       });
+
+      // A reopen reports what the workspace records, whatever the caller put in
+      // the payload — and nothing when nothing is recorded (an adopted worktree).
+      it.each([
+        ["reports the recorded base", { base: "develop" }, "develop"],
+        ["omits a base that was never recorded", {}, undefined],
+      ])("existing workspace %s", async (_label, metadata, expected) => {
+        const { dispatcher, provider } = setup;
+        const projectPath = projPath("/projects/my-app");
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+        const result = await dispatchCreateWorkspace(dispatcher, {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "existing-ws",
+            projectPath,
+            existingWorkspace: {
+              path: wsPath("/workspaces/existing-ws"),
+              name: "existing-ws",
+              branch: "existing-ws",
+              metadata,
+            },
+          },
+        });
+        expect(result.resolvedBase).toBe(expected);
+      });
+    });
+
+    describe("branch", () => {
+      it("reports a detached HEAD as null, not as the workspace name", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = projPath("/projects/my-app");
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+        const result = await dispatchCreateWorkspace(dispatcher, {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "detached-ws",
+            projectPath,
+            existingWorkspace: {
+              path: wsPath("/workspaces/detached-ws"),
+              name: "detached-ws",
+              branch: null,
+              metadata: {},
+            },
+          },
+        });
+        expect(result.branch).toBeNull();
+      });
     });
   });
 

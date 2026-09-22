@@ -435,12 +435,14 @@ export async function createPluginServerEnv(
       workspacePath: WorkspacePath,
       env: Record<string, string>,
       agentType: AgentType,
-      resetWorkspace: boolean
+      resetWorkspace: boolean,
+      workspaceEnv: Record<string, string> = {}
     ): Promise<void> {
       // Update the mutable hook input for the finalize operation
       finalizeOp.hookInput = {
         workspacePath,
         envVars: env,
+        workspaceEnv,
         agentType,
       };
 

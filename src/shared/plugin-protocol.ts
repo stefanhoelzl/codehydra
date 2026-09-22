@@ -122,6 +122,13 @@ export interface PluginConfig {
   readonly isDevelopment: boolean;
   /** Agent environment variables for terminal integration (null if agent not ready) */
   readonly env: Record<string, string> | null;
+  /**
+   * The workspace environment (from the repository's `before-workspace-opened`
+   * hook), for every terminal the user opens. Already part of `env` for the
+   * agent terminal. Never persisted: held for this open only. Null when the
+   * workspace is not open.
+   */
+  readonly workspaceEnv: Record<string, string> | null;
   /** Agent type for terminal launching (null if no agent configured) */
   readonly agentType: AgentType | null;
   /** True for new workspaces (reset editor layout), false for reopened (preserve layout) */

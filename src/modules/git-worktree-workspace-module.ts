@@ -587,8 +587,11 @@ export function createGitWorktreeWorkspaceModule(
             if (payload.existingWorkspace) {
               const existing = payload.existingWorkspace;
               const workspacePath = existing.path;
-              const branch = existing.branch ?? existing.name;
               const metadata = existing.metadata;
+              // The recorded base, not the payload's: callers reopening a
+              // workspace know nothing better than its metadata, and a base
+              // that was never recorded stays absent rather than invented.
+              const recordedBase = metadata["base"];
 
               const key = projectKey(projectPath);
               const projectWorkspaces = workspaces.get(key) ?? [];
@@ -613,9 +616,9 @@ export function createGitWorktreeWorkspaceModule(
               return {
                 result: {
                   workspacePath,
-                  branch,
+                  branch: existing.branch,
                   metadata,
-                  ...(payload.base !== undefined && { resolvedBase: payload.base }),
+                  ...(recordedBase !== undefined && { resolvedBase: recordedBase }),
                 },
               };
             }
@@ -661,7 +664,7 @@ export function createGitWorktreeWorkspaceModule(
             return {
               result: {
                 workspacePath: workspaceKey(internalWorkspace.path.toString()),
-                branch: internalWorkspace.branch ?? internalWorkspace.name,
+                branch: internalWorkspace.branch,
                 metadata: internalWorkspace.metadata,
                 resolvedBase: base,
               },

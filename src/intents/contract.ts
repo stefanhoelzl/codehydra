@@ -149,7 +149,7 @@ export const workspaceSchema = z
     name: workspaceNameSchema,
     /** Current branch name, or null for detached HEAD state. */
     branch: z.string().nullable(),
-    /** Workspace metadata stored in git config (always contains `base`). */
+    /** Workspace metadata stored in git config (`base` when one is recorded). */
     metadata: z.record(z.string(), z.string()).readonly(),
     path: workspacePathSchema,
     /** IDE server URL for the iframe. Absent for hibernated workspaces until they wake. */
