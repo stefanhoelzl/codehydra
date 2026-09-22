@@ -44,7 +44,11 @@ beforeEach(async () => {
     processRunner: new ExecaProcessRunner(SILENT_LOGGER),
     logger: SILENT_LOGGER,
     binDir: new Path("/data/bin"),
-    sink: { write: (_ws, entry, line) => sinkLines.push({ entry, line }) },
+    sink: {
+      write: (_ws, entry, line) => sinkLines.push({ entry, line }),
+      opening: () => {},
+      closed: () => {},
+    },
   };
 });
 
@@ -61,11 +65,25 @@ async function writeHook(name: string, posix: string, windows: string): Promise<
   return entry;
 }
 
-async function run(entry: string, input: unknown = {}): Promise<z.infer<typeof outputSchema>> {
+async function run(
+  entry: string,
+  input: unknown = {},
+  signal?: AbortSignal
+): Promise<z.infer<typeof outputSchema>> {
   const wt = new Path(worktree);
   const found = await findHook(deps, wt, entry);
   if (!found) throw new Error(`hook ${entry} was not found`);
-  return runHook(deps, found, wt, input, outputSchema);
+  return runHook(deps, found, wt, input, outputSchema, signal ? { signal } : undefined);
+}
+
+/** Whether a process with this PID still exists. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("running a real hook", () => {
@@ -176,6 +194,76 @@ describe("what counts as a hook", () => {
 
     // git skips a non-executable hook in silence, which is its most-reported
     // footgun. The shell's 126 is what lets this say so instead.
-    await expect(run("no-exec-bit")).rejects.toThrow(/not executable/);
+    await expect(run("no-exec-bit")).rejects.toThrow(
+      /exit 126: a file could not be executed \(is it chmod \+x\?\)/
+    );
   });
+
+  it.skipIf(isWindows)("names a missing interpreter without blaming the file", async () => {
+    const entry = await writeHook(
+      "bad-shebang",
+      "#!/nonexistent/interpreter\necho '{}'\n",
+      OK_WINDOWS
+    );
+    await expect(run(entry)).rejects.toThrow(
+      /exit 127: a command was not found \(the shebang interpreter, or one the script ran\)/
+    );
+  });
+
+  it("runs the file pinned to this platform beside an unsuffixed one", async () => {
+    const dir = nodePath.join(worktree, HOOKS_ROOT, HOOKS_DIR);
+    const own = isWindows ? "win" : process.platform === "darwin" ? "mac" : "linux";
+    // The unsuffixed file would fail; only the pinned one prints a result.
+    await fs.writeFile(nodePath.join(dir, "pinned"), "#!/bin/sh\nexit 9\n");
+    await fs.chmod(nodePath.join(dir, "pinned"), 0o755);
+    const pinned = isWindows ? `pinned.${own}.cmd` : `pinned.${own}.sh`;
+    await fs.writeFile(nodePath.join(dir, pinned), isWindows ? OK_WINDOWS : OK_POSIX);
+    if (!isWindows) await fs.chmod(nodePath.join(dir, pinned), 0o755);
+
+    await expect(run("pinned")).resolves.toEqual({ ok: true });
+  });
+});
+
+describe("cancel", () => {
+  it.skipIf(isWindows)(
+    "kills the hook and everything it started, and fails the run",
+    async () => {
+      // sh → the script → a sleep holding the pipes: the grandchild is what a
+      // children-only kill left behind, keeping the run from ever returning.
+      const pidFile = nodePath.join(nodePath.dirname(worktree), "sleep.pid");
+      const entry = await writeHook(
+        "hangs",
+        `#!/bin/sh\nsleep 60 &\necho $! > '${pidFile}'\nwait\n`,
+        OK_WINDOWS
+      );
+      const controller = new AbortController();
+      const running = run(entry, {}, controller.signal);
+
+      let sleepPid: number | undefined;
+      for (let i = 0; i < 100 && sleepPid === undefined; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const text = await fs.readFile(pidFile, "utf8").catch(() => "");
+        if (text.trim() !== "") sleepPid = Number(text.trim());
+      }
+      expect(sleepPid).toBeDefined();
+
+      controller.abort();
+      await expect(running).rejects.toThrow(new HookFailedError("hangs", "hangs was canceled"));
+      expect(alive(sleepPid!)).toBe(false);
+    },
+    10_000
+  );
+
+  it("fails a run whose signal was aborted before the hook finished", async () => {
+    const entry = await writeHook(
+      "slow",
+      "#!/bin/sh\nsleep 60\n",
+      "@echo off\r\nping -n 60 127.0.0.1 >nul\r\n"
+    );
+    const controller = new AbortController();
+    const running = run(entry, {}, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    controller.abort();
+    await expect(running).rejects.toThrow(/slow was canceled/);
+  }, 10_000);
 });

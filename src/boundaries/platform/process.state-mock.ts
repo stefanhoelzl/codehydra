@@ -110,6 +110,7 @@ interface MockSpawnedProcessOptions {
   pid: number | undefined;
   waitResult: ProcessResult;
   killResult: KillResult;
+  untilKilled: boolean;
 }
 
 /**
@@ -161,6 +162,9 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
   }
 }
 
+/** What wait() reports for an `untilKilled` process once it has been killed. */
+const KILLED_RESULT: ProcessResult = { stdout: "", stderr: "", exitCode: null, signal: "SIGTERM" };
+
 /**
  * Implementation of MockSpawnedProcess.
  */
@@ -169,11 +173,20 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
   private readonly state: SpawnedProcessMockStateImpl;
   private readonly waitResult: ProcessResult;
   private readonly killResult: KillResult;
+  /** Set for an `untilKilled` process: settles every wait once kill() lands. */
+  private readonly killed: { promise: Promise<void>; resolve: () => void } | undefined;
 
   constructor(options: MockSpawnedProcessOptions) {
     this.pid = options.pid;
     this.waitResult = options.waitResult;
     this.killResult = options.killResult;
+    if (options.untilKilled) {
+      let resolve = (): void => {};
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      this.killed = { promise, resolve };
+    }
     this.state = new SpawnedProcessMockStateImpl({
       command: options.command,
       args: options.args,
@@ -189,12 +202,17 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
     return this.state;
   }
 
-  async wait(_timeout?: number): Promise<ProcessResult> {
-    return this.waitResult;
+  async wait(timeout?: number): Promise<ProcessResult> {
+    if (this.killed === undefined) return this.waitResult;
+    if (this.state.killCalls.length > 0) return KILLED_RESULT;
+    if (timeout !== undefined) return { stdout: "", stderr: "", exitCode: null, running: true };
+    await this.killed.promise;
+    return KILLED_RESULT;
   }
 
   async kill(termTimeout?: number, killTimeout?: number): Promise<KillResult> {
     this.state.recordKill(termTimeout, killTimeout);
+    this.killed?.resolve();
     return this.killResult;
   }
 }
@@ -361,6 +379,7 @@ class MockProcessRunnerImpl implements MockProcessRunner {
       pid,
       waitResult,
       killResult,
+      untilKilled: config?.untilKilled === true,
     });
 
     this.state.addProcess(process);
@@ -390,6 +409,13 @@ export interface SpawnConfig {
   running?: boolean;
   /** Result for kill(). Default: { success: true, reason: "SIGTERM" } */
   killResult?: KillResult;
+  /**
+   * The process runs until kill() is called: an untimed wait() stays pending
+   * until then and a timed one reports `running: true`; after the kill, wait()
+   * resolves with no exit code and SIGTERM. The exit/output fields above are
+   * ignored. Simulates a hung process.
+   */
+  untilKilled?: boolean;
 }
 
 /**

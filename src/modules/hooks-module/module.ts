@@ -28,6 +28,11 @@
  *   refuse. It fails closed: a script that breaks stops the deletion too.
  * - `on-workspace-opened` observes `workspace:created` (every open) and can
  *   affect nothing.
+ *
+ * While a blocking entry's process runs it is registered with the presenter,
+ * which offers a Cancel for it (the loading surface, a notification, or the
+ * deletion panel). Cancel kills the hook's process tree and counts as that
+ * hook failing, with that entry's usual consequence.
  */
 
 import type { z } from "zod/v4";
@@ -35,7 +40,7 @@ import type { IntentModule, EventDeclarations, HookDeclarations } from "../../in
 import type { DomainEvent } from "../../intents/lib/types";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import type { UiPresenter } from "../presentation/presentation-module";
+import type { RunningHook, UiPresenter } from "../presentation/presentation-module";
 import { notify } from "../presentation/notification-card";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { ProcessRunner } from "../../boundaries/platform/process";
@@ -64,6 +69,8 @@ import {
   type PreDeleteHookResult,
   type PreDeleteStartedFrame,
   type PreflightHookResult,
+  EVENT_WORKSPACE_DELETED,
+  type WorkspaceDeletedEvent,
 } from "../../intents/delete-workspace";
 import {
   INTENT_RESOLVE_WORKSPACE,
@@ -84,6 +91,7 @@ import {
   type HookSpec,
 } from "./hook-map";
 import {
+  ambiguityError,
   findHook,
   runEventHook,
   runHook,
@@ -104,10 +112,12 @@ export interface HooksModuleDeps {
   readonly config: Config;
   readonly stateService: StateService;
   readonly dispatcher: Dispatcher;
-  readonly ui: Pick<UiPresenter, "dialog">;
+  readonly ui: Pick<UiPresenter, "dialog" | "trackRunningHook">;
   /** Directory holding the `ch` CLI, prepended to every hook's PATH. */
   readonly binDir: Path;
   readonly sink: HookOutputSink;
+  /** Which platform-suffixed hook files apply. Default: this process's. */
+  readonly platform?: NodeJS.Platform;
 }
 
 // =============================================================================
@@ -216,6 +226,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     logger: deps.logger,
     binDir: deps.binDir,
     sink: deps.sink,
+    ...(deps.platform !== undefined && { platform: deps.platform }),
   };
 
   // ---------------------------------------------------------------------------
@@ -284,6 +295,8 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     stdin: CoreInput & Record<string, unknown>,
     schema: z.ZodType<T>
   ): Promise<T | undefined> {
+    // Whatever happened to this workspace's editor before, it is coming now.
+    deps.sink.opening(input.workspacePath);
     if (!allowed()) return undefined;
 
     const worktree = new Path(input.workspacePath);
@@ -298,10 +311,46 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     if (decision === "skip") return undefined;
 
     try {
-      return await runHook(runnerDeps, found, worktree, stdin, schema);
+      return await runCancelable(
+        found,
+        {
+          workspacePath: input.workspacePath,
+          projectPath: input.projectPath,
+          workspaceName: stdin.workspaceName,
+          phase: "open",
+        },
+        (signal) => runHook(runnerDeps, found, worktree, stdin, schema, { signal })
+      );
     } catch (error) {
       reportFailure(found, error);
       return undefined;
+    }
+  }
+
+  /**
+   * Run a blocking hook with a Cancel on offer for as long as it runs.
+   *
+   * An ambiguous entry never starts a process, so it is not offered — it fails
+   * straight away inside `run`.
+   */
+  async function runCancelable<T>(
+    found: FoundHook,
+    hook: Omit<RunningHook, "entry" | "cancel">,
+    run: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const controller = new AbortController();
+    const untrack =
+      found.kind === "file"
+        ? deps.ui.trackRunningHook({
+            ...hook,
+            entry: found.entry,
+            cancel: () => controller.abort(),
+          })
+        : undefined;
+    try {
+      return await run(controller.signal);
+    } finally {
+      untrack?.();
     }
   }
 
@@ -359,18 +408,33 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
 
     const identity = await resolveBranchAndBase(input.workspacePath);
 
-    const output = await runHook(
-      runnerDeps,
+    // The editor was torn down at "shutdown" and is not coming back: whatever
+    // this hook prints belongs in the log, not in a buffer nobody will flush.
+    deps.sink.closed(input.workspacePath);
+
+    const output = await runCancelable(
       found,
-      worktree,
       {
-        workspaceName: input.workspaceName,
         workspacePath: input.workspacePath,
         projectPath: input.projectPath,
-        ...identity,
-        keepBranch: intent.payload.keepBranch,
+        workspaceName: input.workspaceName,
+        phase: "delete",
       },
-      beforeWorktreeDeletedOutputSchema
+      (signal) =>
+        runHook(
+          runnerDeps,
+          found,
+          worktree,
+          {
+            workspaceName: input.workspaceName,
+            workspacePath: input.workspacePath,
+            projectPath: input.projectPath,
+            ...identity,
+            keepBranch: intent.payload.keepBranch,
+          },
+          beforeWorktreeDeletedOutputSchema,
+          { signal }
+        )
     );
 
     // A throw above is the "could not tell" half of the gate and stops the
@@ -430,6 +494,13 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
           entry: found.entry,
         });
         if (decision === "skip") return;
+
+        // Nothing waits on this entry, but a repository whose files cannot say
+        // which one is the hook has a mistake the author needs to hear about.
+        if (found.kind === "ambiguous") {
+          reportFailure(found, ambiguityError(found));
+          return;
+        }
 
         await runEventHook(runnerDeps, found, worktree, {
           workspaceName: payload.workspaceName,
@@ -536,6 +607,12 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
       // script, least of all one that may park on a trust dialog.
       handler: async (event: DomainEvent): Promise<void> => {
         onWorkspaceOpened(event);
+      },
+    },
+    [EVENT_WORKSPACE_DELETED]: {
+      // Its editor is never coming back, so neither is a reason to hold its output.
+      handler: async (event: DomainEvent): Promise<void> => {
+        deps.sink.closed((event as WorkspaceDeletedEvent).payload.workspacePath);
       },
     },
   };

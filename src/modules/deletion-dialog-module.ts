@@ -9,7 +9,8 @@
  *    active (selected) workspace. Subscribes to
  *    EVENT_WORKSPACE_DELETION_PROGRESS, EVENT_WORKSPACE_DELETED, and
  *    EVENT_WORKSPACE_SWITCHED — behaves like a workspace view replacement,
- *    with retry/dismiss on failure.
+ *    with retry/dismiss on failure, and a Cancel while the repository's
+ *    `before-worktree-deleted` hook runs.
  */
 
 import type { IntentModule, EventDeclarations, HookDeclarations } from "../intents/lib/module";
@@ -50,11 +51,14 @@ import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
 import type { WorkspacePath } from "../intents/contract";
 
+/** The progress row the repository's `before-worktree-deleted` hook owns. */
+const REPO_HOOK_OPERATION_ID = "repo-hook";
+
 /**
  * Dependencies for the deletion dialog module.
  */
 export interface DeletionDialogModuleDeps {
-  readonly ui: Pick<UiPresenter, "dialog" | "deletionProgress">;
+  readonly ui: Pick<UiPresenter, "dialog" | "deletionProgress" | "cancelRunningHooks">;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
 }
@@ -115,6 +119,27 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
       headerIcon: "warning",
       columns,
       rows,
+    });
+  }
+
+  // A hook has no timeout, so one that hangs would hold the panel here forever:
+  // Cancel kills it, which the gate treats as a failed hook — the deletion
+  // stops, and Retry / Dismiss appear as for any other failure.
+  const hookRunning = progress.operations.some(
+    (op) => op.id === REPO_HOOK_OPERATION_ID && op.status === "in-progress"
+  );
+  if (hookRunning && !progress.completed) {
+    sections.push({
+      type: "group",
+      items: [
+        {
+          type: "button",
+          id: "cancel-hook",
+          label: "Cancel",
+          variant: "secondary",
+          title: "Stop the repository hook. The deletion stops, as when the hook fails.",
+        },
+      ],
     });
   }
 
@@ -262,7 +287,10 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       const progress = deps.ui.deletionProgress(workspacePath);
       if (!progress) return;
 
-      if (evt.actionId === "retry") {
+      if (evt.actionId === "cancel-hook") {
+        deps.logger.debug("Deletion hook cancel", { workspace: workspacePath });
+        deps.ui.cancelRunningHooks(workspacePath);
+      } else if (evt.actionId === "retry") {
         deps.logger.debug("Deletion retry", { workspace: workspacePath });
         const pids = progress.blockingProcesses?.map((p) => p.pid);
         dispatchDelete(deps.dispatcher, {

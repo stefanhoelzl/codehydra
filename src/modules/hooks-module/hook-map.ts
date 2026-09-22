@@ -25,6 +25,7 @@ import { z } from "zod/v4";
 import type { OperationSchemas, HookPointOf } from "../../intents/lib/operation";
 import { schemas as openWorkspaceSchemas } from "../../intents/open-workspace";
 import { schemas as deleteWorkspaceSchemas } from "../../intents/delete-workspace";
+import { isValidMetadataKey, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
 
 // =============================================================================
 // Directories
@@ -108,6 +109,24 @@ const tagSchema = z
   .strict();
 
 /**
+ * A tag's name, held to the rule its metadata key must obey.
+ *
+ * Checked here rather than at the write: a name that cannot be stored used to
+ * slip through as a warning, reach `workspace:created` and show in the sidebar
+ * until the next restart quietly lost it. Failing the whole output instead is
+ * the strict-schema rule applied to keys — the author finds out now, with the
+ * name in the message.
+ */
+const tagNameSchema = z
+  .string()
+  .refine((name) => isValidMetadataKey(`${TAGS_METADATA_KEY_PREFIX}${name}`), {
+    error:
+      `not a valid tag name (each dot-separated part must ` +
+      `start with a letter, contain only letters, digits and -, and not end with -; ` +
+      `at most 59 characters in all)`,
+  });
+
+/**
  * What `after-worktree-created` may contribute back.
  *
  * Separate fields rather than one metadata map, so the reachable surface is
@@ -127,7 +146,7 @@ export const afterWorktreeCreatedOutputSchema = z
     /** Sidebar display title. The branch name stays the identity. */
     title: z.string().optional(),
     /** Tags to attach, keyed by name. */
-    tags: z.record(z.string(), tagSchema).optional(),
+    tags: z.record(tagNameSchema, tagSchema).optional(),
   })
   .strict();
 
