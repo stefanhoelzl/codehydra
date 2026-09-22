@@ -6,7 +6,12 @@
  * socket (replacing the wrapper's WrapperStart/WrapperEnd POSTs).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createdTerminals, closeHandlers, resetVscodeFake } from "../../../__mocks__/vscode";
+import {
+  createdTerminals,
+  closeHandlers,
+  env as vscodeEnv,
+  resetVscodeFake,
+} from "../../../__mocks__/vscode";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -104,6 +109,26 @@ describe("sidekick agent lifecycle emits", () => {
     closeHandlers[0]!(createdTerminals[0]!);
 
     expect(socket.emit).toHaveBeenCalledWith("api:workspace:agentLifecycle", { event: "close" });
+  });
+
+  // The terminal must close when the agent exits: its close is what teardown
+  // waits for, and a shell left at its prompt keeps it open.
+  it.each([
+    ["/bin/bash", "exec ch claude"],
+    ["/usr/bin/fish", "exec ch claude"],
+    ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "try { ch claude } finally { exit }"],
+    [
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "try { ch claude } finally { exit }",
+    ],
+    ["C:\\Windows\\System32\\cmd.exe", "ch claude & exit"],
+  ])("launches the agent so the %s shell exits with it", async (shell, line) => {
+    vscodeEnv.shell = shell;
+    activate(makeContext());
+    const socket = getSocket();
+    await socket._handlers.config!(CONFIG);
+
+    expect(createdTerminals[0]!.sendText).toHaveBeenCalledWith(line);
   });
 
   it("does not emit when the socket is disconnected", async () => {
