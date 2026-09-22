@@ -11,7 +11,8 @@ Run multiple AI agents in parallel, each in its own isolated workspace.
 5. [Configuration](#configuration)
 6. [Automatic workspaces](#automatic-workspaces)
 7. [Repository hooks](#repository-hooks)
-8. [CLI and MCP](#cli-and-mcp)
+8. [Agents](#agents)
+9. [CLI and MCP](#cli-and-mcp)
 
 ## Why CodeHydra?
 
@@ -45,10 +46,11 @@ uvx --refresh codehydra
 Or download it from
 [GitHub Releases](https://github.com/stefanhoelzl/codehydra/releases).
 
-On first launch, CodeHydra asks which coding agent to use — **Claude Code** or
-**OpenCode** — then guides you through opening a project and creating your first
-workspace. Want to run multiple agents? Just create more workspaces — each one
-gets its own worktree and agent session.
+On first launch (no `config.json` yet), CodeHydra asks which coding agent to
+use — **Claude Code** or **OpenCode** — then downloads what it needs (the
+embedded editor and the agent), which only happens once. Then open a project
+and create your first workspace. Want to run multiple agents? Just create more
+workspaces — each one gets its own worktree and agent session.
 
 ## Core concepts
 
@@ -61,62 +63,185 @@ projects are kept as a bare clone with worktrees created on demand.
 ### Workspace
 
 An isolated development environment with its own branch, files, and AI agent
-session. Workspaces are backed by git worktrees, so changes in one never affect
-another. Each one opens in a full VSCodium editor with the agent in a terminal.
+session. Workspaces are git worktrees, so changes in one never affect another.
+Each one opens in a full VSCodium editor with the agent in a terminal.
 
 ### Hibernation
 
-Workspaces you're not using can be put to sleep to free up resources. A
-hibernated workspace keeps its branch and files — wake it any time to pick up
-where you left off.
+A workspace you're not using can be put to sleep to free its editor and agent
+server. A hibernated workspace keeps its branch and files and shows a
+screenshot of where you left it — wake it any time to pick up where you left
+off.
 
 ### Agent status
 
-The sidebar shows each workspace's agent status at a glance:
+Each workspace reports its agent's status:
 
-| Status   | Meaning           |
-| -------- | ----------------- |
-| **None** | No agent active   |
-| **Idle** | Ready for input   |
-| **Busy** | Working on a task |
+| Status    | Meaning                                                         |
+| --------- | --------------------------------------------------------------- |
+| **None**  | No agent running                                                |
+| **Idle**  | Done, or waiting on you (including a pending permission prompt) |
+| **Busy**  | Working on a task                                               |
+| **Mixed** | Several agent sessions, some idle and some busy                 |
 
-You'll hear a sound when an agent finishes its task, so you can stay productive
-without constantly checking the screen. The app icon also carries a badge
-summarizing status across all workspaces.
+You'll hear a sound when an agent goes idle, so you can stay productive
+without constantly checking the screen. On macOS and Windows the app icon
+carries a badge: ● when every agent is busy, ◐ when some are done (no badge on
+Linux).
 
 ## Using CodeHydra
 
-### Managing workspaces
+### The sidebar
 
-- **Create** — click **New workspace** or press <kbd>Enter</kbd> in shortcut mode
-- **Switch** — click a workspace or use <kbd>1</kbd>-<kbd>0</kbd> in shortcut mode to jump directly
-- **Delete** — hover and click the delete icon, or press <kbd>Delete</kbd> in shortcut mode
-- **Hibernate / Wake** — put an idle workspace to sleep to free resources; click
-  it (or wake it from the sidebar) to bring it back
+The sidebar lists your projects and their workspaces, sorted by name.
 
-Workspaces created in the background — by the MCP server, a plugin, or
-automation — get a blue **new** tag in the sidebar so they're easy to spot. The
-tag clears the first time you switch to that workspace.
+- **Collapsed**, it is a strip of status icons. It expands when you rest the
+  pointer at the left edge of the window, in shortcut mode, while a dialog or
+  the New workspace form is showing, and whenever there are no workspaces.
+- **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
+  window); the width is saved as `sidebar.width`.
+- The header has **?** (this guide) and the **gear** (settings), when expanded.
+- **Hide hibernated / Show hibernated** at the bottom (or <kbd>Alt</kbd>+<kbd>X</kbd>,
+  <kbd>T</kbd>) hides sleeping workspaces; a project with hidden rows shows how
+  many. The choice is remembered.
+- Notifications (clone progress, failures, updates) stack at the bottom of the
+  sidebar, newest on top; repeats merge into one card with a count.
 
-The question mark in the sidebar header opens this guide; the gear next to it
-opens the settings.
+A workspace row shows its title (or its name if it has none); with a title, the
+second line shows the branch. Tags follow, each in its color and with its label,
+and its description on hover. Long labels scroll as `sidebar.label-scroll` says
+(`hover` by default). A folder icon marks a local project, a source-control icon
+a cloned one.
+
+The icon on each row:
+
+| Icon                       | Meaning                    |
+| -------------------------- | -------------------------- |
+| Grey dot                   | No agent                   |
+| Green dot                  | Idle                       |
+| Red pulsing dot            | Busy                       |
+| Red dot                    | Mixed                      |
+| Spinner                    | Being deleted              |
+| Warning triangle           | Deletion failed            |
+| Pause icon (play on hover) | Hibernated — click to wake |
+
+Hovering the dot shows the counts, e.g. "2 idle, 1 busy". A row also turns
+green while a dialog about that workspace is waiting for you — a hook trust
+question, a failed deletion.
+
+### Opening and closing projects
+
+Open a project from the New workspace form (**Open project folder** or
+**Clone from Git**), or with `ch project open <path|url>`.
+
+- A folder that is not a git repository asks to **initialize** one (git init
+  with an initial commit).
+- A repository that already has worktrees CodeHydra does not manage asks which
+  to **adopt**; worktrees on a detached HEAD cannot be adopted.
+- **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
+  `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
+  background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
+  repository that does not exist it offers **Create on GitHub** (initialize it
+  with a README so it can be cloned) and **Retry Clone**.
+
+To **close** a project, hover its header and click the trash icon. By default
+its worktrees stay on disk and reappear when you open it again. The dialog
+offers:
+
+- **Remove all workspaces and their branches**;
+- for a cloned project, **Keep cloned repository** (unchecked: the clone is
+  deleted);
+- for a local project, **Remove project directory from disk** (which implies
+  removing all workspaces).
+
+### Creating a workspace
+
+Click **New workspace** at the top of the sidebar (or <kbd>Alt</kbd>+<kbd>X</kbd>,
+<kbd>Enter</kbd>). The form has:
+
+- **Project** — preselected with the one you opened last, or the active
+  workspace's.
+- **Name** — becomes the git branch. Type a new name, or pick an existing local
+  or remote branch to check it out (which also fills in its base). Letters,
+  digits and `-_./`, starting with a letter or digit, at most 100 characters,
+  no `..`, and not the name of an existing workspace.
+- **Base branch** — what a new branch forks from (default: the project's
+  default branch). Cached branches show at once while a fetch runs.
+- **Prompt** (optional) — sent to the agent as soon as the workspace is ready.
+- **Agent**, **Agent name**, **Permission mode** — shown when there is a
+  choice: more than one agent installed, a named agent or persona, Claude's
+  permission modes.
+
+**Create** is enabled once the form is valid; **Reset** or <kbd>Escape</kbd>
+clears it (otherwise it keeps what you typed). The new row shows as loading
+until the workspace is ready.
+
+Every new workspace gets a blue **new** tag until you first switch to it, so
+one you left while it was being created — or one an agent or automation made —
+is easy to spot. Turn this off with `auto-tag.new`.
+
+### Switching, hibernating and waking
+
+- **Switch** — click a row, or in shortcut mode use the arrows or a number.
+- **Hibernate** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active
+  workspace (or `ch ws hibernate`). Any workspace can hibernate, busy or not;
+  hibernating the active one moves you to another.
+- **Wake** — select it and click its screenshot, click the pause icon on its
+  row, or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> again. Selecting a
+  hibernated workspace never wakes it by itself.
+
+### Deleting a workspace
+
+Hover a ready row and click its trash icon (or <kbd>Alt</kbd>+<kbd>X</kbd>,
+<kbd>Delete</kbd>). The dialog checks the worktree and warns about uncommitted
+changes and commits not merged into its base; confirming deletes anyway. Tick
+**Keep branch** to keep the git branch. (From `ch` or MCP, a workspace with
+uncommitted or unmerged work is refused unless told to ignore warnings.)
+
+While you are looking at the workspace, a progress panel shows the steps:
+terminating processes, stopping the agent server, closing the editor, running
+the repository hook (if the repository has one), removing the worktree. On a
+failure it offers **Retry**, **Kill & Retry** (with a table of the processes
+holding files open) and **Dismiss**, which force-removes the workspace from
+CodeHydra (deleting its branch even if you chose to keep it) even if files
+remain on disk. <kbd>Escape</kbd> on a failed panel means Dismiss.
+
+### Notifications and updates
+
+- **Sound** — played when a workspace's idle count goes up (including an agent
+  that reports idle when it first connects). Mute it with `silent`.
+- **OS notifications** — "CodeHydra agent needs your attention", only while the
+  CodeHydra window is not focused; clicking one brings the window forward and
+  switches to that workspace. By default only the first agent to finish while
+  all were busy notifies (`notification`).
+- **Updates** — checked every 4 hours and on resume. A sidebar card offers
+  **Install**, shows the download, then **Restart Now**; dismissing silences
+  that version (a newer one shows again). Only for DMG, NSIS and AppImage
+  builds. Turn it off with `update.notification`.
+- **Bug reports** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>B</kbd> opens **Report a
+  Bug**; your config (secrets redacted) and logs are attached, and it is sent
+  even with telemetry off.
 
 ### Keyboard shortcuts
 
-Press <kbd>Alt</kbd>+<kbd>X</kbd> to enter shortcut mode, then:
+Hold <kbd>Alt</kbd> and tap <kbd>X</kbd> to enter shortcut mode, and keep
+holding <kbd>Alt</kbd> while you press:
 
-| Key                                     | Action                              |
-| --------------------------------------- | ----------------------------------- |
-| <kbd>↑</kbd> / <kbd>↓</kbd>             | Navigate workspaces                 |
-| <kbd>←</kbd> / <kbd>→</kbd>             | Navigate idle workspaces            |
-| <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd> | Jump to workspace 1-10              |
-| <kbd>Enter</kbd>                        | Create workspace                    |
-| <kbd>Delete</kbd>                       | Remove workspace                    |
-| <kbd>H</kbd>                            | Hibernate / wake workspace          |
-| <kbd>T</kbd>                            | Toggle hiding hibernated workspaces |
-| <kbd>S</kbd>                            | Open settings                       |
-| <kbd>B</kbd>                            | Report a bug                        |
-| <kbd>Escape</kbd>                       | Exit shortcut mode                  |
+| Key                                      | Action                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| <kbd>↑</kbd> / <kbd>↓</kbd>              | Previous / next workspace                                           |
+| <kbd>←</kbd> / <kbd>→</kbd>              | Previous / next idle workspace (a busy one if none is idle)         |
+| <kbd>1</kbd>-<kbd>9</kbd>, <kbd>0</kbd>  | Jump to the numbered workspace (numbers are shown in shortcut mode) |
+| <kbd>Enter</kbd>                         | Open the New workspace form                                         |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                         |
+| <kbd>H</kbd>                             | Hibernate / wake the active workspace                               |
+| <kbd>T</kbd>                             | Hide / show hibernated workspaces                                   |
+| <kbd>S</kbd>                             | Open settings                                                       |
+| <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                    |
+| <kbd>Escape</kbd>                        | Leave shortcut mode                                                 |
+
+Releasing <kbd>Alt</kbd> or leaving the window also ends shortcut mode.
+Navigation skips hibernated and hidden workspaces.
 
 ### Background processes: `ch bg`
 
@@ -133,26 +258,35 @@ Prefix a long-lived background command with `ch bg` (or the equivalent
 ch bg npm run dev
 ```
 
-It runs the command unchanged — same output, same exit code — and only tells
-CodeHydra to leave the workspace status alone. This applies to Claude Code;
-OpenCode's background shells don't affect its status.
-
-### What agents are told
-
-You don't have to explain any of this to your agent. CodeHydra gives every
-agent session a short system prompt describing the workspace it runs in — what
-busy and idle mean, that the worktree's lifecycle belongs to CodeHydra, that
-creating another workspace is your call, and where to find this guide
-(`ch guide`). A line in your project's `CLAUDE.md` or `AGENTS.md` is still the
-place to tighten or loosen any of it for your repository.
+It runs the command unchanged, with the same output and exit code, and only
+tells CodeHydra to leave the workspace status alone. It matters only for
+Claude Code: OpenCode's background shells never affect its status, so there it
+simply runs the command. A background sub-agent always keeps the workspace busy.
 
 ## Configuration
 
-CodeHydra works out of the box, but most behavior is configurable. Open the
-settings with the gear in the sidebar header (or <kbd>Alt</kbd>+<kbd>X</kbd>
-then <kbd>S</kbd>).
+CodeHydra works out of the box, but most behavior is configurable. Every
+setting is a dot-separated key. Launching CodeHydra with `--help` prints them
+all with their defaults and valid values, then exits.
 
-The same dot-separated keys work in three places, highest precedence first:
+### The settings dialog
+
+Open it with the gear in the sidebar header (or <kbd>Alt</kbd>+<kbd>X</kbd>
+then <kbd>S</kbd>). Keys are grouped by their first segment; dotless keys are
+under **General**.
+
+- Edits are buffered: **Save**, **Save & Restart** (saves, then relaunches) or
+  **Cancel**. Save is disabled while a field is invalid.
+- A key that only takes effect after a restart says **Restart to apply** once
+  changed; the others apply at once.
+- A key set by an env var or CLI flag carries an `env` / `cli` badge: saving it
+  applies now, but the override wins again at the next start.
+- Each changed key has a reset button, and **Reset all to defaults** resets
+  everything. Resetting removes the key from `config.json`.
+
+### Where settings come from
+
+The same keys work in three places, highest precedence first:
 
 | Source      | Example                |
 | ----------- | ---------------------- |
@@ -160,38 +294,54 @@ The same dot-separated keys work in three places, highest precedence first:
 | Env var     | `CH_LOG__LEVEL=debug`  |
 | config.json | `"log.level": "debug"` |
 
-An env var is the key with a `CH_` prefix, `.` turned into `__` and `-` into
-`_`, upper-cased. `config.json` lives in the data directory:
+- An env var is the key with a `CH_` prefix, `.` turned into `__` and `-` into
+  `_`, upper-cased.
+- A CLI flag also takes `--key value`, and a bare `--key` means `true`.
+  Booleans accept `true`/`false`/`1`/`0`. `--key=@path` reads the value from a
+  file (one trailing newline stripped; `@@` for a value that really starts with
+  `@`) — the only way to give a multi-line value on the command line.
+- An invalid value from any source stops CodeHydra at startup with an error and
+  the `--help` text. Unknown keys are ignored (and dropped from `config.json`);
+  a `config.json` that is not valid JSON is renamed to `config.json.broken` and
+  defaults are used.
+
+`config.json` lives in the data directory, next to `state.json` (what the app
+itself remembers: trusted hook answers, the hide-hibernated toggle, tracked
+automatic workspaces, a dismissed update) and the `logs/` folder:
 
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
-- **Windows**: `%APPDATA%\Codehydra\`
+- **Windows**: `%USERPROFILE%\AppData\Roaming\Codehydra\`
 
-From a shell or an agent, `ch config list`, `ch config get <key>`,
-`ch config set <key> <value>` and `ch config reset <key>` read and write the
-running app's settings, exactly as the settings dialog does.
+### From a shell or an agent
 
-Common keys:
+`ch config` reads and writes the **running** app's settings exactly as the
+dialog does (MCP: `config_list`, `config_get`, `config_set`, `config_reset`).
+`ch config list` is the reference for every setting: its current value,
+default, where the value comes from, whether it applies live or after a
+restart, its valid values and what it does.
 
-- `agent` — which coding agent to launch (`claude` or `opencode`)
-- `silent` — mute the sound played when an agent goes idle
-- `notification` — when to raise an OS notification for an idle agent
-  (`disabled`, `each-workspace`, `first-workspace`)
-- `sidebar.width` — expanded sidebar width (also set by dragging its edge)
-- `update.notification` — whether to notify when an update is available
-- `hooks.enabled` — run repository hooks (see [Repository hooks](#repository-hooks))
-- `log.level` — e.g. `debug`, or `debug:hooks,process` for some loggers only
+```sh
+ch config list                      # every setting, with its description
+ch config get log.level
+ch config set sidebar.width 300     # values are strings, parsed like a CLI flag
+ch config set version.claude ""     # empty clears a key that accepts null
+ch config reset sidebar.width       # back to the default
+```
 
-Logs are written to the `logs/` folder of the data directory.
+An unknown key exits with 6, an invalid value with 2, and no running app with 3.
 
 ## Automatic workspaces
 
 CodeHydra can create workspaces for you on a schedule from any command that
 emits JSON — for example, a workspace per pull request that requests your
 review. Configure them under `auto-workspace.sources` in the settings; the
-editor there has a help panel with the full reference. The poll interval is
-`auto-workspace.poll-interval` (seconds between the end of one poll and the
-start of the next, default 60).
+editor there has a help panel with the same reference. The first poll runs at
+startup; after that, `auto-workspace.poll-interval` is the number of seconds
+between the end of one poll and the start of the next (default 60, minimum 1;
+a change applies once the current wait ends).
+
+### Sources
 
 The value is a multi-document YAML stream, one `---`-separated document per
 source:
@@ -201,25 +351,82 @@ source:
 | `name`     | Source name; must be unique                                                          |
 | `type`     | The trigger: `cron` (the default and only type)                                      |
 | `mode`     | `workspaces` (default) or `events` — what the command's objects mean                 |
-| `cmd`      | Shell command (`sh` on POSIX, `cmd.exe` on Windows) printing a JSON array of objects |
+| `cmd`      | Shell command printing a top-level JSON array of objects                             |
 | `template` | Rendered once per object into one workspace; every string in it is a Liquid template |
 
-Inside `template`, the render context is the JSON object itself: `{{ title }}`,
-`{{ user.login }}`, `{{ title | truncate: 60 }}`. Its keys are `name`
-(required: workspace name and git branch), `key` (dedup identity, default the
-name), `base`, `tracking`, `project` or `git` (where the workspace goes),
-`focus`, `prompt` (sent to the new agent), `agent` and `metadata` (`title`,
-`tags`, any other keys).
+The command runs with `/bin/sh -c` on POSIX and `cmd.exe /d /s /c` on Windows
+(use cmd.exe syntax there: `"…"` quoting, `^` to continue a line). It inherits
+CodeHydra's environment and working directory, and is killed after 30
+seconds. A non-zero exit, a timeout or output that is not a JSON array skips
+that poll. The command line is never logged, so an inlined token stays out of
+the logs (the value is also left out of bug reports).
+
+An invalid value — bad YAML, a document that fails validation — is rejected by
+the settings dialog and `ch config set`; given at startup (config.json, env
+var, CLI flag) it stops CodeHydra from starting. On the command line,
+`--auto-workspace.sources=@./sources.yaml` reads the value from a file, the
+only way to pass multi-line YAML there.
+
+### The template
+
+The render context is the JSON object itself: `{{ title }}`, `{{ user.login }}`,
+`{{ title | truncate: 60 }}`, `{% if draft %}…{% endif %}`. A field the object
+does not have renders empty.
+
+| Key        | Meaning                                                                                                                                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-{{ number }}` to a title                                                                        |
+| `key`      | Dedup identity across polls (default: the rendered name). `workspaces` mode only                                                                                                         |
+| `project`  | Absolute path of a local repository. Opened if it is not already                                                                                                                         |
+| `git`      | Clone URL (or `org/repo`) — cloned once, then reused. `project` wins if both are given; with neither, the item is skipped                                                                |
+| `base`     | Branch to fork from (default: the project's default branch). Only when creating                                                                                                          |
+| `tracking` | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                                                |
+| `focus`    | `true` switches to the workspace once created (default `false`)                                                                                                                          |
+| `prompt`   | Sent to the new workspace's agent. Never sent to an existing or adopted workspace                                                                                                        |
+| `agent`    | `{ type, name, permission-mode, model: { provider, id } }`; `type` is `claude` or `opencode`, `permission-mode` is Claude only, `model` needs both fields. Default: the configured agent |
+| `metadata` | `title` (sidebar title), `tags` (`tags.<name>: { color, label, description }`), and any other keys                                                                                       |
+
+Metadata keys must start with a letter and contain only letters, digits and
+`-`; an invalid key is dropped with a warning in the log. Every workspace a
+source creates or matches also gets `source: <source name>` in its metadata,
+and a created one gets the blue **new** tag.
+
+### Modes
 
 - **`mode: workspaces`** — the command emits the workspaces that _should_
-  exist. An item not seen before creates a workspace; one already handled is
-  skipped; one that disappears is forgotten, so if it comes back it is created
-  again. Nothing is ever deleted automatically.
+  exist, and each poll reconciles against that list:
+  - an item not seen before creates a workspace — or, if a workspace with that
+    name already exists in the project, **adopts** it: tracked from then on,
+    otherwise untouched (no metadata, wake, focus or prompt);
+  - an item already handled is skipped, so deleting its workspace by hand is
+    final while the item is still listed;
+  - an item that disappears is forgotten once its workspace is gone too; if it
+    comes back after that, it is created again.
+
+  Nothing is ever deleted automatically. Removing a source, or switching it to
+  `events`, forgets everything it tracked.
+
 - **`mode: events`** — the command emits things that _happened_, and each
-  object fires once. Nothing is tracked, so the command must not emit the same
-  thing twice. If `template.name` matches an existing workspace, its metadata is
-  re-applied and it is woken (or switched to with `focus: true`); it gets no
-  prompt. Otherwise the workspace is created.
+  object fires exactly once. Nothing is tracked, so the command must not emit
+  the same thing twice (mark it read, pop a queue, keep its own cursor). Per
+  event, `template.name` is matched against the project's workspaces:
+  - no match — the workspace is created, as in `workspaces` mode;
+  - a match — its metadata is re-applied, then it is woken if hibernated, or
+    switched to if `focus: true`. It gets no prompt: a prompt only reaches an
+    agent when it starts;
+  - a match being deleted — skipped.
+
+  A failed event is logged and dropped; there is no retry.
+
+### When something goes wrong
+
+Most problems only reach the log, at `warn`: a failing or timed-out command,
+bad JSON, a template that does not render, a project that cannot be opened, a
+failed event. A clone that fails shows a "Clone failed" notification. A
+workspace that cannot be created (an invalid branch name, a bad `tracking`)
+shows an error notification and is retried every poll.
+
+### Example
 
 ```yaml
 name: github
@@ -228,10 +435,10 @@ cmd: |
     -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body baseRefName author{login} repository{url}}}}}' \
     --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
 template:
-  name: "{{ title }}"
+  name: "pr-{{ number }}"
   key: "{{ html_url }}"
   base: "{{ base.ref }}"
-  project: "{{ clone_url }}"
+  git: "{{ clone_url }}"
   metadata:
     title: "PR #{{ number }}: {{ title }}"
     tags:
@@ -252,7 +459,10 @@ was created. They live in the repository, so everyone who works on it gets them.
 ### Where hooks go
 
 One directory, read from the **worktree** — so a hook must be committed on the
-branch workspaces are created from (in practice, `main`):
+branch the worktree checks out: its base (in practice, `main`), or the remote
+branch it tracks. A hook runs as it is in the worktree at that moment,
+uncommitted edits included — so an agent in the workspace can change what
+`before-worktree-deleted` does.
 
 ```
 .codehydra/hooks/
@@ -271,6 +481,8 @@ file is named after the entry, with or without an extension —
 `after-worktree-created.py` are all the same entry. If two files claim one entry,
 the first by name wins and CodeHydra logs a warning; this is not platform-aware,
 so a repository cannot ship both a bare file for POSIX and a `.cmd` for Windows.
+Backup files count too — `after-worktree-created.bak` sorts before `.sh` and
+wins — so remove them.
 
 How a hook is started:
 
@@ -279,7 +491,8 @@ How a hook is started:
   reports a non-executable blocking hook instead of skipping it silently.
 - **Windows**: `cmd.exe /d /s /c "<path>"`. The shebang means nothing there, so
   use `.cmd` or `.bat`.
-- Symlinks and directories are ignored with a warning.
+- Symlinks and directories are not run (a warning is logged) — and if one sorts
+  first, it still claims the entry.
 
 ### The exchange
 
@@ -295,6 +508,9 @@ How a hook is started:
   put first on `PATH`. `ch` therefore works inside a hook and finds the
   workspace from the working directory (`ch ws title`, `ch ws tag set`, …).
   Nothing workspace-specific is added to the environment; stdin is the context.
+- **Paths**: on Windows, `workspacePath` is lower-case with forward slashes
+  (`c:/users/…`). For a project cloned from a URL, `projectPath` is
+  CodeHydra's bare clone, which has no working files.
 - **Timeout**: none. A hook runs until it exits.
 
 Every entry receives this core, plus a field or two of its own:
@@ -323,10 +539,11 @@ echo '{"title": "Feature X"}'         # the result
 ### after-worktree-created
 
 Runs once, on a newly created worktree, before the editor and the agent start.
-It does not run when a workspace is reopened (app start, project open) or woken
-from hibernation. It blocks the workspace opening — the sidebar row shows as
-loading until it exits — because it can contribute the environment the agent
-runs in.
+It does not run when a workspace is reopened (app start, project open), woken
+from hibernation, or adopted as an existing worktree when a project is added.
+It blocks the workspace opening — the sidebar row shows as loading until it
+exits, including while the trust question is open — because it can contribute
+the environment the agent runs in.
 
 Extra input: none. `branch` and `base` are always present.
 
@@ -344,21 +561,28 @@ Output — every field optional:
 }
 ```
 
-- `env` reaches the agent's terminal and the editor's terminals. It is not
-  persisted: after an app restart or a hibernate/wake the workspace starts
-  without it. With OpenCode, the agent server process itself does not get it.
+- `env` (string values) reaches the agent terminal CodeHydra opens, so Claude
+  Code and the commands it runs see it. Terminals you open yourself do not.
+  With OpenCode, the commands the agent runs do not see it either: they run in
+  OpenCode's server, which is started without it. CodeHydra's own `_CH_*`
+  variables win over a key of the same name. It is not persisted: after an app
+  restart or a hibernate/wake the workspace starts without it. The values are
+  also written in plain text to the workspace's `.code-workspace` file.
 - `title` is the sidebar display name; the branch name stays the identity.
 - `tags` are keyed by tag name; `color`, `label` and `description` are optional.
-  A tag name must start with a letter and contain only letters, digits and
-  `-` (not ending in `-`); an invalid one is dropped with a warning in the log.
+  Each dot-separated part of a tag name must start with a letter and contain
+  only letters, digits and `-`, not ending in `-`; at most 59 characters. An
+  invalid tag is not saved (a warning is logged) but shows until the next
+  restart.
 
 `title` and `tags` are stored in the workspace's git config, so they survive a
-restart like a title set by hand. Return them rather than calling `ch` during
-setup, which can be overwritten by the workspace opening.
+restart like a title set by hand.
 
-**Failure is loud but not fatal.** A non-zero exit or invalid output raises a
-notification and is logged; the workspace still opens, without anything the
-hook returned. A hook that never exits leaves the workspace loading.
+**Failure is loud but not fatal.** A non-zero exit or invalid output shows a
+**Repository hook failed** notification (e.g. `after-worktree-created failed:
+exit 1 — <last stderr line>`) and is logged; the workspace still opens, without
+anything the hook returned. A hook that never exits leaves the workspace
+loading.
 
 Replacing a `.keepfiles` that listed `.env` and `config/local.yml`:
 
@@ -396,30 +620,39 @@ To refuse, exit **0** and print:
 ```
 
 Printing nothing, or `{}`, allows the deletion. `{"reason": "…"}` without
-`"blocked": true` also allows it.
+`"blocked": true` also allows it; `{"blocked": true}` without a reason shows
+"blocked".
 
 A **non-zero exit** or invalid output means the hook broke. That stops the
 deletion too — the gate fails closed — but is reported as a hook failure, with
 the last stderr line, rather than as a refusal.
 
 Either way the deletion stops before the worktree is removed and the reason
-appears on the progress row, with **Retry** and **Dismiss**. Retry runs the
-hook again. Dismiss force-deletes, skipping hooks, and deletes the branch even
-if you chose to keep it. These buttons appear only once the hook has exited:
-a hook that hangs can only be stopped by killing its process (or quitting
-CodeHydra).
+appears on the progress row, with **Retry** and **Dismiss**. Neither keeps the
+workspace: Retry runs the whole deletion again (trust question included, unless
+answered Always or Never); Dismiss force-deletes, skipping hooks, and deletes
+the branch even if you chose to keep it. **Escape on the failed panel means
+Dismiss.** These buttons appear only once the hook has exited: a hook that
+hangs can only be stopped by killing its process (or quitting CodeHydra).
+
+When closing a project with "remove all", a refused deletion does not stop the
+project from closing; that worktree stays on disk.
 
 ### on-workspace-created
 
-Started after a workspace is created and forgotten immediately — nothing waits
-for it, its stdout is ignored, and a failure (including a non-executable file)
-only reaches the log.
+Started after a workspace is open — its editor and agent already running, so
+it cannot prepare anything for the agent; use `after-worktree-created` for
+that — and forgotten immediately. Nothing waits for it, its stdout is ignored,
+and a failure (including a non-executable file) only logs a warning with the
+exit code; its stderr is logged at `info`, below the default level.
 
 It also runs for every non-hibernated workspace when CodeHydra starts or a
-project is opened, and when a workspace is woken. Extra input:
-`"reopened": true | false` tells these apart, so a script that registers
-workspaces with something external can skip reopens, while one that re-warms a
-cache will not. On a reopen, `base` may be empty or absent.
+project is opened (adopted worktrees included), and when a workspace is woken.
+Extra input: `"reopened": true | false` tells these apart, so a script that
+registers workspaces with something external can skip reopens, while one that
+re-warms a cache will not. On a start or project open, `base` is the recorded
+base or `""`; on a wake it is absent. `branch` is always present (the workspace
+name for a detached HEAD).
 
 ### Trust
 
@@ -428,11 +661,18 @@ project, CodeHydra asks:
 
 > **Run repository hooks?** "my-app" defines CodeHydra hooks. Running them
 > executes scripts from the repository on your machine.
+> `.codehydra/hooks/after-worktree-created`
 >
-> **Always** · **Once** · **Skip** · **Never**
+> Buttons: **Always**, **Once**, **Skip**, **Never**
 
 - **Always** and **Never** are remembered for that project; **Once** and
   **Skip** apply to that one run. Escape means Skip.
+- Trust is per project, not per script: after **Always**, edited hooks run
+  without asking.
+- One question per project is open at a time; every hook waiting on it gets
+  the same answer.
+- The operation waits while the question is open. With an
+  `on-workspace-created` hook, it can appear right at app start.
 - Skip or Never on a `before-worktree-deleted` lets the deletion proceed
   without the gate.
 - The question is asked whatever triggered the hook — the UI, `ch ws delete`,
@@ -449,8 +689,11 @@ To turn hooks off entirely, set `hooks.enabled` to `false` (settings,
 
 - Test a hook by hand from the worktree:
   `echo '{"workspaceName":"x","workspacePath":"'"$PWD"'","projectPath":"/path/to/project","branch":"x","base":"main"}' | .codehydra/hooks/after-worktree-created`
+  — add `"keepBranch": false` for `before-worktree-deleted`, or
+  `"reopened": false` for `on-workspace-created`.
 - stderr appears in the **CodeHydra Hooks** output channel once the hook
-  exits. `before-worktree-deleted` has no editor left to show it in: only its
+  exits, each line tagged with the hook's name (up to 500 lines are kept until
+  the editor is up; the log keeps them all). `before-worktree-deleted` has no editor left to show it in: only its
   reason, or its last stderr line on failure, reaches the progress row.
 - stderr is logged at `info`, below the default log level. Run with
   `--log.level=info` (or `debug`) to see it in the log file; the process
@@ -460,45 +703,171 @@ To turn hooks off entirely, set `hooks.enabled` to `false` (settings,
   found" means the `#!` line points at something that is not installed — or
   that the script itself exited with 127 (command not found).
 
+## Agents
+
+Each workspace runs one coding agent — Claude Code or OpenCode, chosen by the
+`agent` setting or per workspace when you create it — in a terminal tab of its
+editor.
+
+### Claude Code
+
+The agent terminal runs `ch claude`, which starts the `claude` on your `PATH`
+(or the version set by `version.claude`) with CodeHydra's additions: its status
+hooks, the CodeHydra MCP server, the system prompt below, and
+`--allow-dangerously-skip-permissions` (so bypass mode is available through
+Shift+Tab, not switched on). It resumes the workspace's last conversation
+(`--continue`) unless the workspace is new.
+
+### OpenCode
+
+CodeHydra runs one `opencode serve` per workspace and the agent terminal
+attaches to it. The status shows **None** until the terminal has attached.
+
+### Starting, closing and restarting
+
+In the editor's command palette: **CodeHydra: Open Agent**, **Close Agent**,
+**Restart Agent Server** (or `ch ws agent open|close|restart`, or the MCP
+tools).
+
+- **Open** focuses the agent terminal, starting it if it is closed.
+- **Close** stops the agent; its terminal stays closed after a restart or
+  wake until you open it again. The terminal also closes when the agent exits.
+- **Restart** restarts OpenCode's server. For Claude Code there is no server:
+  it regenerates CodeHydra's config files and resets status tracking, but does
+  not restart a running `claude`.
+
+### Initial prompts
+
+A prompt given when a workspace is created — in the New workspace form, with
+`ch ws create … --prompt`, by `workspace_create` from another agent, or by an
+[automatic workspace](#automatic-workspaces) — is sent once, when the agent
+first starts. With it you can choose `--agent claude|opencode`, `--model`
+(OpenCode: `provider/model`), `--permission-mode` (Claude Code, e.g. `plan`)
+and `--agent-name`; these need `--agent`.
+
+### Status and permissions
+
+Busy and idle come from the agent itself: Claude Code through its hooks,
+OpenCode through its server's events. A pending permission prompt counts as
+idle — the agent is waiting on you.
+
+### What agents are told
+
+You don't have to explain CodeHydra to your agent. Every session gets a short
+system prompt: what busy and idle mean (so it ends its turn only when it needs
+you), that the worktree's lifecycle belongs to CodeHydra, that sibling
+workspaces share the repository (an `index.lock` error means retry), that
+creating another workspace is your call, that `ch` is on its `PATH`, that
+`code <path>` opens a file in your editor, and that `ch guide` explains
+CodeHydra. Claude Code is also told about `ch bg`. The MCP server adds: pass a
+prompt when creating a workspace, and file a bug report only when asked.
+
+A line in your project's `CLAUDE.md` or `AGENTS.md` is the place to tighten or
+loosen any of it. With OpenCode the prompt is passed as `instructions`, which
+replaces an `instructions` list in your own `opencode.json` — use `AGENTS.md`.
+
 ## CLI and MCP
 
 ### The `ch` command
 
-Every workspace terminal has `ch` on its `PATH`. It drives the running
-CodeHydra from a shell: `ch --help` lists the commands, `ch <command> --help`
-shows one command's arguments.
+`ch` lives in the `bin` folder of the data directory. It is on the `PATH` of
+every editor terminal, the agent, and repository hooks; to use it from any
+other shell, add that folder to your `PATH` or symlink `ch`. It finds the
+running CodeHydra by itself; if none is running, it exits 3.
+
+`ch --help` lists the commands (it needs the running app), and
+`ch <command> --help` shows one command's arguments:
+
+| Command                                                            | Purpose                                                                                                          |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `ws status`                                                        | Dirty flag, unmerged commits and agent status (`--refresh` fetches first)                                        |
+| `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`) |
+| `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
+| `ws hibernate`, `ws wake`                                          | Hibernate / wake                                                                                                 |
+| `ws switch <workspace>`                                            | Make a workspace the active one                                                                                  |
+| `ws title <title>`                                                 | Sidebar title                                                                                                    |
+| `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
+| `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |
+| `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
+| `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
+| `ws notify`, `ws status-bar`, `ws ask`                             | A notification, status-bar text, or a question in the editor (`ask` waits for the answer)                        |
+| `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                   |
+| `ws vscode-command <command>`                                      | Run a VS Code command                                                                                            |
+| `ws open <path>`                                                   | Open with the OS (`--reveal` shows it in the file manager)                                                       |
+| `project list`, `project open <target>`, `project close <project>` | Projects (a path, a git URL or `org/repo`; `--remove-local-repo`)                                                |
+| `lock take`, `lock release`, `lock ls`, `lock run`                 | Locks, see below                                                                                                 |
+| `config list\|get\|set\|reset`                                     | Settings, see [Configuration](#configuration)                                                                    |
+| `guide [section]`                                                  | This guide, or one `##` section of it                                                                            |
+| `log <level> <message>`                                            | Write to CodeHydra's log                                                                                         |
+| `report-issue <description>`                                       | File a bug report                                                                                                |
+| `bg <cmd…>`                                                        | Run a command without keeping the workspace busy                                                                 |
+| `mcp`, `claude`, `opencode`                                        | The MCP server and agent launchers CodeHydra itself uses                                                         |
 
 ```sh
-ch ws status                  # this workspace: branch, dirty flag, agent status
-ch ws create feature-auth main
+ch ws status
+ch ws create feature-auth main --prompt "add login with GitHub"
 ch ws title "Auth rework"
 ch ws tag set review --color "#3498db"
-ch project list
-ch config get agent
-ch guide repository-hooks     # one section of this guide
+ch ws delete --workspace feature-auth --keep-branch
+ch guide repository-hooks
 ```
 
-- `ch` acts on the workspace containing the current directory; `--workspace
-<path>` targets another. Workspaces and projects may be named instead of
-  pathed.
-- Output is human-readable at a terminal and JSON when piped; `--json` and
-  `--no-json` force either. `ch guide` prints markdown unless `--json` is given.
+- `ch` acts on the workspace containing the current directory.
+  `--workspace <name|path>` targets another; a name must be unique across open
+  projects, and only an absolute path counts as a path. A name that does not
+  resolve leaves the command with no workspace (exit 4).
+- `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`, `ws switch`,
+  `ws open` and `ws create --project …` work outside a workspace; other
+  workspace commands exit 4 there.
+- Output is human-readable at a terminal and JSON when piped (errors as
+  `{"error", "exitCode"}`); `--json` / `--no-json` force either. `ch guide`
+  prints markdown unless `--json` is given. Progress (clones, deletions) goes to
+  stderr when it is a terminal.
 - Exit codes: 0 ok, 1 failed, 2 usage, 3 CodeHydra not reachable, 4 not in a
   workspace, 5 conflict, 6 not found.
-- `ch lock take|release|ls` and `ch lock run <name> -- <cmd…>` share a
-  single-holder resource (a phone, a port) across workspaces.
+
+### Locks
+
+A lock is a single-holder resource shared across workspaces — one phone, one
+port, one test database. Locks are advisory: nothing stops a command that does
+not ask.
+
+```sh
+ch lock take device "smoke test"    # waits its turn (FIFO), then holds it
+ch lock take device --no-wait       # exit 5 at once if someone holds it
+ch lock ls
+ch lock release device              # or no name: everything this workspace holds
+ch lock run device -- npm run e2e   # hold only while the command runs
+```
+
+- The **workspace** holds the lock, not the process: it stays held after
+  `take` returns, until `release`, or the workspace hibernates, is deleted or
+  its project is closed. Closing the agent terminal does not release it.
+- `--scope global` (the default) is shared by every project; `--scope project`
+  only by the workspaces of this project.
+- The sidebar shows the holder with a `🔒 name` tag and waiters with `⏳ name`.
+- Locks live in memory and are gone after a restart.
+- `ch lock run` ties the lock to its own process; without a command it holds
+  until killed (run that under `ch bg`, or the workspace stays busy).
+- Releasing a lock the workspace does not hold exits 6.
 
 ### MCP
 
-The same operations are exposed to the agents as MCP tools (`ch mcp` is the
-server both agents launch). Agents can query workspace info, create
-workspaces with an initial prompt, execute VS Code commands, hibernate and
-wake workspaces, read and set metadata and tags, delete workspaces, and read
-this guide (`guide`).
+The agents reach the same operations as MCP tools (`ch mcp` is the server both
+agents launch):
 
-You don't need to learn any special syntax. Just describe what you want in
-plain language:
+| Area       | Tools                                                                                                                                                                                                                                                                      |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
+| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_set_agent_status`                                                                                                                             |
+| Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                        |
+| Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                            |
+| Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                      |
+| Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                    |
 
-- "What branch is this workspace on?"
-- "Create a new workspace called 'feature-auth' from main"
+You don't need to learn any of it. Just describe what you want in plain
+language:
+
+- "Open a workspace for the login bug and tell its agent to fix it"
+- "Hibernate the workspaces I'm not using"
 - "Save all open files"

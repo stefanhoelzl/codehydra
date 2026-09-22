@@ -65,7 +65,7 @@ const FIELDS = `=== FIELDS (keys under template) ===
                                          (only when the item creates)
   tracking     no        —               remote branch to track (upstream set)
                                          (only when the item creates)
-  project      no        —               local project path (or use git)
+  project      no        —               absolute local project path (or git)
   git          no        —               git URL to clone as the project
   focus        no        false           true = switch to it once created
                                          (events mode: also on a match)
@@ -122,10 +122,10 @@ cmd: |
     -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body headRefName baseRefName author{login} repository{url}}}}}' \\
     --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},head:{ref:.headRefName},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
 template:
-  name: "{{ title }}"
+  name: "pr-{{ number }}"
   key: "{{ html_url }}"
   base: "{{ base.ref }}"
-  project: "{{ clone_url }}"
+  git: "{{ clone_url }}"
   metadata:
     title: "PR #{{ number }}: {{ title }}"
     tags:
@@ -153,7 +153,7 @@ cmd: |
   gh api -X PUT /notifications >/dev/null
 template:
   name: "pr-{{ number }}"
-  project: "{{ clone_url }}"
+  git: "{{ clone_url }}"
   metadata:
     title: "PR #{{ number }} — {{ reason }}"
     tags:

@@ -544,7 +544,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    *
    * The runtime dir, outside the ASAR, so the opencode process can read it. The
    * OpenCode file omits the `ch-bg` section: that wrapper is only detectable in
-   * Claude's background_tasks, and it is not on OpenCode's PATH.
+   * Claude's background_tasks, so under OpenCode it would change nothing.
    */
   getSystemPromptPath(): Path {
     return this.pathProvider.runtimePath("bin/codehydra-prompt-opencode.md");
