@@ -245,13 +245,13 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   /** Wire retry/dismiss event handlers on a dialog handle. */
   function wireEvents(handle: DialogHandle, workspacePath: WorkspacePath): void {
-    function dismiss(): void {
+    function dismiss(keepBranch: boolean): void {
       deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
       handle.close();
       activeDialog = null;
       dispatchDelete(deps.dispatcher, {
         workspacePath,
-        keepBranch: false,
+        keepBranch,
         force: true,
         removeWorktree: true,
         ignoreWarnings: true,
@@ -275,7 +275,9 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
           ...(pids && { blockingPids: pids }),
         });
       } else if (evt.actionId === "dismiss") {
-        dismiss();
+        // Dismiss gives up on the failed step, not on the user's choice: a
+        // branch they asked to keep survives the forced teardown.
+        dismiss(progress.keepBranch);
       }
     });
     // Escape is handled declaratively: the Dismiss button carries role

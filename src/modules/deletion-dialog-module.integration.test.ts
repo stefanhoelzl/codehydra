@@ -413,6 +413,39 @@ describe("DeletionDialogModule", () => {
     expect(payload.ignoreWarnings).toBe(true);
   });
 
+  it.each([true, false])(
+    "dismiss keeps the user's keepBranch choice (keepBranch: %s)",
+    async (keepBranch) => {
+      const { dialogManager, dispatcher, fireProgress, fireSwitched } = setup;
+
+      await fireSwitched(WS_PATH_A);
+      await fireProgress(
+        makeProgress({
+          completed: true,
+          hasErrors: true,
+          keepBranch,
+          operations: [
+            {
+              id: "cleanup-workspace",
+              label: "Removing workspace",
+              status: "error",
+              error: "EBUSY",
+            },
+          ],
+        })
+      );
+
+      const handle = dialogManager.lastHandle!;
+      handle.emitEvent({ dialogId: handle.id, actionId: "dismiss" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const intent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
+      const payload = intent!.payload as Record<string, unknown>;
+      expect(payload.force).toBe(true);
+      expect(payload.keepBranch).toBe(keepBranch);
+    }
+  );
+
   it("marks Dismiss as the cancel-role button when completed with errors (Escape clicks it)", async () => {
     const { dialogManager, fireProgress, fireSwitched } = setup;
 
