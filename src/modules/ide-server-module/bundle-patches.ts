@@ -67,6 +67,7 @@ import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { SupportedPlatform } from "../../boundaries/platform/platform-info";
 import { IdeServerError, getErrorMessage } from "../../shared/errors/service-errors";
+import { LOCAL_FILE_HOST } from "./local-files";
 
 // =============================================================================
 // The patches
@@ -237,11 +238,38 @@ const WATCHER_IGNORE_SEPARATORS: TextPatch = {
     "file watching stays broken on Windows (saving a file will not refresh the Source Control view)",
 };
 
+/**
+ * Open `file://` URLs in Simple Browser.
+ *
+ * Simple Browser's page lives in an iframe inside an https webview, and Blink
+ * refuses to load `file:` into it — the page stays white. Its webview script
+ * funnels every navigation (the address bar, reload, the URL `simpleBrowser.show`
+ * was called with) through one function that sets the iframe's `src`:
+ *
+ *     function e(t){try{let n=new URL(t),l=new URLSearchParams(location.search);…;a.src=n.toString()}catch{a.src=t}i.setState({url:t})}
+ *
+ * The patch rewrites a local `file:` URL to the synthetic host the IDE server
+ * module serves from disk (`LOCAL_FILE_HOST`, see `local-files.ts`) right where
+ * `n` is built. Only the iframe sees the rewrite: the address bar and the saved
+ * state keep the `file://` URL, so reload and restore go through it again. A
+ * `file:` URL with a host (UNC, `file://server/share`) is left alone.
+ */
+const SIMPLE_BROWSER_LOCAL_FILES: TextPatch = {
+  id: "simple-browser-local-files",
+  file: "extensions/simple-browser/media/index.js",
+  find: /let ([\w$]+)=new URL\(([\w$]+)\),([\w$]+)=new URLSearchParams\(location\.search\);/g,
+  replace: (url, input, params) =>
+    `let ${url}=(chUrl=>chUrl.protocol==="file:"&&chUrl.host===""?new URL("https://${LOCAL_FILE_HOST}"+chUrl.pathname+chUrl.search+chUrl.hash):chUrl)(new URL(${input})),${params}=new URLSearchParams(location.search);`,
+  applied: /chUrl\.protocol==="file:"/,
+  whenMissing: "file:// URLs stay blank in Simple Browser",
+};
+
 /** Every patch. */
 const TEXT_PATCHES: readonly TextPatch[] = [
   OSC52_CLIPBOARD,
   SECRET_STORAGE_PERSISTENCE,
   WATCHER_IGNORE_SEPARATORS,
+  SIMPLE_BROWSER_LOCAL_FILES,
 ];
 
 // =============================================================================

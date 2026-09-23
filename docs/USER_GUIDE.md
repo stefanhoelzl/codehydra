@@ -959,6 +959,14 @@ ch guide repository-hooks
   Progress (clones, deletions) goes to stderr when it is a terminal.
 - Exit codes: 0 ok, 1 failed, 2 usage, 3 CodeHydra not reachable, 4 not in a
   workspace, 5 conflict, 6 not found.
+- `ws browser` opens the URL in the editor's Simple Browser. `file://` URLs
+  work there too, however they are opened (including typed into its address
+  bar): CodeHydra serves the file from disk, so the page's relative links,
+  stylesheets and scripts load. A directory shows its `index.html`, or else a
+  listing. A file that is missing or unreadable shows a "site can't be reached"
+  error. PDFs do not display: Simple Browser sandboxes its page, and Chromium's
+  PDF viewer refuses to run in a sandboxed frame — open them with
+  `ch ws open <path>` instead.
 
 ### Locks
 

@@ -88,6 +88,13 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import type { DialogConfig } from "../../shared/dialog-types";
 import type { UiPresenter } from "../presentation/presentation-module";
 import { Path } from "../../utils/path/path";
+import {
+  createFileSystemMock,
+  directory,
+  file,
+  type DirectoryEntry,
+  type FileEntry,
+} from "../../boundaries/platform/filesystem.state-mock";
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
 import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
@@ -623,6 +630,107 @@ describe("IdeServerModule", () => {
           "https://abc.vscode-cdn.net/insider/ef65ac/out/vs/workbench/contrib/webview/browser/pre/index.html"
         )
       ).resolves.toBeNull();
+    });
+
+    describe("local files for Simple Browser", () => {
+      const host = process.platform === "win32" ? "win32" : "linux";
+
+      /** The URL the patched Simple Browser loads for a local path. */
+      function localUrl(path: Path, trailingSlash = false): string {
+        const encoded = path
+          .toString()
+          .split("/")
+          .map((segment) => encodeURIComponent(segment).replace(/%3A/g, ":"))
+          .join("/");
+        const urlPath = encoded.startsWith("/") ? encoded : `/${encoded}`;
+        return `https://file.codehydra.invalid${urlPath}${trailingSlash ? "/" : ""}`;
+      }
+
+      /** Start the module, then answer file reads from an in-memory tree. */
+      async function interceptorOver(entries: Record<string, FileEntry | DirectoryEntry>) {
+        const deps = createMockDeps({ platform: host });
+        const intercept = await startAndGetInterceptor(deps);
+
+        const disk = createFileSystemMock();
+        for (const [path, entry] of Object.entries(entries)) disk.$.setEntry(path, entry);
+        deps.fileSystemLayer.readFileBuffer = (p) => disk.readFileBuffer(p);
+        deps.fileSystemLayer.readdir = (p) => disk.readdir(p);
+        return intercept!;
+      }
+
+      const REPORT = testPath("/report");
+
+      it("serves a file with its content type, never cached", async () => {
+        const intercept = await interceptorOver({
+          [REPORT.toString()]: directory(),
+          [new Path(REPORT, "index.html").toString()]: file("<h1>hi</h1>"),
+        });
+
+        const asset = await intercept(`${localUrl(new Path(REPORT, "index.html"))}?id=x#top`);
+
+        expect(Buffer.from(asset!.body).toString()).toBe("<h1>hi</h1>");
+        expect(asset!.contentType).toBe("text/html; charset=utf-8");
+        expect(asset!.headers?.["cache-control"]).toBe("no-cache");
+      });
+
+      it("types subresources by extension", async () => {
+        const intercept = await interceptorOver({
+          [REPORT.toString()]: directory(),
+          [new Path(REPORT, "app.mjs").toString()]: file("export {}"),
+          [new Path(REPORT, "logo.png").toString()]: file(Buffer.from([0x89])),
+          [new Path(REPORT, "data.unknownext").toString()]: file("?"),
+        });
+
+        expect((await intercept(localUrl(new Path(REPORT, "app.mjs"))))!.contentType).toBe(
+          "text/javascript; charset=utf-8"
+        );
+        expect((await intercept(localUrl(new Path(REPORT, "logo.png"))))!.contentType).toBe(
+          "image/png"
+        );
+        expect((await intercept(localUrl(new Path(REPORT, "data.unknownext"))))!.contentType).toBe(
+          "application/octet-stream"
+        );
+      });
+
+      it("serves a directory's index.html", async () => {
+        const intercept = await interceptorOver({
+          [REPORT.toString()]: directory(),
+          [new Path(REPORT, "index.html").toString()]: file("<h1>index</h1>"),
+        });
+
+        const asset = await intercept(localUrl(REPORT, true));
+
+        expect(Buffer.from(asset!.body).toString()).toBe("<h1>index</h1>");
+      });
+
+      it("lists a directory without an index.html, folders first", async () => {
+        const intercept = await interceptorOver({
+          [REPORT.toString()]: directory(),
+          [new Path(REPORT, "a b.txt").toString()]: file("x"),
+          [new Path(REPORT, "sub").toString()]: directory(),
+        });
+
+        const html = Buffer.from((await intercept(localUrl(REPORT, true)))!.body).toString();
+
+        expect(html).toContain('<a href="sub/">sub/</a>');
+        expect(html).toContain('<a href="a%20b.txt">a b.txt</a>');
+        expect(html.indexOf("sub/")).toBeLessThan(html.indexOf("a b.txt"));
+      });
+
+      it("sends a directory URL without its trailing slash on to the one with it", async () => {
+        // Otherwise the relative links of its index.html resolve next to it.
+        const intercept = await interceptorOver({ [REPORT.toString()]: directory() });
+
+        const html = Buffer.from((await intercept(localUrl(REPORT)))!.body).toString();
+
+        expect(html).toContain('http-equiv="refresh" content="0;url=report/"');
+      });
+
+      it("falls through to the network for a missing file", async () => {
+        const intercept = await interceptorOver({});
+
+        await expect(intercept(localUrl(new Path(REPORT, "gone.html")))).resolves.toBeNull();
+      });
     });
   });
 
