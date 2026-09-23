@@ -23,7 +23,7 @@ export default defineConfig({
     build: {
       reportCompressedSize: false,
       // Bundle ESM-only packages that lack CJS exports (require() would fail)
-      externalizeDeps: { exclude: ["@opencode-ai/sdk", "execa"] },
+      externalizeDeps: { exclude: ["@opencode-ai/sdk", "execa", "mime"] },
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main.ts"),

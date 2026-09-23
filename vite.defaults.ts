@@ -88,6 +88,11 @@ export function codehydraDefaults(options: CodehydraDefaultsOptions = {}): ViteP
                 if (log.code === "CIRCULAR_DEPENDENCY" && log.message?.includes("node_modules")) {
                   return;
                 }
+                // Allow top-level `this` in bundled ESM deps: tsc's helpers (`this && this.__x`,
+                // e.g. in mime) fall back correctly once Rollup rewrites it to undefined
+                if (log.code === "THIS_IS_UNDEFINED" && log.message?.includes("node_modules")) {
+                  return;
+                }
                 throw new Error(`Rollup warning: ${log.message}`);
               }
               handler(level, log);

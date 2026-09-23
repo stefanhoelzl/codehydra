@@ -67,10 +67,22 @@ import { listInstalledExtensions, removeFromExtensionsJson } from "../../utils/e
 import { Path } from "../../utils/path/path";
 import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
 import type { Config } from "../../boundaries/platform/config";
-import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
+import {
+  FileSystemError,
+  IdeServerError,
+  SetupError,
+  getErrorMessage,
+} from "../../shared/errors/service-errors";
 import { HealthCheckAbortError, waitForHealthy } from "../../utils/health-check";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
 import { applyBundlePatches } from "./bundle-patches";
+import {
+  directoryListing,
+  directorySlashRedirect,
+  localFileContentType,
+  parseLocalFileUrl,
+  type LocalFileRequest,
+} from "./local-files";
 import type { IdeServer } from "./types";
 import type { UiPresenter } from "../presentation/presentation-module";
 import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
@@ -389,8 +401,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
   /**
    * Serve the webview shell from the bundle instead of the CDN the distribution
-   * bakes in (see `IdeServer.webviewAsset` for why). Registered on the session
-   * the workspace iframes load in; every other https request passes through.
+   * bakes in (see `IdeServer.webviewAsset` for why), and local files from disk
+   * for Simple Browser (see `local-files.ts`). Registered on the session the
+   * workspace iframes load in; every other https request passes through.
    */
   function registerWebviewInterceptor(): void {
     const ide = getIdeServer();
@@ -401,6 +414,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       handle,
       "https",
       async (url): Promise<InterceptedAsset | null> => {
+        const localFile = parseLocalFileUrl(url, deps.platform);
+        if (localFile !== null) return serveLocalFile(localFile);
+
         const assetPath = ide.webviewAsset(url);
         if (assetPath === null) return null;
 
@@ -429,6 +445,59 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     );
 
     logger.debug("Webview interceptor registered", { partition: deps.sessionPartition });
+  }
+
+  /** A served local file: always re-read, so an edit shows on reload. */
+  function localAsset(body: Uint8Array, contentType: string): InterceptedAsset {
+    return { body, contentType, headers: { "cache-control": "no-cache" } };
+  }
+
+  /**
+   * Answer a `file://` URL the patched Simple Browser rewrote (see
+   * `local-files.ts`): the file itself, or for a directory its `index.html`,
+   * else a listing. Anything unreadable falls through to the network, where the
+   * `.invalid` host fails to resolve.
+   */
+  async function serveLocalFile(request: LocalFileRequest): Promise<InterceptedAsset | null> {
+    try {
+      const target = new Path(request.path);
+      try {
+        return localAsset(
+          await fileSystemLayer.readFileBuffer(target),
+          localFileContentType(request.path)
+        );
+      } catch (error) {
+        if (!(error instanceof FileSystemError && error.fsCode === "EISDIR")) throw error;
+      }
+
+      if (!request.trailingSlash) {
+        return localAsset(
+          Buffer.from(directorySlashRedirect(request.lastSegment)),
+          "text/html; charset=utf-8"
+        );
+      }
+
+      try {
+        return localAsset(
+          await fileSystemLayer.readFileBuffer(new Path(target, "index.html")),
+          "text/html; charset=utf-8"
+        );
+      } catch (error) {
+        if (!(error instanceof FileSystemError && error.fsCode === "ENOENT")) throw error;
+      }
+
+      const entries = await fileSystemLayer.readdir(target);
+      return localAsset(
+        Buffer.from(directoryListing(request.path, entries)),
+        "text/html; charset=utf-8"
+      );
+    } catch (error) {
+      logger.debug("Local file not served", {
+        path: request.path,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
   }
 
   /**

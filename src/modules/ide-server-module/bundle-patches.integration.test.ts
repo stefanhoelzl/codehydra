@@ -1,11 +1,11 @@
 // @vitest-environment node
 /**
- * Tests for the bundle patches: the generic text-patch engine, the OSC 52
- * clipboard entry it carries, and the registry that runs them.
+ * Tests for the bundle patches: the generic text-patch engine, the entries it
+ * carries, and the registry that runs them.
  *
- * The OSC 52 fixture is the real minified expression from the VSCodium reh-web
- * workbench (1.126.04524) — the patch has to survive the shape it actually ships
- * in, not a tidied-up stand-in.
+ * The fixtures are the real minified expressions from the VSCodium reh-web
+ * bundle (1.126.04524) — a patch has to survive the shape it actually ships in,
+ * not a tidied-up stand-in.
  */
 
 import { describe, it, expect } from "vitest";
@@ -49,11 +49,20 @@ const REAL_WRAPPER_LOOP =
   "    for (const value of ignore) {\n" +
   "      if (isGlob(value)) {\n";
 
+const SIMPLE_BROWSER = testPath("/bundle/extensions/simple-browser/media/index.js").toNative();
+
+/** Simple Browser's navigate function, as shipped. */
+const REAL_NAVIGATE =
+  "function e(t){try{let n=new URL(t),l=new URLSearchParams(location.search);" +
+  'n.searchParams.append("id",l.get("id")),n.searchParams.append("vscodeBrowserReqId",Date.now().toString()),' +
+  "a.src=n.toString()}catch{a.src=t}i.setState({url:t})}";
+
 /** A bundle carrying every patch target. */
 function bundle(workbench: string = REAL_WORKBENCH): MockFileSystemBoundary {
   const fsLayer = createFileSystemMock();
   fsLayer.$.setEntry(WRAPPER, file(REAL_WRAPPER_LOOP));
   fsLayer.$.setEntry(WORKBENCH, file(workbench));
+  fsLayer.$.setEntry(SIMPLE_BROWSER, file(REAL_NAVIGATE));
   return fsLayer;
 }
 
@@ -170,6 +179,74 @@ describe("secret storage persistence patch", () => {
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, "secretStorageProvider:new Qns(n)");
     }
+  });
+});
+
+// =============================================================================
+// The Simple Browser local-files patch, through the registry
+// =============================================================================
+
+describe("Simple Browser local-files patch", () => {
+  /**
+   * Run the patched navigate function against a stub iframe and return the
+   * `src` it set and the state it saved.
+   */
+  async function navigate(url: string): Promise<{ src: string; state: unknown }> {
+    const fsLayer = bundle();
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+    const source = await fsLayer.readFile(SIMPLE_BROWSER);
+
+    const frame = { src: "" };
+    let state: unknown;
+    const vscode = { setState: (value: unknown) => (state = value) };
+    const location = { search: "?id=webview-1" };
+    // Stand-ins for what the shipped function reads: the iframe, the webview API, location.
+    const run = new Function("a", "i", "location", "url", `${source};e(url);`) as (
+      a: typeof frame,
+      i: typeof vscode,
+      l: typeof location,
+      url: string
+    ) => void;
+    run(frame, vscode, location, url);
+    return { src: frame.src, state };
+  }
+
+  it("points the iframe at the local-file host, keeping the path", async () => {
+    const { src } = await navigate("file:///home/u/report/index.html#top");
+
+    const url = new URL(src);
+    expect(url.origin).toBe("https://file.codehydra.invalid");
+    expect(url.pathname).toBe("/home/u/report/index.html");
+    expect(url.hash).toBe("#top");
+  });
+
+  it("keeps the drive of a Windows path in the URL path", async () => {
+    const { src } = await navigate("file:///C:/Users/u/r%20x.html");
+
+    expect(new URL(src).pathname).toBe("/C:/Users/u/r%20x.html");
+  });
+
+  it("saves the original file:// URL, so reload and restore rewrite it again", async () => {
+    const { state } = await navigate("file:///tmp/a.html");
+
+    expect(state).toEqual({ url: "file:///tmp/a.html" });
+  });
+
+  it("leaves web URLs and file URLs with a host alone", async () => {
+    expect(new URL((await navigate("https://example.com/x")).src).host).toBe("example.com");
+    expect((await navigate("file://server/share/a.html")).src).toMatch(/^file:\/\/server\//);
+  });
+
+  it("matches regardless of the minifier's identifiers", async () => {
+    const fsLayer = bundle();
+    fsLayer.$.setEntry(
+      SIMPLE_BROWSER,
+      file("let $u=new URL($t),$p=new URLSearchParams(location.search);")
+    );
+
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+
+    expect(fsLayer).toHaveFileContaining(SIMPLE_BROWSER, "(new URL($t)),$p=new URLSearchParams");
   });
 });
 
@@ -307,11 +384,13 @@ describe("applyBundlePatches", () => {
     await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
     const workbench = await fsLayer.readFile(WORKBENCH);
     const wrapper = await fsLayer.readFile(WRAPPER);
+    const simpleBrowser = await fsLayer.readFile(SIMPLE_BROWSER);
 
     await applyBundlePatches(deps(fsLayer, "win32"), testPath("/bundle").toNative());
 
     expect(await fsLayer.readFile(WORKBENCH)).toBe(workbench);
     expect(await fsLayer.readFile(WRAPPER)).toBe(wrapper);
+    expect(await fsLayer.readFile(SIMPLE_BROWSER)).toBe(simpleBrowser);
   });
 
   it("applies the remaining patches when one target is missing", async () => {
