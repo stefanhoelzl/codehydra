@@ -20,11 +20,13 @@ import { testPath } from "../shared/test-fixtures";
 const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
 const IN_WORKSPACE: OperationContext = {
   workspacePath: WS,
+  callerWorkspacePath: WS,
   cwd: null,
   signal: new AbortController().signal,
 };
 const NO_WORKSPACE: OperationContext = {
   workspacePath: null,
+  callerWorkspacePath: null,
   cwd: null,
   signal: new AbortController().signal,
 };

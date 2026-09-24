@@ -779,18 +779,22 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     readonly kind: ClientKind;
     /** Explicit workspace, when the client named one. */
     readonly workspacePath?: string;
-    /** Working directory to resolve into a workspace, when it did not. */
+    /** Working directory: the caller's own workspace, and the target when it named none. */
     readonly cwd?: string;
+    /** Project to look a named workspace up in (`ch --project p --workspace w`). */
+    readonly project?: string;
   }
 
   /** The workspace a connection acts on, and why it has none when it asked for one. */
   interface ResolvedWorkspace {
     readonly workspacePath: WorkspacePath | null;
+    /** The caller's own workspace (see OperationContext.callerWorkspacePath). */
+    readonly callerWorkspacePath: WorkspacePath | null;
     /** Set when the client named a workspace that could not be resolved. */
     readonly workspaceError?: ApiError;
   }
 
-  const NO_WORKSPACE: ResolvedWorkspace = { workspacePath: null };
+  const NO_WORKSPACE: ResolvedWorkspace = { workspacePath: null, callerWorkspacePath: null };
 
   function readHandshake(auth: unknown): Handshake | { error: string } {
     if (typeof auth !== "object" || auth === null) {
@@ -828,6 +832,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       ...(typeof record.workspacePath === "string" &&
         record.workspacePath.length > 0 && { workspacePath: record.workspacePath }),
       ...(typeof record.cwd === "string" && record.cwd.length > 0 && { cwd: record.cwd }),
+      ...(typeof record.project === "string" &&
+        record.project.length > 0 && { project: record.project }),
     };
   }
 
@@ -852,9 +858,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     if (handshake.kind === "sidekick") {
       if (handshake.workspacePath === undefined) return NO_WORKSPACE;
       try {
-        return {
-          workspacePath: workspacePathSchema.parse(new Path(handshake.workspacePath).toString()),
-        };
+        const own = workspacePathSchema.parse(new Path(handshake.workspacePath).toString());
+        return { workspacePath: own, callerWorkspacePath: own };
       } catch {
         return NO_WORKSPACE;
       }
@@ -882,8 +887,25 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       return NO_WORKSPACE;
     }
 
+    // A shell is the workspace it stands in, whatever it names. An MCP client
+    // presents its agent's own workspace, which is who it is.
+    const here =
+      handshake.cwd === undefined
+        ? null
+        : findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
+    const callerWorkspacePath =
+      handshake.kind === "mcp" && reference !== undefined
+        ? workspacePathSchema.parse(new Path(reference).toString())
+        : here === null
+          ? null
+          : workspacePathSchema.parse(here);
+
     if (reference !== undefined) {
-      const resolved = resolveWorkspaceReference(projects, reference);
+      const resolved = resolveWorkspaceReference(projects, reference, {
+        callerWorkspace: callerWorkspacePath,
+        cwd: handshake.cwd ?? null,
+        project: handshake.project,
+      });
       if ("error" in resolved) {
         logger.debug("Could not resolve the workspace a client named", {
           reference,
@@ -891,14 +913,14 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         });
         return {
           workspacePath: null,
+          callerWorkspacePath,
           workspaceError: new ApiError(resolved.category, resolved.error),
         };
       }
-      return { workspacePath: workspacePathSchema.parse(resolved.path) };
+      return { workspacePath: workspacePathSchema.parse(resolved.path), callerWorkspacePath };
     }
 
-    const match = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd!);
-    return match === null ? NO_WORKSPACE : { workspacePath: workspacePathSchema.parse(match) };
+    return { workspacePath: callerWorkspacePath, callerWorkspacePath };
   }
 
   // ---------------------------------------------------------------------------
@@ -926,7 +948,11 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       return;
     }
 
-    const { workspacePath: resolved, workspaceError } = await resolveConnectionWorkspace(handshake);
+    const {
+      workspacePath: resolved,
+      callerWorkspacePath,
+      workspaceError,
+    } = await resolveConnectionWorkspace(handshake);
 
     // The socket may have gone while we were resolving.
     if (socket.disconnected) return;
@@ -938,6 +964,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
         registry: deps.registry,
         workspacePath: resolved,
+        callerWorkspacePath,
         workspaceError: workspaceError ?? null,
         cwd: handshake.cwd ?? null,
         logger,

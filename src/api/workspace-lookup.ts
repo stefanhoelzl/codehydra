@@ -70,27 +70,92 @@ export function allWorkspaces(projects: readonly ProjectLocation[]): readonly Wo
   return projects.flatMap((project) => project.workspaces);
 }
 
+/** A lookup failure, and which kind: nothing matched, or several did. */
+export interface LookupError {
+  readonly error: string;
+  readonly category: "not-found" | "usage";
+}
+
+/**
+ * Where a workspace name is looked up from.
+ *
+ * A name is most likely meant in the caller's own project, so that project is
+ * searched first. The caller's project is its workspace's, or — for a shell
+ * standing in a project's own checkout rather than in a workspace — that one.
+ */
+export interface LookupScope {
+  /** The caller's own workspace, when it has one. */
+  readonly callerWorkspace?: string | null;
+  /** The directory the caller stands in, when it is a shell. */
+  readonly cwd?: string | null;
+  /** Look a name up in this project only (a project name or path). */
+  readonly project?: string | undefined;
+}
+
+/** The project the caller belongs to, or undefined when it stands in none. */
+export function callerProject(
+  projects: readonly ProjectLocation[],
+  scope: LookupScope
+): ProjectLocation | undefined {
+  const caller = scope.callerWorkspace;
+  if (caller !== null && caller !== undefined) {
+    const own = new Path(caller);
+    const project = projects.find((candidate) =>
+      candidate.workspaces.some((workspace) => own.equals(new Path(workspace.path)))
+    );
+    if (project !== undefined) return project;
+  }
+  const cwd = scope.cwd;
+  if (cwd === null || cwd === undefined) return undefined;
+  const here = new Path(cwd).toString();
+  return projects.find((project) => isWithinWorkspace(here, new Path(project.path).toString()));
+}
+
 /**
  * Resolve a workspace reference to its path.
  *
  * A path is taken at its word — it may name a workspace that has not been
- * discovered yet. A name is matched against the open workspaces, and an
- * ambiguous name (the same workspace name in two projects) resolves to nothing
- * rather than guessing which was meant.
+ * discovered yet. A name is matched against the open workspaces:
+ *
+ * - with `scope.project`, in that project only;
+ * - otherwise in the caller's project first, where a match wins outright;
+ * - then in every other open project, where exactly one match wins and several
+ *   resolve to nothing rather than guessing which was meant.
  *
  * A failure says which of the two it was: a name that matches nothing is
  * `not-found`, one that matches several is `usage` — the caller has to write
- * the reference differently, as a path.
+ * the reference differently (with a project, or as a path).
  */
 export function resolveWorkspaceReference(
   projects: readonly ProjectLocation[],
-  reference: string
-):
-  | { readonly path: string }
-  | { readonly error: string; readonly category: "not-found" | "usage" } {
+  reference: string,
+  scope: LookupScope = {}
+): { readonly path: string } | LookupError {
+  if (scope.project !== undefined) {
+    const project = resolveProjectReference(projects, scope.project);
+    if ("error" in project) return project;
+    if (looksLikePath(reference)) return { path: new Path(reference).toString() };
+    const owner = new Path(project.path);
+    const match = projects
+      .find((candidate) => owner.equals(new Path(candidate.path)))
+      ?.workspaces.find((workspace) => workspace.name === reference);
+    return match !== undefined
+      ? { path: new Path(match.path).toString() }
+      : {
+          error: `No open workspace named "${reference}" in project "${scope.project}"`,
+          category: "not-found",
+        };
+  }
+
   if (looksLikePath(reference)) return { path: new Path(reference).toString() };
 
-  const matches = allWorkspaces(projects).filter((workspace) => workspace.name === reference);
+  const home = callerProject(projects, scope);
+  const own = home?.workspaces.find((workspace) => workspace.name === reference);
+  if (own !== undefined) return { path: new Path(own.path).toString() };
+
+  const matches = projects
+    .filter((project) => project !== home)
+    .flatMap((project) => project.workspaces.filter((workspace) => workspace.name === reference));
   if (matches.length === 1) return { path: new Path(matches[0]!.path).toString() };
   if (matches.length === 0) {
     return { error: `No open workspace named "${reference}"`, category: "not-found" };
@@ -99,7 +164,8 @@ export function resolveWorkspaceReference(
     category: "usage",
     error:
       `"${reference}" matches ${matches.length} open workspaces. ` +
-      `Pass a path instead: ${matches.map((match) => match.path).join(", ")}`,
+      `Name the project with --project, or pass a path: ` +
+      matches.map((match) => match.path).join(", "),
   };
 }
 
@@ -111,13 +177,16 @@ export function resolveWorkspaceReference(
 export function resolveProjectReference(
   projects: readonly ProjectLocation[],
   reference: string
-): { readonly path: string } | { readonly error: string } {
+): { readonly path: string } | LookupError {
   if (looksLikePath(reference)) return { path: new Path(reference).toString() };
 
   const matches = projects.filter((project) => project.name === reference);
   if (matches.length === 1) return { path: new Path(matches[0]!.path).toString() };
-  if (matches.length === 0) return { error: `No open project named "${reference}"` };
+  if (matches.length === 0) {
+    return { error: `No open project named "${reference}"`, category: "not-found" };
+  }
   return {
+    category: "usage",
     error:
       `"${reference}" matches ${matches.length} open projects. ` +
       `Pass a path instead: ${matches.map((match) => match.path).join(", ")}`,

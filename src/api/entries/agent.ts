@@ -13,7 +13,8 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import { createTargetResolver, targetFields } from "./target";
+import type { WorkspacePath } from "../../intents/contract";
 
 import { INTENT_GET_AGENT_SESSION } from "../../intents/get-agent-session";
 import type { GetAgentSessionIntent } from "../../intents/get-agent-session";
@@ -29,33 +30,21 @@ import { INTENT_SEND_AGENT_MESSAGE } from "../../intents/send-agent-message";
 import type { SendAgentMessageIntent } from "../../intents/send-agent-message";
 import { Path } from "../../utils/path/path";
 
-const targetWorkspace = workspacePathSchema
-  .min(1)
-  .optional()
-  .describe("Workspace to act on. Omit to target the current workspace.");
-
-function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): WorkspacePath {
-  const target = explicit ?? ctx.workspacePath;
-  if (target === null || target === undefined) {
-    throw new ApiError("no-workspace", "No workspace to act on.");
-  }
-  return target;
-}
-
 /**
- * Who a message is from, as the receiving agent sees it: the calling
- * workspace when there is one, otherwise the CLI outside any workspace. Taken
- * from the connection, never from the input, so a caller cannot sign as
- * someone else.
+ * Who a message is from, as the receiving agent sees it: the caller's own
+ * workspace — where a shell stands, whatever it targets — otherwise the CLI
+ * outside any workspace. Taken from the connection, never from the input, so a
+ * caller cannot sign as someone else.
  */
 export function messageSender(ctx: OperationContext): string {
-  return ctx.workspacePath === null
+  return ctx.callerWorkspacePath === null
     ? "CodeHydra · ch"
-    : `CodeHydra · workspace ${new Path(ctx.workspacePath).basename}`;
+    : `CodeHydra · workspace ${new Path(ctx.callerWorkspacePath).basename}`;
 }
 
 export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const targetOf = createTargetResolver(dispatcher);
 
   const runVscodeCommand = (workspacePath: WorkspacePath, command: string) =>
     dispatcher.dispatch<VscodeCommandIntent>({
@@ -71,12 +60,12 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Returns the address of the agent's OWN http server, so a caller can talk to the agent " +
       "directly rather than through CodeHydra. Null when the server is not running — the " +
       "workspace is hibernated, or the agent has not started yet.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
       dispatcher.dispatch<GetAgentSessionIntent>({
         type: INTENT_GET_AGENT_SESSION,
-        payload: { workspacePath: targetOf(ctx, input.workspacePath) },
+        payload: { workspacePath: await targetOf(ctx, input) },
       }),
   });
 
@@ -84,12 +73,12 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     name: "agent.restart",
     kind: "command",
     description: "Restart a workspace's agent server, preserving its port.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const result = await dispatcher.dispatch<RestartAgentIntent>({
         type: INTENT_RESTART_AGENT,
-        payload: { workspacePath: targetOf(ctx, input.workspacePath) },
+        payload: { workspacePath: await targetOf(ctx, input) },
       });
       if (result === undefined) throw new Error("Restart agent returned no result");
       return result;
@@ -101,10 +90,10 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Open the agent terminal tab in the workspace's editor.",
     instructions: "Focuses the existing terminal when one is already open.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      runVscodeCommand(targetOf(ctx, input.workspacePath), "codehydra.openAgent"),
+      runVscodeCommand(await targetOf(ctx, input), "codehydra.openAgent"),
   });
 
   const close = defineEntry({
@@ -114,10 +103,10 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     instructions:
       "Returns { closed } reporting whether a terminal existed at all, NOT whether it has " +
       "finished closing — closing is asynchronous and completes afterwards.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      runVscodeCommand(targetOf(ctx, input.workspacePath), "codehydra.closeAgent"),
+      runVscodeCommand(await targetOf(ctx, input), "codehydra.closeAgent"),
   });
 
   const message = defineEntry({
@@ -135,7 +124,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "terminal and waits for the agent to start. A Claude Code session that bypasses permission prompts " +
       "holds the message until its user approves it.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       text: z.string().min(1).describe("The message; `-` on the command line reads standard input"),
       wake: z
         .boolean()
@@ -150,7 +139,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const result = await dispatcher.dispatch<SendAgentMessageIntent>({
         type: INTENT_SEND_AGENT_MESSAGE,
         payload: {
-          workspacePath: targetOf(ctx, input.workspacePath),
+          workspacePath: await targetOf(ctx, input),
           text: input.text,
           from: messageSender(ctx),
           wake: input.wake,
@@ -174,7 +163,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "nudge sent while the agent is idle sticks until the agent next does something; one sent " +
       "mid-turn is replaced by the next hook event.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       status: z.enum(["idle", "busy"]).describe("Status to report"),
     }),
     requiresWorkspace: true,
@@ -183,7 +172,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       await dispatcher.dispatch<UpdateAgentStatusIntent>({
         type: INTENT_UPDATE_AGENT_STATUS,
         payload: {
-          workspacePath: targetOf(ctx, input.workspacePath),
+          workspacePath: await targetOf(ctx, input),
           status: {
             status: input.status,
             counts: { idle: busy ? 0 : 1, busy: busy ? 1 : 0 },
@@ -207,7 +196,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     handler: async (ctx, input) => {
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
-        payload: { workspacePath: targetOf(ctx, undefined), event: input.event },
+        payload: { workspacePath: await targetOf(ctx, {}), event: input.event },
       };
       void dispatcher.dispatch(intent);
       return null;

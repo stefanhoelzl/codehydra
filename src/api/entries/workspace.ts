@@ -10,14 +10,10 @@
 import { z } from "zod/v4";
 import { ApiError } from "../errors";
 import { defineEntry } from "../types";
-import type { AnyOperationEntry, OperationContext } from "../types";
+import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
-import {
-  workspacePathSchema,
-  type AgentSpec,
-  type PromptModel,
-  type WorkspacePath,
-} from "../../intents/contract";
+import { createReferenceResolver, createTargetResolver, targetFields } from "./target";
+import type { AgentSpec, PromptModel } from "../../intents/contract";
 import type { DeletionProgress, Workspace } from "../../shared/api/types";
 
 import { INTENT_GET_WORKSPACE_STATUS } from "../../intents/get-workspace-status";
@@ -33,28 +29,7 @@ import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import { INTENT_SWITCH_WORKSPACE } from "../../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
-import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
-import type { ListProjectsIntent } from "../../intents/list-projects";
-import { resolveWorkspaceReference, type ProjectLocation } from "../workspace-lookup";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
-
-/**
- * Optional target for operations that can act on a workspace other than the
- * caller's own. Absent means "the workspace I am in".
- */
-const targetWorkspace = workspacePathSchema
-  .min(1)
-  .optional()
-  .describe("Workspace to act on. Omit to target the current workspace.");
-
-/** Resolve the effective target: an explicit path wins over the caller's own. */
-function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): WorkspacePath {
-  const target = explicit ?? ctx.workspacePath;
-  if (target === null || target === undefined) {
-    throw new ApiError("no-workspace", "No workspace to act on.");
-  }
-  return target;
-}
 
 /** The agent options `workspace.create` accepts, as the caller typed them. */
 interface AgentInput {
@@ -161,33 +136,21 @@ function formatDeletionFailure(progress: DeletionProgress): string {
 
 export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const targetOf = createTargetResolver(dispatcher);
 
   /**
-   * Turn a workspace reference into a path.
-   *
-   * A name is the ergonomic form — `ch ws switch test-0` beats pasting a
-   * worktree path — and a path still works, so a workspace that has not been
-   * listed yet stays reachable.
+   * Turn a workspace reference into a path. A name is the ergonomic form —
+   * `ch ws switch test-0` beats pasting a worktree path — and a path still
+   * works, so a workspace that has not been listed yet stays reachable.
    */
-  const resolveReference = async (reference: string): Promise<WorkspacePath> => {
-    const projects = await dispatcher.dispatch<ListProjectsIntent>({
-      type: INTENT_LIST_PROJECTS,
-      payload: {} as Record<string, never>,
-    });
-    const resolved = resolveWorkspaceReference(
-      (projects ?? []) as readonly ProjectLocation[],
-      reference
-    );
-    if ("error" in resolved) throw new ApiError("usage", resolved.error);
-    return workspacePathSchema.parse(resolved.path);
-  };
+  const resolveReference = createReferenceResolver(dispatcher);
 
   const status = defineEntry({
     name: "workspace.status",
     kind: "command",
     description: "Get workspace status, including the dirty flag and agent status.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       refresh: z
         .boolean()
         .optional()
@@ -198,7 +161,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       const result = await dispatcher.dispatch<GetWorkspaceStatusIntent>({
         type: INTENT_GET_WORKSPACE_STATUS,
         payload: {
-          workspacePath: targetOf(ctx, input.workspacePath),
+          workspacePath: await targetOf(ctx, input),
           ...(typeof input.refresh === "boolean" && { refresh: input.refresh }),
         },
       });
@@ -215,12 +178,12 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       "Tears down the workspace's view and agent server to free resources while keeping the " +
       "git worktree on disk. The workspace stays listed and can be brought back with wake. " +
       "Returns { started: true } once hibernation has begun; teardown completes in the background.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const intent: HibernateWorkspaceIntent = {
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: targetOf(ctx, input.workspacePath) },
+        payload: { workspacePath: await targetOf(ctx, input) },
       };
       const handle = dispatcher.dispatch(intent);
       if (!(await handle.accepted)) return { started: false };
@@ -236,13 +199,13 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     instructions:
       "Clears the hibernated flag, recreates the view and restarts the agent server. " +
       "Returns the reopened workspace. Does not steal focus.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const result = await dispatcher.dispatch<WakeWorkspaceIntent>({
         type: INTENT_WAKE_WORKSPACE,
         payload: {
-          workspacePath: targetOf(ctx, input.workspacePath),
+          workspacePath: await targetOf(ctx, input),
           stealFocus: false,
           source: "mcp",
         },
@@ -359,7 +322,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       "changes, or unmerged commits on a branch that is not kept (pass ignoreWarnings to " +
       "override), or if processes block worktree removal.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       // Divergence 1: one default everywhere. `api:workspace:delete` has no
       // caller today, so nothing real relied on the plugin's inverted `true`.
       keepBranch: z.boolean().optional().default(false),
@@ -370,7 +333,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const workspacePath = targetOf(ctx, input.workspacePath);
+      const workspacePath = await targetOf(ctx, input);
       const waiter = input.wait ? deps.awaitDeletion(workspacePath) : undefined;
 
       try {
@@ -410,13 +373,21 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       "Brings the workspace to the front in the sidebar and shows its editor. Accepts a name or " +
       "a path. Focus follows by default; pass focus false to switch without taking the window.",
     input: z.object({
-      workspace: z.string().min(1).describe("Workspace name or path to switch to"),
+      workspace: z
+        .string()
+        .min(1)
+        .describe("Workspace to switch to: a name (your own project first) or a path"),
+      project: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Project to look the workspace name up in: a name or a path"),
       focus: z.boolean().optional().default(true).describe("Take window focus as well"),
     }),
     // The target is named outright, so this works from anywhere.
     requiresWorkspace: false,
-    handler: async (_ctx, input) => {
-      const workspacePath = await resolveReference(input.workspace);
+    handler: async (ctx, input) => {
+      const workspacePath = await resolveReference(ctx, input.workspace, input.project);
       await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspacePath, focus: input.focus },

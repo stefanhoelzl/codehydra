@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  callerProject,
   findWorkspaceContaining,
   isWithinWorkspace,
   looksLikePath,
@@ -111,10 +112,78 @@ describe("resolveWorkspaceReference", () => {
     expect(result).toHaveProperty("category", "usage");
   });
 
+  it("prefers the caller's own project for a name both projects have", () => {
+    expect(
+      resolveWorkspaceReference(PROJECTS, "feature", { callerWorkspace: "/other/wt/feature" })
+    ).toEqual({ path: "/other/wt/feature" });
+    expect(
+      resolveWorkspaceReference(PROJECTS, "feature", { callerWorkspace: "/repo/.worktrees/outer" })
+    ).toEqual({ path: "/repo/.worktrees/feature" });
+  });
+
+  it("counts a shell in a project's own checkout as that project", () => {
+    expect(resolveWorkspaceReference(PROJECTS, "feature", { cwd: "/other/src" })).toEqual({
+      path: "/other/wt/feature",
+    });
+  });
+
+  it("falls back to the other projects when the caller's has no such name", () => {
+    expect(
+      resolveWorkspaceReference(PROJECTS, "nested", { callerWorkspace: "/other/wt/feature" })
+    ).toEqual({ path: "/repo/.worktrees/outer/nested" });
+  });
+
+  it("still refuses a name that several other projects have", () => {
+    const projects = [
+      ...PROJECTS,
+      { name: "third", path: "/third", workspaces: [{ name: "x", path: "/third/wt/x" }] },
+      { name: "fourth", path: "/fourth", workspaces: [{ name: "x", path: "/fourth/wt/x" }] },
+    ];
+
+    const result = resolveWorkspaceReference(projects, "x", {
+      callerWorkspace: "/other/wt/feature",
+    });
+
+    expect(result).toHaveProperty("category", "usage");
+    expect((result as { error: string }).error).toContain("--project");
+  });
+
+  it("looks a name up only in the project it is scoped to", () => {
+    expect(resolveWorkspaceReference(PROJECTS, "feature", { project: "other" })).toEqual({
+      path: "/other/wt/feature",
+    });
+    expect(
+      resolveWorkspaceReference(PROJECTS, "nested", {
+        project: "/other",
+        callerWorkspace: "/repo/.worktrees/outer",
+      })
+    ).toMatchObject({ category: "not-found" });
+  });
+
+  it("reports a scoping project that is not open", () => {
+    expect(resolveWorkspaceReference(PROJECTS, "feature", { project: "absent" })).toMatchObject({
+      category: "not-found",
+    });
+  });
+
   it("reports a name that matches nothing", () => {
     const result = resolveWorkspaceReference(PROJECTS, "absent");
     expect((result as { error: string }).error).toContain('No open workspace named "absent"');
     expect(result).toHaveProperty("category", "not-found");
+  });
+});
+
+describe("callerProject", () => {
+  it("is the project of the caller's workspace", () => {
+    expect(callerProject(PROJECTS, { callerWorkspace: "/other/wt/feature" })?.name).toBe("other");
+  });
+
+  it("is the project whose checkout a shell stands in", () => {
+    expect(callerProject(PROJECTS, { cwd: "/other" })?.name).toBe("other");
+  });
+
+  it("is undefined for a caller outside every project", () => {
+    expect(callerProject(PROJECTS, { cwd: "/elsewhere" })).toBeUndefined();
   });
 });
 

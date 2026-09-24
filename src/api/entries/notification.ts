@@ -12,7 +12,8 @@ import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
 import { ApiError } from "../errors";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import type { WorkspacePath } from "../../intents/contract";
+import { createReferenceResolver, targetFields } from "./target";
 import {
   INTENT_SHOW_NOTIFICATION,
   type ShowNotificationIntent,
@@ -23,15 +24,25 @@ import {
   type CloseNotificationIntent,
 } from "../../intents/close-notification";
 
-/** Where an attached card points: the explicit path, else the caller's workspace. */
-function attachmentOf(
+/**
+ * Where an attached card points: the workspace the input names, else — with
+ * `attach` — the one the call is scoped to.
+ */
+async function attachmentOf(
+  resolveReference: ReturnType<typeof createReferenceResolver>,
   ctx: OperationContext,
   input: {
     readonly attach?: boolean | undefined;
-    readonly workspacePath?: WorkspacePath | undefined;
+    readonly workspace?: string | undefined;
+    readonly project?: string | undefined;
   }
-): WorkspacePath | undefined {
-  if (input.workspacePath !== undefined) return input.workspacePath;
+): Promise<WorkspacePath | undefined> {
+  if (input.workspace !== undefined) {
+    return resolveReference(ctx, input.workspace, input.project);
+  }
+  if (input.project !== undefined) {
+    throw new ApiError("usage", "project only says where to look a workspace name up: name one.");
+  }
   if (!input.attach) return undefined;
   if (ctx.workspacePath === null) {
     throw new ApiError("no-workspace", "No workspace to attach the notification to.");
@@ -41,6 +52,7 @@ function attachmentOf(
 
 export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const resolveReference = createReferenceResolver(dispatcher);
 
   // Names each wait so a caller that disconnects can release it. Per registry,
   // not per call site: tokens only have to be unique among live waits.
@@ -54,7 +66,7 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
       "For the USER — the agent never sees it; to tell the agent something, use " +
       "agent.message. Returns { id } for a new or updated card; pass that id back to update it (progress, " +
       "a new message) or to notification.close. A card is app-wide unless attach is set (the " +
-      "calling workspace) or workspacePath is given: an attached card names the workspace, " +
+      "calling workspace) or workspace is given: an attached card names the workspace, " +
       "switches to it when clicked, and closes when the workspace is deleted. A card that says " +
       "exactly what an open card says joins it (a repeat counter) and returns its id. With " +
       "wait, blocks until the user answers and returns { choice }: the clicked action, or " +
@@ -88,16 +100,16 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
         .describe("Action buttons; the clicked one is returned as the choice"),
       id: z.string().min(1).optional().describe("Card to update instead of opening a new one"),
       attach: z.boolean().optional().describe("Attach the card to the calling workspace"),
-      workspacePath: workspacePathSchema
-        .min(1)
-        .optional()
-        .describe("Attach the card to this workspace instead"),
+      workspace: targetFields.workspace.describe(
+        "Attach the card to this workspace instead: a name (your own project first) or a path"
+      ),
+      project: targetFields.project,
       wait: z.boolean().optional().describe("Block until the user answers; returns { choice }"),
       timeout: z.number().positive().optional().describe("Give up waiting after this many seconds"),
     }),
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const workspacePath = attachmentOf(ctx, input);
+      const workspacePath = await attachmentOf(resolveReference, ctx, input);
       const config = {
         title: input.title,
         type: input.type,

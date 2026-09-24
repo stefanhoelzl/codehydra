@@ -26,6 +26,11 @@ const FORMATS: readonly Format[] = ["json", "text", "auto"];
 export interface GlobalArgs {
   /** Explicit workspace target, overriding the one derived from cwd. */
   readonly workspace?: string;
+  /**
+   * Project to look the `--workspace` name up in. Global only for a command
+   * without a `project` field of its own (`ws create` has one, and keeps it).
+   */
+  readonly project?: string;
   /** Output format; undefined when `--format` was not given, which means `auto`. */
   readonly format?: Format;
   readonly help: boolean;
@@ -245,11 +250,15 @@ export function parseArgs(
     }
   }
   Object.assign(options, GLOBAL_OPTIONS);
+  // `--project` scopes the `--workspace` lookup — unless the command has a
+  // `project` of its own, which it then simply is.
+  const projectIsGlobal = !fields.includes("project");
+  if (projectIsGlobal) options.project = { type: "string" };
 
   let input: Record<string, unknown> = {};
   const flags: Record<string, unknown> = {};
   const free: string[] = [];
-  const global: { workspace?: string; format?: Format; help: boolean } = {
+  const global: { workspace?: string; project?: string; format?: Format; help: boolean } = {
     help: false,
   };
 
@@ -287,6 +296,10 @@ export function parseArgs(
     }
     if (name === "workspace") {
       global.workspace = required();
+      continue;
+    }
+    if (name === "project" && projectIsGlobal) {
+      global.project = required();
       continue;
     }
     if (name === "input") {

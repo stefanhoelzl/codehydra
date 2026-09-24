@@ -66,7 +66,12 @@ async function createdAgentSpec(
   const create = registry(dispatcher).get("workspace.create");
   // `project` explicitly, so the handler skips resolving one from the caller.
   await create.handler(
-    { workspacePath: null, cwd: null, signal: new AbortController().signal },
+    {
+      workspacePath: null,
+      callerWorkspacePath: null,
+      cwd: null,
+      signal: new AbortController().signal,
+    },
     // The entry's own schema is what an adapter feeds the handler.
     create.input.parse({ name: "w", project: "/p", ...input })
   );
@@ -219,6 +224,7 @@ describe("registry contents", () => {
         const shape = (entry.input as unknown as { shape?: Record<string, unknown> }).shape ?? {};
         return Object.keys(shape)
           .filter((field) => !(cli.positionals ?? []).includes(field))
+          .filter((field) => !(cli.omit ?? []).includes(field))
           .filter((field) => GLOBAL_FLAG_NAMES.includes(toKebabCase(field)))
           .map((field) => `${entry.name}.${field}`);
       });

@@ -43,7 +43,18 @@ export type EntryKind = "command" | "event";
  * before the handler runs.
  */
 export interface OperationContext {
+  /** The workspace the call acts on: the one the caller named, else its own. */
   readonly workspacePath: WorkspacePath | null;
+  /**
+   * The caller's own workspace — where it stands, whatever it named.
+   *
+   * The same as `workspacePath` unless a shell named another one
+   * (`ch --workspace other …`): then this is still the workspace the shell is
+   * in, or null outside every workspace. An agent or extension is always its
+   * own workspace. It is what a workspace name is looked up relative to, and
+   * who a message is signed by.
+   */
+  readonly callerWorkspacePath: WorkspacePath | null;
   /**
    * Directory the caller is standing in, when it told us.
    *

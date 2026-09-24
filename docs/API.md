@@ -416,16 +416,32 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 The wire carries three kinds of client, declared in the handshake. They differ in
 what they may call and in how operations are addressed.
 
-| Kind     | Handshake                                          | Addresses operations as      |
-| -------- | -------------------------------------------------- | ---------------------------- |
-| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.** | `api:workspace:getStatus`, … |
-| `cli`    | `{ client: "cli", token, cwd? , workspacePath? }`  | `api:operation:<name>`       |
-| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`   | `api:operation:<name>`       |
+| Kind     | Handshake                                                   | Addresses operations as      |
+| -------- | ----------------------------------------------------------- | ---------------------------- |
+| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.**          | `api:workspace:getStatus`, … |
+| `cli`    | `{ client: "cli", token, cwd? , workspacePath?, project? }` | `api:operation:<name>`       |
+| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`            | `api:operation:<name>`       |
 
 The historical channel names are a compatibility surface for extensions, so they
 are kept exactly as they are and never grow for a new client. `ch` and the stdio
 MCP shim address operations by registry name instead, which is why adding an
 operation does not widen the extension-facing contract.
+
+For a `cli` client, `workspacePath` is the `--workspace` reference (a name or a
+path) and `project` the `--project` to look it up in; `cwd` is always sent. The
+connection then acts on the named workspace, while the workspace `cwd` sits in
+stays the **caller** — what a name is looked up relative to, and who
+`agent.message` signs as. For `mcp` and extensions, the caller is the
+workspace they present.
+
+**Naming a target.** Every operation that can act on another workspace takes
+`workspace` (a name or an absolute path) and `project` (a name or path to look
+the name up in). A name is looked up in the caller's project first, where a match
+wins; otherwise it must be unique across the other open projects (several →
+`usage`, none → `not-found`). `project` without `workspace` is `usage`. These
+two fields replace the former path-only `workspacePath` field — a breaking
+rename, with no alias. `ch` hides both: its global `--workspace` / `--project`
+name the target for the whole connection instead.
 
 Two further differences matter for anyone writing a client:
 
@@ -762,12 +778,12 @@ operations that instance actually has.
 
 ### Conventions
 
-|               |                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides; an unknown name fails the first command that needs a workspace with exit `6`, an ambiguous one with exit `2`. Several operations also accept a target so one workspace can act on another.                                                                                                       |
-| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                              |
-| **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                    | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview. |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the first command that needs a workspace with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). |
+| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                |
+| **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                                                                      | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                   |
 
 ### Exit codes
 
@@ -852,7 +868,7 @@ choice  Deploy
 
 `NotificationShowRequest` is `{ title, message?, type? ("info" default | "warning" |
 "error" | "spinner"), percent? (0–100), dismissible? (true), actions?: string[], id?,
-attach?, workspacePath?, wait?, timeout? (seconds) }`.
+attach?, workspace?, project?, wait?, timeout? (seconds) }`.
 
 - **Ids** are minted by CodeHydra. `id` updates that card; a card that is no longer open
   (dismissed) is exit `6`. `close` of a card that is gone does nothing.
@@ -860,7 +876,7 @@ attach?, workspacePath?, wait?, timeout? (seconds) }`.
   attached workspace match an open card joins it — the card shows a counter and the
   call gets its id — and the card closes once every show holding it has closed it.
   Progress is not part of the match.
-- **Attachment.** `attach` ties the card to the caller's workspace, `workspacePath` to a
+- **Attachment.** `attach` ties the card to the caller's workspace, `workspace` to a
   named one: the card names the workspace, clicking its title switches there, and
   `workspace:deleted` closes it. Otherwise it is app-wide.
 - **Waiting.** `wait` blocks and returns `{ choice }`: the clicked action, or `null` on
@@ -875,13 +891,13 @@ attach?, workspacePath?, wait?, timeout? (seconds) }`.
 conversation through the `agent:send-message` intent. It is the agent's channel, as the
 notifications above, `ws notify`, `ws status-bar` and `ws ask` are the user's.
 
-`SendAgentMessageRequest` is `{ text, wake? (false), workspacePath? }`. `text` given as
+`SendAgentMessageRequest` is `{ text, wake? (false), workspace?, project? }`. `text` given as
 `-` on the command line is read from stdin. The result is `null` once the agent has taken
 the message (sent, not read).
 
 - **Sender.** Set from the connection, never from the input:
-  `CodeHydra · workspace <name>` for the calling workspace, `CodeHydra · ch` for a call from
-  outside every workspace, and `CodeHydra · auto-workspace <source>` for events-mode
+  `CodeHydra · workspace <name>` for the caller's workspace (a shell's cwd, even when
+  `--workspace` names another), `CodeHydra · ch` for a shell outside every workspace, and `CodeHydra · auto-workspace <source>` for events-mode
   automatic workspaces.
 - **No agent.** A hibernated workspace fails fast. Without `wake`, a closed agent terminal
   fails too (category `not-found`, exit 6). The operation reports this as

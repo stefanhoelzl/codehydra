@@ -257,7 +257,14 @@ test("a message from outside reaches the running agent, and --wake brings a clos
 
   // `chAsync`: the mock in this process has to answer the turn the message starts.
   const first = `${MESSAGE_PROBE} one — the build is green`;
-  const sent = await chAsync(["ws", "agent", "message", "--workspace-path", workspacePath, first]);
+  const sent = await chAsync([
+    "ws",
+    "agent",
+    "message",
+    "--workspace",
+    MESSAGE_WORKSPACE_NAME,
+    first,
+  ]);
   expect(sent.status, `ch ws agent message failed: ${sent.stderr}`).toBe(0);
   await expect
     .poll(() => delivered(first), {
@@ -287,8 +294,8 @@ test("a message from outside reaches the running agent, and --wake brings a clos
     "ws",
     "agent",
     "message",
-    "--workspace-path",
-    workspacePath,
+    "--workspace",
+    MESSAGE_WORKSPACE_NAME,
     second,
   ]);
   // Not found: there is no agent to take it. Reported, not logged as a fault.
@@ -298,8 +305,8 @@ test("a message from outside reaches the running agent, and --wake brings a clos
     "ws",
     "agent",
     "message",
-    "--workspace-path",
-    workspacePath,
+    "--workspace",
+    MESSAGE_WORKSPACE_NAME,
     "--wake",
     second,
   ]);

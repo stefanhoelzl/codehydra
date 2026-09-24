@@ -20,12 +20,31 @@ import { ApiError } from "../errors";
 import type { OperationName } from "../names";
 import type { OperationContext } from "../types";
 import { createRegistry } from "./index";
+import { z } from "zod/v4";
+import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
+import type { Operation, OperationSchemas } from "../../intents/lib/operation";
+
+const listProjectsSchemas = {
+  type: INTENT_LIST_PROJECTS,
+  payload: z.unknown(),
+  result: z.unknown(),
+} satisfies OperationSchemas;
+
+/** Nothing is listed: a workspace named by path is taken at its word. */
+class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
+  readonly id = "list-projects";
+  readonly schemas = listProjectsSchemas;
+  async execute(): Promise<unknown[]> {
+    return [];
+  }
+}
 
 const PROJECT = projPath("/projects/app");
 const FEAT = wsPath("/projects/app/workspaces/feat");
 
 function setup() {
   const dispatcher = createMockDispatcher();
+  dispatcher.registerOperation(new ListNoProjectsOp());
   registerTestInfrastructure(dispatcher, {
     workspaces: (workspacePath: WorkspacePath) => ({
       projectPath: PROJECT,
@@ -53,7 +72,12 @@ function setup() {
     input: Record<string, unknown>,
     signal: AbortSignal = new AbortController().signal
   ): Promise<unknown> => {
-    const ctx: OperationContext = { workspacePath: workspace, cwd: null, signal };
+    const ctx: OperationContext = {
+      workspacePath: workspace,
+      callerWorkspacePath: workspace,
+      cwd: null,
+      signal,
+    };
     return registry.invoke(registry.get(name), ctx, input);
   };
 
@@ -118,7 +142,7 @@ describe("notification entries", () => {
   it("attaches to an explicit workspace from anywhere", async () => {
     const { call, cards } = setup();
 
-    await call("notification.show", null, { title: "Tests green", workspacePath: FEAT });
+    await call("notification.show", null, { title: "Tests green", workspace: FEAT });
 
     expect(cards.lastNotification!.workspacePath).toBe(FEAT);
   });

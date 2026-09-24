@@ -64,6 +64,11 @@ export interface PluginAdapterOptions {
   /** Workspace this connection is scoped to, or null for a workspace-less client. */
   readonly workspacePath: WorkspacePath | null;
   /**
+   * The client's own workspace (see OperationContext.callerWorkspacePath).
+   * Defaults to `workspacePath`: only a shell naming another workspace differs.
+   */
+  readonly callerWorkspacePath?: WorkspacePath | null;
+  /**
    * Why `workspacePath` is null although the client named a workspace — an
    * unknown or ambiguous `--workspace`. Raised instead of the generic
    * `no-workspace` by any operation that requires a workspace.
@@ -151,6 +156,8 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
 
   const ctx: OperationContext = {
     workspacePath,
+    callerWorkspacePath:
+      options.callerWorkspacePath !== undefined ? options.callerWorkspacePath : workspacePath,
     cwd: options.cwd ?? null,
     signal: connection.signal,
   };

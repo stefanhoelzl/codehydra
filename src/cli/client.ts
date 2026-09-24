@@ -52,6 +52,8 @@ export interface ClientOptions {
   readonly cwd: string;
   /** Explicit workspace, overriding whatever cwd would resolve to. */
   readonly workspace?: string;
+  /** Project to look the `workspace` name up in. */
+  readonly project?: string;
   /**
    * How long to wait for the connection.
    *
@@ -84,7 +86,7 @@ export interface Client {
  * caller's side — CodeHydra is not listening — so they report identically.
  */
 export async function connect(options: ClientOptions): Promise<Client> {
-  const { connection, cwd, workspace, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const { connection, cwd, workspace, project, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
 
   const socket: Socket = io(`http://127.0.0.1:${connection.port}`, {
     // Skip the long-polling handshake: this process may live for milliseconds,
@@ -95,6 +97,7 @@ export async function connect(options: ClientOptions): Promise<Client> {
       token: connection.token,
       cwd,
       ...(workspace !== undefined && { workspacePath: workspace }),
+      ...(project !== undefined && { project }),
     },
     reconnection: false,
     timeout: timeoutMs,

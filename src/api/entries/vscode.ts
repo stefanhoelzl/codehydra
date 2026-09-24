@@ -10,11 +10,11 @@
  */
 
 import { z } from "zod/v4";
-import { ApiError } from "../errors";
 import { defineEntry } from "../types";
-import type { AnyOperationEntry, OperationContext } from "../types";
+import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import { createTargetResolver, targetFields } from "./target";
+import type { WorkspacePath } from "../../intents/contract";
 import type { OperationName } from "../names";
 import { Path } from "../../utils/path/path";
 
@@ -22,19 +22,6 @@ import { INTENT_VSCODE_COMMAND } from "../../intents/vscode-command";
 import type { VscodeCommandIntent } from "../../intents/vscode-command";
 import { INTENT_VSCODE_SHOW_MESSAGE } from "../../intents/vscode-show-message";
 import type { VscodeShowMessageIntent } from "../../intents/vscode-show-message";
-
-const targetWorkspace = workspacePathSchema
-  .min(1)
-  .optional()
-  .describe("Workspace to act on. Omit to target the current workspace.");
-
-function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): WorkspacePath {
-  const target = explicit ?? ctx.workspacePath;
-  if (target === null || target === undefined) {
-    throw new ApiError("no-workspace", "No workspace to act on.");
-  }
-  return target;
-}
 
 /** The `$vscode` wrapper form the sidekick deserializes into a real Uri. */
 function uri(filePath: string): unknown {
@@ -61,6 +48,7 @@ function parseLocation(spec: string): { path: string; line?: number; character?:
 
 export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher, appLayer } = deps;
+  const targetOf = createTargetResolver(dispatcher);
 
   const run = (workspacePath: WorkspacePath, command: string, args?: readonly unknown[]) =>
     dispatcher.dispatch<VscodeCommandIntent>({
@@ -77,13 +65,12 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       'wrapper form, e.g. { "$vscode": "Uri", "value": "file:///path/to/file.ts" }. Prefer a ' +
       "composed command (browser, diff, goto, preview, reveal, launch) where one exists.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       command: z.string().min(1).max(256).describe("VS Code command identifier"),
       args: z.array(z.unknown()).optional().describe("Command arguments, $vscode form supported"),
     }),
     requiresWorkspace: true,
-    handler: async (ctx, input) =>
-      run(targetOf(ctx, input.workspacePath), input.command, input.args),
+    handler: async (ctx, input) => run(await targetOf(ctx, input), input.command, input.args),
   });
 
   const message = defineEntry({
@@ -101,7 +88,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "quick picks and inputs are modal: the workspace shows as waiting on the user until " +
       "they are dismissed, even after a notification without options has returned.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       type: z.enum(["info", "warning", "error", "status", "select"]),
       message: z.string().max(1000).nullable().describe("Display text; null clears the status bar"),
       hint: z.string().max(200).optional().describe("Tooltip for status, placeholder for select"),
@@ -114,7 +101,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const result = await dispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath: targetOf(ctx, input.workspacePath),
+          workspacePath: await targetOf(ctx, input),
           type: input.type,
           message: input.message,
           ...(input.hint !== undefined && { hint: input.hint }),
@@ -146,7 +133,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       description,
       instructions,
       input: z.object({
-        workspacePath: targetWorkspace,
+        ...targetFields,
         message: z.string().max(1000).nullable(),
         hint: z.string().max(200).optional(),
         options: z.array(z.string()).max(100).optional(),
@@ -159,7 +146,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         const result = await dispatcher.dispatch<VscodeShowMessageIntent>({
           type: INTENT_VSCODE_SHOW_MESSAGE,
           payload: {
-            workspacePath: targetOf(ctx, input.workspacePath),
+            workspacePath: await targetOf(ctx, input),
             type: build(input.level),
             message: input.message,
             ...(input.hint !== undefined && { hint: input.hint }),
@@ -197,12 +184,12 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Open a url in the workspace's built-in simple browser.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       url: z.url().describe("Url to open"),
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      run(targetOf(ctx, input.workspacePath), "simpleBrowser.show", [input.url]),
+      run(await targetOf(ctx, input), "simpleBrowser.show", [input.url]),
   });
 
   const diff = defineEntry({
@@ -210,14 +197,14 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Open a diff of two files in the workspace's editor.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       left: z.string().min(1).describe("Path of the left-hand file"),
       right: z.string().min(1).describe("Path of the right-hand file"),
       title: z.string().min(1).optional().describe("Editor tab title"),
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      run(targetOf(ctx, input.workspacePath), "vscode.diff", [
+      run(await targetOf(ctx, input), "vscode.diff", [
         uri(input.left),
         uri(input.right),
         ...(input.title !== undefined ? [input.title] : []),
@@ -232,13 +219,13 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Accepts either separate fields or a 'file:line:column' location string. Line and column " +
       "are 1-based, matching what compilers and grep print.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       location: z.string().min(1).describe("Path, or 'path:line' / 'path:line:column'"),
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const { path, line, character } = parseLocation(input.location);
-      const target = targetOf(ctx, input.workspacePath);
+      const target = await targetOf(ctx, input);
       if (line === undefined) return run(target, "vscode.open", [uri(path)]);
       return run(target, "vscode.open", [
         uri(path),
@@ -252,12 +239,12 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Open a markdown preview in the workspace's editor.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       path: z.string().min(1).describe("Path of the markdown file"),
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      run(targetOf(ctx, input.workspacePath), "markdown.showPreview", [uri(input.path)]),
+      run(await targetOf(ctx, input), "markdown.showPreview", [uri(input.path)]),
   });
 
   const systemPath = defineEntry({
