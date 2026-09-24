@@ -49,6 +49,12 @@ import type {
   GetAgentSessionHookResult,
 } from "../../intents/get-agent-session";
 import type { RestartAgentHookInput, RestartAgentHookResult } from "../../intents/restart-agent";
+import {
+  SEND_AGENT_MESSAGE_OPERATION_ID,
+  type SendAgentMessageIntent,
+  type SendHookInput,
+  type SendHookResult,
+} from "../../intents/send-agent-message";
 import type { AgentLifecycleHookInput } from "../../intents/agent-lifecycle";
 import type { ModalHookInput } from "../../intents/vscode-modal-changed";
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
@@ -72,7 +78,7 @@ import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-ch
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { AgentSpec } from "../../shared/api/types";
-import type { AgentPromptConfig, McpConfig } from "./types";
+import { AgentUnreachableError, type AgentPromptConfig, type McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import type { AgentModuleProvider } from "./agent-module-provider";
 
@@ -467,6 +473,26 @@ export function createAgentModule(
             } else {
               throw new Error(result.error);
             }
+          },
+        },
+      },
+
+      [SEND_AGENT_MESSAGE_OPERATION_ID]: {
+        send: {
+          requires: { agent: provider.type },
+          handler: async (ctx: HookContext): Promise<HookOutput<SendHookResult>> => {
+            const { workspacePath, waitMs } = ctx as SendHookInput;
+            const { text, from } = (ctx.intent as SendAgentMessageIntent).payload;
+            try {
+              await provider.sendMessage(workspacePath, { text, from }, { waitMs });
+            } catch (error) {
+              // No agent to take it is the target's state, not a fault.
+              if (error instanceof AgentUnreachableError) {
+                return { result: { sent: false, reason: error.message } };
+              }
+              throw error;
+            }
+            return { result: { sent: true } };
           },
         },
       },

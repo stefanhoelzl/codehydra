@@ -13,6 +13,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ClaudeCodeProvider } from "./provider";
 import { ClaudeCodeServerManager } from "./server-manager";
 import {
+  createLocalSocketClientMock,
+  type MockLocalSocketClient,
+} from "../../../boundaries/platform/local-socket-client.state-mock";
+import {
   createPortManagerMock,
   type MockPortManager,
 } from "../../../boundaries/platform/network.test-utils";
@@ -47,6 +51,7 @@ async function sendHook(
 
 describe("ClaudeCodeProvider integration", () => {
   let serverManager: ClaudeCodeServerManager;
+  let mockSockets: MockLocalSocketClient;
   let provider: ClaudeCodeProvider;
   let mockPortManager: MockPortManager;
   let mockPathProvider: PathProvider;
@@ -67,7 +72,9 @@ describe("ClaudeCodeProvider integration", () => {
       },
     });
 
+    mockSockets = createLocalSocketClientMock();
     serverManager = new ClaudeCodeServerManager({
+      localSocketClient: mockSockets,
       portManager: mockPortManager,
       pathProvider: mockPathProvider,
       fileSystem: mockFileSystem,
@@ -281,6 +288,7 @@ describe("ClaudeCodeProvider integration", () => {
     it("returns an empty token when MCP is not configured", async () => {
       // Create server manager without MCP config
       const serverManagerNoMcp = new ClaudeCodeServerManager({
+        localSocketClient: createLocalSocketClientMock(),
         portManager: createPortManagerMock(),
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,

@@ -86,6 +86,7 @@ import {
 } from "./intents/get-workspace-status";
 import { GetAgentSessionOperation } from "./intents/get-agent-session";
 import { RestartAgentOperation } from "./intents/restart-agent";
+import { SendAgentMessageOperation } from "./intents/send-agent-message";
 import { AgentLifecycleOperation } from "./intents/agent-lifecycle";
 import { GetActiveWorkspaceOperation } from "./intents/get-active-workspace";
 import { ListProjectsOperation } from "./intents/list-projects";
@@ -364,6 +365,7 @@ const serverManagerDeps = {
 const agentServerManagers = {
   claude: new ClaudeCodeServerManager({
     portManager: serverManagerDeps.portManager,
+    localSocketClient: networkLayer,
     pathProvider: serverManagerDeps.pathProvider,
     fileSystem: serverManagerDeps.fileSystem,
     logger: serverManagerDeps.logger,
@@ -913,6 +915,7 @@ dispatcher.registerOperation(new GetMetadataOperation());
 dispatcher.registerOperation(new GetWorkspaceStatusOperation());
 dispatcher.registerOperation(new GetAgentSessionOperation());
 dispatcher.registerOperation(new RestartAgentOperation());
+dispatcher.registerOperation(new SendAgentMessageOperation());
 dispatcher.registerOperation(new AgentLifecycleOperation());
 dispatcher.registerOperation(new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(new ListProjectsOperation());

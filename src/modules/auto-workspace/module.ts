@@ -31,11 +31,11 @@
  *   - no match          → create, exactly like the workspaces mode
  *   - match, closing    → skip (a teardown pipeline owns it)
  *   - match             → re-apply the rendered metadata, then wake it if it is
- *                         hibernated, or switch to it if `focus: true`
- * The metadata is the whole signal — no prompt is delivered to an existing
- * workspace's agent, because a prompt only reaches one at launch. A failed
- * event is logged and gone: unlike a workspaces-mode item there is no retry,
- * since the cmd has already consumed it.
+ *                         hibernated, or switch to it if `focus: true`, then
+ *                         send the rendered `prompt` (if any) to its agent as a
+ *                         message — reopening a closed agent terminal first
+ * A failed event is logged and gone: unlike a workspaces-mode item there is no
+ * retry, since the cmd has already consumed it.
  *
  * `auto-workspace.poll-interval` (seconds, default 60) is the *gap between
  * runs*: the next wait is armed only once a cycle has settled, so a slow poll
@@ -70,6 +70,10 @@ import {
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
+import {
+  INTENT_SEND_AGENT_MESSAGE,
+  type SendAgentMessageIntent,
+} from "../../intents/send-agent-message";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import type { Config } from "../../boundaries/platform/config";
 import {
@@ -513,8 +517,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         return;
       }
 
-      // The rendered metadata is the event's only signal — a prompt cannot reach
-      // an agent that is already running (it is read from a file at launch).
       await applyMetadata(source, workspacePath, definition, key);
 
       const hibernated = resolved.metadata[HIBERNATED_METADATA_KEY] === "true";
@@ -532,6 +534,28 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           type: INTENT_SWITCH_WORKSPACE,
           payload: { workspacePath, focus: true },
         });
+      }
+
+      // The agent is already running (or just woke), so the prompt goes in as
+      // a message rather than a launch prompt. `wake` also reopens an agent
+      // terminal the user closed, and waits for a woken agent to start.
+      if (definition.prompt !== "") {
+        const message = await deps.dispatcher.dispatch<SendAgentMessageIntent>({
+          type: INTENT_SEND_AGENT_MESSAGE,
+          payload: {
+            workspacePath,
+            text: definition.prompt,
+            from: `CodeHydra · auto-workspace ${source.name}`,
+            wake: true,
+          },
+        });
+        if (!message.sent) {
+          deps.logger.warn("Auto-workspace prompt not delivered", {
+            source: source.name,
+            key,
+            reason: message.reason ?? "",
+          });
+        }
       }
 
       deps.logger.info("Auto-workspace event applied", {
@@ -644,7 +668,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       // incoming item's name. Creating would then collide on the branch every
       // cycle, forever, so take ownership of what is already there instead.
       // Adopting writes the entry and nothing else — no metadata, no wake, no
-      // focus, and no prompt, which only ever reaches an agent at launch.
+      // focus, and no prompt: it is bookkeeping, not news for the agent.
       const existing = await findWorkspaceByName(projectPath, definition.name);
       if (existing) {
         entries[key] = newEntry(definition.name, projectPath);

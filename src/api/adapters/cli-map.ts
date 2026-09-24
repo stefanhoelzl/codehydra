@@ -27,6 +27,11 @@ export interface CliMapping extends InputShaping {
    * is for. `--format json` still forces JSON.
    */
   readonly text?: boolean;
+  /**
+   * A string field that reads standard input when its value is `-`, so text
+   * that is long or awkward to quote can be piped in (`… | ch ws agent message -`).
+   */
+  readonly stdin?: string;
 }
 
 export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
@@ -48,6 +53,7 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "agent.restart": { path: ["ws", "agent", "restart"] },
   "agent.open": { path: ["ws", "agent", "open"] },
   "agent.close": { path: ["ws", "agent", "close"] },
+  "agent.message": { path: ["ws", "agent", "message"], positionals: ["text"], stdin: "text" },
   // Nests under the status command: `ch ws status` reads it, `ch ws status set`
   // reports it. Resolution is longest-path so the two never collide.
   "agent.status.set": { path: ["ws", "status", "set"], positionals: ["status"] },

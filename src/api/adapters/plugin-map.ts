@@ -50,6 +50,7 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "agent.restart": { channel: "api:workspace:restartAgentServer", pick: [] },
   "agent.open": { channel: "api:workspace:openAgent" },
   "agent.close": { channel: "api:workspace:closeAgent" },
+  "agent.message": { channel: "api:workspace:sendAgentMessage" },
   "agent.status.set": { channel: "api:workspace:setAgentStatus" },
   // The one event. Only an observer that witnessed the terminal event can send
   // it truthfully, and the sidekick is that observer.

@@ -201,7 +201,7 @@ Services are pure Node.js for testability without Electron:
 | OpenCode Status Provider     | SSE connections, status aggregation                                                                | Implemented |
 | VS Code Setup Service        | First-run extension and config installation                                                        | Implemented |
 | Hooks Module                 | Run a repository's own `.codehydra` scripts at curated lifecycle moments                           | Implemented |
-| NetworkLayer                 | HTTP, SSE, port operations (HttpClient, SseClient, PortManager)                                    | Implemented |
+| NetworkLayer                 | HTTP, SSE, port operations, local sockets (HttpClient, SseClient, PortManager, LocalSocketClient)  | Implemented |
 | PluginServer                 | Socket.IO server for VS Code extension communication                                               | Implemented |
 | McpServerManager             | MCP server for AI agent workspace API access                                                       | Implemented |
 | PosthogModule                | PostHog analytics for DAU, version, platform, errors                                               | Implemented |
@@ -503,6 +503,7 @@ For detailed platform abstraction documentation including interface definitions,
 | Filesystem         | `FileSystemBoundary`    | `DefaultFileSystemBoundary`  |
 | HTTP requests      | `HttpClient`            | `DefaultNetworkLayer`        |
 | Port operations    | `PortManager`           | `DefaultNetworkLayer`        |
+| Local sockets      | `LocalSocketClient`     | `DefaultNetworkLayer`        |
 | Process spawning   | `ProcessRunner`         | `ExecaProcessRunner`         |
 | Build info         | `BuildInfo`             | `ElectronBuildInfo`          |
 | Platform info      | `PlatformInfo`          | `NodePlatformInfo`           |

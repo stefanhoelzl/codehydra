@@ -34,6 +34,11 @@ export interface RunOptions {
    * written to stderr and only when that is a terminal. Omitted means silent.
    */
   readonly onProgress?: (line: string) => void;
+  /**
+   * Reads all of standard input, for a field given as `-` (see
+   * `CliMapping.stdin`). Omitted means there is none to read.
+   */
+  readonly readStdin?: () => Promise<string>;
 }
 
 /** Exit code for each failure category the app reports. */
@@ -102,6 +107,15 @@ export async function run(options: RunOptions): Promise<RunResult> {
       resolved.match.inputSchema as { properties?: Record<string, { type?: string | string[] }> },
       resolved.match.positionals ?? []
     );
+
+    const stdinField = resolved.match.stdin;
+    if (stdinField !== undefined && input[stdinField] === "-") {
+      if (options.readStdin === undefined) {
+        throw new UsageError(`"-" reads ${stdinField} from standard input, and there is none`);
+      }
+      // Drop the one newline a pipeline's last line ends with.
+      input[stdinField] = (await options.readStdin()).replace(/\r?\n$/, "");
+    }
 
     // Watch only for the duration of the call, and only when someone is
     // looking: an unwatched subscription would render nothing and still cost a

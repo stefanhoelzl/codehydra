@@ -11,7 +11,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ClaudeCodeServerManager } from "./server-manager";
+import {
+  createLocalSocketClientMock,
+  type MockLocalSocketClient,
+} from "../../../boundaries/platform/local-socket-client.state-mock";
 import { registeredHooks } from "./types";
+import { AgentUnreachableError } from "../types";
 import {
   createPortManagerMock,
   type MockPortManager,
@@ -52,6 +57,7 @@ function lastStatus(statusChanges: readonly AgentStatus[]): AgentStatus {
 
 describe("ClaudeCodeServerManager integration", () => {
   let serverManager: ClaudeCodeServerManager;
+  let mockSockets: MockLocalSocketClient;
   let mockPortManager: MockPortManager;
   let mockPathProvider: PathProvider;
   let mockFileSystem: MockFileSystemBoundary;
@@ -71,7 +77,9 @@ describe("ClaudeCodeServerManager integration", () => {
       },
     });
 
+    mockSockets = createLocalSocketClientMock();
     serverManager = new ClaudeCodeServerManager({
+      localSocketClient: mockSockets,
       portManager: mockPortManager,
       pathProvider: mockPathProvider,
       fileSystem: mockFileSystem,
@@ -149,6 +157,7 @@ describe("ClaudeCodeServerManager integration", () => {
       // Regression: a failed listen() left `httpServer` set, so dispose() called
       // close() on a handle-less server and rejected with ERR_SERVER_NOT_RUNNING.
       const failing = new ClaudeCodeServerManager({
+        localSocketClient: createLocalSocketClientMock(),
         portManager: {
           ...mockPortManager,
           listenOnFreePort: vi
@@ -167,6 +176,149 @@ describe("ClaudeCodeServerManager integration", () => {
         failing.startServer(testPath("/workspace/feature-a").toNative())
       ).rejects.toThrow("EADDRINUSE");
       await expect(failing.dispose()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("messages", () => {
+    const workspace = testPath("/workspace/feature-a").toNative();
+    const message = { text: "the build is green", from: "CodeHydra · workspace other" };
+
+    /** Announce a session inbox the way the hook handler forwards it. */
+    async function startSession(port: number, socket: string, token?: string): Promise<void> {
+      await sendHook(port, "SessionStart", {
+        workspacePath: workspace,
+        session_id: "session-1",
+        _ch_messaging: { socket, ...(token !== undefined && { token }) },
+      });
+    }
+
+    it("writes the message to the inbox SessionStart announced", async () => {
+      const port = await serverManager.startServer(workspace);
+      await startSession(port, "/run/inbox-1.sock", "secret");
+
+      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+
+      expect(mockSockets.$.sent).toHaveLength(1);
+      const sent = mockSockets.$.sent[0]!;
+      expect(sent.socketPath).toBe("/run/inbox-1.sock");
+      const [auth, line] = sent.data.trimEnd().split("\n");
+      expect(JSON.parse(auth!)).toEqual({ type: "auth", token: "secret" });
+      expect(JSON.parse(line!)).toEqual({
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            '<cross-session-message from-name="CodeHydra · workspace other">\n' +
+            "the build is green\n</cross-session-message>",
+        },
+      });
+    });
+
+    it("fails without waiting when no session has announced an inbox", async () => {
+      await serverManager.startServer(workspace);
+
+      await expect(
+        serverManager.sendMessage(workspace, message, { waitMs: 0 })
+      ).rejects.toBeInstanceOf(AgentUnreachableError);
+      expect(mockSockets.$.sent).toHaveLength(0);
+    });
+
+    it("waits for a claude that is starting in an open terminal, even unasked", async () => {
+      // The sidebar reads idle from WrapperStart, before claude's SessionStart.
+      const port = await serverManager.startServer(workspace);
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+
+      const sending = serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      await startSession(port, "/run/inbox-1.sock");
+      await sending;
+
+      expect(mockSockets.$.sent.map((entry) => entry.socketPath)).toEqual(["/run/inbox-1.sock"]);
+    });
+
+    it("stops waiting for a starting claude once its terminal closes", async () => {
+      await serverManager.startServer(workspace);
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+
+      const sending = serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+
+      await expect(sending).rejects.toBeInstanceOf(AgentUnreachableError);
+    });
+
+    it("keeps waiting when asked to, although the terminal has not opened yet", async () => {
+      // After --wake reopens the terminal: closed now, open in a moment.
+      const port = await serverManager.startServer(workspace);
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+
+      const sending = serverManager.sendMessage(workspace, message, { waitMs: 5000 });
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      await startSession(port, "/run/inbox-1.sock");
+      await sending;
+
+      expect(mockSockets.$.sent).toHaveLength(1);
+    });
+
+    it("fails for a workspace it does not track", async () => {
+      await expect(serverManager.sendMessage(workspace, message, { waitMs: 50 })).rejects.toThrow(
+        /No Claude session is running/
+      );
+    });
+
+    it("waits for the session to announce its inbox", async () => {
+      const port = await serverManager.startServer(workspace);
+
+      const sending = serverManager.sendMessage(workspace, message, { waitMs: 5000 });
+      await startSession(port, "/run/inbox-1.sock");
+      await sending;
+
+      expect(mockSockets.$.sent.map((entry) => entry.socketPath)).toEqual(["/run/inbox-1.sock"]);
+    });
+
+    it("forgets the inbox when the session ends or its terminal closes", async () => {
+      const port = await serverManager.startServer(workspace);
+      await startSession(port, "/run/inbox-1.sock");
+      await sendHook(port, "SessionEnd", { workspacePath: workspace });
+
+      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
+        /No Claude session is running/
+      );
+
+      await startSession(port, "/run/inbox-2.sock");
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+
+      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
+        /No Claude session is running/
+      );
+    });
+
+    it("follows the session to a new inbox on the next SessionStart", async () => {
+      const port = await serverManager.startServer(workspace);
+      await startSession(port, "/run/inbox-1.sock");
+      await startSession(port, "/run/inbox-2.sock");
+
+      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+
+      expect(mockSockets.$.sent.map((entry) => entry.socketPath)).toEqual(["/run/inbox-2.sock"]);
+    });
+
+    it("keeps the inbox across a restart, which leaves claude running", async () => {
+      const port = await serverManager.startServer(workspace);
+      await startSession(port, "/run/inbox-1.sock");
+
+      await serverManager.restartServer(workspace);
+      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+
+      expect(mockSockets.$.sent).toHaveLength(1);
+    });
+
+    it("surfaces a failed socket write", async () => {
+      const port = await serverManager.startServer(workspace);
+      await startSession(port, "/run/inbox-1.sock");
+      mockSockets.$.failWith(new Error("connect ECONNREFUSED"));
+
+      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
+        "ECONNREFUSED"
+      );
     });
   });
 
@@ -1103,6 +1255,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("keeps a spaced handler path as one argument, unquoted", async () => {
       const spaced = new ClaudeCodeServerManager({
+        localSocketClient: createLocalSocketClientMock(),
         portManager: mockPortManager,
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,
@@ -2056,6 +2209,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     function createManager(): ClaudeCodeServerManager {
       return new ClaudeCodeServerManager({
+        localSocketClient: createLocalSocketClientMock(),
         portManager: mockPortManager,
         pathProvider: mockPathProvider,
         fileSystem: mockFileSystem,

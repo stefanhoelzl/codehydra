@@ -77,6 +77,15 @@ function runCommand(command: string, args: readonly string[]): Promise<number> {
   });
 }
 
+/** All of standard input, as text — for a field given as `-`. */
+async function readAllStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer));
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function main(): Promise<number> {
   const argv = process.argv.slice(2);
 
@@ -167,6 +176,7 @@ async function main(): Promise<number> {
     argv,
     isTty: process.stdout.isTTY === true,
     connect: () => openConnection(workspaceFlag(flagArgv)),
+    ...(process.stdin.isTTY !== true && { readStdin: readAllStdin }),
     ...(showProgress && {
       onProgress: (line: string) => process.stderr.write(`${line}\n`),
     }),

@@ -78,6 +78,15 @@ export interface ClaudeCodeBackgroundTask {
 export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
   /** Workspace path (added by hook-handler from environment) */
   readonly workspacePath: string;
+  /**
+   * The session's inbox (added by hook-handler to SessionStart only, from the
+   * CLAUDE_CODE_MESSAGING_* variables Claude exports to hooks). Absent when the
+   * session has no inbox.
+   */
+  readonly _ch_messaging?: {
+    readonly socket?: string;
+    readonly token?: string;
+  };
 }
 
 /**

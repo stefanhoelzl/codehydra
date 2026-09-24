@@ -25,6 +25,7 @@ export const OPERATION_NAMES = [
   "agent.restart",
   "agent.open",
   "agent.close",
+  "agent.message",
   "agent.status.set",
   "agent.lifecycle",
   "vscode.command",

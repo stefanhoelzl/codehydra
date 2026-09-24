@@ -49,9 +49,10 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
   const show = defineEntry({
     name: "notification.show",
     kind: "command",
-    description: "Show or update a notification in CodeHydra's sidebar.",
+    description: "Show or update a notification for the user in CodeHydra's sidebar.",
     instructions:
-      "Returns { id } for a new or updated card; pass that id back to update it (progress, " +
+      "For the USER — the agent never sees it; to tell the agent something, use " +
+      "agent.message. Returns { id } for a new or updated card; pass that id back to update it (progress, " +
       "a new message) or to notification.close. A card is app-wide unless attach is set (the " +
       "calling workspace) or workspacePath is given: an attached card names the workspace, " +
       "switches to it when clicked, and closes when the workspace is deleted. A card that says " +

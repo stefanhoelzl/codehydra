@@ -11,7 +11,13 @@
  * - AgentModule (aggregates status across workspaces)
  */
 
-import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
+import type {
+  AgentMessage,
+  AgentMessageOptions,
+  AgentProvider,
+  AgentSessionInfo,
+  AgentStatus,
+} from "../types";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import type { Logger } from "../../../boundaries/platform/logging";
 
@@ -192,6 +198,14 @@ export class ClaudeCodeProvider implements AgentProvider {
    */
   markActive(): void {
     // Intentionally empty (interface conformance)
+  }
+
+  /**
+   * Deliver a message into the running Claude session (see
+   * {@link ClaudeCodeServerManager.sendMessage}).
+   */
+  sendMessage(message: AgentMessage, options: AgentMessageOptions): Promise<void> {
+    return this.serverManager.sendMessage(this.workspacePath, message, options);
   }
 
   /**

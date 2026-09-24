@@ -1476,6 +1476,7 @@ src/boundaries/platform/
 ├── filesystem.state-mock.ts    # createFileSystemMock()
 ├── http-client.state-mock.ts   # createMockHttpClient()
 ├── port-manager.state-mock.ts  # createPortManagerMock()
+├── local-socket-client.state-mock.ts  # createLocalSocketClientMock()
 ├── git-client.ts               # Interface
 └── git-client.state-mock.ts    # createMockGitClient() + gitClientMatchers
 ```

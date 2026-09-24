@@ -18,6 +18,8 @@ import type {
   WorkspaceStartResult,
 } from "./agent-module-provider";
 import type {
+  AgentMessage,
+  AgentMessageOptions,
   AgentProvider,
   AgentServerManager,
   AgentSessionInfo,
@@ -38,6 +40,7 @@ import type { BinaryType } from "../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { Logger } from "../../boundaries/platform/logging";
 import { createNoneStatus, convertToAggregatedStatus } from "./status-utils";
+import { AgentUnreachableError } from "./types";
 
 // =============================================================================
 // Spec Interface
@@ -480,6 +483,24 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     getSession(workspacePath: WorkspacePath): AgentSessionInfo | null {
       return providers.get(workspacePath)?.getSession() ?? null;
+    },
+
+    // --- Messages ---
+    async sendMessage(
+      workspacePath: WorkspacePath,
+      message: AgentMessage,
+      options: AgentMessageOptions
+    ): Promise<void> {
+      // A provider that is still being registered (the server just started)
+      // is the one the message is for.
+      await serverStartedPromises.get(workspacePath);
+      const provider = providers.get(workspacePath);
+      if (provider === undefined) {
+        throw new AgentUnreachableError(
+          `No ${spec.displayName} agent is running in this workspace.`
+        );
+      }
+      await provider.sendMessage(message, options);
     },
 
     // --- Events ---

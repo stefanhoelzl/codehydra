@@ -50,6 +50,7 @@ vi.mock("./provider", () => ({
     });
     getSession = vi.fn().mockReturnValue({ port: 8080, sessionId: "s1" });
     getEnvironmentVariables = vi.fn().mockReturnValue({ CLAUDE_PORT: "8080" });
+    sendMessage = vi.fn().mockResolvedValue(undefined);
     constructor() {
       capturedStatusCallback = null;
       latestMockProvider = this as unknown as AgentProvider;
@@ -620,6 +621,31 @@ describe("createClaudeModuleProvider", () => {
       const session = provider.getSession(WS_PATH);
 
       expect(session).toEqual({ port: 8080, sessionId: "s1" });
+    });
+  });
+
+  describe("sendMessage", () => {
+    const message = { text: "hello", from: "CodeHydra · ch" };
+
+    it("fails for a workspace with no provider", async () => {
+      const provider = createProvider();
+
+      await expect(provider.sendMessage(WS_PATH, message, { waitMs: 0 })).rejects.toThrow(
+        "No Claude Code agent is running in this workspace."
+      );
+    });
+
+    it("delegates to the workspace's provider", async () => {
+      const provider = createProvider();
+      provider.initialize(null);
+      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0] as (workspacePath: string, port: number) => void;
+      onStartedCb(WS_PATH, 8080);
+
+      // Sent while the provider is still being registered: it waits for it.
+      await provider.sendMessage(WS_PATH, message, { waitMs: 500 });
+
+      expect(latestMockProvider.sendMessage).toHaveBeenCalledWith(message, { waitMs: 500 });
     });
   });
 

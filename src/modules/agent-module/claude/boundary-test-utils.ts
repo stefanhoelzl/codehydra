@@ -53,7 +53,7 @@ import { createMockBuildInfo } from "../../../boundaries/platform/build-info.tes
 import { createTempDir, createTestGitRepo } from "../../../utils/testing/test-utils";
 import { ClaudeCodeServerManager } from "./server-manager";
 import { isValidHookName, type ClaudeCodeHookName } from "./types";
-import type { AgentStatus } from "../types";
+import type { AgentMessage, AgentStatus } from "../types";
 
 /** The shipped hook handler. Built by `pnpm build:wrappers`. */
 const HOOK_HANDLER_PATH = resolve(__dirname, "../../../../dist/bin/claude-code-hook-handler.cjs");
@@ -90,6 +90,11 @@ export interface ScenarioRun {
   count(hook: ClaudeCodeHookName): number;
   /** Status after the last hook of the run. */
   readonly finalStatus: AgentStatus;
+  /**
+   * With `ScenarioOptions.message`: the text of the user message the model was
+   * handed that carries it, or undefined when it never reached the model.
+   */
+  readonly deliveredMessage: string | undefined;
 }
 
 /** What a scenario waits for before it kills `claude`. */
@@ -119,6 +124,19 @@ export interface ScenarioOptions {
    * to render before it can type.
    */
   readonly mode?: "headless" | "tui";
+  /**
+   * The permission mode `claude` runs in. Default `bypassPermissions`: nobody
+   * is there to answer a prompt. A scenario that never uses a tool can run in
+   * `default`, where Claude delivers messages from outside without asking.
+   */
+  readonly permissionMode?: "default" | "bypassPermissions";
+  /**
+   * Once `until` is met, send this through the bridge's `sendMessage` — the
+   * inbox the shipped hook handler announced — and watch the model's requests
+   * for it for `messageWaitMs` (default 20s). See `ScenarioRun.deliveredMessage`.
+   */
+  readonly message?: AgentMessage;
+  readonly messageWaitMs?: number;
 }
 
 /** Every scenario the boundary tests drive, and the fixtures that produce it. */
@@ -129,7 +147,8 @@ export type ScenarioName =
   | "chbg"
   | "subagent"
   | "maxtokens"
-  | "suggestionfork";
+  | "suggestionfork"
+  | "message";
 
 /** The prompt every scenario sends. Content is irrelevant — fixtures match on the system prompt. */
 const PROMPT = "do the thing";
@@ -366,6 +385,7 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
 
   switch (scenario) {
     case "plain":
+    case "message":
       mock.addFixture({ match: {}, response: { content: "Nothing to do." } });
       break;
     case "tool":
@@ -494,8 +514,20 @@ async function runScenarioInner(
   const dataRoot = await createTempDir();
   disposables.cleanups.push(dataRoot.cleanup);
 
-  // The mock the agent talks to instead of Anthropic.
+  // The mock the agent talks to instead of Anthropic. The first fixture only
+  // watches: aimock consults every predicate on every request, and one that
+  // says no never answers anything.
   const mock = new LLMock({ port: 0, strict: true });
+  const requests: ChatCompletionRequest[] = [];
+  mock.addFixture({
+    match: {
+      predicate: (req: ChatCompletionRequest) => {
+        requests.push(req);
+        return false;
+      },
+    },
+    response: { content: "" },
+  });
   installFixtures(mock, scenario);
   const mockUrl = await mock.start();
   disposables.cleanups.push(() => mock.stop());
@@ -515,8 +547,10 @@ async function runScenarioInner(
     process.env._CH_ROOT_DIR = previousRoot;
   }
 
+  const network = new DefaultNetworkLayer(SILENT_LOGGER);
   const manager = new ClaudeCodeServerManager({
-    portManager: new DefaultNetworkLayer(SILENT_LOGGER),
+    portManager: network,
+    localSocketClient: network,
     pathProvider,
     fileSystem: new DefaultFileSystemBoundary(SILENT_LOGGER),
     logger: SILENT_LOGGER,
@@ -552,6 +586,7 @@ async function runScenarioInner(
     mockUrl,
     configDir: agentConfig.path,
     pathPrefix: options.pathPrefix ?? [],
+    permissionMode: options.permissionMode ?? "bypassPermissions",
   };
   const agent = mode === "tui" ? spawnTuiAgent(spawnOptions) : spawnHeadlessAgent(spawnOptions);
   disposables.cleanups.push(() => agent.kill());
@@ -559,12 +594,26 @@ async function runScenarioInner(
 
   await waitForRecording(records, options.until, agent);
 
+  let deliveredMessage: string | undefined;
+  if (options.message !== undefined) {
+    const { text } = options.message;
+    await manager.sendMessage(repo.path, options.message, { waitMs: 10_000 });
+    const deadline = Date.now() + (options.messageWaitMs ?? 20_000);
+    while (deliveredMessage === undefined && Date.now() < deadline) {
+      deliveredMessage = requests
+        .flatMap((req) => req.messages)
+        .map((message: ChatMessage) => messageText(message))
+        .find((content) => content.includes(text));
+      await new Promise((done) => setTimeout(done, 100));
+    }
+  }
+
   if (options.thenEndSession === true) {
     agent.endSession();
     await waitForRecording(records, (entries) => seen(entries, "SessionEnd"), agent);
   }
 
-  return buildRun(records);
+  return buildRun(records, deliveredMessage);
 }
 
 /** A running `claude`, however it was started. */
@@ -688,6 +737,7 @@ interface SpawnAgentOptions {
   readonly mockUrl: string;
   readonly configDir: string;
   readonly pathPrefix: readonly string[];
+  readonly permissionMode: "default" | "bypassPermissions";
 }
 
 /**
@@ -772,10 +822,10 @@ function agentArgs(options: SpawnAgentOptions): string[] {
   return [
     "--settings",
     options.settingsPath,
-    // Without this Claude parks on a permission prompt nobody is there to
-    // answer.
+    // bypassPermissions unless a scenario asks otherwise: without it Claude
+    // parks on a permission prompt nobody is there to answer.
     "--permission-mode",
-    "bypassPermissions",
+    options.permissionMode,
   ];
 }
 
@@ -1011,7 +1061,10 @@ async function waitForRecording(
 }
 
 /** Wrap the raw records in the lookups the assertions use. */
-function buildRun(records: readonly HookRecord[]): ScenarioRun {
+function buildRun(
+  records: readonly HookRecord[],
+  deliveredMessage: string | undefined
+): ScenarioRun {
   const pick = (hook: ClaudeCodeHookName, index: number): HookRecord => {
     const matches = records.filter((entry) => entry.hook === hook);
     const match = matches[index];
@@ -1033,6 +1086,7 @@ function buildRun(records: readonly HookRecord[]): ScenarioRun {
     },
     count: (hook) => records.filter((entry) => entry.hook === hook).length,
     finalStatus: records.at(-1)?.after ?? "none",
+    deliveredMessage,
   };
 }
 

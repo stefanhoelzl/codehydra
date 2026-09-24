@@ -8,9 +8,17 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import { createServer } from "net";
-import { DefaultNetworkLayer, type HttpClient, type PortManager } from "./network";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { createServer, type Server, type Socket } from "net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  DefaultNetworkLayer,
+  type HttpClient,
+  type LocalSocketClient,
+  type PortManager,
+} from "./network";
 import { createTestServer, type TestServer } from "./network.test-utils";
 import { SILENT_LOGGER } from "./logging";
 
@@ -567,5 +575,86 @@ describe("DefaultNetworkLayer boundary tests", () => {
         TEST_TIMEOUT_MS
       );
     });
+  });
+
+  describe("LocalSocketClient.send()", () => {
+    let client: LocalSocketClient;
+    let dir: string;
+    let socketPath: string;
+    let server: Server | null;
+    const connections = new Set<Socket>();
+
+    beforeEach(() => {
+      client = new DefaultNetworkLayer(SILENT_LOGGER);
+      dir = mkdtempSync(join(tmpdir(), "ch-sock-"));
+      // Node addresses a named pipe on Windows through the same argument.
+      socketPath =
+        process.platform === "win32"
+          ? `\\\\.\\pipe\\ch-sock-${process.pid}-${Date.now()}`
+          : join(dir, "inbox.sock");
+      server = null;
+    });
+
+    afterEach(async () => {
+      const current = server;
+      // close() waits for open connections; the silent peer never ends its own.
+      for (const socket of connections) socket.destroy();
+      connections.clear();
+      if (current !== null) await new Promise<void>((resolve) => current.close(() => resolve()));
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** Listen on the socket; `onConnection` decides what the peer does. */
+    async function listen(onConnection: (socket: Socket) => void): Promise<void> {
+      const created = createServer({ allowHalfOpen: true }, (socket) => {
+        connections.add(socket);
+        onConnection(socket);
+      });
+      server = created;
+      await new Promise<void>((resolve) => created.listen(socketPath, () => resolve()));
+    }
+
+    it(
+      "delivers the data and resolves once the peer closes",
+      async () => {
+        let received = "";
+        let ended = false;
+        await listen((socket) => {
+          socket.on("data", (chunk: Buffer) => (received += chunk.toString()));
+          // A peer that reads to the end and then closes, like Claude's inbox.
+          socket.on("end", () => {
+            ended = true;
+            socket.end();
+          });
+        });
+
+        await client.send(socketPath, "line one\nline two\n");
+
+        expect(ended).toBe(true);
+        expect(received).toBe("line one\nline two\n");
+      },
+      TEST_TIMEOUT_MS
+    );
+
+    it(
+      "rejects when nothing listens at the path",
+      async () => {
+        await expect(client.send(socketPath, "x\n")).rejects.toThrow();
+      },
+      TEST_TIMEOUT_MS
+    );
+
+    it(
+      "rejects when the peer never closes within the timeout",
+      async () => {
+        // Half-open and silent: reads, never ends its side.
+        await listen((socket) => socket.on("data", () => undefined));
+
+        await expect(client.send(socketPath, "x\n", { timeout: 200 })).rejects.toThrow(
+          /did not settle within 200ms/
+        );
+      },
+      TEST_TIMEOUT_MS
+    );
   });
 });
