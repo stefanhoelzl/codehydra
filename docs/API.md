@@ -912,7 +912,10 @@ the message (sent, not read).
   `{"type":"user","message":{"role":"user","content":…}}`, with the content wrapped in
   `<cross-session-message from-name="…">`. The docs describe the format wrongly as plain
   text; `server-manager.boundary.test.ts` pins it against the real CLI. No `from-mode` is
-  declared, so a bypass-permissions session holds the message for its user's approval.
+  declared, so on macOS and Linux a bypass-permissions session holds the message for its
+  user's approval (Claude verifies the sender by process tree, and CodeHydra is not its
+  child). On Windows Claude verifies by the token instead, which the auth line must carry,
+  so the message counts as the session's own and is delivered in every mode.
 - **OpenCode.** `session.promptAsync` on the primary session, prefixed `[from <sender>]`.
   A busy session runs it as its own turn once the current one ends.
 

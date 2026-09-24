@@ -235,8 +235,12 @@ describe("a message from outside, to a session that prompts for permissions", ()
 describe("a message from outside, to a session that bypasses permission prompts", () => {
   let run: ScenarioRun;
   beforeAll(async () => {
-    // CodeHydra declares no permission mode for itself, so a session that runs
-    // tools without asking holds the message for its user — who is not here.
+    // CodeHydra declares no permission mode for itself. On macOS and Linux
+    // Claude verifies a sender by its process tree, finds CodeHydra is not its
+    // child, and — running tools without asking — holds the message for its
+    // user, who is not here. On Windows it verifies by the token instead, which
+    // the auth line must carry there, so the message counts as the session's
+    // own and is delivered.
     run = await runScenario("message", {
       until: (r) => seen(r, "Stop"),
       permissionMode: "bypassPermissions",
@@ -245,7 +249,11 @@ describe("a message from outside, to a session that bypasses permission prompts"
     });
   }, SCENARIO_TIMEOUT_MS);
 
-  it("is held back from the model", () => {
+  it.skipIf(process.platform === "win32")("is held back from the model (macOS, Linux)", () => {
     expect(run.deliveredMessage).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")("is delivered all the same (Windows)", () => {
+    expect(run.deliveredMessage).toContain("MESSAGE-PROBE held");
   });
 });

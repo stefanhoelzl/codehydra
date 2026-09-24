@@ -644,7 +644,9 @@ describe("DefaultNetworkLayer boundary tests", () => {
       TEST_TIMEOUT_MS
     );
 
-    it(
+    // A named pipe cannot be half-open: finishing our side closes the whole
+    // pipe, so a peer that keeps its side open cannot be built on Windows.
+    it.skipIf(process.platform === "win32")(
       "rejects when the peer never closes within the timeout",
       async () => {
         // Half-open and silent: reads, never ends its side.
