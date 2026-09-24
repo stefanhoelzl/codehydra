@@ -991,7 +991,7 @@ ch guide repository-hooks
   matches no open workspace fails the first command that needs a workspace with
   exit 6; one that matches several fails it with exit 2 — add `--project` or
   pass a path. `--project` without `--workspace` is exit 2 (except on
-  `ws create`, whose own `--project` it is). Commands that need no workspace
+  `ws create` and `ws switch`, whose own `--project` it is). Commands that need no workspace
   still run.
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`,
   `notification`, `ws switch`, `ws open` and `ws create --project …` work
