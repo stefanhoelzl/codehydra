@@ -65,7 +65,11 @@ export function renderHelp(descriptors: readonly OperationDescriptor[]): string 
   sections.push("global flags:");
   sections.push(
     columns([
-      ["--workspace <name|path>", "Act on this workspace instead of the one containing cwd"],
+      [
+        "--workspace <name|path>",
+        "Act on this workspace instead of the one containing cwd (a name: your project first)",
+      ],
+      ["--project <name|path>", "Look the --workspace name up in this project"],
       ["--input <json>", "Supply the whole payload as JSON"],
       ["--format json|text|auto", "Output format (default auto: JSON when piped, else text)"],
       ["--help", "Show this, or a command's own arguments"],

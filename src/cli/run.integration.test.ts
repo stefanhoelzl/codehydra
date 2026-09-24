@@ -152,6 +152,30 @@ describe("run", () => {
     });
   });
 
+  describe("--project", () => {
+    it("is a usage error without --workspace, before anything is called", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["ws", "status", "--project", "p0"],
+        fakeClient(() => ({}), calls)
+      );
+
+      expect(result.exitCode).toBe(EXIT.USAGE);
+      expect(calls).toEqual([]);
+    });
+
+    it("rides along with --workspace, sending nothing in the input", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["ws", "status", "--workspace", "ws0", "--project", "p0"],
+        fakeClient(() => ({}), calls)
+      );
+
+      expect(result.exitCode).toBe(EXIT.OK);
+      expect(calls[0]!.request).toEqual({});
+    });
+  });
+
   describe("standard input", () => {
     it("reads a field given as - from standard input, less its final newline", async () => {
       const calls: Recorded[] = [];

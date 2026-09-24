@@ -198,6 +198,23 @@ describe("parseArgs", () => {
       expect(parseArgs(["--progress", "--no-progress"], DELETE).input).toEqual({});
     });
 
+    it("takes --project as global for a command without a project field", () => {
+      const { input, global } = parseArgs(["--workspace", "ws0", "--project", "p0"], DELETE);
+
+      expect(input).toEqual({});
+      expect(global).toMatchObject({ workspace: "ws0", project: "p0" });
+    });
+
+    it("leaves --project to a command that has a project field of its own", () => {
+      const create: InputSchema = {
+        properties: { name: { type: "string" }, project: { type: "string" } },
+      };
+      const { input, global } = parseArgs(["--project", "p0"], create);
+
+      expect(input).toEqual({ project: "p0" });
+      expect(global.project).toBeUndefined();
+    });
+
     it("lets a global flag win over a field of the same name", () => {
       const schema: InputSchema = { properties: { workspace: { type: "string" } } };
       const { input, global } = parseArgs(["--workspace", "/wt/a"], schema, ["workspace"]);

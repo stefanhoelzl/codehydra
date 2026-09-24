@@ -56,7 +56,12 @@ function setup() {
     input: Record<string, unknown> = {},
     signal: AbortSignal = new AbortController().signal
   ): Promise<unknown> => {
-    const ctx: OperationContext = { workspacePath: workspace, cwd: null, signal };
+    const ctx: OperationContext = {
+      workspacePath: workspace,
+      callerWorkspacePath: workspace,
+      cwd: null,
+      signal,
+    };
     return registry.invoke(registry.get(name), ctx, input);
   };
 

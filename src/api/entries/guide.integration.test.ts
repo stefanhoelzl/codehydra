@@ -52,7 +52,12 @@ function call(input: Record<string, unknown>): Promise<unknown> {
   const reg = registry();
   return reg.invoke(
     reg.get("guide"),
-    { workspacePath: null, cwd: null, signal: new AbortController().signal },
+    {
+      workspacePath: null,
+      callerWorkspacePath: null,
+      cwd: null,
+      signal: new AbortController().signal,
+    },
     input
   );
 }

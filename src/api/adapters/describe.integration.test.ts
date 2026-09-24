@@ -133,15 +133,15 @@ suite("describe", () => {
   });
 
   it("hides fields the adapter does not accept", () => {
-    // The plugin wire scopes a connection to one workspace, so its status
-    // channel picks only `refresh` — a client must not be offered a target.
     const status = describe(registry(), "cli").find((d) => d.name === "workspace.status")!;
     const properties = Object.keys(
       (status.inputSchema as { properties: Record<string, unknown> }).properties
     );
 
-    // The CLI does take a target, so this one keeps it.
-    expect(properties).toContain("workspacePath");
+    // The CLI names a target with its global --workspace / --project instead.
+    expect(properties).not.toContain("workspace");
+    expect(properties).not.toContain("project");
+    expect(properties).toContain("refresh");
   });
 
   it("carries the tool name for MCP and the path for the CLI", () => {

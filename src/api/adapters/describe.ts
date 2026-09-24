@@ -70,7 +70,7 @@ export function describe(
       kind: entry.kind,
       description: entry.description,
       ...(entry.instructions !== undefined && { instructions: entry.instructions }),
-      inputSchema: narrow(schema, mapping.pick),
+      inputSchema: narrow(schema, mapping.pick, mapping.omit),
       ...("tool" in mapping && { tool: mapping.tool }),
       ...("path" in mapping && { path: mapping.path }),
       ...("positionals" in mapping &&
@@ -90,16 +90,21 @@ export function describe(
  * Without this a client would offer arguments the adapter silently discards —
  * the plugin wire's workspace-scoped channels, for instance, take no target.
  */
-function narrow(schema: unknown, pick: readonly string[] | undefined): unknown {
-  if (pick === undefined || schema === null || typeof schema !== "object") return schema;
+function narrow(
+  schema: unknown,
+  pick: readonly string[] | undefined,
+  omit: readonly string[] | undefined
+): unknown {
+  if (pick === undefined && omit === undefined) return schema;
+  if (schema === null || typeof schema !== "object") return schema;
   const object = schema as { properties?: Record<string, unknown>; required?: string[] };
   if (!object.properties) return schema;
 
+  const keep = (key: string): boolean =>
+    (pick === undefined || pick.includes(key)) && !(omit ?? []).includes(key);
   return {
     ...object,
-    properties: Object.fromEntries(
-      Object.entries(object.properties).filter(([key]) => pick.includes(key))
-    ),
-    ...(object.required && { required: object.required.filter((key) => pick.includes(key)) }),
+    properties: Object.fromEntries(Object.entries(object.properties).filter(([key]) => keep(key))),
+    ...(object.required && { required: object.required.filter(keep) }),
   };
 }

@@ -23,12 +23,24 @@ const VERSION = "1.0.0";
 
 const fs: DiscoveryFs = { readFileSync, realpathSync };
 
-/** Read `--workspace` before anything else: the handshake carries it. */
-function workspaceFlag(argv: readonly string[]): string | undefined {
-  const index = argv.indexOf("--workspace");
+/** The value of `--<name>`, read straight from argv. */
+function flagValue(argv: readonly string[], name: string): string | undefined {
+  const index = argv.indexOf(`--${name}`);
   if (index !== -1) return argv[index + 1];
-  const inline = argv.find((token) => token.startsWith("--workspace="));
-  return inline?.slice("--workspace=".length);
+  const inline = argv.find((token) => token.startsWith(`--${name}=`));
+  return inline?.slice(`--${name}=`.length);
+}
+
+/**
+ * Read `--workspace` (and the `--project` to look it up in) before anything
+ * else: the handshake carries them. `--project` alone is not sent — it is then
+ * either a command's own field (`ws create --project`) or a usage error.
+ */
+function workspaceFlags(argv: readonly string[]): { workspace?: string; project?: string } {
+  const workspace = flagValue(argv, "workspace");
+  if (workspace === undefined) return {};
+  const project = flagValue(argv, "project");
+  return { workspace, ...(project !== undefined && { project }) };
 }
 
 /**
@@ -126,18 +138,18 @@ async function main(): Promise<number> {
    * the right answer for `ch mcp`, whose agent config passes it explicitly and
    * which has no meaningful working directory.
    */
-  const openConnection = async (workspace?: string) =>
+  const openConnection = async (target: { workspace?: string; project?: string } = {}) =>
     connect({
       connection: connection(),
       cwd: process.cwd(),
-      ...(workspace !== undefined && { workspace }),
+      ...target,
     });
 
   if (argv[0] === "lock" && argv[1] === "run") {
     return lockRun({
       argv: argv.slice(2),
       isTty: process.stdout.isTTY === true,
-      connect: (workspace) => openConnection(workspace),
+      connect: (workspace) => openConnection(workspace === undefined ? {} : { workspace }),
       runCommand,
       // The open socket keeps the process alive; the default signal handling
       // ends it, and the closing connection releases the lock.
@@ -150,7 +162,8 @@ async function main(): Promise<number> {
   if (argv[0] === "mcp") {
     // Failing here would leave the agent with a dead MCP server, so the reason
     // goes to stderr where the agent's logs will show it.
-    const client = await openConnection(process.env._CH_WORKSPACE_PATH);
+    const own = process.env._CH_WORKSPACE_PATH;
+    const client = await openConnection(own === undefined ? {} : { workspace: own });
     try {
       await serveMcp(client, VERSION);
     } finally {
@@ -175,7 +188,7 @@ async function main(): Promise<number> {
   const result = await run({
     argv,
     isTty: process.stdout.isTTY === true,
-    connect: () => openConnection(workspaceFlag(flagArgv)),
+    connect: () => openConnection(workspaceFlags(flagArgv)),
     ...(process.stdin.isTTY !== true && { readStdin: readAllStdin }),
     ...(showProgress && {
       onProgress: (line: string) => process.stderr.write(`${line}\n`),

@@ -24,6 +24,12 @@ import type { AnyOperationEntry, OperationContext } from "./types";
  */
 export interface InputShaping {
   readonly pick?: readonly string[];
+  /**
+   * Fields this adapter does not carry, when that is easier said than `pick`:
+   * the CLI names a target with its global `--workspace` / `--project`, so it
+   * drops every entry's own target fields.
+   */
+  readonly omit?: readonly string[];
   readonly defaults?: Readonly<Record<string, unknown>>;
 }
 
@@ -109,7 +115,7 @@ export class OperationRegistry {
  * caller always wins and the default only fills a field that was omitted.
  */
 function applyShaping(rawInput: unknown, shaping: InputShaping): unknown {
-  if (shaping.pick === undefined && shaping.defaults === undefined) {
+  if (shaping.pick === undefined && shaping.omit === undefined && shaping.defaults === undefined) {
     return rawInput;
   }
   const input: Record<string, unknown> =
@@ -117,9 +123,13 @@ function applyShaping(rawInput: unknown, shaping: InputShaping): unknown {
       ? { ...(rawInput as Record<string, unknown>) }
       : {};
 
-  const picked = shaping.pick
-    ? Object.fromEntries(Object.entries(input).filter(([key]) => shaping.pick!.includes(key)))
-    : input;
+  const picked = Object.fromEntries(
+    Object.entries(input).filter(
+      ([key]) =>
+        (shaping.pick === undefined || shaping.pick.includes(key)) &&
+        !(shaping.omit ?? []).includes(key)
+    )
+  );
 
   return { ...(shaping.defaults ?? {}), ...picked };
 }

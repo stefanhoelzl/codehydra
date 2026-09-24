@@ -10,9 +10,10 @@
 import { z } from "zod/v4";
 import { ApiError } from "../errors";
 import { defineEntry } from "../types";
-import type { AnyOperationEntry, OperationContext } from "../types";
+import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import { createTargetResolver, targetFields } from "./target";
+import type { WorkspacePath } from "../../intents/contract";
 import { extractTags, isValidMetadataKey } from "../../shared/api/types";
 
 import { INTENT_GET_METADATA } from "../../intents/get-metadata";
@@ -22,21 +23,9 @@ import type { SetMetadataIntent } from "../../intents/set-metadata";
 
 const TAG_PREFIX = "tags.";
 
-const targetWorkspace = workspacePathSchema
-  .min(1)
-  .optional()
-  .describe("Workspace to act on. Omit to target the current workspace.");
-
-function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): WorkspacePath {
-  const target = explicit ?? ctx.workspacePath;
-  if (target === null || target === undefined) {
-    throw new ApiError("no-workspace", "No workspace to act on.");
-  }
-  return target;
-}
-
 export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const targetOf = createTargetResolver(dispatcher);
 
   const read = (workspacePath: WorkspacePath) =>
     dispatcher.dispatch<GetMetadataIntent>({
@@ -64,10 +53,10 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Get all metadata for a workspace.",
     instructions: "Always includes a 'base' key holding the base branch name.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const result = await read(targetOf(ctx, input.workspacePath));
+      const result = await read(await targetOf(ctx, input));
       if (!result) throw new Error("Get metadata returned no result");
       return result;
     },
@@ -81,13 +70,12 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Pass a null value to delete the key. Prefer the dedicated title and tag commands over " +
       "writing the 'title' key or 'tags.' prefix by hand.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       key: z.string().describe("Metadata key, e.g. 'base' or 'tags.bugfix'"),
       value: z.string().nullable().describe("Value to set, or null to delete the key"),
     }),
     requiresWorkspace: true,
-    handler: async (ctx, input) =>
-      write(targetOf(ctx, input.workspacePath), input.key, input.value),
+    handler: async (ctx, input) => write(await targetOf(ctx, input), input.key, input.value),
   });
 
   const title = defineEntry({
@@ -98,7 +86,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Clearing reverts the sidebar row to the branch name. This changes a label only — it " +
       "does NOT delete the workspace.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       title: z
         .string()
         .nullable()
@@ -109,7 +97,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       // A blank title reads as absent (readTitle trims), so normalize it to a
       // delete rather than storing whitespace that renders as an empty row.
       const value = input.title === null || input.title.trim() === "" ? null : input.title;
-      return write(targetOf(ctx, input.workspacePath), "title", value);
+      return write(await targetOf(ctx, input), "title", value);
     },
   });
 
@@ -117,10 +105,10 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     name: "workspace.tag.list",
     kind: "command",
     description: "List a workspace's tags.",
-    input: z.object({ workspacePath: targetWorkspace }),
+    input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const metadata = await read(targetOf(ctx, input.workspacePath));
+      const metadata = await read(await targetOf(ctx, input));
       return extractTags(metadata ?? {});
     },
   });
@@ -133,7 +121,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Replaces the tag entirely — any field you omit is cleared, so re-pass the ones you " +
       "want to keep.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       name: z.string().min(1).describe("Tag name"),
       color: z
         .string()
@@ -159,11 +147,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       if (input.color !== undefined) tag.color = input.color;
       if (input.label !== undefined) tag.label = input.label.trim();
       if (input.description !== undefined) tag.description = input.description.trim();
-      return write(
-        targetOf(ctx, input.workspacePath),
-        `${TAG_PREFIX}${input.name}`,
-        JSON.stringify(tag)
-      );
+      return write(await targetOf(ctx, input), `${TAG_PREFIX}${input.name}`, JSON.stringify(tag));
     },
   });
 
@@ -172,12 +156,12 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Remove a tag from a workspace.",
     input: z.object({
-      workspacePath: targetWorkspace,
+      ...targetFields,
       name: z.string().min(1).describe("Tag name"),
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) =>
-      write(targetOf(ctx, input.workspacePath), `${TAG_PREFIX}${input.name}`, null),
+      write(await targetOf(ctx, input), `${TAG_PREFIX}${input.name}`, null),
   });
 
   return [get, set, title, tagList, tagSet, tagRemove];

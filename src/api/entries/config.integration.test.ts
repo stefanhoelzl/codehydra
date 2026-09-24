@@ -95,7 +95,12 @@ function setup(options: { env?: Record<string, string> } = {}): Setup {
 function call(registry: OperationRegistry, name: OperationName, input: unknown): Promise<unknown> {
   return registry.invoke(
     registry.get(name),
-    { workspacePath: null, cwd: null, signal: new AbortController().signal },
+    {
+      workspacePath: null,
+      callerWorkspacePath: null,
+      cwd: null,
+      signal: new AbortController().signal,
+    },
     input
   );
 }

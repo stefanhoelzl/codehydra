@@ -883,7 +883,7 @@ prompt of a workspace that already exists.
 
 ```sh
 ch ws agent message "main is green again — rebase when you are done"
-git log -3 | ch ws agent message --workspace-path /path/to/other -
+git log -3 | ch ws agent message --workspace other -
 ch ws agent message --wake "pick this back up"
 ```
 
@@ -893,8 +893,9 @@ ch ws agent message --wake "pick this back up"
 - A busy agent reads it at its next step, and an idle one starts a turn on it.
   The command returns once the agent has taken it: sent, not read.
 - The agent is told who sent it: `CodeHydra · workspace <name>` for the
-  workspace the command ran in, `CodeHydra · ch` from outside any workspace,
-  or `CodeHydra · auto-workspace <source>`. The sender cannot be chosen.
+  workspace your shell is in (even when `--workspace` names another),
+  `CodeHydra · ch` from outside any workspace, or
+  `CodeHydra · auto-workspace <source>`. The sender cannot be chosen.
 - A hibernated workspace, or one whose agent terminal is closed, has no agent
   to take it, and the command fails (exit 6). `--wake` wakes the workspace or
   reopens the agent terminal, then waits up to 90 seconds for the agent to
@@ -956,7 +957,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
 | `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
-| `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`, `--workspace-path`)        |
+| `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`)                            |
 | `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
 | `ws notify`, `ws status-bar`, `ws ask`                             | For you: a notification, status-bar text, or a question in the editor (`ask` waits for the answer)               |
 | `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                |
@@ -982,15 +983,20 @@ ch guide repository-hooks
 ```
 
 - `ch` acts on the workspace containing the current directory.
-  `--workspace <name|path>` targets another; a name must be unique across open
-  projects, and only an absolute path counts as a path. A name that matches no
-  open workspace fails the first command that needs a workspace with exit 6; a
-  name that matches several fails it with exit 2 — pass a path instead.
-  Commands that need no workspace still run.
+  `--workspace <name|path>` targets another. Only an absolute path counts as a
+  path. A name is looked up in your own project first (the one the current
+  directory's workspace belongs to, or whose checkout you are in) and wins
+  there; otherwise it must be unique across the other open projects.
+  `--project <name|path>` looks the name up in that project only. A name that
+  matches no open workspace fails the first command that needs a workspace with
+  exit 6; one that matches several fails it with exit 2 — add `--project` or
+  pass a path. `--project` without `--workspace` is exit 2 (except on
+  `ws create`, whose own `--project` it is). Commands that need no workspace
+  still run.
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`,
-  `notification`, `ws switch`, `ws open`, `ws create --project …` and
-  `ws agent message --workspace-path …` work outside a workspace; other
-  workspace commands exit 4 there.
+  `notification`, `ws switch`, `ws open` and `ws create --project …` work
+  outside a workspace, and so does every workspace command given `--workspace`;
+  other workspace commands exit 4 there.
 - `--format auto` (the default) prints human-readable output at a terminal and
   JSON when piped — errors too, as `{"error", "exitCode"}` on stderr;
   `--format json` or `--format text` forces either. `ch guide` prints markdown
@@ -1059,7 +1065,7 @@ ch notification show "Deploy to staging?" --actions Deploy --actions Skip --wait
   second line, `--percent 0..100` for a bar, `--no-dismissible` to hide the
   dismiss button.
 - A card is app-wide. `--attach` ties it to the current workspace
-  (`--workspace-path` to another): it names the workspace, clicking its title
+  (`--workspace` to another): it names the workspace, clicking its title
   switches there, and it closes when the workspace is deleted.
 - `--wait` blocks until you answer and returns the clicked action as `choice`,
   or `null` if you dismissed it, `--timeout <seconds>` passed or the workspace
@@ -1082,6 +1088,10 @@ agents launch):
 | Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                      |
 | Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                  |
 | Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                    |
+
+Tools that can act on another workspace take `workspace` (a name or an
+absolute path, looked up like `--workspace`: the agent's own project first) and
+`project`, like `ch`'s `--workspace` and `--project`.
 
 You don't need to learn any of it. Just describe what you want in plain
 language:
