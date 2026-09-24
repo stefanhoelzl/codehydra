@@ -39,6 +39,8 @@ export interface OperationDescriptor {
   readonly hidden?: boolean;
   /** The result is a document, delivered as plain text rather than JSON. */
   readonly text?: boolean;
+  /** Field that reads standard input when given as `-`, when describing the CLI view. */
+  readonly stdin?: string;
 }
 
 /**
@@ -75,6 +77,7 @@ export function describe(
         mapping.positionals !== undefined && { positionals: mapping.positionals }),
       ...("hidden" in mapping && mapping.hidden === true && { hidden: true }),
       ...(mapping.text === true && { text: true }),
+      ...("stdin" in mapping && mapping.stdin !== undefined && { stdin: mapping.stdin }),
     });
   }
 

@@ -131,6 +131,49 @@ export interface AgentSessionInfo {
 }
 
 /**
+ * A message for a running agent, delivered into its conversation mid-session.
+ *
+ * Unlike an initial prompt (read once, at launch), a message reaches an agent
+ * that is already running. It is addressed to the agent, never to the user —
+ * notifications and the status bar are the user's channels.
+ */
+export interface AgentMessage {
+  /** The message text. */
+  readonly text: string;
+  /**
+   * Who sent it, as the agent should see it (e.g. "CodeHydra · workspace foo").
+   * Set by CodeHydra from where the call came from, never by the caller.
+   */
+  readonly from: string;
+}
+
+/**
+ * The workspace has no agent that can take a message: none running, its
+ * terminal closed, or it did not come up in time. A condition of the target,
+ * not a fault — the send-message operation reports it as "not sent" instead of
+ * failing, so it never reaches the log as an error.
+ */
+export class AgentUnreachableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentUnreachableError";
+  }
+}
+
+/**
+ * How long {@link AgentProvider.sendMessage} may wait for the agent to become
+ * reachable before giving up.
+ */
+export interface AgentMessageOptions {
+  /**
+   * 0 = the agent must be reachable now, or the send fails. Anything larger
+   * waits up to that many ms for it (used right after waking the workspace or
+   * reopening its agent terminal).
+   */
+  readonly waitMs: number;
+}
+
+/**
  * Per-workspace agent connection and status tracking.
  *
  * Each workspace has one provider instance that manages the connection
@@ -157,6 +200,17 @@ export interface AgentProvider {
 
   /** Mark agent as active (first MCP request received) */
   markActive(): void;
+
+  /**
+   * Deliver a message into the running agent's conversation.
+   *
+   * Resolves once the agent has accepted it for delivery — "sent", not "read":
+   * a busy agent reads it at its next opportunity. Rejects with
+   * {@link AgentUnreachableError} when no agent is reachable within
+   * `options.waitMs` (none running, or its terminal closed), and with any other
+   * error when the hand-over itself fails.
+   */
+  sendMessage(message: AgentMessage, options: AgentMessageOptions): Promise<void>;
 
   /**
    * Detach the TUI without stopping the server (agent terminal closed).

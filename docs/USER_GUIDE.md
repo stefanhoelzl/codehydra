@@ -400,7 +400,7 @@ does not have renders empty.
 | `base`     | Branch to fork from (default: the project's default branch). Only when creating                                                                                                          |
 | `tracking` | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                                                |
 | `focus`    | `true` switches to the workspace once created (default `false`)                                                                                                                          |
-| `prompt`   | Sent to the new workspace's agent. Never sent to an existing or adopted workspace                                                                                                        |
+| `prompt`   | Sent to the new workspace's agent. In `events` mode also sent to a matched workspace's agent, as a message. Never sent to an adopted workspace                                           |
 | `agent`    | `{ type, name, permission-mode, model: { provider, id } }`; `type` is `claude` or `opencode`, `permission-mode` is Claude only, `model` needs both fields. Default: the configured agent |
 | `metadata` | `title` (sidebar title), `tags` (`tags.<name>: { color, label, description }`), and any other keys                                                                                       |
 
@@ -430,8 +430,10 @@ and a created one gets the blue **new** tag.
   event, `template.name` is matched against the project's workspaces:
   - no match — the workspace is created, as in `workspaces` mode;
   - a match — its metadata is re-applied, then it is woken if hibernated, or
-    switched to if `focus: true`. It gets no prompt: a prompt only reaches an
-    agent when it starts;
+    switched to if `focus: true`. Its `prompt`, if there is one, then reaches
+    the running agent as a [message](#messages-to-a-running-agent), signed
+    `CodeHydra · auto-workspace <source>`; an agent terminal you closed is
+    reopened for it;
   - a match being deleted — skipped.
 
   A failed event is logged and dropped; there is no retry.
@@ -870,6 +872,41 @@ first starts. With it you can choose `--agent claude|opencode`, `--model`
 (OpenCode: `provider/model`), `--permission-mode` (Claude Code, e.g. `plan`)
 and `--agent-name`; these need `--agent`.
 
+### Messages to a running agent
+
+A message reaches an agent that is **already running**, the way one Claude
+Code session messages another. An initial prompt only reaches it at launch.
+Send one with `ch ws agent message <text>` (`-` reads the text from standard
+input), the `workspace_send_agent_message` MCP tool or the plugin API.
+[Automatic workspaces](#automatic-workspaces) in `events` mode use it for the
+prompt of a workspace that already exists.
+
+```sh
+ch ws agent message "main is green again — rebase when you are done"
+git log -3 | ch ws agent message --workspace-path /path/to/other -
+ch ws agent message --wake "pick this back up"
+```
+
+- **Messages are for the agent**, while notifications, the status bar and
+  `ws ask` are for you. The agent never sees a notification, and you see a
+  message only in the agent's transcript.
+- A busy agent reads it at its next step, and an idle one starts a turn on it.
+  The command returns once the agent has taken it: sent, not read.
+- The agent is told who sent it: `CodeHydra · workspace <name>` for the
+  workspace the command ran in, `CodeHydra · ch` from outside any workspace,
+  or `CodeHydra · auto-workspace <source>`. The sender cannot be chosen.
+- A hibernated workspace, or one whose agent terminal is closed, has no agent
+  to take it, and the command fails (exit 6). `--wake` wakes the workspace or
+  reopens the agent terminal, then waits up to 90 seconds for the agent to
+  start. It does not switch to the workspace. An agent still starting in an
+  open terminal is waited for (up to 30 seconds) even without `--wake`.
+- **Claude Code** in bypass-permissions mode holds a message from outside until
+  you approve it in its terminal. The dialog closes after five minutes and
+  drops the message. In every other mode the message is delivered straight
+  away.
+- **OpenCode** runs a message sent while it is busy as its own turn, once the
+  current one ends. The message starts with `[from <sender>]`.
+
 ### Status and permissions
 
 Busy and idle come from the agent itself: Claude Code through its hooks,
@@ -919,9 +956,10 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
 | `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
+| `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`, `--workspace-path`)        |
 | `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
-| `ws notify`, `ws status-bar`, `ws ask`                             | A notification, status-bar text, or a question in the editor (`ask` waits for the answer)                        |
-| `notification show <title>`, `notification close <id>`             | A card in CodeHydra's sidebar, see below                                                                         |
+| `ws notify`, `ws status-bar`, `ws ask`                             | For you: a notification, status-bar text, or a question in the editor (`ask` waits for the answer)               |
+| `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                |
 | `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                   |
 | `ws vscode-command <command>`                                      | Run a VS Code command                                                                                            |
 | `ws open <path>`                                                   | Open with the OS (`--reveal` shows it in the file manager)                                                       |
@@ -950,8 +988,9 @@ ch guide repository-hooks
   name that matches several fails it with exit 2 — pass a path instead.
   Commands that need no workspace still run.
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`,
-  `notification`, `ws switch`, `ws open` and `ws create --project …` work
-  outside a workspace; other workspace commands exit 4 there.
+  `notification`, `ws switch`, `ws open`, `ws create --project …` and
+  `ws agent message --workspace-path …` work outside a workspace; other
+  workspace commands exit 4 there.
 - `--format auto` (the default) prints human-readable output at a terminal and
   JSON when piped — errors too, as `{"error", "exitCode"}` on stderr;
   `--format json` or `--format text` forces either. `ch guide` prints markdown
@@ -1002,7 +1041,8 @@ ch lock run device -- npm run e2e   # hold only while the command runs
 `ch notification show` puts a card in CodeHydra's own sidebar — the same kind
 CodeHydra uses for clone progress and errors, visible whichever workspace you
 are looking at. (`ch ws notify` is different: a toast inside one workspace's
-editor.)
+editor.) Both are for you, and no agent sees them. To tell an agent
+something, [send it a message](#messages-to-a-running-agent).
 
 ```sh
 ch notification show "Nightly build finished"
@@ -1036,7 +1076,7 @@ agents launch):
 | Area       | Tools                                                                                                                                                                                                                                                                      |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
-| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_set_agent_status`                                                                                                                             |
+| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                             |
 | Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                        |
 | Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                            |
 | Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                      |

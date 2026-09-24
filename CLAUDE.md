@@ -44,6 +44,7 @@ All external access MUST use abstraction interfaces:
 | Filesystem            | `FileSystemBoundary`                  | `node:fs/promises`      |
 | HTTP requests         | `HttpClient`                          | `fetch()`               |
 | Port operations       | `PortManager`                         | `net` module            |
+| Local sockets         | `LocalSocketClient`                   | `net.createConnection`  |
 | Process spawning      | `ProcessRunner`                       | `execa`                 |
 | Agent operations      | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
 | OpenCode API          | `SdkClientFactory`                    | Direct HTTP/SSE         |

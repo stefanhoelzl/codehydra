@@ -25,6 +25,9 @@ import { INTENT_AGENT_LIFECYCLE } from "../../intents/agent-lifecycle";
 import type { AgentLifecycleIntent } from "../../intents/agent-lifecycle";
 import { INTENT_VSCODE_COMMAND } from "../../intents/vscode-command";
 import type { VscodeCommandIntent } from "../../intents/vscode-command";
+import { INTENT_SEND_AGENT_MESSAGE } from "../../intents/send-agent-message";
+import type { SendAgentMessageIntent } from "../../intents/send-agent-message";
+import { Path } from "../../utils/path/path";
 
 const targetWorkspace = workspacePathSchema
   .min(1)
@@ -37,6 +40,18 @@ function targetOf(ctx: OperationContext, explicit: WorkspacePath | undefined): W
     throw new ApiError("no-workspace", "No workspace to act on.");
   }
   return target;
+}
+
+/**
+ * Who a message is from, as the receiving agent sees it: the calling
+ * workspace when there is one, otherwise the CLI outside any workspace. Taken
+ * from the connection, never from the input, so a caller cannot sign as
+ * someone else.
+ */
+export function messageSender(ctx: OperationContext): string {
+  return ctx.workspacePath === null
+    ? "CodeHydra · ch"
+    : `CodeHydra · workspace ${new Path(ctx.workspacePath).basename}`;
 }
 
 export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
@@ -105,6 +120,50 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       runVscodeCommand(targetOf(ctx, input.workspacePath), "codehydra.closeAgent"),
   });
 
+  const message = defineEntry({
+    name: "agent.message",
+    kind: "command",
+    description: "Send a message to a workspace's running agent.",
+    instructions:
+      "For the AGENT, not the user: the text lands in the agent's conversation, the way one " +
+      "agent session messages another, and the agent reads it at its next opportunity (a busy " +
+      "agent between steps, an idle one starts a turn on it). To reach the user instead, use a " +
+      "notification or the status bar. The sender is named from where the call comes from " +
+      "(the calling workspace, else the CLI). Returns once the agent has taken the message — " +
+      "sent, not read. Fails as not found when the workspace has no running agent (hibernated, " +
+      "or its agent terminal closed) unless wake is set, which wakes it or reopens the agent " +
+      "terminal and waits for the agent to start. A Claude Code session that bypasses permission prompts " +
+      "holds the message until its user approves it.",
+    input: z.object({
+      workspacePath: targetWorkspace,
+      text: z.string().min(1).describe("The message; `-` on the command line reads standard input"),
+      wake: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Wake a hibernated workspace, or reopen a closed agent terminal, first"),
+    }),
+    // Reachable from outside any workspace with an explicit target: the
+    // handler resolves the target itself, and signs such a call as the CLI.
+    requiresWorkspace: false,
+    handler: async (ctx, input) => {
+      const result = await dispatcher.dispatch<SendAgentMessageIntent>({
+        type: INTENT_SEND_AGENT_MESSAGE,
+        payload: {
+          workspacePath: targetOf(ctx, input.workspacePath),
+          text: input.text,
+          from: messageSender(ctx),
+          wake: input.wake,
+        },
+      });
+      // No agent to take it: the caller named something that is not there.
+      if (!result.sent) {
+        throw new ApiError("not-found", result.reason ?? "The workspace has no running agent.");
+      }
+      return null;
+    },
+  });
+
   const statusSet = defineEntry({
     name: "agent.status.set",
     kind: "command",
@@ -156,5 +215,5 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     // Event: restricted to the observer that can witness it.
   });
 
-  return [session, restart, open, close, statusSet, lifecycle];
+  return [session, restart, open, close, message, statusSet, lifecycle];
 }

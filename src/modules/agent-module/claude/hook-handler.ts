@@ -16,6 +16,9 @@
  * Environment variables:
  * - _CH_BRIDGE_PORT: Port of the bridge server
  * - _CH_WORKSPACE_PATH: Workspace path to include in payload
+ * - CLAUDE_CODE_MESSAGING_SOCKET / CLAUDE_CODE_MESSAGING_TOKEN: the session's
+ *   inbox, exported by Claude itself. Forwarded with SessionStart as
+ *   `_ch_messaging`, so the app can deliver messages into the session.
  *
  * Usage (by Claude Code hooks):
  *   node /path/to/hook-handler.js SessionStart < payload.json
@@ -50,6 +53,15 @@ process.stdin.on("end", async () => {
 
     // Add workspace path for routing
     payload.workspacePath = workspacePath;
+
+    // Only a hook knows the session's inbox: Claude exports it to its children.
+    const inboxSocket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;
+    if (hookName === "SessionStart" && inboxSocket) {
+      payload._ch_messaging = {
+        socket: inboxSocket,
+        token: process.env.CLAUDE_CODE_MESSAGING_TOKEN || undefined,
+      };
+    }
 
     // POST to bridge server
     await fetch(`http://127.0.0.1:${bridgePort}/hook/${hookName}`, {

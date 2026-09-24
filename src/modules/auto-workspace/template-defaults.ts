@@ -48,11 +48,13 @@ cursor) — an object emitted twice fires twice. Per event, the project
 is opened and template.name is matched against its workspaces:
   - no match       -> create it, exactly like workspaces mode
   - match          -> re-apply metadata, then wake it if hibernated,
-                      or switch to it if focus: true
+                      or switch to it if focus: true, then send
+                      prompt to its agent as a message (reopening a
+                      closed agent terminal first)
   - being deleted  -> skipped
-An existing workspace gets NO prompt — a prompt only reaches an agent
-when it launches. Use metadata (a tag, an updated title) to say what
-happened. A failed event is logged and gone; there is no retry.`;
+A message reaches the agent mid-session, not at launch; use metadata
+(a tag, an updated title) to tell the user what happened. A failed
+event is logged and gone; there is no retry.`;
 
 const FIELDS = `=== FIELDS (keys under template) ===
 
@@ -69,7 +71,8 @@ const FIELDS = `=== FIELDS (keys under template) ===
   git          no        —               git URL to clone as the project
   focus        no        false           true = switch to it once created
                                          (events mode: also on a match)
-  prompt       no        "" (no prompt)  agent prompt (only when it creates)
+  prompt       no        "" (no prompt)  agent prompt when it creates;
+                                         events mode: a message on a match
   agent        no        —               agent config (see below)
   metadata     no        —               title / tags / extra keys (see METADATA)
 
@@ -164,7 +167,8 @@ template:
     {{ url }}
 
 The first notification about PR #42 creates the workspace with that
-prompt. A later one finds it: the title and tag are refreshed, and it
-is woken if it was hibernated.`;
+prompt. A later one finds it: the title and tag are refreshed, it is
+woken if it was hibernated, and the prompt reaches its agent as a
+message.`;
 
 export const SOURCES_HELP = `${FORMAT}\n\n${MODES}\n\n${FIELDS}\n\n${LIQUID}\n\n${METADATA}\n\n${GITHUB_EXAMPLE}\n\n${EVENTS_EXAMPLE}`;

@@ -12,7 +12,7 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PortManager } from "../../../boundaries/platform/network";
+import type { LocalSocketClient, PortManager } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
 import type { Logger } from "../../../boundaries/platform/logging";
@@ -23,7 +23,12 @@ import type {
   AgentStatus,
   McpConfig,
   AgentPromptConfig,
+  AgentMessage,
+  AgentMessageOptions,
 } from "../types";
+import { AgentUnreachableError } from "../types";
+import { ConditionWaiters } from "../wait-until";
+import { inboxPayload } from "./inbox-message";
 import { Path } from "../../../utils/path/path";
 import {
   type ClaudeCodeHookName,
@@ -179,6 +184,17 @@ export interface WorkspaceState {
   status: AgentStatus;
   /** Current session ID (from SessionStart hook) */
   sessionId?: string;
+  /**
+   * The running session's inbox (from SessionStart), cleared when the session
+   * or its terminal ends. Present exactly when a message can be delivered.
+   */
+  inbox?: { readonly socketPath: string; readonly token: string | undefined };
+  /**
+   * The agent terminal is open (WrapperStart, until WrapperEnd). Open without an
+   * inbox means `claude` is still starting: it reads idle already, and a message
+   * sent now waits for SessionStart rather than failing.
+   */
+  terminalOpen?: boolean;
   /** Callbacks for status changes */
   statusCallbacks: Set<(status: AgentStatus) => void>;
   /**
@@ -228,11 +244,19 @@ export interface ClaudeCodeServerManagerConfig {
  */
 export interface ClaudeCodeServerManagerDeps {
   readonly portManager: PortManager;
+  /** Writes messages into a session's inbox socket. */
+  readonly localSocketClient: LocalSocketClient;
   readonly pathProvider: PathProvider;
   readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly config?: ClaudeCodeServerManagerConfig;
 }
+
+/**
+ * How long a message waits for a `claude` whose terminal is open but which has
+ * not yet announced its inbox (SessionStart): the TUI is booting.
+ */
+const STARTING_AGENT_WAIT_MS = 30_000;
 
 /**
  * Claude Code Server Manager implementation.
@@ -244,6 +268,7 @@ export interface ClaudeCodeServerManagerDeps {
  */
 export class ClaudeCodeServerManager implements AgentServerManager {
   private readonly portManager: PortManager;
+  private readonly localSocketClient: LocalSocketClient;
   private readonly pathProvider: PathProvider;
   private readonly fileSystem: FileSystemBoundary;
   private readonly logger: Logger;
@@ -257,6 +282,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   /** Per-workspace state */
   private readonly workspaces = new Map<string, WorkspaceState>();
 
+  /** Senders waiting for a workspace's session inbox to appear. */
+  private readonly inboxWaiters = new ConditionWaiters();
+
   /** Callbacks for lifecycle events */
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
@@ -269,6 +297,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
   constructor(deps: ClaudeCodeServerManagerDeps) {
     this.portManager = deps.portManager;
+    this.localSocketClient = deps.localSocketClient;
     this.pathProvider = deps.pathProvider;
     this.fileSystem = deps.fileSystem;
     this.logger = deps.logger;
@@ -342,6 +371,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Remove workspace
     this.workspaces.delete(normalizedPath);
+    this.inboxWaiters.notify();
 
     // Fire stopped callback
     for (const callback of this.stoppedCallbacks) {
@@ -376,9 +406,12 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       };
     }
 
-    // Stop and restart the workspace (preserving status callbacks)
+    // Stop and restart the workspace (preserving status callbacks). A restart
+    // leaves a running `claude` alone, so its inbox is still the one to use.
     const state = this.workspaces.get(normalizedPath)!;
     const savedCallbacks = state.statusCallbacks;
+    const savedInbox = state.inbox;
+    const savedTerminalOpen = state.terminalOpen;
 
     // Fire stopped callback with isRestart=true
     for (const callback of this.stoppedCallbacks) {
@@ -389,6 +422,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(normalizedPath, {
       status: "none",
       statusCallbacks: savedCallbacks,
+      ...(savedInbox !== undefined && { inbox: savedInbox }),
+      ...(savedTerminalOpen !== undefined && { terminalOpen: savedTerminalOpen }),
     });
 
     // Regenerate config files
@@ -457,6 +492,55 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   getSessionId(workspacePath: string): string | undefined {
     const normalizedPath = new Path(workspacePath).toString();
     return this.workspaces.get(normalizedPath)?.sessionId;
+  }
+
+  /**
+   * Deliver a message into the workspace's running Claude session, through the
+   * inbox socket its SessionStart hook announced.
+   *
+   * Waits up to `options.waitMs` for a session to announce one (after a wake,
+   * or reopening the agent terminal) — and, whatever `waitMs` says, for a
+   * `claude` whose terminal is open but which has not announced one yet: it is
+   * starting, not absent. Resolves once the socket has taken the message —
+   * whether Claude hands it to the model or holds it for its user's approval is
+   * Claude's inbound policy, not ours.
+   *
+   * @throws AgentUnreachableError when no session is reachable in time
+   * @throws when the socket write fails
+   */
+  async sendMessage(
+    workspacePath: string,
+    message: AgentMessage,
+    options: AgentMessageOptions
+  ): Promise<void> {
+    const normalizedPath = new Path(workspacePath).toString();
+    const stateOf = () => this.workspaces.get(normalizedPath);
+    // A caller that asked to wait has just (re)started the agent, whose terminal
+    // may not even report open yet. Otherwise wait only for one already
+    // starting, and give up the moment its terminal closes.
+    const asked = options.waitMs > 0;
+    const starting = !asked && stateOf()?.terminalOpen === true;
+    const waitMs = asked ? options.waitMs : starting ? STARTING_AGENT_WAIT_MS : 0;
+
+    const reachable = await this.inboxWaiters.waitUntil(() => {
+      const state = stateOf();
+      if (state === undefined || state.inbox !== undefined) return true;
+      return starting && state.terminalOpen !== true;
+    }, waitMs);
+    const inbox = stateOf()?.inbox;
+    if (!reachable || inbox === undefined) {
+      throw new AgentUnreachableError(
+        "No Claude session is running in this workspace (its agent terminal is closed, " +
+          "or the agent has not started yet)."
+      );
+    }
+
+    await this.localSocketClient.send(inbox.socketPath, inboxPayload(message, inbox.token));
+    this.logger.info("Message delivered to Claude inbox", {
+      workspacePath: normalizedPath,
+      from: message.from,
+      length: message.text.length,
+    });
   }
 
   /**
@@ -791,6 +875,24 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Update session ID if present
     if (session_id) {
       state.sessionId = session_id;
+    }
+
+    // Track the session's inbox: announced by SessionStart (every start,
+    // resume, /clear and compaction), gone with the session or its terminal.
+    if (hookName === "SessionStart" && payload._ch_messaging?.socket) {
+      state.inbox = {
+        socketPath: payload._ch_messaging.socket,
+        token: payload._ch_messaging.token,
+      };
+      this.inboxWaiters.notify();
+    } else if (hookName === "SessionEnd" || hookName === "WrapperEnd") {
+      delete state.inbox;
+    }
+    if (hookName === "WrapperStart") {
+      state.terminalOpen = true;
+    } else if (hookName === "WrapperEnd") {
+      state.terminalOpen = false;
+      this.inboxWaiters.notify();
     }
 
     // A Stop/StopFailure carrying an agent_id is a *sub-agent's* turn end, not the

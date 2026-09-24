@@ -34,6 +34,13 @@ export const AGENT_SET_TITLE = "renamed by agent";
 export const AGENT_PROMPT = `rename this workspace to '${AGENT_SET_TITLE}'`;
 
 /**
+ * Marks a message sent to a running agent (`ch ws agent message`). The fixtures
+ * answer a turn carrying it with plain text, so it must survive whatever the
+ * agent wraps around a message from outside.
+ */
+export const MESSAGE_PROBE = "MESSAGE-PROBE";
+
+/**
  * CodeHydra's MCP tool for the title, as each agent namespaces it.
  *
  * Claude Code prefixes `mcp__<server>__`; OpenCode joins with a single
@@ -67,7 +74,8 @@ export interface AgentMock {
   /** The server itself — `getRequests()` is the first stop when a spec fails. */
   readonly server: LLMock;
   /**
-   * Pre-accept Claude's folder-trust dialog for `workspacePath`.
+   * Pre-accept Claude's folder-trust dialog for `workspacePath` — in addition
+   * to every workspace trusted before it.
    *
    * Claude asks "is this a project you trust?" before it will do anything, and
    * in an agent terminal nobody is there to answer — it just sits on the prompt
@@ -130,13 +138,15 @@ export function useAgentMock(): AgentMockHandle {
     const url = await server.start();
 
     const dir = configDir;
+    const trusted: string[] = [];
     handle = {
       url,
       env: agentEnv(agent, url, dir),
       server,
       trustWorkspace: (workspacePath) => {
         if (agent !== "claude") return;
-        writeClaudeConfig(dir, pathSpellings(workspacePath));
+        trusted.push(...pathSpellings(workspacePath));
+        writeClaudeConfig(dir, trusted);
       },
       seenRequests: () => seen,
     };

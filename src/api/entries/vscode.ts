@@ -89,9 +89,11 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const message = defineEntry({
     name: "vscode.message",
     kind: "command",
-    description: "Show a notification, status-bar text, or a picker in the workspace's editor.",
+    description:
+      "Show the user a notification, status-bar text, or a picker in the workspace's editor.",
     instructions:
-      "Types: info/warning/error show a notification (add options for action buttons, which " +
+      "For the USER watching the editor — the agent never sees it; to tell the agent " +
+      "something, use agent.message. Types: info/warning/error show a notification (add options for action buttons, which " +
       "blocks until clicked or dismissed); status updates the status bar and supports codicon " +
       'syntax "$(icon-name) text", with a null message clearing it; select shows a quick pick ' +
       "when options are given and a free-text input when they are not. Returns { result }: the " +
@@ -124,10 +126,16 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     },
   });
 
+  /** Who the three forms below are for — the other half of agent.message. */
+  const FOR_THE_USER =
+    "For the USER watching the editor — the agent never sees it. To tell the agent " +
+    "something, use agent.message.";
+
   /** Build one of the three CLI-facing forms of vscode.message. */
   const messageForm = (
     name: OperationName,
     description: string,
+    instructions: string,
     build: (
       level: "info" | "warning" | "error"
     ) => "info" | "warning" | "error" | "status" | "select"
@@ -136,6 +144,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       name,
       kind: "command",
       description,
+      instructions,
       input: z.object({
         workspacePath: targetWorkspace,
         message: z.string().max(1000).nullable(),
@@ -164,19 +173,22 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
 
   const notify = messageForm(
     "vscode.notify",
-    "Show a notification in the workspace's editor.",
+    "Show the user a notification in the workspace's editor.",
+    FOR_THE_USER,
     (level) => level
   );
 
   const statusBar = messageForm(
     "vscode.status-bar",
-    "Set or clear the workspace's status-bar text.",
+    "Set or clear the workspace's status-bar text, for the user.",
+    FOR_THE_USER,
     () => "status"
   );
 
   const ask = messageForm(
     "vscode.ask",
-    "Ask for a choice or free text in the workspace's editor.",
+    "Ask the user for a choice or free text in the workspace's editor.",
+    FOR_THE_USER,
     () => "select"
   );
 

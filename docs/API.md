@@ -484,6 +484,7 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:workspace:removeTag`          | `{ name: string }`                     | `PluginResult<void>`                       |
 | `api:workspace:openAgent`          | None                                   | `PluginResult<unknown>`                    |
 | `api:workspace:closeAgent`         | None                                   | `PluginResult<{ closed: boolean }>`        |
+| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `PluginResult<null>`                       |
 | `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `PluginResult<void>`                       |
 | `api:workspace:showMessage`        | `ShowMessageRequest`                   | `PluginResult<{ result: string \| null }>` |
 | `api:workspace:openBrowser`        | `{ url: string }`                      | `PluginResult<unknown>`                    |
@@ -748,7 +749,8 @@ $ ch project open .                  # a path, or a git URL to clone
 $ ch project list
 $ ch project close ohi               # by name
 $ ch project close ohi --remove-local-repo   # also delete its directory (no workspaces left)
-$ ch ws notify "build finished" --level warning
+$ ch ws notify "build finished" --level warning   # for the user
+$ ch ws agent message "main is green again"      # for the agent
 $ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
 $ ch lock take device "smoke test"   # wait for, then hold, a shared resource
 $ ch config set sidebar.width 300    # writes config.json, like the settings dialog
@@ -865,6 +867,38 @@ attach?, workspacePath?, wait?, timeout? (seconds) }`.
   dismiss, `timeout`, or the workspace going away. A choice or dismiss closes the card
   and answers every caller waiting on it. A waiter whose connection drops gives up its
   hold, so the question goes away with its last waiter.
+
+### Agent messages
+
+`ch ws agent message <text>` (MCP `workspace_send_agent_message`, plugin
+`api:workspace:sendAgentMessage`) puts text into a workspace's **running** agent's
+conversation through the `agent:send-message` intent. It is the agent's channel, as the
+notifications above, `ws notify`, `ws status-bar` and `ws ask` are the user's.
+
+`SendAgentMessageRequest` is `{ text, wake? (false), workspacePath? }`. `text` given as
+`-` on the command line is read from stdin. The result is `null` once the agent has taken
+the message (sent, not read).
+
+- **Sender.** Set from the connection, never from the input:
+  `CodeHydra · workspace <name>` for the calling workspace, `CodeHydra · ch` for a call from
+  outside every workspace, and `CodeHydra · auto-workspace <source>` for events-mode
+  automatic workspaces.
+- **No agent.** A hibernated workspace fails fast. Without `wake`, a closed agent terminal
+  fails too (category `not-found`, exit 6). The operation reports this as
+  `{ sent: false, reason }` rather than throwing, so it is not logged as a fault. A
+  Claude agent whose terminal is open but which has not announced its inbox yet is
+  starting, not absent: the send waits up to 30 s for it even without `wake`. `wake` runs `workspace:wake` (in the background) or
+  reopens the agent terminal, then lets the send wait up to 90 s for the agent to become
+  reachable.
+- **Claude Code.** The SessionStart hook forwards the session's inbox
+  (`CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`) to the bridge. The
+  message is written there as JSON lines, an auth line and then
+  `{"type":"user","message":{"role":"user","content":…}}`, with the content wrapped in
+  `<cross-session-message from-name="…">`. The docs describe the format wrongly as plain
+  text; `server-manager.boundary.test.ts` pins it against the real CLI. No `from-mode` is
+  declared, so a bypass-permissions session holds the message for its user's approval.
+- **OpenCode.** `session.promptAsync` on the primary session, prefixed `[from <sender>]`.
+  A busy session runs it as its own turn once the current one ends.
 
 ### Progress events
 

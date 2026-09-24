@@ -620,6 +620,40 @@ describe("OpenCodeClient", () => {
     });
   });
 
+  describe("sendPromptAsync", () => {
+    it("queues the prompt on the session and returns ok", async () => {
+      client = createClient();
+
+      const result = await client.sendPromptAsync("ses-1", "hello");
+
+      expect(result.ok).toBe(true);
+      expect(mockSdk.$.prompts).toEqual([
+        expect.objectContaining({ sessionId: "ses-1", prompt: "hello", queued: true }),
+      ]);
+    });
+
+    it("reports an error the server answered with", async () => {
+      mockSdk.session.promptAsync = vi
+        .fn()
+        .mockResolvedValue({ data: undefined, error: { name: "NotFoundError" } });
+      client = createClient();
+
+      const result = await client.sendPromptAsync("ses-missing", "hello");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain("NotFoundError");
+    });
+
+    it("reports a failed request", async () => {
+      mockSdk.session.promptAsync = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+      client = createClient();
+
+      const result = await client.sendPromptAsync("ses-1", "hello");
+
+      expect(result.ok).toBe(false);
+    });
+  });
+
   describe("lifecycle", () => {
     it("can be disposed", () => {
       client = createClient(8080);

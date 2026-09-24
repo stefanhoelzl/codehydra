@@ -6,6 +6,14 @@
       "response": { "content": "Rename workspace" }
     },
     {
+      "_comment": "A message sent from outside (`ch ws agent message`) is queued as a prompt of its own, prefixed with its sender. Matched on the probe inside it and answered with text. Before turn 1, whose gate (the MCP tool, no tool result) this request would otherwise also pass.",
+      "match": {
+        "systemMessage": "You are running inside CodeHydra.",
+        "userMessage": "MESSAGE-PROBE"
+      },
+      "response": { "content": "Message received." }
+    },
+    {
       "_comment": "Turn 2. The set-title result is back, so the turn ends.",
       "match": { "systemMessage": "You are running inside CodeHydra.", "hasToolResult": true },
       "response": { "content": "Renamed the workspace." }

@@ -9,6 +9,8 @@
 import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type {
+  AgentMessage,
+  AgentMessageOptions,
   AgentSessionInfo,
   McpConfig,
   StopServerResult,
@@ -141,6 +143,19 @@ export interface AgentModuleProvider {
 
   /** Get session info for TUI attachment */
   getSession(workspacePath: WorkspacePath): AgentSessionInfo | null;
+
+  // --- Messages ---
+
+  /**
+   * Deliver a message into the workspace's running agent (see
+   * {@link AgentProvider.sendMessage}). Rejects when the workspace has no agent
+   * of this type, or it is not reachable within `options.waitMs`.
+   */
+  sendMessage(
+    workspacePath: WorkspacePath,
+    message: AgentMessage,
+    options: AgentMessageOptions
+  ): Promise<void>;
 
   // --- Events ---
 

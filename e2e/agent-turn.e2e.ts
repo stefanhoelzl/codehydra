@@ -20,7 +20,13 @@ import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import { AGENT_PROMPT, AGENT_SET_TITLE, setTitleTool, useAgentMock } from "./agent-mock.ts";
+import {
+  AGENT_PROMPT,
+  AGENT_SET_TITLE,
+  MESSAGE_PROBE,
+  setTitleTool,
+  useAgentMock,
+} from "./agent-mock.ts";
 import { chAsync, json } from "./ch.ts";
 import {
   appLogEntries,
@@ -33,6 +39,9 @@ import {
 import type { Agent } from "./env.ts";
 
 const WORKSPACE_NAME = "agent-turn";
+
+/** A second workspace, for messages: an agent launched without a prompt. */
+const MESSAGE_WORKSPACE_NAME = "agent-message";
 
 /** A whole turn: worktree, IDE server, agent boot, two round trips to the mock. */
 const TURN_TIMEOUT_MS = 240_000;
@@ -201,6 +210,123 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
     `nothing was served by the gated fixture — the agent never sent a request carrying both ` +
       `CodeHydra's system prompt and ${setTitleTool(agent)}`
   ).toBe(true);
+});
+
+test("a message from outside reaches the running agent, and --wake brings a closed one back", async () => {
+  test.setTimeout(TURN_TIMEOUT_MS * 2);
+  const agent = currentAgent();
+  const ui = app().uiPage();
+
+  // A workspace of its own, launched without a prompt and — for Claude — in the
+  // default permission mode: a session that bypasses permission prompts holds
+  // a message from outside for its user's approval, which the turn workspace
+  // above runs in. A message that needs no tool never meets a permission prompt.
+  const workspacePath = join(await resolvedWorkspacesDir(), MESSAGE_WORKSPACE_NAME);
+  mock().trustWorkspace(workspacePath);
+  const created = await chAsync([
+    "ws",
+    "create",
+    MESSAGE_WORKSPACE_NAME,
+    "--project",
+    repo.path,
+    "--agent",
+    agent,
+  ]);
+  expect(created.status, `ch ws create failed: ${created.stderr}`).toBe(0);
+
+  const idleRow = ui.getByRole("button", {
+    name: new RegExp(`^${MESSAGE_WORKSPACE_NAME} in .* - 1 agent idle$`),
+  });
+  await expect(idleRow, "the agent never came up idle").toBeVisible({ timeout: TURN_TIMEOUT_MS });
+
+  /** Whether the model was handed a turn carrying `text`, as a message from `ch`. */
+  const delivered = (text: string): boolean =>
+    mock()
+      .seenRequests()
+      .some(
+        (request) =>
+          request.userMessage.includes(text) &&
+          // How each agent names the sender. `ch` runs outside every workspace
+          // here, so it signs as the CLI.
+          request.userMessage.includes(
+            agent === "claude"
+              ? '<cross-session-message from-name="CodeHydra · ch">'
+              : "[from CodeHydra · ch]"
+          )
+      );
+
+  // `chAsync`: the mock in this process has to answer the turn the message starts.
+  const first = `${MESSAGE_PROBE} one — the build is green`;
+  const sent = await chAsync(["ws", "agent", "message", "--workspace-path", workspacePath, first]);
+  expect(sent.status, `ch ws agent message failed: ${sent.stderr}`).toBe(0);
+  await expect
+    .poll(() => delivered(first), {
+      timeout: TURN_TIMEOUT_MS,
+      message: "the message never reached the model (the mock's diagnostic above has the requests)",
+    })
+    .toBe(true);
+  await expect(idleRow, "the turn the message started never ended").toBeVisible({
+    timeout: TURN_TIMEOUT_MS,
+  });
+
+  // Close the agent terminal: no agent to take a message, until --wake reopens it.
+  const closed = await chAsync(["ws", "agent", "close", "--workspace", MESSAGE_WORKSPACE_NAME]);
+  expect(closed.status, `ch ws agent close failed: ${closed.stderr}`).toBe(0);
+  await expect
+    .poll(
+      async () => {
+        const status = await chAsync(["ws", "status", "--workspace", MESSAGE_WORKSPACE_NAME]);
+        return (json(status) as { agent: { type: string } }).agent.type;
+      },
+      { timeout: 60_000, message: "the agent never reported its terminal closed" }
+    )
+    .toBe("none");
+
+  const second = `${MESSAGE_PROBE} two — pick this back up`;
+  const refused = await chAsync([
+    "ws",
+    "agent",
+    "message",
+    "--workspace-path",
+    workspacePath,
+    second,
+  ]);
+  // Not found: there is no agent to take it. Reported, not logged as a fault.
+  expect(refused.status, "a message to a closed agent terminal must fail").toBe(6);
+
+  const woken = await chAsync([
+    "ws",
+    "agent",
+    "message",
+    "--workspace-path",
+    workspacePath,
+    "--wake",
+    second,
+  ]);
+  expect(woken.status, `ch ws agent message --wake failed: ${woken.stderr}`).toBe(0);
+  await expect
+    .poll(() => delivered(second), {
+      timeout: TURN_TIMEOUT_MS,
+      message: "the message never reached the reopened agent",
+    })
+    .toBe(true);
+
+  const unmatched = mock()
+    .server.getRequests()
+    .filter((entry) => entry.response.fixture === null);
+  expect(
+    unmatched.map((entry) => `${entry.path} -> ${entry.response.status}`),
+    "the agent made a call no fixture anticipated"
+  ).toEqual([]);
+
+  const deleted = await chAsync([
+    "ws",
+    "delete",
+    "--workspace",
+    MESSAGE_WORKSPACE_NAME,
+    "--ignore-warnings",
+  ]);
+  expect(deleted.status, `ch ws delete failed: ${deleted.stderr}`).toBe(0);
 });
 
 test("deleting the workspace waits for the agent to exit, not for a timeout", async () => {

@@ -4,12 +4,13 @@
  * Provides focused, injectable network interfaces following Interface Segregation Principle:
  * - HttpClient: HTTP requests with timeout support
  * - PortManager: Port discovery and allocation
+ * - LocalSocketClient: One-shot writes to a local socket (Unix socket / named pipe)
  *
  * Note: SSE (Server-Sent Events) functionality was previously provided here but has been
  * removed in favor of the @opencode-ai/sdk which handles SSE internally.
  */
 
-import { createServer, type Server } from "net";
+import { createConnection, createServer, type Server } from "net";
 import type { Logger } from "./logging";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 
@@ -107,6 +108,37 @@ export interface PortManager {
 }
 
 // ============================================================================
+// Local Socket Client Interface
+// ============================================================================
+
+/**
+ * Options for a local socket write.
+ */
+export interface LocalSocketSendOptions {
+  /** Give up after this many ms without the connection settling. Default: 5000 */
+  readonly timeout?: number;
+}
+
+/**
+ * One-shot writes to a local socket: a Unix domain socket on macOS/Linux, a
+ * named pipe on Windows. Node addresses both through the same path argument.
+ */
+export interface LocalSocketClient {
+  /**
+   * Connect, write `data`, and close the write side.
+   *
+   * Resolves once the peer has closed the connection cleanly — the whole of
+   * `data` has then been handed over. Rejects when the connection fails, the
+   * peer resets it, or it does not settle within the timeout. Nothing the
+   * peer writes back is read.
+   *
+   * @param socketPath - Socket path (or named-pipe name on Windows)
+   * @param data - Bytes to write, as UTF-8 text
+   */
+  send(socketPath: string, data: string, options?: LocalSocketSendOptions): Promise<void>;
+}
+
+// ============================================================================
 // Default Implementation
 // ============================================================================
 
@@ -144,9 +176,9 @@ async function listenOnPort(server: Server, port: number, host: string): Promise
 
 /**
  * Default implementation of network interfaces.
- * Implements HttpClient and PortManager.
+ * Implements HttpClient, PortManager and LocalSocketClient.
  */
-export class DefaultNetworkLayer implements HttpClient, PortManager {
+export class DefaultNetworkLayer implements HttpClient, PortManager, LocalSocketClient {
   private readonly logger: Logger;
 
   constructor(logger: Logger) {
@@ -231,6 +263,42 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
       server.listen(port, "127.0.0.1", () => {
         this.logger.debug("Port available", { port });
         server.close(() => resolve(true));
+      });
+    });
+  }
+
+  // LocalSocketClient implementation
+  async send(socketPath: string, data: string, options?: LocalSocketSendOptions): Promise<void> {
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.logger.debug("Local socket send", { socketPath, bytes: Buffer.byteLength(data) });
+
+    await new Promise<void>((resolve, reject) => {
+      const socket = createConnection(socketPath);
+      let settled = false;
+      const settle = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) {
+          socket.destroy();
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const timer = setTimeout(
+        () => settle(new Error(`Local socket ${socketPath} did not settle within ${timeout}ms`)),
+        timeout
+      );
+      // Drain whatever the peer writes back, so its writes never block on us.
+      socket.on("data", () => undefined);
+      socket.once("error", (error) => settle(error));
+      socket.once("close", (hadError) => {
+        if (hadError) settle(new Error(`Local socket ${socketPath} closed with an error`));
+        else settle();
+      });
+      socket.once("connect", () => {
+        socket.end(data);
       });
     });
   }

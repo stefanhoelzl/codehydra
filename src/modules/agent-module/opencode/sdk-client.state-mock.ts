@@ -54,6 +54,8 @@ export interface PromptRecord {
   readonly agent?: string;
   readonly model?: { providerID: string; modelID: string };
   readonly timestamp: number;
+  /** Sent through promptAsync: queued, the call returned without waiting for the turn. */
+  readonly queued?: true;
 }
 
 /**
@@ -123,6 +125,10 @@ export interface MockSdkClient extends MockWithState<SdkClientMockState> {
         model?: { providerID: string; modelID: string };
       };
     }): Promise<{ data: { id: string } }>;
+    promptAsync(args: {
+      path: { id: string };
+      body: { parts: Array<{ type: string; text: string }> };
+    }): Promise<{ data: undefined; error: undefined }>;
     get(args: { path: { id: string } }): Promise<{ data: Session }>;
     delete(args: { path: { id: string } }): Promise<{ data: Session }>;
   };
@@ -483,6 +489,19 @@ export function createSdkClientMock(options?: MockSdkClientOptions): MockSdkClie
         state._recordPrompt(record);
 
         return { data: { id: `msg-${Date.now()}` } };
+      },
+
+      async promptAsync(args: {
+        path: { id: string };
+        body: { parts: Array<{ type: string; text: string }> };
+      }): Promise<{ data: undefined; error: undefined }> {
+        state._recordPrompt({
+          sessionId: args.path.id,
+          prompt: args.body.parts.find((p) => p.type === "text")?.text ?? "",
+          timestamp: Date.now(),
+          queued: true,
+        });
+        return { data: undefined, error: undefined };
       },
 
       async get(args: { path: { id: string } }): Promise<{ data: Session }> {

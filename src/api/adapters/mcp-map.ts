@@ -36,6 +36,7 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "agent.restart": { tool: "workspace_restart_agent_server" },
   "agent.open": { tool: "workspace_open_agent" },
   "agent.close": { tool: "workspace_close_agent" },
+  "agent.message": { tool: "workspace_send_agent_message" },
   "agent.status.set": { tool: "workspace_set_agent_status" },
   // The one event: only an observer that witnessed the terminal event can send
   // it, and an agent is not that observer.

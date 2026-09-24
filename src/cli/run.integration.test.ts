@@ -59,6 +59,18 @@ const DESCRIPTORS: readonly OperationDescriptor[] = [
     text: true,
   },
   {
+    name: "agent.message",
+    kind: "command",
+    description: "Send a message to a workspace's running agent.",
+    inputSchema: {
+      type: "object",
+      properties: { text: { type: "string" }, wake: { type: "boolean" } },
+    },
+    path: ["ws", "agent", "message"],
+    positionals: ["text"],
+    stdin: "text",
+  },
+  {
     name: "lock.hold",
     kind: "command",
     description: "Take a lock for as long as this connection lives",
@@ -137,6 +149,45 @@ describe("run", () => {
       );
 
       expect(calls[0]!.request).toEqual({ keepBranch: true, wait: false });
+    });
+  });
+
+  describe("standard input", () => {
+    it("reads a field given as - from standard input, less its final newline", async () => {
+      const calls: Recorded[] = [];
+      await run({
+        argv: ["ws", "agent", "message", "-", "--wake"],
+        isTty: false,
+        connect: async () => fakeClient(() => null, calls),
+        readStdin: async () => "line one\nline two\n",
+      });
+
+      expect(calls[0]!.request).toEqual({ text: "line one\nline two", wake: true });
+    });
+
+    it("passes an ordinary value through untouched", async () => {
+      const calls: Recorded[] = [];
+      await run({
+        argv: ["ws", "agent", "message", "hello"],
+        isTty: false,
+        connect: async () => fakeClient(() => null, calls),
+        readStdin: async () => {
+          throw new Error("stdin must not be read");
+        },
+      });
+
+      expect(calls[0]!.request).toEqual({ text: "hello" });
+    });
+
+    it("reports - with no standard input as a usage error", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["ws", "agent", "message", "-"],
+        fakeClient(() => null, calls)
+      );
+
+      expect(result.exitCode).toBe(EXIT.USAGE);
+      expect(calls).toEqual([]);
     });
   });
 

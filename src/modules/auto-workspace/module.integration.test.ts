@@ -49,6 +49,11 @@ import {
 } from "../../intents/resolve-workspace";
 import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
 import {
+  INTENT_SEND_AGENT_MESSAGE,
+  type SendAgentMessageIntent,
+  type SendAgentMessageResult,
+} from "../../intents/send-agent-message";
+import {
   INTENT_SWITCH_WORKSPACE,
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
@@ -272,6 +277,25 @@ class WakeWorkspaceOp implements Operation<typeof wakeSchemas> {
   }
 }
 
+const sendMessageSchemas = {
+  type: INTENT_SEND_AGENT_MESSAGE,
+  payload: z.custom<SendAgentMessageIntent["payload"]>(),
+  result: z.custom<SendAgentMessageResult>(),
+} satisfies OperationSchemas;
+class SendAgentMessageOp implements Operation<typeof sendMessageSchemas> {
+  readonly id = "send-agent-message";
+  readonly schemas = sendMessageSchemas;
+  readonly dispatched: IntentOf<typeof sendMessageSchemas>[] = [];
+  /** When set, the agent could not be reached, for this reason. */
+  notSent: string | null = null;
+  async execute(
+    ctx: OperationContext<IntentOf<typeof sendMessageSchemas>, typeof sendMessageSchemas>
+  ): Promise<SendAgentMessageResult> {
+    this.dispatched.push(ctx.intent);
+    return this.notSent === null ? { sent: true } : { sent: false, reason: this.notSent };
+  }
+}
+
 const switchSchemas = {
   type: INTENT_SWITCH_WORKSPACE,
   payload: z.custom<SwitchWorkspaceIntent["payload"]>(),
@@ -300,15 +324,14 @@ template:
 }
 
 /** An events-mode source. `focus` is appended verbatim when given. */
-function eventsYaml(options?: { name?: string; focus?: boolean }): string {
+function eventsYaml(options?: { name?: string; focus?: boolean; prompt?: boolean }): string {
   return `name: ${options?.name ?? "gh"}
 type: cron
 mode: events
 cmd: fetch
 template:
   name: "ws-{{ id }}"
-  git: "https://github.com/org/repo.git"
-  prompt: "Work on {{ id }}"
+  git: "https://github.com/org/repo.git"${options?.prompt === false ? "" : `\n  prompt: "Work on {{ id }}"`}
   metadata:
     title: "Event {{ id }}"${options?.focus === undefined ? "" : `\n  focus: ${String(options.focus)}`}`;
 }
@@ -349,6 +372,7 @@ function createSetup(options?: {
   const resolveWsOp = new ResolveWorkspaceOp(listProjectsOp);
   const wakeOp = new WakeWorkspaceOp();
   const switchOp = new SwitchWorkspaceOp();
+  const sendMessageOp = new SendAgentMessageOp();
   const notificationManager = createMockNotificationManager();
 
   const configDefaults: Record<string, unknown> = { ...(options?.configDefaults ?? {}) };
@@ -367,6 +391,7 @@ function createSetup(options?: {
   dispatcher.registerOperation(resolveWsOp);
   dispatcher.registerOperation(wakeOp);
   dispatcher.registerOperation(switchOp);
+  dispatcher.registerOperation(sendMessageOp);
 
   const module = createAutoWorkspaceModule({
     logger,
@@ -392,6 +417,7 @@ function createSetup(options?: {
     resolveWsOp,
     wakeOp,
     switchOp,
+    sendMessageOp,
     notificationManager,
   };
 }
@@ -877,7 +903,6 @@ template:
       expect(wakeOp.dispatched).toHaveLength(1);
       expect(wakeOp.dispatched[0]!.payload.workspacePath).toBe(workspacePathOf("ws-1"));
       expect(wakeOp.dispatched[0]!.payload.stealFocus).toBe(false);
-      // The metadata is the whole signal — no prompt reaches an existing agent.
       expect(
         setMetaOp.dispatched.some((d) => d.payload.key === "title" && d.payload.value === "Event 1")
       ).toBe(true);
@@ -916,6 +941,85 @@ template:
         workspacePath: workspacePathOf("ws-1"),
         focus: true,
       });
+    });
+
+    it("sends the prompt to a matched workspace's agent as a message", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, sendMessageOp } = createSetup({
+        sources: eventsYaml(),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(sendMessageOp.dispatched.map((d) => d.payload)).toEqual([
+        {
+          workspacePath: workspacePathOf("ws-1"),
+          text: "Work on 1",
+          from: "CodeHydra · auto-workspace gh",
+          // Also reopens an agent terminal the user closed.
+          wake: true,
+        },
+      ]);
+    });
+
+    it("sends the prompt after waking a hibernated match", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, wakeOp, sendMessageOp } = createSetup({
+        sources: eventsYaml(),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(wakeOp.dispatched).toHaveLength(1);
+      expect(sendMessageOp.dispatched).toHaveLength(1);
+    });
+
+    it("sends nothing to a match when the template has no prompt", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, sendMessageOp, setMetaOp } = createSetup({
+        sources: eventsYaml({ prompt: false }),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(sendMessageOp.dispatched).toHaveLength(0);
+      expect(setMetaOp.dispatched.map((d) => d.payload.key)).toContain("title");
+    });
+
+    it("never sends a prompt it already gave a newly created workspace", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, sendMessageOp } = createSetup({ sources: eventsYaml() });
+      cmd.items = [{ id: "1" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(sendMessageOp.dispatched).toHaveLength(0);
+    });
+
+    it("warns about a prompt no agent took, and keeps going", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, cmd, listProjectsOp, sendMessageOp, logger } = createSetup({
+        sources: eventsYaml(),
+      });
+      listProjectsOp.workspaces.push(workspaceNamed("ws-1"), workspaceNamed("ws-2"));
+      sendMessageOp.notSent = "No Claude session is running";
+      cmd.items = [{ id: "1" }, { id: "2" }];
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(sendMessageOp.dispatched).toHaveLength(2);
+      expect(
+        logger
+          .getMessagesByLevel("warn")
+          .filter((entry) => entry.message === "Auto-workspace prompt not delivered")
+      ).toHaveLength(2);
     });
 
     it("skips an event whose workspace is mid-teardown", async () => {

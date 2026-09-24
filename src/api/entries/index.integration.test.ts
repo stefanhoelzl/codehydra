@@ -233,6 +233,7 @@ describe("registry contents", () => {
       // These name their own target, or need none, so they work from a shell
       // standing anywhere — including outside every worktree.
       expect(global).toEqual([
+        "agent.message",
         "config.get",
         "config.list",
         "config.reset",

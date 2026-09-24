@@ -135,7 +135,7 @@ src/modules/agent-module/
 
 ### AgentModuleProvider
 
-The unified per-agent surface consumed by the generic module (`agent-module-provider.ts`). Covers identity constants (`type`, `displayName`, `icon`, `scripts`, ...), binary management (`preflight`, `downloadBinary`), lifecycle (`initialize`, `dispose`), per-workspace operations (`startWorkspace`, `stopWorkspace`, `restartWorkspace`, `applyTerminalLifecycle`, `setModalOpen`), queries (`getStatus`, `getSession`), the cross-workspace `onStatusChange` event, and `clearWorkspaceTracking`.
+The unified per-agent surface consumed by the generic module (`agent-module-provider.ts`). Covers identity constants (`type`, `displayName`, `icon`, `scripts`, ...), binary management (`preflight`, `downloadBinary`), lifecycle (`initialize`, `dispose`), per-workspace operations (`startWorkspace`, `stopWorkspace`, `restartWorkspace`, `applyTerminalLifecycle`, `setModalOpen`), queries (`getStatus`, `getSession`), `sendMessage` (deliver a message into the running agent), the cross-workspace `onStatusChange` event, and `clearWorkspaceTracking`.
 
 ### AgentModuleSpec and the core factory
 
@@ -210,6 +210,7 @@ interface AgentProvider {
   getSession(): AgentSessionInfo | null;
   getEnvironmentVariables(): Record<string, string>;
   markActive(): void;
+  sendMessage(message: AgentMessage, options: AgentMessageOptions): Promise<void>;
   detachTui?(): void; // only providers with a TUI-attached status gate (OpenCode)
   dispose(): void;
 }
@@ -220,6 +221,12 @@ interface AgentProvider {
 - `disconnect()` preserves state for reconnection; `dispose()` is final cleanup
 - Status changes should be emitted as soon as they occur
 - `getEnvironmentVariables()` provides env vars the sidekick sets for all new terminals
+- `sendMessage()` puts `{ text, from }` into the running agent's conversation and resolves
+  once the agent took it (sent, not read). It rejects when no agent is reachable within
+  `options.waitMs` (0 = now). Claude writes to the session inbox its SessionStart hook
+  forwarded (`claude/inbox-message.ts` has the wire format). OpenCode queues it with
+  `promptAsync` once the TUI is attached. The `agent:send-message` intent (`agent.message`
+  in the registry) drives it, and waking or reopening the agent terminal first is its job.
 
 ---
 

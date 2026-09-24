@@ -207,3 +207,45 @@ describe("a prompt-suggestion fork while a background sub-agent runs (TUI)", () 
     expect(run.finalStatus).toBe("busy");
   });
 });
+
+describe("a message from outside, to a session that prompts for permissions", () => {
+  const message = { text: "MESSAGE-PROBE the build is green", from: "CodeHydra · workspace probe" };
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // Pins the undocumented part of Claude's inbox: the JSON line format, and
+    // the sender envelope it parses. The docs call the format plain text.
+    run = await runScenario("message", {
+      until: (r) => seen(r, "Stop"),
+      permissionMode: "default",
+      message,
+    });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("reaches the model", () => {
+    expect(run.deliveredMessage).toContain(message.text);
+  });
+
+  it("names its sender in the envelope Claude parses", () => {
+    expect(run.deliveredMessage).toContain(
+      `<cross-session-message from-name="${message.from}">\n${message.text}\n</cross-session-message>`
+    );
+  });
+});
+
+describe("a message from outside, to a session that bypasses permission prompts", () => {
+  let run: ScenarioRun;
+  beforeAll(async () => {
+    // CodeHydra declares no permission mode for itself, so a session that runs
+    // tools without asking holds the message for its user — who is not here.
+    run = await runScenario("message", {
+      until: (r) => seen(r, "Stop"),
+      permissionMode: "bypassPermissions",
+      message: { text: "MESSAGE-PROBE held", from: "CodeHydra · workspace probe" },
+      messageWaitMs: 5_000,
+    });
+  }, SCENARIO_TIMEOUT_MS);
+
+  it("is held back from the model", () => {
+    expect(run.deliveredMessage).toBeUndefined();
+  });
+});

@@ -8,7 +8,13 @@
  * - Pending user request tracking (permissions, questions) for status display
  */
 
-import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
+import type {
+  AgentMessage,
+  AgentMessageOptions,
+  AgentProvider,
+  AgentSessionInfo,
+  AgentStatus,
+} from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
 import { OpenCodeClient, type UserRequestEvent } from "./client";
 import { OpenCodeError } from "../../../shared/errors/service-errors";
@@ -16,6 +22,8 @@ import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
 import { countsToStatus } from "../status-utils";
 import type { Logger } from "../../../boundaries/platform/logging";
+import { AgentUnreachableError } from "../types";
+import { ConditionWaiters } from "../wait-until";
 
 /**
  * Per-workspace provider that manages a single OpenCode client connection.
@@ -64,6 +72,9 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    */
   private readonly statusChangeListeners = new Set<(status: AgentStatus) => void>();
 
+  /** Senders waiting for the agent to become reachable (see {@link sendMessage}). */
+  private readonly readyWaiters = new ConditionWaiters();
+
   constructor(workspacePath: string, logger: Logger) {
     this.workspacePath = workspacePath;
     this.logger = logger;
@@ -107,7 +118,43 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     if (!this.tuiAttached) {
       this.tuiAttached = true;
       this.notifyStatusChange();
+      this.readyWaiters.notify();
     }
+  }
+
+  /**
+   * Queue a message on the workspace's primary session.
+   *
+   * Reachable means what the user sees as a running agent: a connected server
+   * with a session, and the TUI attached. The server outlives a closed agent
+   * terminal, but a message sent then would run with nobody watching, so it
+   * fails the same way as for Claude. The sender is named in a tag on the first
+   * line — OpenCode has no envelope for it.
+   */
+  async sendMessage(message: AgentMessage, options: AgentMessageOptions): Promise<void> {
+    const reachable = await this.readyWaiters.waitUntil(
+      () => this.client !== null && this._primarySessionId !== null && this.tuiAttached,
+      options.waitMs
+    );
+    const sessionId = this._primarySessionId;
+    if (!reachable || this.client === null || sessionId === null) {
+      throw new AgentUnreachableError(
+        "No OpenCode session is running in this workspace (its agent terminal is closed, " +
+          "or the agent has not started yet)."
+      );
+    }
+
+    const result = await this.client.sendPromptAsync(
+      sessionId,
+      `[from ${message.from}] ${message.text}`
+    );
+    if (!result.ok) throw result.error;
+    this.logger.info("Message queued on OpenCode session", {
+      workspacePath: this.workspacePath,
+      sessionId,
+      from: message.from,
+      length: message.text.length,
+    });
   }
 
   /**
@@ -215,6 +262,8 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // The primary session may be what a waiting sender still lacked.
+    this.readyWaiters.notify();
   }
 
   /**
@@ -363,6 +412,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     this.sessionToPort.clear();
     this.pendingRequests.clear();
     this.statusChangeListeners.clear();
+    this.readyWaiters.notify();
   }
 
   /**

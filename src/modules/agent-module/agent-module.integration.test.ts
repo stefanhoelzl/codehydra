@@ -67,6 +67,11 @@ import type { GetAgentSessionHookResult } from "../../intents/get-agent-session"
 import { RESTART_AGENT_OPERATION_ID, INTENT_RESTART_AGENT } from "../../intents/restart-agent";
 import type { RestartAgentHookResult } from "../../intents/restart-agent";
 import {
+  SEND_AGENT_MESSAGE_OPERATION_ID,
+  INTENT_SEND_AGENT_MESSAGE,
+  type SendHookResult,
+} from "../../intents/send-agent-message";
+import {
   AGENT_LIFECYCLE_OPERATION_ID,
   INTENT_AGENT_LIFECYCLE,
 } from "../../intents/agent-lifecycle";
@@ -75,7 +80,7 @@ import {
   INTENT_VSCODE_MODAL_CHANGED,
 } from "../../intents/vscode-modal-changed";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
-import type { McpConfig } from "./types";
+import { AgentUnreachableError, type McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
@@ -126,6 +131,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
       counts: { idle: 0, busy: 0 },
     } satisfies AggregatedAgentStatus),
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "session-1" }),
+    sendMessage: vi.fn().mockResolvedValue(undefined),
     onStatusChange: vi.fn(
       (cb: (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void) => {
         capturedStatusCallback = cb;
@@ -1346,6 +1352,88 @@ describe("createAgentModule", () => {
 
       expect(result).toBeUndefined();
       expect(mockProvider.restartWorkspace).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // send (agent:send-message)
+  // ---------------------------------------------------------------------------
+
+  describe("send", () => {
+    function registerSendOp(dispatcher: Dispatcher, agent: string): void {
+      dispatcher.registerOperation(
+        createMinimalOperation<SendHookResult | undefined>(
+          SEND_AGENT_MESSAGE_OPERATION_ID,
+          INTENT_SEND_AGENT_MESSAGE,
+          "send",
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: testPath("/test/workspace").toNative(),
+              waitMs: 1234,
+              capabilities: { agent },
+            }),
+          }
+        )
+      );
+    }
+
+    const intent = {
+      type: INTENT_SEND_AGENT_MESSAGE,
+      payload: {
+        workspacePath: testPath("/test/workspace").toNative(),
+        text: "hello",
+        from: "CodeHydra · ch",
+        wake: false,
+      },
+    };
+
+    it("hands the message and the wait to the provider", async () => {
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
+      registerSendOp(dispatcher, "claude");
+
+      const result = (await dispatcher.dispatch(intent)) as SendHookResult | undefined;
+
+      expect(mockProvider.sendMessage).toHaveBeenCalledWith(
+        testPath("/test/workspace").toNative(),
+        { text: "hello", from: "CodeHydra · ch" },
+        { waitMs: 1234 }
+      );
+      expect(result).toEqual({ sent: true });
+    });
+
+    it("answers not sent, with the reason, when the agent is unreachable", async () => {
+      const { dispatcher, agentConfig } = createTestSetup({
+        sendMessage: vi
+          .fn()
+          .mockRejectedValue(new AgentUnreachableError("No Claude session is running")),
+      });
+      await activateModule(dispatcher, agentConfig);
+      registerSendOp(dispatcher, "claude");
+
+      const result = (await dispatcher.dispatch(intent)) as SendHookResult | undefined;
+
+      expect(result).toEqual({ sent: false, reason: "No Claude session is running" });
+    });
+
+    it("propagates a failed hand-over", async () => {
+      const { dispatcher, agentConfig } = createTestSetup({
+        sendMessage: vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED")),
+      });
+      await activateModule(dispatcher, agentConfig);
+      registerSendOp(dispatcher, "claude");
+
+      await expect(dispatcher.dispatch(intent)).rejects.toThrow("ECONNREFUSED");
+    });
+
+    it("does not run for another agent's workspace", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerSendOp(dispatcher, "opencode");
+
+      await dispatcher.dispatch(intent);
+
+      expect(mockProvider.sendMessage).not.toHaveBeenCalled();
     });
   });
 

@@ -304,6 +304,41 @@ export class OpenCodeClient implements IDisposable {
   }
 
   /**
+   * Queue a prompt on an existing session and return at once.
+   *
+   * Unlike {@link sendPrompt}, which resolves only when the turn it starts has
+   * finished, this resolves as soon as the server has accepted the prompt. A
+   * busy session runs it as its own turn once the current one ends.
+   *
+   * @param sessionId - The session to queue the prompt on
+   * @param prompt - The prompt text
+   */
+  async sendPromptAsync(sessionId: string, prompt: string): Promise<Result<void, OpenCodeError>> {
+    try {
+      const result = await this.sdk.session.promptAsync({
+        path: { id: sessionId },
+        body: { parts: [{ type: "text", text: prompt }] },
+      });
+      if (result.error !== undefined) {
+        return err(
+          new OpenCodeError(
+            `Prompt was not accepted: ${JSON.stringify(result.error)}`,
+            "REQUEST_FAILED"
+          )
+        );
+      }
+      this.logger.debug("Prompt queued", {
+        port: this.port,
+        sessionId,
+        promptLength: prompt.length,
+      });
+      return ok(undefined);
+    } catch (error) {
+      return err(this.mapSdkError(error));
+    }
+  }
+
+  /**
    * Connect to SSE event stream.
    *
    * @param timeoutMs - Connection timeout in milliseconds. Default: 5000
