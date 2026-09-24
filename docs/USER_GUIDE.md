@@ -901,10 +901,10 @@ ch ws agent message --wake "pick this back up"
   reopens the agent terminal, then waits up to 90 seconds for the agent to
   start. It does not switch to the workspace. An agent still starting in an
   open terminal is waited for (up to 30 seconds) even without `--wake`.
-- **Claude Code** in bypass-permissions mode holds a message from outside until
-  you approve it in its terminal. The dialog closes after five minutes and
-  drops the message. In every other mode the message is delivered straight
-  away.
+- **Claude Code** in bypass-permissions mode on macOS and Linux holds a
+  message from outside until you approve it in its terminal. The dialog closes
+  after five minutes and drops the message. In every other mode, and in every
+  mode on Windows, the message is delivered straight away.
 - **OpenCode** runs a message sent while it is busy as its own turn, once the
   current one ends. The message starts with `[from <sender>]`.
 

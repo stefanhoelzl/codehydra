@@ -19,9 +19,11 @@
  *   body
  *   </cross-session-message>
  *
- * No `from-mode` is declared, deliberately: a session that bypasses permission
- * prompts then holds the message for its user's approval, as it would any
- * message from outside it.
+ * No `from-mode` is declared, deliberately: on macOS and Linux a session that
+ * bypasses permission prompts then holds the message for its user's approval,
+ * as it would any message from outside it. Not on Windows: there Claude
+ * verifies a sender by the token, which the auth line must carry, so the
+ * message counts as the session's own and is delivered in every mode.
  */
 
 import type { AgentMessage } from "../types";
