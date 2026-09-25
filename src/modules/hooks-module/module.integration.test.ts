@@ -106,7 +106,9 @@ interface TestSetup {
   readonly notifications: readonly NotificationConfig[];
   readonly dialogs: DialogConfig[];
   /** The open options each dialog was raised with, in order. */
-  readonly dialogOptions: Array<{ workspacePath?: string; projectPath?: string } | undefined>;
+  readonly dialogOptions: Array<
+    { workspacePath?: string; projectPath?: string; workspaceName?: string } | undefined
+  >;
   readonly sinkLines: Array<{ entry: string; line: string }>;
   /** Metadata written through the real SetMetadataOperation, in order. */
   readonly metadataWrites: Array<{ key: string; value: string | null }>;
@@ -230,7 +232,10 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   };
 
   const ui = {
-    dialog: (config: DialogConfig, options?: { workspacePath?: string; projectPath?: string }) => {
+    dialog: (
+      config: DialogConfig,
+      options?: { workspacePath?: string; projectPath?: string; workspaceName?: string }
+    ) => {
       dialogs.push(config);
       dialogOptions.push(options);
       return makeDialogStub(() => trustAnswer);
@@ -1160,6 +1165,7 @@ describe("trust", () => {
     expect(setup.dialogOptions[0]).toMatchObject({
       workspacePath: WORKSPACE_PATH,
       projectPath: PROJECT_ROOT,
+      workspaceName: "feature-x",
     });
   });
 

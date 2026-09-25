@@ -23,13 +23,17 @@ const CODEHYDRA = projPath("/projects/codehydra");
 const IOS = wsPath("/projects/snapsync/workspaces/ios");
 const ANDROID = wsPath("/projects/snapsync/workspaces/android");
 const CH_LOCK = wsPath("/projects/codehydra/workspaces/ch-lock");
+/** Branch `feature/x`, in the directory CodeHydra sanitizes it to. */
+const FEATURE_X = wsPath("/projects/snapsync/workspaces/feature%x");
 
 function setup() {
   const dispatcher = createMockDispatcher();
   registerTestInfrastructure(dispatcher, {
     workspaces: (workspacePath: WorkspacePath) => ({
       projectPath: workspacePath.startsWith(SNAPSYNC) ? SNAPSYNC : CODEHYDRA,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
+      workspaceName: workspacePath
+        .slice(workspacePath.lastIndexOf("/") + 1)
+        .replace("%", "/") as WorkspaceName,
     }),
     projects: {
       [SNAPSYNC]: { projectId: "snapsync-1" as ProjectId },
@@ -186,6 +190,18 @@ describe("lock entries", () => {
   });
 
   describe("lock.list", () => {
+    it("names holders and waiters by workspace name, not directory", async () => {
+      const { call } = setup();
+      await call("lock.take", FEATURE_X, { name: "device" });
+      void call("lock.take", IOS, { name: "device" });
+      // Let the queued take reach the table before listing.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      await expect(call("lock.list", null)).resolves.toMatchObject([
+        { name: "device", holder: "feature/x", waiting: "ios" },
+      ]);
+    });
+
     it("lists both namespaces as table rows, from anywhere", async () => {
       const { call } = setup();
       await call("lock.take", IOS, { name: "device", reason: "pull crash logs" });

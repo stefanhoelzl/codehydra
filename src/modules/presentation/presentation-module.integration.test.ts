@@ -2858,6 +2858,7 @@ describe("PresentationModule - attention highlight", () => {
       kind: "modal",
       workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
       projectPath: PROJECT_PATH.toString(),
+      workspaceName: "feat",
     });
     await flush();
     expect(rowAgent(deps, "feat")).toEqual(IDLE_ATTENTION);
@@ -2865,6 +2866,27 @@ describe("PresentationModule - attention highlight", () => {
     handle.close();
     await flush();
     expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
+  });
+
+  it("matches the placeholder by the name it was given, not the directory", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feature/x",
+      projectPath: PROJECT_PATH,
+    });
+
+    // `feature/x` lives in `feature%x`: the directory name is not the name.
+    module.dialog(ATTENTION, {
+      kind: "modal",
+      workspacePath: `${PROJECT_PATH}/.worktrees/feature%x`,
+      projectPath: PROJECT_PATH.toString(),
+      workspaceName: "feature/x",
+    });
+    await flush();
+
+    expect(rowAgent(deps, "feature/x")).toEqual(IDLE_ATTENTION);
   });
 
   it("does not mark a placeholder for a same-named workspace of another project", async () => {
@@ -2881,9 +2903,14 @@ describe("PresentationModule - attention highlight", () => {
       kind: "modal",
       workspacePath: `${other}/.worktrees/feat`,
       projectPath: other,
+      workspaceName: "feat",
     });
     // Without a project the name alone is not enough to claim the row.
-    module.dialog(ATTENTION, { kind: "modal", workspacePath: `${PROJECT_PATH}/.worktrees/feat` });
+    module.dialog(ATTENTION, {
+      kind: "modal",
+      workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
+      workspaceName: "feat",
+    });
     await flush();
 
     expect(rowAgent(deps, "feat")).toEqual({ type: "none" });

@@ -115,10 +115,6 @@ function normalize(workspacePath: WorkspacePath): string {
   return new Path(workspacePath).toString();
 }
 
-function workspaceName(workspacePath: WorkspacePath): string {
-  return new Path(workspacePath).basename;
-}
-
 export function createLockModule(deps: LockModuleDeps): LockModule {
   const { dispatcher, logger } = deps;
 
@@ -133,6 +129,13 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   const chains = new Map<string, Promise<void>>();
   // Deleted workspaces: their worktree is gone, so writing their tags would fail.
   const gone = new Set<string>();
+  // Each workspace's name, from the event that opened it. A name is not the
+  // directory: `feature/x` lives in `feature%x`, and Windows paths are lowercased.
+  const names = new Map<string, string>();
+
+  function workspaceName(workspacePath: WorkspacePath): string {
+    return names.get(normalize(workspacePath)) ?? new Path(workspacePath).basename;
+  }
 
   // ---------------------------------------------------------------------------
   // Tags
@@ -455,6 +458,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
           gone.add(normalize(workspacePath));
           written.delete(normalize(workspacePath));
           releaseWorkspace(workspacePath, "deleted");
+          names.delete(normalize(workspacePath));
         },
       },
       [EVENT_WORKSPACE_HIBERNATED]: {
@@ -468,9 +472,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       // taken since is kept.
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, metadata } = (event as WorkspaceCreatedEvent).payload;
+          const {
+            workspacePath,
+            workspaceName: name,
+            metadata,
+          } = (event as WorkspaceCreatedEvent).payload;
           const workspace = normalize(workspacePath);
           gone.delete(workspace);
+          names.set(workspace, name);
           const held = metadata[LOCK_TAG_KEY] ?? null;
           const waiting = metadata[LOCK_WAIT_TAG_KEY] ?? null;
           if (held === null && waiting === null && !written.has(workspace)) return;

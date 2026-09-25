@@ -21,6 +21,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
 import { Path } from "../../utils/path/path";
 import { formatAge } from "../../utils/age";
+import { createWorkspaceNamer } from "./target";
 
 const lockName = z
   .string()
@@ -40,12 +41,9 @@ function callerOf(ctx: OperationContext): WorkspacePath {
   return ctx.workspacePath;
 }
 
-function holderName(workspacePath: WorkspacePath): string {
-  return new Path(workspacePath).basename;
-}
-
 export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher, locks } = deps;
+  const nameOf = createWorkspaceNamer(dispatcher);
 
   /** The project the caller's workspace belongs to. */
   const projectOf = async (ctx: OperationContext): Promise<ProjectPath> => {
@@ -199,21 +197,23 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     requiresWorkspace: false,
     handler: async (ctx, input) => {
       const project = input.scope === "project" ? await projectOf(ctx) : null;
-      return locks
+      const shown = locks
         .list()
         .filter((lock) => inScope(lock, input.scope, project))
         .sort(
           (a, b) => (a.project ?? "").localeCompare(b.project ?? "") || a.name.localeCompare(b.name)
-        )
-        .map((lock) => ({
+        );
+      return Promise.all(
+        shown.map(async (lock) => ({
           // Strings throughout, so the human table has no `null` cells.
           name: lock.name,
           project: lock.project === null ? "" : new Path(lock.project).basename,
-          holder: holderName(lock.holder),
+          holder: await nameOf(lock.holder),
           held: formatAge(lock.acquiredAt),
           reason: lock.reason ?? "",
-          waiting: lock.waiting.map(holderName).join(", "),
-        }));
+          waiting: (await Promise.all(lock.waiting.map(nameOf))).join(", "),
+        }))
+      );
     },
   });
 

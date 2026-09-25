@@ -1923,10 +1923,11 @@ describe("Add-project worktree picker", () => {
     "prepare"
   );
 
-  function makeUnmanaged(name: string, branch: string | null) {
+  /** As the provider lists it: named after its branch, else its directory. */
+  function makeUnmanaged(dir: string, branch: string | null) {
     return {
-      name,
-      path: new Path(`/code/${name}`),
+      name: branch ?? dir,
+      path: new Path(`/code/${dir}`),
       branch,
       adoptable: branch !== null,
     };
@@ -2031,11 +2032,11 @@ describe("Add-project worktree picker", () => {
     const handle = await openedDialog(dialogs);
 
     // One checkbox per worktree, name first (that is what the workspace gets
-    // called), then where it lives. The branch is shown only where it differs.
+    // called: its branch), then where it lives.
     expect(handle.config.sections).toContainEqual({
       type: "checkbox",
       id: "wt-0",
-      label: "repo-login (feature/login) — /code/repo-login",
+      label: "feature/login — /code/repo-login",
       value: false,
       changeEvent: true,
       disabled: false,
@@ -2051,20 +2052,6 @@ describe("Add-project worktree picker", () => {
     // No orphaned detail lines: a second section per row is centered by the
     // default layout and a full gap away from its own checkbox.
     expect(handle.config.sections.filter((s) => s.type === "text")).toHaveLength(2);
-
-    handle.emitAction("cancel");
-    await pending;
-  });
-
-  it("omits the branch when it matches the directory name", async () => {
-    const { dispatcher, dialogs } = createPickerSetup([makeUnmanaged("wt", "wt")]);
-
-    const pending = prepare(dispatcher, { path: PROJECT, initial: true });
-    const handle = await openedDialog(dialogs);
-
-    expect(handle.config.sections).toContainEqual(
-      expect.objectContaining({ id: "wt-0", label: "wt — /code/wt" })
-    );
 
     handle.emitAction("cancel");
     await pending;
@@ -2226,7 +2213,7 @@ describe("Add-project worktree picker", () => {
     await notifications.settle();
     expect(notifications.lastNotification?.latestConfig).toMatchObject({
       type: "error",
-      message: expect.stringContaining("repo-login") as unknown as string,
+      message: expect.stringContaining("feature/login") as unknown as string,
     });
   });
 

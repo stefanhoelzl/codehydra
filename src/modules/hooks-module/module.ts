@@ -306,6 +306,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     const decision = await trust.check({
       projectPath: input.projectPath,
       workspacePath: input.workspacePath,
+      workspaceName: stdin.workspaceName,
       entry: found.entry,
     });
     if (decision === "skip") return undefined;
@@ -409,6 +410,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     const decision = await trust.check({
       projectPath: input.projectPath,
       workspacePath: input.workspacePath,
+      workspaceName: input.workspaceName,
       entry: found.entry,
     });
     if (decision === "skip") return { result: {} };
@@ -498,6 +500,7 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
         const decision = await trust.check({
           projectPath: payload.projectPath,
           workspacePath: payload.workspacePath,
+          workspaceName: payload.workspaceName,
           entry: found.entry,
         });
         if (decision === "skip") return;

@@ -139,7 +139,8 @@ Open a project from the New workspace form (**Open project folder** or
 - A folder that is not a git repository asks to **initialize** one (git init
   with an initial commit).
 - A repository that already has worktrees CodeHydra does not manage asks which
-  to **adopt**; worktrees on a detached HEAD cannot be adopted.
+  to **adopt**; worktrees on a detached HEAD cannot be adopted. An adopted
+  workspace is named after its branch, like every other workspace.
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
   `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
   background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub

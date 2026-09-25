@@ -110,7 +110,7 @@ describe("GitWorktreeProvider integration", () => {
       });
     });
 
-    it("keeps an adopted worktree and names it after its directory", async () => {
+    it("keeps an adopted worktree and names it after its branch", async () => {
       const client = mixedRepo({
         "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
       });
@@ -127,9 +127,9 @@ describe("GitWorktreeProvider integration", () => {
       const adopted = discovered.find(
         (w) => w.path.toString() === testPath("/code/repo-login").toString()
       );
-      // The directory name, not the branch: everything downstream assumes
-      // basename === name, and the user named this directory.
-      expect(adopted?.name).toBe("repo-login");
+      // The branch, not the directory: a workspace is named after its branch
+      // wherever it lives, so the directory name never leaks into the name.
+      expect(adopted?.name).toBe("feature/login");
       expect(adopted?.branch).toBe("feature/login");
       expect(adopted?.metadata["tags.external"]).toBe('{"color":"#8b949e"}');
     });
@@ -146,6 +146,29 @@ describe("GitWorktreeProvider integration", () => {
       const discovered = await provider.discover(PROJECT_ROOT);
 
       expect(discovered[0]?.name).toBe("feature-a");
+    });
+
+    it("names its own detached worktree after the branch its directory encodes", async () => {
+      const client = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature/x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature%x", path: "/workspaces/feature%x", branch: null }],
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+
+      expect(discovered.map((w) => w.name)).toEqual(["feature/x"]);
     });
   });
 
@@ -201,7 +224,7 @@ describe("GitWorktreeProvider integration", () => {
       const unmanaged = await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR);
 
       expect(unmanaged.map((w) => ({ name: w.name, adoptable: w.adoptable }))).toEqual([
-        { name: "repo-login", adoptable: true },
+        { name: "feature/login", adoptable: true },
         { name: "wt-8fa2", adoptable: false },
       ]);
     });
@@ -247,7 +270,12 @@ describe("GitWorktreeProvider integration", () => {
       );
       expect(await provider.discover(PROJECT_ROOT)).toEqual([]);
 
-      await provider.adoptWorktree(PROJECT_ROOT, testPath("/code/repo-login"), "feature/login");
+      const adopted = await provider.adoptWorktree(
+        PROJECT_ROOT,
+        testPath("/code/repo-login"),
+        "feature/login"
+      );
+      expect(adopted.name).toBe("feature/login");
 
       // A fresh provider over the same repo: the tag lives in git config, not memory.
       const restarted = await createProvider(
@@ -257,7 +285,9 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual(["repo-login"]);
+      expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual([
+        "feature/login",
+      ]);
     });
 
     it("refuses to adopt a detached worktree — there is no branch to mark", async () => {

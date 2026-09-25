@@ -68,7 +68,7 @@ export interface Workspace {
  * nor adopted by the user. Offered in the add-project picker.
  */
 export interface UnmanagedWorktree {
-  /** Directory name; the name the workspace takes if adopted */
+  /** The name the workspace takes if adopted: its branch, else the directory name */
   readonly name: string;
   /** Absolute path to the worktree directory (normalized Path) */
   readonly path: Path;

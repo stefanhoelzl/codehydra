@@ -37,6 +37,8 @@ const APP = projPath("/projects/app");
 const LIB = projPath("/projects/lib");
 const FEAT = wsPath("/projects/app/workspaces/feat");
 const OTHER = wsPath("/projects/app/workspaces/other");
+/** Branch `feature/x`, in the directory CodeHydra sanitizes it to. */
+const FEATURE_X = wsPath("/projects/app/workspaces/feature%x");
 const APP_SHARED = wsPath("/projects/app/workspaces/shared");
 const LIB_SHARED = wsPath("/projects/lib/workspaces/shared");
 const LIB_ONLY = wsPath("/projects/lib/workspaces/only-lib");
@@ -79,7 +81,9 @@ function setup() {
   registerTestInfrastructure(dispatcher, {
     workspaces: (workspacePath: WorkspacePath) => ({
       projectPath: workspacePath.startsWith(LIB) ? LIB : APP,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
+      workspaceName: workspacePath
+        .slice(workspacePath.lastIndexOf("/") + 1)
+        .replace("%", "/") as WorkspaceName,
     }),
     projects: {
       [APP]: { projectId: "app-1" as ProjectId },
@@ -155,6 +159,14 @@ describe("agent.message entry", () => {
     expect(sent).toEqual([
       { workspacePath: FEAT, text: "hello", from: "CodeHydra · workspace feat", wake: false },
     ]);
+  });
+
+  it("signs with the workspace's name, not its directory", async () => {
+    const { call, sent } = setup();
+
+    await call({ scope: OTHER, caller: FEATURE_X }, { text: "hello" });
+
+    expect(sent[0]?.from).toBe("CodeHydra · workspace feature/x");
   });
 
   it("signs with where the shell stands when --workspace names another", async () => {
