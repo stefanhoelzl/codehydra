@@ -63,13 +63,13 @@ test("stray worktrees stay out of the sidebar unless adopted in the picker", asy
   await expect(ui.getByText("Open existing worktrees?")).toBeVisible({ timeout: 60_000 });
 
   // One row per worktree, each a single checkbox labelled with the name the
-  // workspace would take plus where it lives. `vscode-checkbox` reflects its
-  // label into aria-label, and row order follows git's worktree list, so rows are
-  // located by that label rather than by index.
-  const adoptable = ui.locator('vscode-checkbox[aria-label^="repo-login"]');
+  // workspace would take (its branch) plus where it lives. `vscode-checkbox`
+  // reflects its label into aria-label, and row order follows git's worktree list,
+  // so rows are located by that label rather than by index.
+  const adoptable = ui.locator('vscode-checkbox[aria-label^="feature/login"]');
   const detached = ui.locator('vscode-checkbox[aria-label^="agent-scratch"]');
 
-  await expect(adoptable).toHaveAttribute("aria-label", /repo-login .*repo-login$/);
+  await expect(adoptable).toHaveAttribute("aria-label", /^feature\/login — .*repo-login$/);
   await expect(adoptable).not.toHaveAttribute("disabled", "");
   // The agent's detached worktree is listed but cannot be adopted: the marker is
   // stored per branch, and it has none.
