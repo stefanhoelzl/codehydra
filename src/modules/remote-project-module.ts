@@ -10,7 +10,6 @@
  * - close-project / close: filesystem cleanup (delete cloned directory if requested)
  */
 
-import * as crypto from "node:crypto";
 import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
@@ -20,8 +19,8 @@ import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { projectPathSchema } from "../intents/contract";
-import type { ProjectId } from "../shared/api/types";
-import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../utils/url-utils";
+import { expandGitUrl, extractRepoName } from "../utils/url-utils";
+import { managedClonePath } from "../boundaries/platform/paths";
 import type {
   OpenProjectIntent,
   ResolveHookResult,
@@ -34,25 +33,6 @@ import type { Dispatcher } from "../intents/lib/dispatcher";
 import { notify } from "./presentation/notification-card";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
-
-// =============================================================================
-// Private Helpers
-// =============================================================================
-
-function generateProjectIdFromUrl(url: string): ProjectId {
-  const normalized = normalizeGitUrl(url);
-  const repoName = extractRepoName(url);
-
-  const safeName =
-    repoName
-      .replace(/[^a-zA-Z0-9]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "repo";
-
-  const hash = crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 8);
-
-  return `${safeName}-${hash}` as ProjectId;
-}
 
 // =============================================================================
 // Factory
@@ -90,10 +70,8 @@ export function createRemoteProjectModule(deps: {
             const expanded = expandGitUrl(git);
 
             // Deterministic clone path from URL
-            const urlProjectId = generateProjectIdFromUrl(expanded);
             const repoName = extractRepoName(expanded);
-            const projectDir = new Path(pathProvider.dataPath("remotes"), urlProjectId);
-            const gitPath = new Path(projectDir.toString(), repoName);
+            const gitPath = managedClonePath(pathProvider.dataPath("remotes"), expanded);
 
             // Check for existing clone via filesystem
             try {

@@ -59,7 +59,11 @@ import { createFileSystemMock, directory } from "../boundaries/platform/filesyst
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { projectDirName } from "../boundaries/platform/paths";
+import {
+  managedClonePath,
+  managedProjectDirName,
+  projectDirName,
+} from "../boundaries/platform/paths";
 import nodePath from "path";
 import { projPath, testPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "../intents/contract";
@@ -73,6 +77,11 @@ const PROJECT_PATH = projPath("/test/local-project");
 // would only ever be right for one platform's spelling of that path.
 const PROJECT_ID = projectDirName(PROJECT_PATH) as ProjectId;
 const PROJECTS_DIR = testPath("/test/app-data/projects").toNative();
+const REMOTES_DIR = testPath("/test/app-data/remotes").toNative();
+const REPO_URL = "https://github.com/user/repo.git";
+/** Where the remote project module clones REPO_URL to — the managed project's path. */
+const MANAGED_PATH = projPath(managedClonePath(REMOTES_DIR, REPO_URL).toString());
+const MANAGED_RECORD = nodePath.join(PROJECTS_DIR, managedProjectDirName(REPO_URL), "config.json");
 
 // =============================================================================
 // Mock Factories
@@ -108,6 +117,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
   return {
     deps: {
       projectsDir: PROJECTS_DIR,
+      remotesDir: REMOTES_DIR,
       fs,
       gitWorktreeProvider,
       ui: dialog.ui,
@@ -753,6 +763,110 @@ describe("LocalProjectModule Integration", () => {
       expect(results).toHaveLength(1);
       // Local project config has no remoteUrl, so result is empty
       expect(results[0]).toEqual({});
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Managed (URL-cloned) projects: the record is named after the URL
+  // ---------------------------------------------------------------------------
+
+  describe("managed project records", () => {
+    function readJson(fs: ReturnType<typeof createFileSystemMock>, file: string): unknown {
+      const entry = fs.$.entries.get(new Path(file).toString());
+      return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
+    }
+
+    it("stores only the URL, in the URL-named directory", async () => {
+      const setup = createTestSetup();
+
+      await setup.openHooks.collect("register", {
+        intent: openLocalIntent(MANAGED_PATH),
+        projectPath: MANAGED_PATH,
+        remoteUrl: REPO_URL,
+      } satisfies RegisterHookInput);
+
+      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL });
+      const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "config.json");
+      expect(setup.fs.$.entries.has(new Path(pathRecord).toString())).toBe(false);
+    });
+
+    it("keeps the path for a clone that is not where its URL derives", async () => {
+      const setup = createTestSetup();
+
+      await setup.openHooks.collect("register", {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        remoteUrl: REPO_URL,
+      } satisfies RegisterHookInput);
+
+      const pathRecord = nodePath.join(PROJECTS_DIR, projectDirName(PROJECT_PATH), "config.json");
+      expect(readJson(setup.fs, pathRecord)).toEqual({
+        path: new Path(PROJECT_PATH).toString(),
+        remoteUrl: REPO_URL,
+      });
+    });
+
+    it("reopens a managed project at the path its URL derives", async () => {
+      const setup = createTestSetup();
+      setup.fs.$.setEntry(nodePath.dirname(MANAGED_RECORD), { type: "directory" });
+      setup.fs.$.setEntry(MANAGED_RECORD, {
+        type: "file",
+        content: JSON.stringify({ remoteUrl: REPO_URL }),
+      });
+
+      const { results } = await setup.readyHooks.collect("load-projects", {
+        intent: appReadyIntent(),
+      });
+      expect(results[0]!.projectPaths).toEqual([MANAGED_PATH]);
+
+      // ...and knows it is managed when asked by that path.
+      const { results: resolved } = await setup.closeHooks.collect("resolve", {
+        intent: closeIntent(MANAGED_PATH),
+      });
+      expect(resolved[0]).toEqual({ remoteUrl: REPO_URL });
+    });
+
+    it("moves a legacy record to the URL-named directory, leaving the worktrees", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, MANAGED_PATH, REPO_URL);
+      const legacyDir = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH));
+      setup.fs.$.setEntry(nodePath.join(legacyDir, "workspaces"), { type: "directory" });
+
+      const { results } = await setup.readyHooks.collect("load-projects", {
+        intent: appReadyIntent(),
+      });
+
+      expect(results[0]!.projectPaths).toEqual([MANAGED_PATH]);
+      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL });
+      expect(
+        setup.fs.$.entries.has(new Path(nodePath.join(legacyDir, "config.json")).toString())
+      ).toBe(false);
+      expect(
+        setup.fs.$.entries.has(new Path(nodePath.join(legacyDir, "workspaces")).toString())
+      ).toBe(true);
+    });
+
+    it("removes both directories when a managed project is closed", async () => {
+      const setup = createTestSetup();
+      await setup.openHooks.collect("register", {
+        intent: openLocalIntent(MANAGED_PATH),
+        projectPath: MANAGED_PATH,
+        remoteUrl: REPO_URL,
+      } satisfies RegisterHookInput);
+      const worktreesDir = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "workspaces");
+      setup.fs.$.setEntry(worktreesDir, { type: "directory" });
+
+      await setup.closeHooks.collect("close", {
+        intent: closeIntent(MANAGED_PATH),
+        projectPath: MANAGED_PATH,
+        remoteUrl: REPO_URL,
+        removeLocalRepo: false,
+      } satisfies CloseHookInput);
+
+      expect(setup.fs.$.entries.has(new Path(nodePath.dirname(MANAGED_RECORD)).toString())).toBe(
+        false
+      );
+      expect(setup.fs.$.entries.has(new Path(worktreesDir).toString())).toBe(false);
     });
   });
 

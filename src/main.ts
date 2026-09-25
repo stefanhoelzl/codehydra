@@ -724,6 +724,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
 const stateModule = createStateModule({ stateService });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
+  remotesDir: pathProvider.dataPath("remotes").toString(),
   fs: fileSystemLayer,
   gitWorktreeProvider,
   ui: presentationModule,

@@ -92,21 +92,19 @@ Discovery finds worktrees in ANY location; creation only in managed location.
 
 ### Remote Projects (Cloned from URL)
 
-Projects can be created by cloning from a git URL. These "remote projects" have a special storage layout:
+Projects can be created by cloning from a git URL. A "remote" (managed) project is identified by its URL, not by where its clone sits:
 
 ```
-~/.local/share/codehydra/projects/<repo-name>-<url-hash>/
-├── config.json        # Contains remoteUrl field
-├── git/               # Bare clone of the repository
-└── workspaces/        # Git worktrees created from the bare clone
+<dataRoot>/remotes/<repo-name>-<url-hash>/<repo-name>/   # The clone (a normal clone) — the project's path
+<dataRoot>/projects/<repo-name>-<url-hash>/config.json   # The record: {"remoteUrl": "..."} only
+<dataRoot>/projects/<repo-name>-<path-hash>/workspaces/  # Its worktrees, named after the clone path like any project
 ```
 
 **Key differences from local projects:**
 
-- **remoteUrl field**: Projects cloned from URL have a `remoteUrl` field in their config
-- **Bare clone**: The repository is cloned in bare mode to `git/` subdirectory
+- **URL-named record**: the record holds only `remoteUrl`; the path is derived from it (`managedClonePath` in `paths.ts`), so nothing stored names the clone's location and the clone can move. A record is written this way only when the clone sits exactly where its URL derives — otherwise it keeps `{path, remoteUrl}`. Legacy `{path, remoteUrl}` records in the path-named directory are moved at startup (`load-projects`), leaving the worktrees where they are
 - **Duplicate detection**: Cloning the same URL returns the existing project (URL normalized for comparison)
-- **Deletion option**: When closing a remote project, users can optionally delete the entire project directory
+- **Deletion option**: When closing a remote project, users can optionally delete the clone and its project directories
 
 **URL normalization** for duplicate detection:
 
