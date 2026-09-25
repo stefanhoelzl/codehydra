@@ -677,6 +677,13 @@ starts things with; there is no appending, so an `env` that sets `PATH` must
 contain the whole path. Keys starting with `_CH_` are CodeHydra's own and are
 dropped (a warning is logged).
 
+CodeHydra puts `GIT_OPTIONAL_LOCKS=0` in the same places, hook or no hook, so
+`git status` there never takes `index.lock` — one killed mid-way cannot leave a
+stale lock behind. (The editor's Source Control view already runs `git status`
+that way. `git diff` against the working tree still takes the lock briefly
+whatever the setting, and skips it when it is held.) It is a default: an `env` that sets `GIT_OPTIONAL_LOCKS` wins, and so does a value
+already in the environment CodeHydra was started with.
+
 The environment is held in memory only: it is never written to a file, and
 nothing of it survives a restart or a hibernation — which is why this hook runs
 on every open, and why it suits short-lived values such as a freshly minted
@@ -923,9 +930,10 @@ running, then returns to its real status.
 
 You don't have to explain CodeHydra to your agent. Every session gets a short
 system prompt: what busy and idle mean (so it ends its turn only when it needs
-you), that the worktree's lifecycle belongs to CodeHydra, that sibling
-workspaces share the repository (an `index.lock` error means retry), that
-creating another workspace is your call, that `ch` is on its `PATH`, that
+you), that the worktree's lifecycle belongs to CodeHydra, that an `index.lock`
+that survives a retry while no git process is running is stale and can be
+deleted (otherwise it gives you the lock's path), that creating another
+workspace is your call, that `ch` is on its `PATH`, that
 `code <path>` opens a file in your editor, and that `ch guide` explains
 CodeHydra. Claude Code is also told about `ch bg`. The MCP server adds: pass a
 prompt when creating a workspace, and file a bug report only when asked.

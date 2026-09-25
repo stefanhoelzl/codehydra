@@ -33,7 +33,7 @@
  */
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -46,6 +46,7 @@ import {
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
+  WORKSPACE_ENV_DEFAULTS,
 } from "./open-workspace";
 import type {
   OpenWorkspaceIntent,
@@ -57,6 +58,7 @@ import type {
   SetupHookResult,
   FinalizeHookInput,
   FinalizeHookResult,
+  PrepareHookResult,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
 } from "./open-workspace";
@@ -932,6 +934,14 @@ describe("OpenWorkspace Operation", () => {
   });
 
   describe("env var accumulation from multiple setup modules (#19)", () => {
+    beforeEach(() => {
+      vi.stubEnv("GIT_OPTIONAL_LOCKS", undefined);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     it("merges envVars from multiple setup hooks", async () => {
       // Add a second setup module that contributes additional env vars
       const extraEnvModule: IntentModule = {
@@ -1027,11 +1037,88 @@ describe("OpenWorkspace Operation", () => {
 
       await dispatcher.dispatch(createIntent());
 
-      // Both modules' envVars should be merged
+      // Both modules' envVars should be merged over the workspace environment
       expect(capturedEnvVars).toEqual({
+        ...WORKSPACE_ENV_DEFAULTS,
         AGENT_PORT: "9090",
         BRIDGE_PORT: "15000",
       });
+    });
+  });
+
+  describe("workspace environment defaults", () => {
+    interface CapturedEnv {
+      setup: Record<string, string>;
+      finalize: Record<string, string>;
+      agentTerminal: Record<string, string>;
+    }
+
+    /** Opens a workspace whose "prepare" hook returns `hookEnv`; captures what each consumer got. */
+    async function openWithHookEnv(hookEnv?: Record<string, string>): Promise<CapturedEnv> {
+      const setup = createTestSetup();
+      const captured: CapturedEnv = { setup: {}, finalize: {}, agentTerminal: {} };
+      setup.dispatcher.registerModule({
+        name: "test",
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: {
+            prepare: {
+              handler: async (): Promise<HookOutput<PrepareHookResult>> => ({
+                result: hookEnv === undefined ? {} : { env: hookEnv },
+              }),
+            },
+            setup: {
+              handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
+                captured.setup = (ctx as SetupHookInput).workspaceEnv;
+                return { result: {} };
+              },
+            },
+            finalize: {
+              handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
+                const finalizeCtx = ctx as FinalizeHookInput;
+                captured.finalize = finalizeCtx.workspaceEnv;
+                captured.agentTerminal = finalizeCtx.envVars;
+                return { result: {} };
+              },
+            },
+          },
+        },
+      });
+      await setup.dispatcher.dispatch(createIntent());
+      return captured;
+    }
+
+    beforeEach(() => {
+      vi.stubEnv("GIT_OPTIONAL_LOCKS", undefined);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("turns off git's optional locks for the agent, its server and the editor", async () => {
+      const captured = await openWithHookEnv();
+
+      // setup starts the agent server; finalize hands the editor its terminal env
+      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "0" });
+      expect(captured.finalize).toEqual({ GIT_OPTIONAL_LOCKS: "0" });
+      expect(captured.agentTerminal).toMatchObject({ GIT_OPTIONAL_LOCKS: "0" });
+    });
+
+    it("lets the repository hook override a default", async () => {
+      const captured = await openWithHookEnv({ GIT_OPTIONAL_LOCKS: "1", DATABASE_URL: "x" });
+
+      expect(captured.setup).toEqual({ GIT_OPTIONAL_LOCKS: "1", DATABASE_URL: "x" });
+      expect(captured.agentTerminal).toMatchObject({ GIT_OPTIONAL_LOCKS: "1" });
+    });
+
+    it("leaves out a default the app's own environment already sets", async () => {
+      vi.stubEnv("GIT_OPTIONAL_LOCKS", "1");
+
+      const captured = await openWithHookEnv();
+
+      // Absent, so the inherited value reaches the agent and editor unchanged
+      expect(captured.setup).toEqual({});
+      expect(captured.finalize).toEqual({});
     });
   });
 
