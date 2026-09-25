@@ -5,7 +5,7 @@
  *   <root>/projects/<name>-<path-hash>/workspaces/<workspace>
  *   <root>/remotes/<repo>-<url-hash>/<repo>
  *
- * The root defaults to the data root and moves with the `workspaces.root` setting
+ * The root defaults to the data root and moves with the `paths.workspaces` setting
  * (e.g. onto a Windows Dev Drive). Everything else CodeHydra stores — binaries,
  * logs, state, project records — stays in the data root.
  *

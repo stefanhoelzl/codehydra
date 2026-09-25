@@ -1,7 +1,7 @@
 /**
  * WorkspacesRootModule — owns where worktrees and managed clones live.
  *
- * Two values: the `workspaces.root` config key (what the user wants) and the
+ * Two values: the `paths.workspaces` config key (what the user wants) and the
  * `workspaces.current-root` state key (what the data on disk is actually under).
  * They differ only after the user changed the setting. The app:start
  * `migrations` hook settles that before any project is opened, on the starting
@@ -47,7 +47,7 @@ import {
   type MigrationReport,
 } from "./migrate";
 
-export const WORKSPACES_ROOT_KEY = "workspaces.root";
+export const WORKSPACES_ROOT_KEY = "paths.workspaces";
 export const CURRENT_ROOT_STATE_KEY = "workspaces.current-root";
 
 const ACTION_MIGRATE = "migrate";

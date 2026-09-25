@@ -1,5 +1,5 @@
 /**
- * Moving the workspaces root (`workspaces.root`, e.g. onto a Windows Dev Drive).
+ * Moving the workspaces root (`paths.workspaces`, e.g. onto a Windows Dev Drive).
  *
  * A full migration between two regular folders, against the packaged binary and
  * real git: a workspace created under the default root survives the move in
@@ -33,7 +33,7 @@ function currentAgent(): Agent {
 }
 
 function rootFlag(): string[] {
-  return [`--workspaces.root=${newRoot}`];
+  return [`--paths.workspaces=${newRoot}`];
 }
 
 test.beforeAll(async () => {

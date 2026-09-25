@@ -354,7 +354,7 @@ An unknown key exits with 6, an invalid value with 2, and no running app with 3.
 ### Where workspaces live
 
 Worktrees and cloned repositories live in the data directory by default. Set
-`workspaces.root` to an absolute folder to keep them elsewhere — for example
+`paths.workspaces` to an absolute folder to keep them elsewhere — for example
 on a Windows Dev Drive. The settings dialog has a **Browse…** button for it.
 Binaries, logs and settings stay in the data directory.
 
