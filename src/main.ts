@@ -724,7 +724,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
 });
 // State module — loads state.json in app:start/init.
 const stateModule = createStateModule({ stateService });
-// Where worktrees and managed clones live (`workspaces.root`), settled at app:start.
+// Where worktrees and managed clones live (`paths.workspaces`), settled at app:start.
 const workspacesRootModule = createWorkspacesRootModule({
   config: configService,
   stateService,

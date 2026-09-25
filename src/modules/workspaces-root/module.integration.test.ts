@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * WorkspacesRootModule: the `workspaces.root` setting, the root in use, and the
+ * WorkspacesRootModule: the `paths.workspaces` setting, the root in use, and the
  * app:start `migrations` hook that settles a change on the starting screen.
  *
  * Runs against the behavioral filesystem, git and dialog mocks. The git mock
