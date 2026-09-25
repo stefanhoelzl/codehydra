@@ -50,7 +50,14 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "workspace.create": { path: ["ws", "create"], positionals: ["name", "base"] },
   "workspace.delete": { ...TARGETED, path: ["ws", "delete"] },
   "workspace.switch": { path: ["ws", "switch"], positionals: ["workspace"] },
-  "workspace.title": { ...TARGETED, path: ["ws", "title"], positionals: ["title"] },
+  // No title clears it: argv cannot spell null, and `ch ws title ""` is not
+  // portable (Windows PowerShell 5.1 drops an empty argument).
+  "workspace.title": {
+    ...TARGETED,
+    path: ["ws", "title"],
+    positionals: ["title"],
+    defaults: { title: null },
+  },
   "workspace.tag.list": { ...TARGETED, path: ["ws", "tag", "ls"] },
   "workspace.tag.set": { ...TARGETED, path: ["ws", "tag", "set"], positionals: ["name"] },
   "workspace.tag.remove": { ...TARGETED, path: ["ws", "tag", "rm"], positionals: ["name"] },

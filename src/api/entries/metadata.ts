@@ -83,8 +83,8 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Set or clear the workspace's sidebar display title.",
     instructions:
-      "Clearing reverts the sidebar row to the branch name. This changes a label only — it " +
-      "does NOT delete the workspace.",
+      "Clearing reverts the sidebar row to the branch name; on the command line, `ch ws title` " +
+      "with no title clears it. This changes a label only — it does NOT delete the workspace.",
     input: z.object({
       ...targetFields,
       title: z

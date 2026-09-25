@@ -144,6 +144,19 @@ suite("describe", () => {
     expect(properties).toContain("refresh");
   });
 
+  it("marks a field the adapter defaults as optional, and only for that adapter", () => {
+    const required = (target: "cli" | "mcp") =>
+      (
+        describe(registry(), target).find((d) => d.name === "workspace.title")!.inputSchema as {
+          required?: string[];
+        }
+      ).required ?? [];
+
+    // `ch ws title` with no title clears it; an MCP caller passes null.
+    expect(required("cli")).not.toContain("title");
+    expect(required("mcp")).toContain("title");
+  });
+
   it("carries the tool name for MCP and the path for the CLI", () => {
     const mcp = describe(registry(), "mcp").find((d) => d.name === "workspace.delete")!;
     const cli = describe(registry(), "cli").find((d) => d.name === "workspace.delete")!;

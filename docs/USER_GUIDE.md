@@ -953,7 +953,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
 | `ws hibernate`, `ws wake`                                          | Hibernate / wake                                                                                                 |
 | `ws switch <workspace>`                                            | Make a workspace the active one                                                                                  |
-| `ws title <title>`                                                 | Sidebar title                                                                                                    |
+| `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                       |
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
 | `ws metadata get`, `ws metadata set <key> <value>`                 | Raw workspace metadata                                                                                           |
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
@@ -977,6 +977,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 ch ws status
 ch ws create feature-auth main --prompt "add login with GitHub"
 ch ws title "Auth rework"
+ch ws title                    # clears the title again
 ch ws tag set review --color "#3498db"
 ch ws delete --workspace feature-auth --keep-branch
 ch guide repository-hooks
