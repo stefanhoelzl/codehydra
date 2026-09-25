@@ -326,7 +326,8 @@ The same keys work in three places, highest precedence first:
 
 `config.json` lives in the data directory, next to `state.json` (what the app
 itself remembers: trusted hook answers, the hide-hibernated toggle, tracked
-automatic workspaces, a dismissed update) and the `logs/` folder:
+automatic workspaces, a dismissed update, the workspaces folder in use) and
+the `logs/` folder:
 
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
@@ -349,6 +350,30 @@ ch config reset sidebar.width       # back to the default
 ```
 
 An unknown key exits with 6, an invalid value with 2, and no running app with 3.
+
+### Where workspaces live
+
+Worktrees and cloned repositories live in the data directory by default. Set
+`workspaces.root` to an absolute folder to keep them elsewhere — for example
+on a Windows Dev Drive. The settings dialog has a **Browse…** button for it.
+Binaries, logs and settings stay in the data directory.
+
+The change applies at the next start, which asks what to do with what is
+already there:
+
+- **Migrate** moves cloned repositories to the new folder. Existing workspaces
+  stay where they are and keep working (agent conversations and editor state
+  included); new workspaces are created in the new folder. Offered only when
+  the new folder is empty. If a step fails, the migration is undone and you can
+  retry, continue with the current folder, or quit.
+- **Use as is** switches to the new folder without moving anything. Workspaces
+  in the old folder stay on disk but are no longer listed.
+- **Quit** leaves everything as it is.
+
+A folder that cannot be used — inside a project, or not writable — offers only
+**Continue with current folder** and **Quit**, and the question comes back at
+the next start until the setting is changed. A migrated workspace on a detached
+HEAD cannot be kept (it stays on disk) and is named in a notification.
 
 ## Automatic workspaces
 
