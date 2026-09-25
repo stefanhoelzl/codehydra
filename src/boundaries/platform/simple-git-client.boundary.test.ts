@@ -163,6 +163,34 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("repairWorktrees", () => {
+    it("reconnects worktrees to a repository that moved", async () => {
+      await client.createBranch(repoPath, "repair-test", "main");
+      const worktreePath = new Path(repoPath.dirname, "worktree-repair");
+      await client.addWorktree(repoPath, worktreePath, "repair-test");
+      const destination = await createTempDir();
+      const movedRepo = new Path(destination.path, "moved-repo");
+      try {
+        await fs.rename(repoPath.toNative(), movedRepo.toNative());
+        // The worktree's .git file still names the old location.
+        await expect(client.getStatus(worktreePath)).rejects.toThrow();
+
+        await client.repairWorktrees(movedRepo, [worktreePath]);
+
+        await expect(client.getStatus(worktreePath)).resolves.toBeDefined();
+        const worktrees = await client.listWorktrees(movedRepo);
+        expect(worktrees.some((w) => !w.isMain && w.path.equals(worktreePath))).toBe(true);
+      } finally {
+        await fs.rm(worktreePath.toNative(), { recursive: true, force: true });
+        await destination.cleanup();
+      }
+    });
+
+    it("does nothing for no worktrees", async () => {
+      await expect(client.repairWorktrees(repoPath, [])).resolves.toBeUndefined();
+    });
+  });
+
   describe("pruneWorktrees", () => {
     it("prunes stale worktree entries", async () => {
       // Create a worktree

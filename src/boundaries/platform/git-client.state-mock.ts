@@ -447,6 +447,15 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       repo.worktrees.delete(normalizedWorktreePath);
     },
 
+    async repairWorktrees(repoPath: Path, worktreePaths: readonly Path[]): Promise<void> {
+      const repo = getRepoOrThrow(repoPath);
+      for (const worktreePath of worktreePaths) {
+        if (!repo.worktrees.has(normalizePath(worktreePath))) {
+          throw new GitError(`Not a worktree of this repository: ${worktreePath.toString()}`);
+        }
+      }
+    },
+
     async pruneWorktrees(repoPath: Path): Promise<void> {
       const repo = getRepoOrThrow(repoPath);
       for (const [wtPath, wt] of repo.worktrees) {
