@@ -13,12 +13,15 @@ import { createSettingsModule } from "./settings-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
+import { createBehavioralDialogBoundary } from "../boundaries/shell/dialog.test-utils";
+import { Path } from "../utils/path/path";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import {
   storeBoolean,
   storeCustom,
   storeEnum,
   storeEnumList,
+  storeFolder,
   storeNumber,
   storeString,
   storeText,
@@ -87,6 +90,12 @@ function registerKeys(config: Config): void {
       },
     }),
   });
+  config.register("storage.root", {
+    default: null,
+    description: "Where things are stored",
+    applies: "restart",
+    ...storeFolder(),
+  });
   config.register("experimental.youtrack.template", {
     default: null,
     description: "Liquid template for youtrack auto-workspaces",
@@ -109,18 +118,21 @@ function setup(): {
   config: Config;
   dialogs: ReturnType<typeof createMockDialogManager>;
   app: ReturnType<typeof createAppBoundaryMock>;
+  dialog: ReturnType<typeof createBehavioralDialogBoundary>;
 } {
   const config = createMockConfig();
   registerKeys(config);
   const dialogs = createMockDialogManager();
   const app = createAppBoundaryMock({ platform: "linux" });
+  const dialog = createBehavioralDialogBoundary();
   const { openSettings } = createSettingsModule({
     ui: dialogs.ui as unknown as UiPresenter,
     config,
     app,
+    dialog,
     logger: createMockLogger(),
   });
-  return { openSettings, config, dialogs, app };
+  return { openSettings, config, dialogs, app, dialog };
 }
 
 /** Flush pending microtasks (the module's async save/reset handlers). */
@@ -397,13 +409,81 @@ describe("SettingsModule — text (inline template) control", () => {
   });
 });
 
+describe("SettingsModule — folder picker", () => {
+  const PICK_ID = "pick:storage.root";
+  const PICKED = new Path("/data/dev-drive").toNative();
+
+  function folderValue(cfg: DialogConfig): string | undefined {
+    const field = rowByLabel(cfg, "root")!.fields[0] as { value?: string };
+    return field.value;
+  }
+
+  it("renders a folder key as a text field with a Browse action", () => {
+    const { openSettings, dialogs } = setup();
+    openSettings();
+
+    const row = rowByLabel(dialogs.lastHandle!.config, "root")!;
+    expect(row.fields[0]!.type).toBe("input");
+    expect(row.action).toEqual({ id: PICK_ID, label: "Browse…", icon: "folder" });
+  });
+
+  it("opens a folder picker and shows the choice without saving it", async () => {
+    const { openSettings, dialogs, dialog, config } = setup();
+    openSettings();
+    dialog._setNextOpenDialogResponse({ canceled: false, filePaths: [PICKED] });
+
+    dialogs.lastHandle!.emitAction(PICK_ID, {});
+    await flush();
+
+    const call = dialog._getState().calls[0]!;
+    expect(call.method).toBe("showDialog");
+    expect((call.options as { properties?: string[] }).properties).toContain("openDirectory");
+    expect(folderValue(dialogs.lastHandle!.config)).toBe(PICKED);
+    expect(config.getEffective()["storage.root"]).toBeNull();
+  });
+
+  it("changes nothing when the picker is canceled", async () => {
+    const { openSettings, dialogs, dialog } = setup();
+    openSettings();
+    dialog._setNextOpenDialogResponse({ canceled: true, filePaths: [] });
+
+    dialogs.lastHandle!.emitAction(PICK_ID, {});
+    await flush();
+
+    expect(folderValue(dialogs.lastHandle!.config)).toBe("");
+  });
+
+  it("saves the folder the field reports", async () => {
+    const { openSettings, dialogs, config } = setup();
+    openSettings();
+
+    dialogs.lastHandle!.emitAction("save", { "storage.root": PICKED });
+    await flush();
+
+    expect(config.getEffective()["storage.root"]).toBe(PICKED);
+  });
+
+  it("rejects a relative path", () => {
+    const { openSettings, dialogs } = setup();
+    openSettings();
+
+    dialogs.lastHandle!.emitChange("storage.root", { "storage.root": "relative/dir" });
+
+    const field = rowByLabel(dialogs.lastHandle!.config, "root")!.fields[0] as {
+      error?: string;
+    };
+    expect(field.error).toContain("absolute folder path");
+  });
+});
+
 describe("SettingsModule — shortcut", () => {
   it("opens on the 's' shortcut key", async () => {
-    const { config, dialogs, app } = setup();
+    const { config, dialogs, app, dialog } = setup();
     const { module } = createSettingsModule({
       ui: dialogs.ui as unknown as UiPresenter,
       config,
       app,
+      dialog,
       logger: createMockLogger(),
     });
     const event: ShortcutKeyPressedEvent = {

@@ -29,6 +29,7 @@ import type {
   SettingsControl,
 } from "../boundaries/platform/store-definition";
 import type { AppBoundary } from "../boundaries/shell/app";
+import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { DialogConfig, DialogSection, SettingRowField } from "../shared/dialog-types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 
@@ -45,6 +46,8 @@ const ACTION_CANCEL = "cancel";
 const ACTION_RESET_ALL = "reset-all";
 /** Per-row reset action ids are `${RESET_PREFIX}${key}`. */
 const RESET_PREFIX = "reset:";
+/** Per-row folder-picker action ids are `${PICK_PREFIX}${key}`. */
+const PICK_PREFIX = "pick:";
 /** Sub-field id suffix for a guarded-text control's on/off checkbox. */
 const GUARD_ON_SUFFIX = "::on";
 
@@ -56,6 +59,7 @@ export interface SettingsModuleDeps {
   readonly ui: UiPresenter;
   readonly config: Config;
   readonly app: Pick<AppBoundary, "relaunch">;
+  readonly dialog: Pick<DialogBoundary, "showDialog">;
   readonly logger: Logger;
 }
 
@@ -119,11 +123,19 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   module: IntentModule;
   openSettings: () => void;
 } {
-  const { ui, config, app, logger } = deps;
+  const { ui, config, app, dialog, logger } = deps;
 
   let activeHandle: DialogHandle | null = null;
   /** Effective value per key when the dialog opened, for the restart-note diff. */
   let openValues: Record<string, unknown> = {};
+  /**
+   * Folders chosen with Browse… and not yet saved, pushed as each row's value so
+   * the field adopts them (and from then on reports them like typed text).
+   * Cleared by reset. Keyed by config key.
+   */
+  let pickedValues: Record<string, string> = {};
+  /** Latest renderer field data, so a pick can rebuild without losing other edits. */
+  let latestData: Record<string, string> | undefined;
 
   /** Settings-eligible keys (see isUserSetting), sorted. */
   function settingKeys(): SettingKey[] {
@@ -147,6 +159,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         return def.validate(Number(raw));
       }
       case "string":
+      case "folder":
       case "text": {
         const raw = data[key] ?? "";
         if (raw === "" && isNullable(def)) return def.validate(null);
@@ -184,6 +197,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         return [{ type: "checkbox", id: key, value: current === true, changeEvent: true }];
       case "number":
       case "string":
+      case "folder":
         return [
           {
             type: "input",
@@ -290,7 +304,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         lastSubheading = parts.subheading;
       }
 
-      const current = config.getEffective()[key];
+      const current = key in pickedValues ? pickedValues[key] : config.getEffective()[key];
       const source = config.getSource(key);
 
       // Live validation from the latest field values.
@@ -331,6 +345,9 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         ...(entry.control.kind === "text" &&
           entry.control.helpLabel !== undefined && { helpLabel: entry.control.helpLabel }),
         ...(resettable && { resetId: `${RESET_PREFIX}${key}` }),
+        ...(entry.control.kind === "folder" && {
+          action: { id: `${PICK_PREFIX}${key}`, label: "Browse…", icon: "folder" },
+        }),
       };
       sections.push(row);
     }
@@ -404,10 +421,33 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     return true;
   }
 
+  /**
+   * Run the native folder picker for a folder key, starting at its current value.
+   * The choice is buffered (persisted on Save). Returns true when one was made.
+   */
+  async function pickFolder(key: string): Promise<boolean> {
+    const entry = settingKeys().find((e) => e.key === key);
+    if (!entry || entry.control.kind !== "folder") return false;
+
+    const current = latestData?.[key] ?? pickedValues[key] ?? config.getEffective()[key];
+    const result = await dialog.showDialog({
+      properties: ["openDirectory", "createDirectory"],
+      ...(typeof current === "string" && current !== "" && { defaultPath: current }),
+    });
+    if (result.canceled || result.filePaths.length === 0) return false;
+    const picked = result.filePaths[0]!.toNative();
+
+    pickedValues[key] = picked;
+    if (latestData) latestData[key] = picked;
+    return true;
+  }
+
   function openSettings(): void {
     if (activeHandle) return;
 
     openValues = { ...config.getEffective() };
+    pickedValues = {};
+    latestData = undefined;
     const handle = ui.dialog(buildConfig().config);
     activeHandle = handle;
 
@@ -419,6 +459,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     handle.onChange((event) => {
       // Rebuild with the latest field values so validation, guard enable/disable
       // and restart notes reflect the edit.
+      latestData = { ...event.data };
       handle.update(buildConfig(event.data).config);
     });
 
@@ -430,6 +471,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       }
       if (event.actionId === ACTION_RESET_ALL) {
         void (async () => {
+          pickedValues = {};
           for (const entry of settingKeys()) {
             if (config.getSource(entry.key) !== "default") await config.reset(entry.key);
           }
@@ -441,9 +483,18 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       if (event.actionId.startsWith(RESET_PREFIX)) {
         const key = event.actionId.slice(RESET_PREFIX.length);
         void (async () => {
+          delete pickedValues[key];
           await config.reset(key);
           openValues = { ...config.getEffective() };
           handle.update(buildConfig().config);
+        })();
+        return;
+      }
+      if (event.actionId.startsWith(PICK_PREFIX)) {
+        const key = event.actionId.slice(PICK_PREFIX.length);
+        latestData = { ...data };
+        void (async () => {
+          if (await pickFolder(key)) handle.update(buildConfig(latestData).config);
         })();
         return;
       }
