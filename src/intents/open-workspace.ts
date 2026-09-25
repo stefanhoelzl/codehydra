@@ -56,6 +56,25 @@ export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
 export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
 export const EVENT_WORKSPACE_CREATE_FAILED = "workspace:create-failed" as const;
 
+/**
+ * CodeHydra's defaults for the workspace environment, beneath whatever the
+ * "prepare" hook point returns. A key already in the app's own environment is
+ * left out, so it reaches every consumer unchanged: the agent server and the
+ * editor inherit that environment, and a default here would override it.
+ *
+ * `GIT_OPTIONAL_LOCKS=0` stops `git status` from taking `index.lock`, as
+ * CodeHydra's own git client and the editor's git extension already do.
+ * Without it an agent's `git add` collides with its own and its terminals'
+ * status checks, and one killed mid-way (common on Windows) leaves a stale
+ * lock behind — for a remote project inside the bare clone, outside the
+ * worktree. Worktree `git diff` still takes the lock: git does not count that
+ * refresh as optional, and `diff.autoRefreshIndex=false` would list
+ * stat-dirty files as modified.
+ */
+export const WORKSPACE_ENV_DEFAULTS: Readonly<Record<string, string>> = {
+  GIT_OPTIONAL_LOCKS: "0",
+};
+
 // =============================================================================
 // Contract schemas (single source of truth)
 // =============================================================================
@@ -538,6 +557,9 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const prepareResult = await ctx.hooks.collect("prepare", identity);
     throwHookErrors(prepareResult.errors, "workspace:open prepare hooks failed");
     const workspaceEnv: Record<string, string> = {};
+    for (const [name, value] of Object.entries(WORKSPACE_ENV_DEFAULTS)) {
+      if (process.env[name] === undefined) workspaceEnv[name] = value;
+    }
     for (const result of prepareResult.results) {
       if (result.env) Object.assign(workspaceEnv, result.env);
     }

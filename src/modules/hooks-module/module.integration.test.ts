@@ -13,7 +13,7 @@
  * test, which runs real scripts.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -457,6 +457,17 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+// The hook's own env is under test here. With the variable already in the app's
+// environment the operation adds none of its defaults (WORKSPACE_ENV_DEFAULTS),
+// which open-workspace.integration.test.ts covers.
+beforeEach(() => {
+  vi.stubEnv("GIT_OPTIONAL_LOCKS", "0");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("no hooks defined", () => {
   it("opens a workspace without spawning anything", async () => {

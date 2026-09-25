@@ -62,6 +62,16 @@ describe("composed agent system prompts", () => {
       expect(get()).toContain(".codehydra/hooks");
     });
 
+    it("has a stale git lock deleted only once no git process is running", () => {
+      // Each worktree has its own index, so a lock that survives a retry is
+      // usually stale; the old "contention: retry" wording kept agents looping
+      // on one. A live one (e.g. `git commit` waiting on its message editor)
+      // must survive: deleting it loses that process's index write.
+      expect(get()).toContain("index.lock");
+      expect(get()).toContain("no git process running is stale: delete it");
+      expect(get()).toContain("give the user its path");
+    });
+
     it("stays within the word budget", () => {
       expect(countWords(get())).toBeLessThanOrEqual(MAX_WORDS);
     });
