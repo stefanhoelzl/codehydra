@@ -79,16 +79,18 @@ Example - user opens `~/projects/myrepo`:
 
 ### Worktree Storage (Platform-Specific)
 
-New worktrees are created only in the managed location:
+New worktrees are created only in the managed location, `<root>/projects/<name>-<hash>/workspaces/`. The root is the data root unless `workspaces.root` names another folder (e.g. a Windows Dev Drive); managed clones follow it to `<root>/remotes/`. Every reader goes through `WorkspacesRoot` (`src/modules/workspaces-root/`), which reads the root in use — the `workspaces.current-root` state key — on each call.
 
-| Platform    | Path                                                                         |
-| ----------- | ---------------------------------------------------------------------------- |
-| Linux       | `~/.local/share/codehydra/projects/<name>-<hash>/workspaces/`                |
-| macOS       | `~/Library/Application Support/codehydra/projects/<name>-<hash>/workspaces/` |
-| Windows     | `%APPDATA%\codehydra\projects\<name>-<hash>\workspaces\`                     |
-| Development | `./app-data/projects/<name>-<hash>/workspaces/`                              |
+| Platform    | Data root (default workspaces root)        |
+| ----------- | ------------------------------------------ |
+| Linux       | `~/.local/share/codehydra/`                |
+| macOS       | `~/Library/Application Support/codehydra/` |
+| Windows     | `%APPDATA%\codehydra\`                     |
+| Development | `./app-data/`                              |
 
 Discovery finds worktrees in ANY location; creation only in managed location.
+
+**Changing the root.** The app:start `migrations` hook compares `workspaces.root` with the root in use and asks on the starting screen. **Migrate** (empty folder only) moves managed clones and nothing else: worktrees are adopted in place (`external` tag) so agents keep their conversations and editors their state, and new worktrees go to the new root. The switch (`workspaces.current-root`) is the commit point: failures before it are undone (copies deleted, `git worktree repair` pointed back, tags removed); after it they are reported. Path-keyed state (`hooks.trusted`, `auto-workspaces`, screenshots) is moved by each owner (`moveProjects`). **Use as is** switches without moving. See `src/modules/workspaces-root/migrate.ts`.
 
 ### Remote Projects (Cloned from URL)
 
@@ -705,7 +707,7 @@ App.svelte (mode router)
 
 1. **App.svelte owns global events**: Shortcut events and setup progress events work across modes
 2. **MainView.svelte owns domain events**: IPC calls only happen when services are started
-3. **Multi-phase startup**: The `app:start` operation runs its hook points in sequence (`before-ready` → `init` → `show-ui` → agent selection (first run) → `check-deps` → `start`). The `init` hook uses capability-based ordering: ElectronLifecycleModule provides `"app-ready"` after `app.whenReady()`, and handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`. Errors in early hooks abort startup.
+3. **Multi-phase startup**: The `app:start` operation runs its hook points in sequence (`before-ready` → `init` → `show-ui` → `migrations` → agent selection (first run) → `check-deps` → `start`). The `init` hook uses capability-based ordering: ElectronLifecycleModule provides `"app-ready"` after `app.whenReady()`, and handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`. Errors in early hooks abort startup.
 4. **Main-process-driven flow**: The main process sends IPC events to tell the renderer which mode to show. The renderer never polls or pulls state.
 5. **Idempotent startup**: The `app:start` intent uses an idempotency interceptor to prevent duplicate execution
 6. **IPC initialization timing**: `listProjects()` and workspace status fetches are called in MainView.onMount, not App.onMount
