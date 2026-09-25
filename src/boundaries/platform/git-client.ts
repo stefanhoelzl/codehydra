@@ -63,6 +63,16 @@ export interface IGitClient {
   pruneWorktrees(repoPath: Path): Promise<void>;
 
   /**
+   * Repair worktree administrative files after the repository or its worktrees
+   * moved (`git worktree repair`). Rewrites each worktree's `.git` file to point
+   * at this repository, and the repository's record of each worktree's location.
+   * @param repoPath Absolute path to the repository, at its current location
+   * @param worktreePaths Current paths of the worktrees to repair
+   * @throws GitError if not a git repository or a path is not one of its worktrees
+   */
+  repairWorktrees(repoPath: Path, worktreePaths: readonly Path[]): Promise<void>;
+
+  /**
    * List all branches in repository.
    * @param repoPath Absolute path to the git repository
    * @returns Promise resolving to array of branch information (local and remote)

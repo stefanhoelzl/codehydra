@@ -224,6 +224,18 @@ export class SimpleGitClient implements IGitClient {
     }, "Failed to prune worktrees");
   }
 
+  async repairWorktrees(repoPath: Path, worktreePaths: readonly Path[]): Promise<void> {
+    if (worktreePaths.length === 0) return;
+    await this.wrapGitOperation(async () => {
+      const git = this.getGit(repoPath);
+      await git.raw(["worktree", "repair", ...worktreePaths.map((p) => p.toNative())]);
+    }, `Failed to repair worktrees of ${repoPath.toString()}`);
+    this.logger.debug("RepairWorktrees", {
+      repo: repoPath.toString(),
+      count: worktreePaths.length,
+    });
+  }
+
   async listBranches(repoPath: Path): Promise<readonly BranchInfo[]> {
     const branches = await this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
