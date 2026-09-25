@@ -24,7 +24,7 @@ import type { UiPresenter } from "./presentation/presentation-module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { notify } from "./presentation/notification-card";
 import type { DialogSection } from "../shared/dialog-types";
-import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { WorkspacesRoot } from "./workspaces-root/workspaces-root";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { WorkspaceName } from "../shared/api/types";
 import type {
@@ -95,7 +95,7 @@ import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
  * Create a module that manages workspace-related git worktree operations.
  *
  * @param gitWorktreeProvider - Global GitWorktreeProvider for all git operations
- * @param pathProvider - PathProvider for resolving workspace directories
+ * @param workspacesRoot - Where each project's worktrees are created
  * @param logger - Logger for warnings and errors
  * @param ui - Presenter for the add-project worktree picker
  * @param dispatcher - Dispatcher for the picker's failure notice (`notification:show`)
@@ -103,7 +103,7 @@ import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
  */
 export function createGitWorktreeWorkspaceModule(
   gitWorktreeProvider: GitWorktreeProvider,
-  pathProvider: PathProvider,
+  workspacesRoot: Pick<WorkspacesRoot, "workspacesDir">,
   logger: Logger,
   ui: Pick<UiPresenter, "dialog">,
   dispatcher: Pick<Dispatcher, "dispatch">
@@ -441,7 +441,7 @@ export function createGitWorktreeWorkspaceModule(
             if (!initial || git || !path) return { result: {} };
 
             const projectPathObj = new Path(path);
-            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
+            const workspacesDir = workspacesRoot.workspacesDir(projectPathObj);
 
             let unmanaged: readonly UnmanagedWorktree[];
             try {
@@ -501,7 +501,7 @@ export function createGitWorktreeWorkspaceModule(
           handler: async (ctx: HookContext): Promise<HookOutput<DiscoverHookResult>> => {
             const { projectPath } = ctx as DiscoverHookInput;
             const projectPathObj = new Path(projectPath);
-            const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
+            const workspacesDir = workspacesRoot.workspacesDir(projectPathObj);
 
             gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
             const key = projectKey(projectPathObj.toString());

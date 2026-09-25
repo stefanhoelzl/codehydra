@@ -59,7 +59,7 @@ import {
   type OperationSchemas,
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
-import type { BinaryType, RequiredScript } from "./app-start";
+import type { BinaryType, RequiredScript, ShowUIHookResult } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import { testPath } from "../shared/test-fixtures";
@@ -287,6 +287,40 @@ describe("AppStart Operation", () => {
         "data-activate",
         "view-activate",
       ]);
+    });
+  });
+
+  describe("migrations hook point", () => {
+    it("runs after show-ui and before start", async () => {
+      const order: string[] = [];
+      const tracker: IntentModule = {
+        name: "test",
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "show-ui": {
+              handler: async (): Promise<HookOutput<ShowUIHookResult>> => {
+                order.push("show-ui");
+                return { result: {} };
+              },
+            },
+            migrations: {
+              handler: async (): Promise<void> => {
+                order.push("migrations");
+              },
+            },
+            start: {
+              handler: async (): Promise<void> => {
+                order.push("start");
+              },
+            },
+          },
+        },
+      };
+      const { dispatcher } = createTestSetup([tracker]);
+
+      await dispatcher.dispatch(appStartIntent());
+
+      expect(order).toEqual(["show-ui", "migrations", "start"]);
     });
   });
 
@@ -1118,6 +1152,33 @@ describe("AppStart Operation", () => {
 
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("early boom");
       expect(captured.ctx!.phase).toBe("before-ready");
+    });
+
+    it("attributes a migrations failure to the migrations phase", async () => {
+      const state = createTestState();
+      const captured: { ctx?: AppStartErrorHookContext } = {};
+      const failingMigration: IntentModule = {
+        name: "test",
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            migrations: {
+              handler: async (): Promise<void> => {
+                throw new Error("migration boom");
+              },
+            },
+          },
+        },
+      };
+      const { dispatcher } = createTestSetup([
+        createErrorHookCaptureModule(captured),
+        failingMigration,
+        createIdeServerModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("migration boom");
+      expect(captured.ctx!.phase).toBe("migrations");
+      // Nothing after it ran: data on disk was not settled.
+      expect(state.ideServerStarted).toBe(false);
     });
 
     it("does not run the error hook on a successful startup", async () => {

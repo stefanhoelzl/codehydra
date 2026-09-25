@@ -117,28 +117,6 @@ describe("createMockPathProvider", () => {
     );
   });
 
-  it("getProjectWorkspacesDir returns Path with project hash", () => {
-    const pp = createMockPathProvider();
-
-    const result = pp.getProjectWorkspacesDir(testPath("/home/user/myproject").toNative());
-
-    expect(result).toBeInstanceOf(Path);
-    expect(result.toString()).toContain("myproject-");
-    expect(result.toString()).toContain("/workspaces");
-    expect(result.toString().startsWith(`${testPath("/test/app-data/projects").toString()}/`)).toBe(
-      true
-    );
-  });
-
-  it("getProjectWorkspacesDir can be overridden", () => {
-    const customPath = new Path("/custom/workspaces");
-    const pp = createMockPathProvider({
-      getProjectWorkspacesDir: () => customPath,
-    });
-
-    expect(pp.getProjectWorkspacesDir("/any/path")).toBe(customPath);
-  });
-
   it("returns object satisfying PathProvider interface", () => {
     const pp: PathProvider = createMockPathProvider();
 
@@ -147,7 +125,6 @@ describe("createMockPathProvider", () => {
     expect(pp.runtimePath("test")).toBeInstanceOf(Path);
     expect(pp.assetPath("test")).toBeInstanceOf(Path);
     expect(pp.appIconPath).toBeInstanceOf(Path);
-    expect(typeof pp.getProjectWorkspacesDir).toBe("function");
   });
 });
 
@@ -455,74 +432,6 @@ describe("DefaultPathProvider", () => {
       expect(pp.dataPath("bin/ch-claude", { cmd: true }).toString()).toMatch(
         /bin\/ch-claude\.cmd$/
       );
-    });
-  });
-
-  describe("getProjectWorkspacesDir", () => {
-    it("returns correct structure for absolute path", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "/opt/codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({
-        platform: "linux",
-        homeDir: "/home/testuser",
-      });
-      const pp = new DefaultPathProvider(buildInfo, platformInfo);
-
-      const result = pp.getProjectWorkspacesDir("/home/testuser/projects/myapp");
-
-      expect(result).toBeInstanceOf(Path);
-      expect(result.toString()).toContain("myapp-");
-      expect(result.toString()).toMatch(/workspaces$/);
-      expect(result.toString().startsWith("/home/testuser/.local/share/codehydra/projects/")).toBe(
-        true
-      );
-    });
-
-    it("accepts Path object as input", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "/opt/codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({
-        platform: "linux",
-        homeDir: "/home/testuser",
-      });
-      const pp = new DefaultPathProvider(buildInfo, platformInfo);
-
-      const projectPath = new Path("/home/testuser/projects/myapp");
-      const result = pp.getProjectWorkspacesDir(projectPath);
-
-      expect(result).toBeInstanceOf(Path);
-      expect(result.toString()).toContain("myapp-");
-    });
-
-    it("throws TypeError for relative path", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "/opt/codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      const pp = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(() => pp.getProjectWorkspacesDir("relative/path")).toThrow(TypeError);
-      expect(() => pp.getProjectWorkspacesDir("relative/path")).toThrow(/absolute path/i);
-    });
-
-    it("throws TypeError for empty path", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "/opt/codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      const pp = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(() => pp.getProjectWorkspacesDir("")).toThrow(TypeError);
     });
   });
 

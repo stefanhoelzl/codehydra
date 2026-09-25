@@ -404,6 +404,7 @@ function createSetup(options?: {
   notificationManager.register(dispatcher);
 
   return {
+    module,
     dispatcher,
     state,
     cmd,
@@ -1089,5 +1090,31 @@ ${sourceYaml("good")}`,
       await tick();
       expect(entriesOf(state)).not.toHaveProperty("gh/1");
     });
+  });
+});
+
+describe("moveProjects", () => {
+  it("points tracking entries at a project's new path, leaving others alone", async () => {
+    const { module, state } = createSetup({
+      existingEntries: {
+        "gh/1": {
+          workspaceName: "one",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          projectPath: "/old/lib",
+        },
+        "gh/2": {
+          workspaceName: "two",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          projectPath: "/code/app",
+        },
+        "gh/3": { workspaceName: "three", createdAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+
+    await module.moveProjects([{ from: "/old/lib", to: "/new/lib" }]);
+
+    expect(entriesOf(state)["gh/1"]?.projectPath).toBe("/new/lib");
+    expect(entriesOf(state)["gh/2"]?.projectPath).toBe("/code/app");
+    expect(entriesOf(state)["gh/3"]?.projectPath).toBeUndefined();
   });
 });

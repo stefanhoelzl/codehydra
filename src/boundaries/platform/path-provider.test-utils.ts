@@ -4,7 +4,6 @@
 import type { PathProvider, PathOptions } from "./path-provider";
 import { Path } from "../../utils/path/path";
 import { testPath } from "../../shared/test-fixtures";
-import { projectDirName } from "./paths";
 
 /**
  * Options for createMockPathProvider.
@@ -24,9 +23,6 @@ export interface MockPathProviderOptions {
   appIconPath?: Path | string;
   /** Platform for cmd option (default: "linux") */
   platform?: "darwin" | "linux" | "win32";
-
-  /** Override getProjectWorkspacesDir */
-  getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
 }
 
 /**
@@ -55,11 +51,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
   const tempRootDir = ensurePath(overrides?.tempRootDir, "/test/temp");
   const platform = overrides?.platform ?? "linux";
 
-  const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
-    const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
-    return new Path(dataRootDir, "projects", projectDirName(pathStr), "workspaces");
-  };
-
   return {
     dataPath(subpath: string, options?: PathOptions): Path {
       const resolved = options?.cmd && platform === "win32" ? `${subpath}.cmd` : subpath;
@@ -78,6 +69,5 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
       return new Path(tempRootDir, subpath);
     },
     appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
-    getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
   };
 }

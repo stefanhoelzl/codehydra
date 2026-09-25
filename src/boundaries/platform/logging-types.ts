@@ -68,7 +68,8 @@ export type LoggerName =
   | "auto-tagging" // AutoTaggingModule - "new" tag on background workspaces
   | "notification" // OsNotificationModule + OsNotificationBoundary - OS toasts
   | "cleanup" // CleanupModule - stale data-root sweeps
-  | "lock"; // LockModule - `ch lock` single-holder resources
+  | "lock" // LockModule - `ch lock` single-holder resources
+  | "workspaces-root"; // WorkspacesRootModule - where worktrees/clones live, root migration
 
 /**
  * Context data for log entries.

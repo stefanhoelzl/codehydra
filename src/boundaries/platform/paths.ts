@@ -8,7 +8,6 @@
  * - vscodeDir, vscodeExtensionsDir, vscodeUserDataDir
  * - vscodeSetupMarkerPath
  * - electronDataDir
- * - getProjectWorkspacesDir()
  *
  * This file contains only pure utility functions with no build-mode dependencies.
  *

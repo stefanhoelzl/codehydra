@@ -151,24 +151,6 @@ describe("Main process wiring", () => {
     });
   });
 
-  describe.skipIf(process.platform !== "linux")("Full wiring chain (Linux)", () => {
-    it("getProjectWorkspacesDir works through the chain", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
-      const platformInfo = createMockPlatformInfo({
-        platform: "linux",
-        homeDir: "/home/user",
-      });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      const workspacesDir = pathProvider.getProjectWorkspacesDir("/home/user/myproject");
-      const workspacesDirStr = workspacesDir.toString();
-
-      expect(workspacesDirStr).toContain("myproject-");
-      expect(workspacesDirStr).toMatch(/workspaces$/);
-      expect(workspacesDirStr.startsWith("/home/user/.local/share/codehydra/projects")).toBe(true);
-    });
-  });
-
   describe.skipIf(process.platform !== "win32")("Full wiring chain (Windows)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });

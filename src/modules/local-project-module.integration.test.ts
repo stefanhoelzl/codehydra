@@ -117,7 +117,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
   return {
     deps: {
       projectsDir: PROJECTS_DIR,
-      remotesDir: REMOTES_DIR,
+      remotesDir: () => REMOTES_DIR,
       fs,
       gitWorktreeProvider,
       ui: dialog.ui,
