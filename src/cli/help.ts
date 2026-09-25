@@ -83,7 +83,10 @@ export function renderHelp(descriptors: readonly OperationDescriptor[]): string 
 export function renderCommandHelp(descriptor: OperationDescriptor): string {
   const path = (descriptor.path ?? []).join(" ");
   const schema = descriptor.inputSchema as {
-    properties?: Record<string, { type?: string | string[]; description?: string }>;
+    properties?: Record<
+      string,
+      { type?: string | string[]; anyOf?: { type?: string }[]; description?: string }
+    >;
     required?: string[];
   };
 
@@ -91,7 +94,10 @@ export function renderCommandHelp(descriptor: OperationDescriptor): string {
   if (descriptor.instructions) sections.push(descriptor.instructions, "");
 
   if (descriptor.positionals?.length) {
-    sections.push(`Usage: ch ${path} ${descriptor.positionals.map((p) => `<${p}>`).join(" ")}`, "");
+    const usage = descriptor.positionals.map((p) =>
+      schema.required?.includes(p) ? `<${p}>` : `[<${p}>]`
+    );
+    sections.push(`Usage: ch ${path} ${usage.join(" ")}`, "");
   }
 
   const properties = Object.entries(schema.properties ?? {});
@@ -100,7 +106,15 @@ export function renderCommandHelp(descriptor: OperationDescriptor): string {
     sections.push(
       columns(
         properties.map(([name, spec]) => {
-          const type = Array.isArray(spec.type) ? spec.type.join("|") : (spec.type ?? "value");
+          // argv cannot spell null (`--title null` is the string "null"), so a
+          // nullable field — a type list, or an anyOf as zod writes it — shows
+          // only the types a flag can carry.
+          const types = Array.isArray(spec.type)
+            ? spec.type
+            : spec.type !== undefined
+              ? [spec.type]
+              : (spec.anyOf ?? []).flatMap((option) => (option.type ? [option.type] : []));
+          const type = types.filter((t) => t !== "null").join("|") || "value";
           const required = schema.required?.includes(name) ? " (required)" : "";
           return [
             `--${toKebabCase(name)} <${type}>`,
