@@ -21,7 +21,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
 import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/plugin";
-import type { Client } from "./client";
+import { NotConnectedError, type Client } from "./client";
 
 /**
  * Cross-tool guidance an agent needs before it has loaded any tool schema.
@@ -37,6 +37,61 @@ export const SERVER_INSTRUCTIONS = [
   "",
   "report_bug files a bug report about CodeHydra itself with the maintainers. Use it only when the user explicitly asks to report a CodeHydra bug or send feedback — never proactively. It attaches CodeHydra's current logs and redacted config and sends even if telemetry is off.",
 ].join("\n");
+
+/**
+ * A client that replaces its connection once it has dropped.
+ *
+ * `ch mcp` lives as long as its agent session — days, across suspends — while
+ * a connection does not: the app drops it when heartbeats stop, as they do
+ * while the machine sleeps. The underlying client does not reconnect (a
+ * one-shot `ch` command wants a dead app reported, not waited for), so the MCP
+ * server does it here, lazily, on the next call.
+ *
+ * Only a call that was refused before it was sent is retried. One that was in
+ * flight when the connection went may already have run, so its failure is
+ * reported to the agent rather than repeated behind its back.
+ */
+export function reconnecting(first: Client, connect: () => Promise<Client>): Client {
+  let current = first;
+  // Shared by every call that finds the connection dead at once, so a burst of
+  // tool calls opens one new connection rather than one each.
+  let replacing: Promise<Client> | null = null;
+
+  const replace = (stale: Client): Promise<Client> => {
+    if (current !== stale) return Promise.resolve(current);
+    replacing ??= connect()
+      .then((client) => {
+        stale.close();
+        current = client;
+        return client;
+      })
+      .finally(() => {
+        replacing = null;
+      });
+    return replacing;
+  };
+
+  return {
+    async call<T>(channel: string, request?: unknown): Promise<T> {
+      const client = current;
+      try {
+        return await client.call<T>(channel, request);
+      } catch (error: unknown) {
+        if (!(error instanceof NotConnectedError)) throw error;
+        const fresh = await replace(client);
+        return fresh.call<T>(channel, request);
+      }
+    },
+    onEvent(listener) {
+      // Nothing in the MCP server watches events; a listener would stay bound
+      // to the connection it was added on.
+      return current.onEvent(listener);
+    },
+    close(): void {
+      current.close();
+    },
+  };
+}
 
 /** A tool result, in the shape the protocol expects. */
 function toolResult(value: unknown, isError = false) {

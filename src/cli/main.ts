@@ -15,7 +15,7 @@ import { connect } from "./client";
 import { chooseConnection, DiscoveryError, type DiscoveryFs } from "./discovery";
 import { childExitCode } from "./child-exit";
 import { lockRun } from "./lock-run";
-import { serveMcp } from "./mcp";
+import { reconnecting, serveMcp } from "./mcp";
 import { EXIT, renderError, useJson } from "./output";
 import { run } from "./run";
 
@@ -163,7 +163,8 @@ async function main(): Promise<number> {
     // Failing here would leave the agent with a dead MCP server, so the reason
     // goes to stderr where the agent's logs will show it.
     const own = process.env._CH_WORKSPACE_PATH;
-    const client = await openConnection(own === undefined ? {} : { workspace: own });
+    const target = own === undefined ? {} : { workspace: own };
+    const client = reconnecting(await openConnection(target), () => openConnection(target));
     try {
       await serveMcp(client, VERSION);
     } finally {
