@@ -1,7 +1,6 @@
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import type { BuildInfo } from "./build-info";
 import type { PlatformInfo } from "./platform-info";
-import { projectDirName } from "./paths";
 import { Path } from "../../utils/path/path";
 
 /**
@@ -38,14 +37,6 @@ export interface PathProvider {
 
   /** Application icon (process.cwd()-based, fixed) */
   readonly appIconPath: Path;
-
-  /**
-   * Get the workspaces directory for a project.
-   * @param projectPath Absolute path to the project (string or Path)
-   * @returns `<dataRoot>/projects/<name>-<hash>/workspaces/` as Path
-   * @throws TypeError if projectPath is not an absolute path
-   */
-  getProjectWorkspacesDir(projectPath: string | Path): Path;
 }
 
 /**
@@ -109,14 +100,6 @@ export class DefaultPathProvider implements PathProvider {
 
   tempPath(subpath: string): Path {
     return new Path(this.tempRoot, subpath);
-  }
-
-  getProjectWorkspacesDir(projectPath: string | Path): Path {
-    const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
-    if (!pathStr || !isAbsolute(pathStr)) {
-      throw new TypeError(`projectPath must be an absolute path, got: "${pathStr}"`);
-    }
-    return new Path(this.dataRoot, "projects", projectDirName(pathStr), "workspaces");
   }
 
   private computeAppIconPath(): Path {

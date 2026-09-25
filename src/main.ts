@@ -165,6 +165,7 @@ import { createTelemetryModule } from "./modules/telemetry-module";
 import { createPostHogBoundary } from "./boundaries/platform/posthog";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { DefaultStateService } from "./boundaries/platform/state-service";
+import { createWorkspacesRootModule } from "./modules/workspaces-root/module";
 import { createStateModule } from "./modules/state-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
@@ -723,9 +724,25 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
 });
 // State module — loads state.json in app:start/init.
 const stateModule = createStateModule({ stateService });
+// Where worktrees and managed clones live (`workspaces.root`), settled at app:start.
+const workspacesRootModule = createWorkspacesRootModule({
+  config: configService,
+  stateService,
+  pathProvider,
+  fs: fileSystemLayer,
+  gitClient,
+  adopt: (projectRoot, worktreePath, branch) =>
+    gitWorktreeProvider.adoptWorktree(projectRoot, worktreePath, branch),
+  ui: presentationModule,
+  dispatcher,
+  // Built further down; read only when a migration runs.
+  moveListeners: () => [hooksModule.moveProjects, autoWorkspaceModule.moveProjects],
+  logger: loggingService.createLogger("workspaces-root"),
+});
+const workspacesRoot = workspacesRootModule.root;
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
-  remotesDir: pathProvider.dataPath("remotes").toString(),
+  remotesDir: () => workspacesRoot.remotesDir().toString(),
   fs: fileSystemLayer,
   gitWorktreeProvider,
   ui: presentationModule,
@@ -736,13 +753,13 @@ const localProjectModule = createLocalProjectModule({
 const remoteProjectModule = createRemoteProjectModule({
   fs: fileSystemLayer,
   gitClient,
-  pathProvider,
+  workspacesRoot,
   logger: lifecycleLogger,
   dispatcher,
 });
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   gitWorktreeProvider,
-  pathProvider,
+  workspacesRoot,
   apiLogger,
   presentationModule,
   dispatcher
@@ -1062,6 +1079,7 @@ dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(stateModule);
+dispatcher.registerModule(workspacesRootModule.module);
 dispatcher.registerModule(telemetryModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
 dispatcher.registerModule(electronLifecycleModule);

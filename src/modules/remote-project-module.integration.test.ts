@@ -103,7 +103,7 @@ function createTestSetup() {
   const module = createRemoteProjectModule({
     fs,
     gitClient,
-    pathProvider,
+    workspacesRoot: { remotesDir: () => pathProvider.dataPath("remotes") },
     logger: SILENT_LOGGER,
     dispatcher: notifications.dispatcher,
   });

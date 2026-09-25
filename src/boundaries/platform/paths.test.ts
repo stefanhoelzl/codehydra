@@ -5,7 +5,6 @@
  * NOTE: Build-mode-dependent path functions have been moved to PathProvider.
  * See path-provider.test.ts for tests of:
  * - dataRootDir, projectsDir, vscodeDir, etc.
- * - getProjectWorkspacesDir()
  *
  * This file tests only pure utility functions with no build-mode dependencies.
  *

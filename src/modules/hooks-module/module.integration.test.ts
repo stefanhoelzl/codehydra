@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
-import { createMockState } from "../../boundaries/platform/state.test-utils";
+import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { createBehavioralLogger } from "../../boundaries/platform/logging.test-utils";
 import type { BehavioralLogger } from "../../boundaries/platform/logging.test-utils";
 import {
@@ -68,7 +68,7 @@ import { createMockNotificationManager } from "../presentation/notification-mana
 import { projPath, wsPath } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import type { RunningHook } from "../presentation/presentation-module";
-import { createHooksModule } from "./module";
+import { createHooksModule, type HooksModule } from "./module";
 import type { HookOutputSink } from "./runner";
 
 const PROJECT_ROOT = projPath("/project");
@@ -101,6 +101,8 @@ interface TestSetup {
   readonly finalizeEnv: Array<Record<string, string>>;
   /** workspaceEnv the finalize hook point saw — what the editor's terminals get. */
   readonly terminalEnv: Array<Record<string, string>>;
+  readonly hooksModule: HooksModule;
+  readonly stateService: MockStateService;
   /** workspaceEnv the setup hook point saw — what the agent server starts with. */
   readonly agentStartEnv: Array<Record<string, string>>;
   readonly notifications: readonly NotificationConfig[];
@@ -324,22 +326,22 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   };
 
   dispatcher.registerModule(openWorkspaceHost);
-  dispatcher.registerModule(
-    createHooksModule({
-      fileSystem,
-      processRunner,
-      logger,
-      config: createMockConfig({ defaults: { "hooks.enabled": options?.enabled ?? true } }),
-      stateService: createMockState({
-        values: { "hooks.trusted": options?.trusted ?? {} },
-      }),
-      dispatcher,
-      ui,
-      binDir: new Path("/data/bin"),
-      sink,
-      ...(options?.platform !== undefined && { platform: options.platform }),
-    })
-  );
+  const stateService = createMockState({
+    values: { "hooks.trusted": options?.trusted ?? {} },
+  });
+  const hooksModule = createHooksModule({
+    fileSystem,
+    processRunner,
+    logger,
+    config: createMockConfig({ defaults: { "hooks.enabled": options?.enabled ?? true } }),
+    stateService,
+    dispatcher,
+    ui,
+    binDir: new Path("/data/bin"),
+    sink,
+    ...(options?.platform !== undefined && { platform: options.platform }),
+  });
+  dispatcher.registerModule(hooksModule);
 
   // The mock records what each spawn was handed; read it lazily so assertions
   // see everything spawned by the time they run.
@@ -356,6 +358,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   });
 
   return {
+    hooksModule,
+    stateService,
     dispatcher,
     createdEvents,
     progress,
@@ -1149,6 +1153,17 @@ describe("hook output", () => {
 });
 
 describe("trust", () => {
+  it("carries answers over to a project whose path moved", async () => {
+    const setup = createTestSetup({ trusted: { "/old/lib": true, [PROJECT_ROOT]: false } });
+
+    await setup.hooksModule.moveProjects([{ from: "/old/lib", to: "/new/lib" }]);
+
+    expect(setup.stateService.getEffective()["hooks.trusted"]).toEqual({
+      "/new/lib": true,
+      [PROJECT_ROOT]: false,
+    });
+  });
+
   it("asks before running an untrusted repository's hook", async () => {
     const setup = createTestSetup({ hooks: { [SETUP_HOOK]: {} } });
     await openWorkspace(setup);

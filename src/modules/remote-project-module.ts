@@ -14,7 +14,7 @@ import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { IGitClient } from "../boundaries/platform/git-client";
-import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { WorkspacesRoot } from "./workspaces-root/workspaces-root";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
@@ -41,11 +41,11 @@ import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 export function createRemoteProjectModule(deps: {
   readonly fs: Pick<FileSystemBoundary, "readdir" | "rm">;
   readonly gitClient: Pick<IGitClient, "clone">;
-  readonly pathProvider: Pick<PathProvider, "dataPath">;
+  readonly workspacesRoot: Pick<WorkspacesRoot, "remotesDir">;
   readonly logger: Logger;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }): IntentModule {
-  const { fs, gitClient, pathProvider, logger, dispatcher } = deps;
+  const { fs, gitClient, workspacesRoot, logger, dispatcher } = deps;
 
   return {
     name: "remote-project",
@@ -71,7 +71,7 @@ export function createRemoteProjectModule(deps: {
 
             // Deterministic clone path from URL
             const repoName = extractRepoName(expanded);
-            const gitPath = managedClonePath(pathProvider.dataPath("remotes"), expanded);
+            const gitPath = managedClonePath(workspacesRoot.remotesDir(), expanded);
 
             // Check for existing clone via filesystem
             try {

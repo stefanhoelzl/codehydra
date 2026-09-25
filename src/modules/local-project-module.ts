@@ -84,8 +84,11 @@ export interface LocalProject {
  */
 export interface LocalProjectModuleDeps {
   readonly projectsDir: string;
-  /** Where managed (URL-cloned) projects are cloned to; their paths derive from it. */
-  readonly remotesDir: string;
+  /**
+   * Where managed (URL-cloned) projects are cloned to; their paths derive from it.
+   * Read on every use: the workspaces root it lives in is settled at startup.
+   */
+  readonly remotesDir: () => string;
   readonly fs: Pick<
     FileSystemBoundary,
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
@@ -114,7 +117,7 @@ function normalizePathForId(absolutePath: string): string {
   return normalized;
 }
 
-function generateProjectId(absolutePath: string): ProjectId {
+export function generateProjectId(absolutePath: string): ProjectId {
   const normalizedPath = normalizePathForId(absolutePath);
   const basename = normalizedPath.split("/").pop() ?? "";
   const safeName =
@@ -133,7 +136,7 @@ function generateProjectId(absolutePath: string): ProjectId {
 type ProjectFs = LocalProjectModuleDeps["fs"];
 
 /** Where project records and managed clones live. */
-interface StoreDirs {
+export interface StoreDirs {
   readonly projectsDir: string;
   readonly remotesDir: string;
 }
@@ -142,7 +145,7 @@ interface StoreDirs {
  * A record read back from disk: the config, the directory it was found in, and
  * whether it is in the legacy managed shape that still stores the clone path.
  */
-interface StoredProject {
+export interface StoredProject {
   readonly config: ProjectConfig;
   readonly dirName: string;
   readonly legacy: boolean;
@@ -154,7 +157,11 @@ interface StoredProject {
  * path — anything else keeps storing it, so no project is reopened somewhere
  * it is not.
  */
-function isManaged(dirs: StoreDirs, projectPath: string, remoteUrl: string | undefined): boolean {
+export function isManaged(
+  dirs: StoreDirs,
+  projectPath: string,
+  remoteUrl: string | undefined
+): boolean {
   return (
     remoteUrl !== undefined && managedClonePath(dirs.remotesDir, remoteUrl).equals(projectPath)
   );
@@ -196,7 +203,7 @@ function parseRecord(dirs: StoreDirs, content: string): Omit<StoredProject, "dir
   return undefined;
 }
 
-async function saveProject(
+export async function saveProject(
   fs: ProjectFs,
   dirs: StoreDirs,
   projectPath: ProjectPath,
@@ -222,7 +229,10 @@ async function saveProject(
   }
 }
 
-async function loadAllProjects(fs: ProjectFs, dirs: StoreDirs): Promise<readonly StoredProject[]> {
+export async function loadAllProjects(
+  fs: ProjectFs,
+  dirs: StoreDirs
+): Promise<readonly StoredProject[]> {
   const results: StoredProject[] = [];
 
   let entries;
@@ -357,7 +367,7 @@ async function migrateLegacyRecords(
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
   const { projectsDir, remotesDir, fs, gitWorktreeProvider, ui, dispatcher, gitClient, logger } =
     deps;
-  const dirs: StoreDirs = { projectsDir, remotesDir };
+  const dirs = (): StoreDirs => ({ projectsDir, remotesDir: remotesDir() });
 
   /** Internal state: all projects keyed by normalized path string. */
   // Keyed by the branded project path, so a key can be handed straight back to the
@@ -474,7 +484,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             }
 
             // Check persisted config for remoteUrl (restores icon on startup)
-            const config = await getProjectConfig(fs, dirs, path);
+            const config = await getProjectConfig(fs, dirs(), path);
             const remoteUrl = config?.remoteUrl;
 
             // Already open — skip validation, signal short-circuit
@@ -514,9 +524,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             }
 
             // Persist to store if new
-            const existingConfig = await getProjectConfig(fs, dirs, projectPathStr);
+            const existingConfig = await getProjectConfig(fs, dirs(), projectPathStr);
             if (!existingConfig) {
-              await saveProject(fs, dirs, projectPathStr, remoteUrl);
+              await saveProject(fs, dirs(), projectPathStr, remoteUrl);
             }
 
             // Add to internal state
@@ -539,7 +549,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const { projectPath } = intent.payload;
 
             // Look up config to get remoteUrl
-            const config = await getProjectConfig(fs, dirs, projectPath);
+            const config = await getProjectConfig(fs, dirs(), projectPath);
 
             return {
               result: {
@@ -563,7 +573,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               // the worktrees' (path-named) and the record's (URL-named).
               const configDirs = new Set([
                 projectDirName(projectPath),
-                recordDirName(dirs, projectPath, remoteUrl),
+                recordDirName(dirs(), projectPath, remoteUrl),
               ]);
               for (const dirName of configDirs) {
                 try {
@@ -587,7 +597,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
 
               // Normal removal: remove config.json and empty dirs
               try {
-                await removeProject(fs, dirs, projectPath, remoteUrl);
+                await removeProject(fs, dirs(), projectPath, remoteUrl);
               } catch {
                 // Fail silently
               }
@@ -602,8 +612,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         // load-projects: load all saved project configs
         "load-projects": {
           handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
-            const stored = await loadAllProjects(fs, dirs);
-            await migrateLegacyRecords(fs, dirs, stored, logger);
+            const stored = await loadAllProjects(fs, dirs());
+            await migrateLegacyRecords(fs, dirs(), stored, logger);
             // A record whose old copy could not be removed is read twice.
             const projectPaths = [...new Set(stored.map((s) => s.config.path))];
             return { result: { projectPaths } };

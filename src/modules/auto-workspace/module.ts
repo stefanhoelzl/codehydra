@@ -49,6 +49,7 @@
  * - app:started: load state, run the first cycle, start polling
  */
 
+import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
 import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
@@ -186,7 +187,12 @@ function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
 // Factory
 // =============================================================================
 
-export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
+export interface AutoWorkspaceModule extends IntentModule {
+  /** Point tracking entries at projects whose path changed. */
+  readonly moveProjects: ProjectMoveListener;
+}
+
+export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWorkspaceModule {
   const sourcesBase = storeText({
     nullable: true,
     rows: 20,
@@ -783,7 +789,22 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
   // ------ Module definition ------
 
+  const moveProjects: ProjectMoveListener = async (moves) => {
+    const current = stateAccessor.get();
+    let changed = false;
+    const next: AutoWorkspaceEntries = {};
+    for (const [key, entry] of Object.entries(current)) {
+      const to = entry.projectPath === undefined ? undefined : movedPath(moves, entry.projectPath);
+      if (to !== undefined) changed = true;
+      next[key] = to === undefined ? entry : { ...entry, projectPath: to };
+    }
+    if (!changed) return;
+    entries = next;
+    await stateAccessor.set(next);
+  };
+
   return {
+    moveProjects,
     name: "auto-workspace",
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {

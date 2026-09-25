@@ -8,10 +8,13 @@
  *             app.whenReady(). Handlers needing Electron declare
  *             `requires: { "app-ready": ANY_VALUE }`.
  * 3. "show-ui" - Show starting screen
- * 4. "register-agents" / "agent-selection" / "save-agent" - (first run only)
+ * 4. "migrations" - Bring data on disk in line with the configuration before
+ *    anything reads it (e.g. a changed workspaces root). May ask the user on the
+ *    starting screen, and may quit the app instead of returning.
+ * 5. "register-agents" / "agent-selection" / "save-agent" - (first run only)
  *    Collect the selectable agents, show the picker, persist the choice.
- * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 6. "start" - Start servers, wire services, mount renderer.
+ * 6. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 7. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, ideServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
@@ -110,6 +113,7 @@ export const appStartPhaseSchema = z.enum([
   "before-ready",
   "init",
   "show-ui",
+  "migrations",
   "agent-selection",
   "check-deps",
   "setup",
@@ -241,6 +245,7 @@ export const schemas = {
     "before-ready": { input: bareHookInputSchema, result: configureResultSchema },
     init: { input: initHookInputSchema, result: initResultSchema },
     "show-ui": { input: bareHookInputSchema, result: showUIHookResultSchema },
+    migrations: { input: bareHookInputSchema },
     "register-agents": { input: bareHookInputSchema, result: registerAgentResultSchema },
     start: { input: bareHookInputSchema },
     "await-retry": { input: bareHookInputSchema },
@@ -368,7 +373,12 @@ export class AppStartOperation implements Operation<typeof schemas> {
       throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
       const retrySupported = showUiResults.some((r) => r.retrySupported === true);
 
-      // Hook 4: agent selection (first run only) -- register-agents, agent-selection, save-agent.
+      // Hook 4: "migrations" -- settle on-disk data before anything reads it.
+      phase = "migrations";
+      const { errors: migrationErrors } = await ctx.hooks.collect("migrations", hookCtx);
+      throwHookErrors(migrationErrors, "app:start migrations hooks failed");
+
+      // Hook 5: agent selection (first run only) -- register-agents, agent-selection, save-agent.
       // Runs BEFORE check-deps so the deps check knows which agent's binary to look for.
       let agent: AgentType;
       if (configuredAgent === null) {
@@ -378,7 +388,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
         agent = configuredAgent;
       }
 
-      // Hook 5: "check-deps" (collect, isolated contexts)
+      // Hook 6: "check-deps" (collect, isolated contexts)
       phase = "check-deps";
       let checkResult = await this.runChecks(ctx, agent, extensionRequirements);
 
@@ -425,7 +435,7 @@ export class AppStartOperation implements Operation<typeof schemas> {
         }
       }
 
-      // Hook 5: "start" -- Start servers, wire callbacks, mount renderer
+      // Hook 7: "start" -- Start servers, wire callbacks, mount renderer
       // Handlers that need ports (mcpPort, ideServerPort) declare `requires` and
       // read from ctx.capabilities. Capability-based ordering replaces the former
       // separate "activate" hook point.

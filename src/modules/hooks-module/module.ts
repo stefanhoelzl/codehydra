@@ -35,6 +35,7 @@
  * hook failing, with that entry's usual consequence.
  */
 
+import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
 import type { z } from "zod/v4";
 import type { IntentModule, EventDeclarations, HookDeclarations } from "../../intents/lib/module";
 import type { DomainEvent } from "../../intents/lib/types";
@@ -204,7 +205,12 @@ export function splitReservedEnv(env: Readonly<Record<string, string>>): {
 // Module
 // =============================================================================
 
-export function createHooksModule(deps: HooksModuleDeps): IntentModule {
+export interface HooksModule extends IntentModule {
+  /** Carry trust answers over to projects whose path changed. */
+  readonly moveProjects: ProjectMoveListener;
+}
+
+export function createHooksModule(deps: HooksModuleDeps): HooksModule {
   const enabled = deps.config.register("hooks.enabled", {
     default: true,
     description: "Run a repository's .codehydra hooks",
@@ -627,5 +633,17 @@ export function createHooksModule(deps: HooksModuleDeps): IntentModule {
     },
   };
 
-  return { name: "hooks", hooks, events };
+  const moveProjects: ProjectMoveListener = async (moves) => {
+    const current = trustState.get();
+    let changed = false;
+    const next: Record<string, boolean> = {};
+    for (const [projectPath, value] of Object.entries(current)) {
+      const to = movedPath(moves, projectPath);
+      if (to !== undefined) changed = true;
+      next[to ?? projectPath] = value;
+    }
+    if (changed) await trustState.set(next);
+  };
+
+  return { name: "hooks", hooks, events, moveProjects };
 }

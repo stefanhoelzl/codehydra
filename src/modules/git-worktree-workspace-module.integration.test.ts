@@ -24,8 +24,6 @@ import type {
 import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { PathProvider } from "../boundaries/platform/path-provider";
-import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import type { Workspace } from "../boundaries/platform/git-types";
 import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../intents/open-project";
 import type { DiscoverHookResult } from "../intents/open-project";
@@ -435,7 +433,7 @@ const listProjectsOperation = createMinimalOperation<ListWorkspacesHookResult>(
 interface TestSetup {
   dispatcher: Dispatcher;
   provider: ReturnType<typeof createMockGitWorktreeProvider>;
-  pathProvider: PathProvider;
+  workspacesRoot: { workspacesDir: () => Path };
   module: IntentModule;
   /** Drives the `closing` enrichment the status hook reads. */
   closing: Map<string, WorkspaceClosing>;
@@ -464,9 +462,7 @@ function createMockUi(): {
 
 function createTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
-  const pathProvider = createMockPathProvider({
-    getProjectWorkspacesDir: () => testPath("/workspaces"),
-  });
+  const workspacesRoot = { workspacesDir: () => testPath("/workspaces") };
 
   const dispatcher = createMockDispatcher();
 
@@ -486,7 +482,7 @@ function createTestSetup(): TestSetup {
   const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
-    pathProvider,
+    workspacesRoot,
     SILENT_LOGGER,
     ui,
     notify
@@ -512,14 +508,12 @@ function createTestSetup(): TestSetup {
     },
   });
 
-  return { dispatcher, provider, pathProvider, module, closing, dialogs, notifications };
+  return { dispatcher, provider, workspacesRoot, module, closing, dialogs, notifications };
 }
 
 function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   const provider = createMockGitWorktreeProvider();
-  const pathProvider = createMockPathProvider({
-    getProjectWorkspacesDir: () => testPath("/workspaces"),
-  });
+  const workspacesRoot = { workspacesDir: () => testPath("/workspaces") };
 
   const dispatcher = createMockDispatcher();
 
@@ -530,7 +524,7 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   const { dialogs, notifications, ui, notify } = createMockUi();
   const module = createGitWorktreeWorkspaceModule(
     provider as unknown as GitWorktreeProvider,
-    pathProvider,
+    workspacesRoot,
     SILENT_LOGGER,
     ui,
     notify
@@ -540,7 +534,7 @@ function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   return {
     dispatcher,
     provider,
-    pathProvider,
+    workspacesRoot,
     closing: new Map<string, WorkspaceClosing>(),
     dialogs,
     notifications,
@@ -1299,16 +1293,14 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
      */
     function finalizeSetup() {
       const provider = createMockGitWorktreeProvider();
-      const pathProvider = createMockPathProvider({
-        getProjectWorkspacesDir: () => new Path("/workspaces"),
-      });
+      const workspacesRoot = { workspacesDir: () => new Path("/workspaces") };
       const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(openWorkspaceFinalizeOperation);
       const { ui, notify } = createMockUi();
       dispatcher.registerModule(
         createGitWorktreeWorkspaceModule(
           provider as unknown as GitWorktreeProvider,
-          pathProvider,
+          workspacesRoot,
           SILENT_LOGGER,
           ui,
           notify
@@ -1936,9 +1928,7 @@ describe("Add-project worktree picker", () => {
   function createPickerSetup(unmanaged: ReturnType<typeof makeUnmanaged>[]) {
     const provider = createMockGitWorktreeProvider();
     provider.listUnmanagedWorktrees.mockResolvedValue(unmanaged);
-    const pathProvider = createMockPathProvider({
-      getProjectWorkspacesDir: () => testPath("/workspaces"),
-    });
+    const workspacesRoot = { workspacesDir: () => testPath("/workspaces") };
     const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(prepareOperation);
 
@@ -1946,7 +1936,7 @@ describe("Add-project worktree picker", () => {
     dispatcher.registerModule(
       createGitWorktreeWorkspaceModule(
         provider as unknown as GitWorktreeProvider,
-        pathProvider,
+        workspacesRoot,
         SILENT_LOGGER,
         ui,
         notify
