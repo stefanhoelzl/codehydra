@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import nodePath from "node:path";
 import {
   createFileSystemMock,
   directory,
@@ -59,10 +60,12 @@ function withParents(
 ): Record<string, ReturnType<typeof directory> | ReturnType<typeof file>> {
   const out = { ...entries };
   for (const key of Object.keys(entries)) {
-    let parent = new Path(key).dirname;
-    while (parent.dirname.toString() !== parent.toString()) {
-      out[parent.toString()] ??= directory();
-      parent = parent.dirname;
+    // Walk on strings: Path rejects a bare drive (`c:`), which is what the parent
+    // of a Windows root would be. Stop below the root.
+    let parent = nodePath.dirname(new Path(key).toNative());
+    while (nodePath.dirname(parent) !== parent) {
+      out[new Path(parent).toString()] ??= directory();
+      parent = nodePath.dirname(parent);
     }
   }
   return out;
