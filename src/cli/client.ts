@@ -29,6 +29,20 @@ export class UnreachableError extends Error {
   }
 }
 
+/**
+ * Raised when a call is made on a connection that has already dropped.
+ *
+ * Distinct from other unreachable failures because the request provably never
+ * left this process, so a caller that can reconnect may retry it without
+ * risking running an operation twice.
+ */
+export class NotConnectedError extends UnreachableError {
+  constructor() {
+    super("The connection to CodeHydra was lost");
+    this.name = "NotConnectedError";
+  }
+}
+
 /** Raised when the app answered and refused the request. */
 export class CallError extends Error {
   /** What kind of failure the app reported; `failed` when it did not say. */
@@ -127,6 +141,12 @@ export async function connect(options: ClientOptions): Promise<Client> {
     },
 
     async call<T>(channel: string, request?: unknown): Promise<T> {
+      // Without reconnection a dropped socket stays dropped, and socket.io does
+      // not refuse an emit on it: it buffers the packet for a reconnect that
+      // never comes. "disconnect" has already fired, so nothing would ever end
+      // the call. A long-lived client (`ch mcp`) meets this after a suspend.
+      if (!socket.connected) throw new NotConnectedError();
+
       const result = await new Promise<PluginResult<T>>((resolve, reject) => {
         // With no timeout, this is the only thing that ends a call the app will
         // never answer: without it a lost app would hang the command forever.

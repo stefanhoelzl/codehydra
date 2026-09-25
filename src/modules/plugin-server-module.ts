@@ -979,7 +979,17 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     if (handshake.kind !== "sidekick") {
       const client = { socket, workspacePath: resolved };
       eventClients.add(client);
-      socket.on("disconnect", () => eventClients.delete(client));
+      socket.on("disconnect", (reason: string) => {
+        eventClients.delete(client);
+        // Most guests are one-shot commands, but `ch mcp` holds its connection
+        // for a whole agent session; when it drops, this is the only trace.
+        logger.debug("Client disconnected", {
+          kind: handshake.kind,
+          workspace: resolved,
+          socketId: socket.id,
+          reason,
+        });
+      });
 
       logger.debug("Client connected", {
         kind: handshake.kind,
