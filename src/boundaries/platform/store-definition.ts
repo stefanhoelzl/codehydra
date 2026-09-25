@@ -7,6 +7,8 @@
  * store uses it for parsing, validation, and (for Config) help-text generation.
  */
 
+import { Path } from "../../utils/path/path";
+
 // =============================================================================
 // Shared Type Aliases
 // =============================================================================
@@ -45,6 +47,8 @@ export interface SettingsOption {
 export type SettingsControl =
   | { readonly kind: "boolean" }
   | { readonly kind: "string" }
+  /** An absolute folder path: a text field plus a native "Browse…" folder picker. */
+  | { readonly kind: "folder" }
   | {
       /**
        * A multi-line text value edited inline in the settings dialog (renders as
@@ -385,6 +389,31 @@ export function storeText(options: {
       ...(options.helpPanel !== undefined && { helpPanel: options.helpPanel }),
       ...(options.helpLabel !== undefined && { helpLabel: options.helpLabel }),
     },
+  };
+}
+
+/**
+ * Builder for nullable absolute folder paths, edited in the settings dialog as a
+ * text field plus a native "Browse…" folder picker (the `folder` control). Empty
+ * → null ("unset"); anything else must be an absolute path (`Path` rejects a
+ * relative one). Callers that need more (e.g. "not inside X") compose their own
+ * `validate` on top of the returned one.
+ */
+export function storeFolder(): PersistedTypeBuilder<string | null> {
+  const check = (s: string): string | undefined => {
+    if (s.includes("\0")) return undefined;
+    try {
+      return new Path(s).toNative();
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    parse: (s: string): string | null | undefined => (s === "" ? null : check(s)),
+    validate: (v: unknown): string | null | undefined =>
+      v === null ? null : typeof v === "string" && v !== "" ? check(v) : undefined,
+    validValues: "<absolute folder path>",
+    settingsControl: { kind: "folder" },
   };
 }
 

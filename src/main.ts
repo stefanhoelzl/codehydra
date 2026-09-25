@@ -486,6 +486,7 @@ const settingsModule = createSettingsModule({
   ui: presentationModule,
   config: configService,
   app: appLayer,
+  dialog: dialogLayer,
   logger: loggingService.createLogger("settings"),
 });
 openSettings = settingsModule.openSettings;
