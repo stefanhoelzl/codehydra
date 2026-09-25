@@ -265,15 +265,12 @@ export function createGitWorktreeWorkspaceModule(
   const CHECKBOX_ID_PREFIX = "wt-";
 
   /**
-   * One line identifying a worktree: the name the workspace would take, then where
-   * it lives. The branch is only worth a mention when it differs from the directory
-   * name — for CodeHydra's own naming they are the same word, and repeating it once
-   * per row is noise.
+   * One line identifying a worktree: the name the workspace would take (its
+   * branch), then where it lives.
    */
   function worktreeLabel(wt: UnmanagedWorktree): string {
-    const branch = wt.branch !== null && wt.branch !== wt.name ? ` (${wt.branch})` : "";
     const detached = wt.adoptable ? "" : " — detached HEAD, cannot be adopted";
-    return `${wt.name}${branch} — ${wt.path.toString()}${detached}`;
+    return `${wt.name} — ${wt.path.toString()}${detached}`;
   }
 
   /**

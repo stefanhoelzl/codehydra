@@ -332,11 +332,11 @@ export class GitWorktreeProvider {
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
 
       workspaces.push({
-        // CodeHydra's own worktrees are named after their branch (the directory is
-        // just its sanitized form). An adopted one sits in a directory the user
-        // named, so it takes the directory name instead — that keeps basename ↔ name
-        // the invariant the rest of the app assumes.
-        name: own ? (wt.branch ?? wt.name) : wt.name,
+        // A workspace is named after its branch, wherever its directory is and
+        // whatever it is called. Only a detached HEAD falls back to the directory:
+        // CodeHydra's own directories are the sanitized branch, so unsanitizing
+        // recovers it; an adopted one always has a branch (its tag is stored there).
+        name: wt.branch ?? (own ? unsanitizeWorkspaceName(wt.name) : wt.name),
         path: wt.path,
         branch: wt.branch,
         metadata,
@@ -379,7 +379,8 @@ export class GitWorktreeProvider {
       if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) continue;
 
       unmanaged.push({
-        name: wt.name,
+        // The name the workspace would take: its branch, like discover() gives it.
+        name: wt.branch ?? wt.name,
         path: wt.path,
         branch: wt.branch,
         adoptable: wt.branch !== null,
@@ -422,7 +423,8 @@ export class GitWorktreeProvider {
     this.ensureWorkspaceRegistered(worktreePath, projectRoot);
 
     return {
-      name: worktreePath.basename,
+      // Named after its branch, like every workspace — see discover().
+      name: branch,
       path: worktreePath,
       branch,
       metadata: { [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE },

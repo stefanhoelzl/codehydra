@@ -13,7 +13,7 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
-import { createTargetResolver, targetFields } from "./target";
+import { createTargetResolver, createWorkspaceNamer, targetFields } from "./target";
 import type { WorkspacePath } from "../../intents/contract";
 
 import { INTENT_GET_AGENT_SESSION } from "../../intents/get-agent-session";
@@ -28,23 +28,22 @@ import { INTENT_VSCODE_COMMAND } from "../../intents/vscode-command";
 import type { VscodeCommandIntent } from "../../intents/vscode-command";
 import { INTENT_SEND_AGENT_MESSAGE } from "../../intents/send-agent-message";
 import type { SendAgentMessageIntent } from "../../intents/send-agent-message";
-import { Path } from "../../utils/path/path";
-
-/**
- * Who a message is from, as the receiving agent sees it: the caller's own
- * workspace — where a shell stands, whatever it targets — otherwise the CLI
- * outside any workspace. Taken from the connection, never from the input, so a
- * caller cannot sign as someone else.
- */
-export function messageSender(ctx: OperationContext): string {
-  return ctx.callerWorkspacePath === null
-    ? "CodeHydra · ch"
-    : `CodeHydra · workspace ${new Path(ctx.callerWorkspacePath).basename}`;
-}
 
 export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
   const targetOf = createTargetResolver(dispatcher);
+  const nameOf = createWorkspaceNamer(dispatcher);
+
+  /**
+   * Who a message is from, as the receiving agent sees it: the caller's own
+   * workspace — where a shell stands, whatever it targets — otherwise the CLI
+   * outside any workspace. Taken from the connection, never from the input, so a
+   * caller cannot sign as someone else.
+   */
+  const messageSender = async (ctx: OperationContext): Promise<string> =>
+    ctx.callerWorkspacePath === null
+      ? "CodeHydra · ch"
+      : `CodeHydra · workspace ${await nameOf(ctx.callerWorkspacePath)}`;
 
   const runVscodeCommand = (workspacePath: WorkspacePath, command: string) =>
     dispatcher.dispatch<VscodeCommandIntent>({
@@ -141,7 +140,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         payload: {
           workspacePath: await targetOf(ctx, input),
           text: input.text,
-          from: messageSender(ctx),
+          from: await messageSender(ctx),
           wake: input.wake,
         },
       });

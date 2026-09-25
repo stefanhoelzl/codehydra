@@ -153,6 +153,21 @@ describe("lock module", () => {
       });
     });
 
+    it("names the holder by its workspace name, not its directory", async () => {
+      const s = setup();
+      const slashed = wsPath("/workspaces/feature%x");
+      await emit(s.module, EVENT_WORKSPACE_CREATED, {
+        workspacePath: slashed,
+        workspaceName: "feature/x",
+        metadata: {},
+      });
+      await s.module.locks.take(slashed, DEVICE, opts());
+
+      await expect(s.module.locks.take(B, DEVICE, opts({ wait: false }))).rejects.toMatchObject({
+        message: expect.stringMatching(/'device' is held by 'feature\/x'/),
+      });
+    });
+
     it("hands the lock to waiters in arrival order", async () => {
       const s = setup();
       await s.module.locks.take(A, DEVICE, opts());

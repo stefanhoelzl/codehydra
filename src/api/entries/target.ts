@@ -15,6 +15,9 @@ import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { ListProjectsIntent } from "../../intents/list-projects";
+import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
+import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
+import { Path } from "../../utils/path/path";
 import { resolveWorkspaceReference, type ProjectLocation } from "../workspace-lookup";
 
 /** The input fields that name a target workspace. */
@@ -87,5 +90,29 @@ export function createTargetResolver(
       throw new ApiError("no-workspace", "No workspace to act on.");
     }
     return ctx.workspacePath;
+  };
+}
+
+/**
+ * The name of the workspace at a path, for showing to a person.
+ *
+ * Looked up, never derived from the path: a workspace is named after its branch,
+ * so `feature/x` lives in `feature%x`, and an adopted worktree's directory can be
+ * called anything. A path no open workspace owns any more falls back to its
+ * directory name — it only labels something, so it must not fail the call.
+ */
+export function createWorkspaceNamer(
+  dispatcher: Dispatcher
+): (workspacePath: WorkspacePath) => Promise<string> {
+  return async (workspacePath) => {
+    try {
+      const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
+        type: INTENT_RESOLVE_WORKSPACE,
+        payload: { workspacePath },
+      });
+      return resolved.workspaceName;
+    } catch {
+      return new Path(workspacePath).basename;
+    }
   };
 }

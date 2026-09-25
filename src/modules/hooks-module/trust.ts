@@ -39,6 +39,7 @@ export interface TrustDialogOpener {
       kind?: "modal" | "modeless" | "panel";
       workspacePath?: string;
       projectPath?: string;
+      workspaceName?: string;
     }
   ): DialogHandle;
 }
@@ -52,6 +53,7 @@ export interface TrustGateDeps {
 export interface TrustRequest {
   readonly projectPath: string;
   readonly workspacePath: string;
+  readonly workspaceName: string;
   /** On-disk entry name, so the question says what is about to run. */
   readonly entry: string;
 }
@@ -146,6 +148,7 @@ export function createTrustGate(deps: TrustGateDeps): TrustGate {
       // The first question usually comes from after-worktree-created, while
       // the row is still a pathless placeholder the project + name identify.
       projectPath: request.projectPath,
+      workspaceName: request.workspaceName,
     });
 
     try {
