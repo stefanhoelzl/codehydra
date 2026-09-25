@@ -14,8 +14,12 @@
 
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
+import { Path } from "../../utils/path/path";
+import { normalizeGitUrl } from "../../utils/url-utils";
 import {
   projectDirName,
+  managedProjectDirName,
+  managedClonePath,
   sanitizeWorkspaceName,
   unsanitizeWorkspaceName,
   encodePathForUrl,
@@ -62,6 +66,33 @@ describe("paths utility functions", () => {
 
       const expectedHash = createHash("sha256").update(projectPath).digest("hex").substring(0, 8);
       expect(result).toBe(`my-repo-${expectedHash}`);
+    });
+  });
+
+  describe("managedProjectDirName", () => {
+    it("is the repo name plus a hash of the normalized URL", () => {
+      const url = "https://github.com/org/my-repo.git";
+      const hash = createHash("sha256").update(normalizeGitUrl(url)).digest("hex").substring(0, 8);
+      expect(managedProjectDirName(url)).toBe(`my-repo-${hash}`);
+    });
+
+    it("names the same project however the URL is spelled", () => {
+      expect(managedProjectDirName("https://github.com/org/repo.git")).toBe(
+        managedProjectDirName("git@github.com:org/repo.git")
+      );
+    });
+  });
+
+  describe("managedClonePath", () => {
+    it("places the clone under its URL-named directory, as the repo name", () => {
+      const clone = managedClonePath("/data/remotes", "https://github.com/org/repo.git");
+      expect(clone.toString()).toBe(
+        new Path(
+          "/data/remotes",
+          managedProjectDirName("https://github.com/org/repo.git"),
+          "repo"
+        ).toString()
+      );
     });
   });
 

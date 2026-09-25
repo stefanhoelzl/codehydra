@@ -18,6 +18,8 @@
 
 import { createHash } from "crypto";
 import { basename } from "path";
+import { Path } from "../../utils/path/path";
+import { extractRepoName, normalizeGitUrl } from "../../utils/url-utils";
 
 // ============================================================================
 // Project/Workspace Naming
@@ -34,6 +36,37 @@ export function projectDirName(projectPath: string): string {
   const folderName = basename(projectPath);
   const hash = createHash("sha256").update(projectPath).digest("hex").substring(0, 8);
   return `${folderName}-${hash}`;
+}
+
+/**
+ * Directory name for a project CodeHydra cloned from a URL (a managed project).
+ * Format: `<repo-name>-<8-char-sha256-of-normalized-url>`
+ *
+ * Derived from the URL, never from where the clone sits, so it names the same
+ * project wherever the clone moves. It names both the clone's own directory
+ * (`remotes/<id>/<repo>`) and the project's record (`projects/<id>/config.json`).
+ *
+ * @param url Git URL, already expanded (`expandGitUrl`)
+ */
+export function managedProjectDirName(url: string): string {
+  const safeName =
+    extractRepoName(url)
+      .replace(/[^a-zA-Z0-9]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "repo";
+  const hash = createHash("sha256").update(normalizeGitUrl(url)).digest("hex").substring(0, 8);
+  return `${safeName}-${hash}`;
+}
+
+/**
+ * Where a managed project's clone lives: `<remotesDir>/<managedProjectDirName>/<repo-name>`.
+ * The clone path is also the project's path.
+ *
+ * @param remotesDir Directory managed clones are kept in
+ * @param url Git URL, already expanded (`expandGitUrl`)
+ */
+export function managedClonePath(remotesDir: Path | string, url: string): Path {
+  return new Path(remotesDir, managedProjectDirName(url), extractRepoName(url));
 }
 
 /**
