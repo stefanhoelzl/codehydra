@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderDefinition } from "./template-render";
-import type { TemplateObject } from "./source-config";
+import { renderDefinition, renderInput } from "./template-render";
+import type { TemplateObject } from "./manifest";
 
 const data = {
   number: 42,
@@ -95,5 +95,26 @@ describe("renderDefinition", () => {
     const { definition, warnings } = renderDefinition({ name: "x", metadata: { _bad: "v" } }, data);
     expect(definition.metadata).toBeUndefined();
     expect(warnings.some((w) => w.includes("Invalid metadata key"))).toBe(true);
+  });
+});
+
+describe("renderInput", () => {
+  it("renders string leaves and keeps other values as written", () => {
+    const input = renderInput(
+      {
+        workspace: "{{ ws }}",
+        dismissible: true,
+        lines: ["a {{ n }}", 2],
+        nested: { title: "#{{ n }}", count: null },
+      },
+      { ws: "feature-x", n: 7 }
+    );
+
+    expect(input).toEqual({
+      workspace: "feature-x",
+      dismissible: true,
+      lines: ["a 7", 2],
+      nested: { title: "#7", count: null },
+    });
   });
 });

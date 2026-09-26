@@ -1,15 +1,15 @@
 /**
- * Render a source's structured `template` object into a workspace definition.
+ * Render an automation's structured `template` for one item its script printed.
  *
  * Every string leaf in the template is a Liquid template evaluated against the
- * cmd's emitted JSON object. Non-string leaves pass through. Known top-level
+ * item. Non-string leaves pass through. Known top-level
  * keys map to workspace-creation fields; `agent` and `metadata` are nested
  * mappings (see buildAgentSpec / flattenMetadata).
  */
 
 import { renderTemplate } from "../../utils/liquid/liquid-renderer";
 import { isValidMetadataKey, type AgentSpec, type PromptModel } from "../../shared/api/types";
-import type { TemplateObject, TemplateValue } from "./source-config";
+import type { TemplateObject, TemplateValue } from "./manifest";
 
 export interface WorkspaceDefinition {
   readonly name: string;
@@ -221,4 +221,23 @@ function flattenMetadata(
 
   walk("", metaObj);
   return out;
+}
+
+/**
+ * Render a template for any other action: every string leaf through Liquid,
+ * everything else as written — so `dismissible: true` stays a boolean while
+ * `"{{ id }}"` becomes a string. The result is the action's input, validated by
+ * the operation's own schema when it is invoked.
+ */
+export function renderInput(template: TemplateObject, data: unknown): Record<string, unknown> {
+  const ctx = (data ?? {}) as Record<string, unknown>;
+  const render = (value: TemplateValue): unknown => {
+    if (typeof value === "string") return renderTemplate(value, ctx);
+    if (Array.isArray(value)) return value.map(render);
+    if (isPlainObject(value)) {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, render(item)]));
+    }
+    return value;
+  };
+  return render(template) as Record<string, unknown>;
 }

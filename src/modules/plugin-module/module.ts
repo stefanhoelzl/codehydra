@@ -94,7 +94,11 @@ import {
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
 import type { WorkspacePath } from "../../intents/contract";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import type { OperationRegistry } from "../../api/registry";
+import { invokePluginAction } from "../../api/adapters/plugin-actions";
+import { notify } from "../presentation/notification-card";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
   AFTER_WORKTREE_CREATED,
@@ -121,6 +125,9 @@ import { createPluginTrust, type EnabledState, type PluginTrust } from "./trust"
 import { createShellResolver, ShellUnavailableError } from "./shells";
 import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
 import type { HookOutputSink } from "./output-sink";
+import { createAutomations, type AutomationSource } from "./automations";
+import { convertLegacySources, LEGACY_SOURCES_PLUGIN } from "./legacy-sources";
+import { MANIFEST_FILE } from "./discovery";
 
 // =============================================================================
 // Dependencies
@@ -138,6 +145,11 @@ export interface PluginModuleDeps {
   /** Directory holding the `ch` CLI, prepended to every script's PATH. */
   readonly binDir: Path;
   readonly sink: HookOutputSink;
+  /**
+   * The operation registry, for automations' actions. A getter: the registry's
+   * `plugin.*` entries reach this module, so it is built after it.
+   */
+  readonly registry: () => OperationRegistry;
   /** Which documents apply. Default: this process's platform. */
   readonly platform?: NodeJS.Platform;
   /** The environment scripts inherit and shells are searched in. Default: this process's. */
@@ -252,6 +264,9 @@ const booleanMapStore = storeCustom<Record<string, boolean>>({
 // Module
 // =============================================================================
 
+/** How long an automation's script may run before it is killed. */
+const AUTOMATION_TIMEOUT_MS = 30_000;
+
 /** A hook script one plugin contributes to one entry. */
 interface HookScript {
   readonly plugin: LoadedPlugin;
@@ -286,6 +301,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     parse: folder.parse,
     validate: folder.validate,
     validValues: "<absolute path to bash.exe>",
+    // A file, not a folder: a plain text field rather than the folder picker.
+    settingsControl: { kind: "string" },
   });
 
   const enabledState = deps.stateService.register<Record<string, boolean>>("plugins.enabled", {
@@ -327,6 +344,21 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   const localDir = deps.pathProvider.homePath("plugins");
   const logsRoot = deps.pathProvider.dataPath("logs/plugins");
 
+  /**
+   * The setting automations replaced. Read once at start to move it into a
+   * plugin, then reset: readable, never settable.
+   */
+  const legacySources = deps.config.register("auto-workspace.sources", {
+    default: null,
+    deprecated: true,
+    description: "Auto-workspace sources, from before plugins (moved into a plugin at start)",
+    omit: true,
+    ...storeCustom<string | null>({
+      parse: (raw) => raw,
+      validate: (value) => (value === null || typeof value === "string" ? value : undefined),
+    }),
+  });
+
   // ---------------------------------------------------------------------------
   // Loading
   // ---------------------------------------------------------------------------
@@ -363,6 +395,18 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       { origin: "workspace", project: projectPath },
       problemsOf(plugins, problems)
     );
+    for (const plugin of plugins) {
+      const key = plugin.manifestPath.toString();
+      if (plugin.applied.some((doc) => doc.automations.length > 0)) {
+        if (!warnedWorkspaceAutomations.has(key)) {
+          warnedWorkspaceAutomations.add(key);
+          deps.logger.warn("A repository's plugin may not run automations; ignoring them", {
+            plugin: plugin.id,
+            path: key,
+          });
+        }
+      }
+    }
     return plugins;
   }
 
@@ -887,6 +931,205 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   }
 
   // ---------------------------------------------------------------------------
+  // Automations
+  // ---------------------------------------------------------------------------
+
+  /** An automation's script, and the plugin it runs for. */
+  interface AutomationScript {
+    readonly plugin: LoadedPlugin;
+    readonly doc: PluginDocument;
+    readonly script: string;
+  }
+  let automationScripts = new Map<string, AutomationScript>();
+  /** Automations that failed in the current cycle, and the ones run in the last. */
+  let failedThisCycle = new Set<string>();
+  let ranLastCycle: readonly AutomationSource[] = [];
+  /** Workspace plugins already warned about for shipping automations. */
+  const warnedWorkspaceAutomations = new Set<string>();
+
+  /** An automation's key in the error book. */
+  function automationKey(source: AutomationSource): { plugin: string; entry: string } {
+    return { plugin: source.plugin, entry: `automations.${source.name}` };
+  }
+
+  /**
+   * The automations to run this cycle: every enabled local plugin's, for this
+   * platform. Also settles the last cycle's error book: an automation that ran
+   * then without failing is no longer failing. (Settling here, rather than the
+   * moment its script succeeds, keeps an item error found after a good run
+   * from being cleared and re-notified every cycle.)
+   */
+  async function automationSources(): Promise<readonly AutomationSource[]> {
+    for (const source of ranLastCycle) {
+      if (!failedThisCycle.has(source.id)) errors.success(automationKey(source));
+    }
+    failedThisCycle = new Set();
+
+    const scripts = new Map<string, AutomationScript>();
+    const sources: AutomationSource[] = [];
+    for (const plugin of await loadLocal()) {
+      if (plugin.error !== undefined || trust.state("local", plugin.name) === "disabled") continue;
+      for (const doc of plugin.applied) {
+        for (const spec of doc.automations) {
+          const id = `${plugin.name}/${spec.name}`;
+          if (scripts.has(id)) {
+            deps.logger.warn("Automation defined twice for this platform; running the first", {
+              plugin: plugin.id,
+              automation: spec.name,
+            });
+            continue;
+          }
+          scripts.set(id, { plugin, doc, script: spec.script });
+          sources.push({
+            id,
+            plugin: plugin.id,
+            name: spec.name,
+            action: spec.action,
+            mode: spec.mode,
+            template: spec.template,
+          });
+        }
+      }
+    }
+    automationScripts = scripts;
+    ranLastCycle = sources;
+    return sources;
+  }
+
+  function automationFailed(source: AutomationSource, message: string, logPath?: Path): void {
+    failedThisCycle.add(source.id);
+    errors.failure(automationKey(source), message, logPath?.toNative());
+  }
+
+  /** Run an automation's script and read the array it prints; null when it failed. */
+  async function runAutomationScript(source: AutomationSource): Promise<unknown[] | null> {
+    const entry = automationScripts.get(source.id);
+    if (entry === undefined) return null;
+    const { plugin, doc, script } = entry;
+
+    let pending;
+    try {
+      pending = await runner.run({
+        plugin: plugin.id,
+        entry: `automations.${source.name}`,
+        shell: doc.shell,
+        script,
+        cwd: plugin.pluginDir ?? localDir,
+        input: {},
+        logDir: logDir(plugin, "", "automations", source.name),
+        ...(plugin.pluginDir !== undefined && { pluginDir: plugin.pluginDir }),
+        timeoutMs: AUTOMATION_TIMEOUT_MS,
+      });
+    } catch (error) {
+      automationFailed(
+        source,
+        error instanceof ShellUnavailableError ? error.message : getErrorMessage(error)
+      );
+      return null;
+    }
+
+    const { result } = pending;
+    let failure: string | undefined;
+    let items: unknown[] | undefined;
+    if (result.status !== "exited" || result.exitCode !== 0) {
+      failure = describeStatus(result);
+    } else {
+      try {
+        const parsed: unknown = JSON.parse(result.stdout);
+        if (Array.isArray(parsed)) items = parsed;
+        else failure = "printed JSON that is not an array";
+      } catch {
+        failure = "printed something that is not JSON";
+      }
+    }
+    const logPath = await pending.finish(
+      failure === undefined ? { outcome: "ok" } : { outcome: "failed", reason: failure }
+    );
+    if (failure !== undefined || items === undefined) {
+      deps.logger.warn("Automation script failed, skipping its items this cycle", {
+        automation: source.id,
+        reason: failure ?? "",
+      });
+      automationFailed(source, failure ?? "failed", logPath);
+      return null;
+    }
+    return items;
+  }
+
+  const automations = createAutomations({
+    logger: deps.logger,
+    dispatcher: deps.dispatcher,
+    configService: deps.config,
+    stateService: deps.stateService,
+    sources: automationSources,
+    runScript: runAutomationScript,
+    invokeAction: async (action, input) => {
+      await invokePluginAction({ registry: deps.registry() }, action, input);
+    },
+    reportError: (source, message) => automationFailed(source, message),
+  });
+
+  /**
+   * Move the pre-plugin `auto-workspace.sources` setting into a local plugin,
+   * `auto-workspaces`, once — and its tracking entries with it, so nothing it
+   * already created is created again. A plugin of that name that already
+   * exists is left alone (a move that wrote it but could not clear the setting
+   * has nothing left to do). A failed move keeps the setting for next time.
+   */
+  async function moveLegacySources(): Promise<void> {
+    const raw = legacySources.get();
+    if (typeof raw !== "string" || raw.trim() === "") return;
+
+    const pluginDir = new Path(localDir, LEGACY_SOURCES_PLUGIN);
+    const manifestPath = new Path(pluginDir, MANIFEST_FILE);
+    try {
+      let exists = true;
+      try {
+        await deps.fileSystem.readFile(manifestPath);
+      } catch {
+        exists = false;
+      }
+      if (!exists) {
+        const converted = convertLegacySources(raw, platform);
+        await deps.fileSystem.mkdir(pluginDir);
+        await deps.fileSystem.writeFile(manifestPath, converted.manifest);
+        await automations.renameTracking((key) => {
+          const slash = key.indexOf("/");
+          if (slash === -1) return undefined;
+          const name = converted.renames.get(key.slice(0, slash));
+          return name === undefined
+            ? undefined
+            : `${LEGACY_SOURCES_PLUGIN}/${name}/${key.slice(slash + 1)}`;
+        });
+        for (const error of converted.errors) {
+          deps.logger.warn("Auto-workspace source could not be moved (invalid)", {
+            source: error.name ?? `#${error.index}`,
+            message: error.message,
+          });
+        }
+        notify(deps.dispatcher, {
+          type: "info",
+          title: "Auto-workspace sources are now a plugin",
+          message:
+            `They moved to ${manifestPath.toNative()}` +
+            (converted.errors.length > 0
+              ? ` (${converted.errors.length} invalid source(s) left out)`
+              : ""),
+          dismissible: true,
+        });
+        deps.logger.info("Moved auto-workspace.sources into a plugin", {
+          path: manifestPath.toString(),
+        });
+      }
+      await legacySources.reset();
+    } catch (error) {
+      deps.logger.warn("Could not move auto-workspace.sources into a plugin", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // `ch plugin`
   // ---------------------------------------------------------------------------
 
@@ -935,7 +1178,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   const hooks: HookDeclarations = {
     [APP_SHUTDOWN_OPERATION_ID]: {
-      stop: { handler: cancelAllHooks },
+      stop: {
+        handler: async () => {
+          automations.stop();
+          await cancelAllHooks();
+        },
+      },
     },
     [OPEN_WORKSPACE_OPERATION_ID]: {
       provision: { handler: afterWorktreeCreated },
@@ -948,6 +1196,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   };
 
   const events: EventDeclarations = {
+    [EVENT_APP_STARTED]: {
+      handler: async (): Promise<void> => {
+        await moveLegacySources();
+        await automations.start();
+      },
+    },
     [EVENT_WORKSPACE_CREATED]: {
       // Returns immediately: the emitter must never wait on a plugin's script,
       // least of all one that may park on a trust dialog.
@@ -965,6 +1219,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   const moveProjects: ProjectMoveListener = async (moves) => {
     await trust.moveProjects(moves);
+    await automations.moveProjects(moves);
   };
 
   return { name: "plugins", hooks, events, moveProjects, api };

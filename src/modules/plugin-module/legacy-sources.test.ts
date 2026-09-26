@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { parseSources, validateSourcesConfig } from "./source-config";
+import { parse } from "yaml";
+import { convertLegacySources, parseSources } from "./legacy-sources";
+import { parseManifest } from "./manifest";
 
 const GH = `name: github
 type: cron
@@ -107,12 +109,37 @@ describe("parseSources", () => {
   });
 });
 
-describe("validateSourcesConfig", () => {
-  it("passes through null and valid strings, rejects invalid", () => {
-    expect(validateSourcesConfig(null)).toBeNull();
-    expect(validateSourcesConfig("")).toBe("");
-    expect(validateSourcesConfig(GH)).toBe(GH);
-    expect(validateSourcesConfig(`name: a\ncmd: x\ntemplate: {}`)).toBeUndefined();
-    expect(validateSourcesConfig(42)).toBeUndefined();
+describe("convertLegacySources", () => {
+  it("turns each source into an automation of a manifest that parses", () => {
+    const converted = convertLegacySources(
+      `name: gh prs\nmode: events\ncmd: gh pr list\ntemplate:\n  name: "pr-{{ number }}"\n---\nname: jira\ncmd: ./jira\ntemplate:\n  name: "{{ key }}"`,
+      "linux"
+    );
+
+    const [doc] = parseManifest(converted.manifest);
+    expect(doc).toMatchObject({ shell: "bash", platforms: ["linux", "windows", "macos"] });
+    expect(doc?.automations.map((a) => [a.name, a.mode, a.script])).toEqual([
+      ["gh-prs", "events", "gh pr list"],
+      ["jira", "workspaces", "./jira"],
+    ]);
+    expect([...converted.renames]).toEqual([
+      ["gh prs", "gh-prs"],
+      ["jira", "jira"],
+    ]);
+  });
+
+  it("keeps a Windows command line in cmd, on Windows only", () => {
+    const converted = convertLegacySources(`name: a\ncmd: dir\ntemplate:\n  name: x`, "win32");
+
+    expect(parse(converted.manifest)).toMatchObject({ shell: "cmd", platform: "windows" });
+  });
+
+  it("gives colliding names distinct automations", () => {
+    const converted = convertLegacySources(
+      `name: a b\ncmd: x\ntemplate:\n  name: x\n---\nname: a-b\ncmd: y\ntemplate:\n  name: y`,
+      "linux"
+    );
+
+    expect([...converted.renames.values()]).toEqual(["a-b", "a-b-2"]);
   });
 });
