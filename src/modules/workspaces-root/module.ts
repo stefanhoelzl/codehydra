@@ -16,6 +16,10 @@
  * A folder that cannot be used (not creatable, not writable, inside a project)
  * offers Continue with the current folder instead of Migrate / Use as is. The
  * setting stays as the user left it, so the question returns at the next start.
+ *
+ * Without asking when the data root itself moved (Windows: `%APPDATA%` to
+ * `%LOCALAPPDATA%`, see data-root-relocation.ts) and left the source code behind:
+ * the user changed nothing, so there is nothing to choose — Migrate runs directly.
  */
 
 import type { IntentModule } from "../../intents/lib/module";
@@ -68,6 +72,11 @@ export interface WorkspacesRootModuleDeps {
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
   /** Owners of path-keyed state; read when a migration runs (they are built later). */
   readonly moveListeners: () => readonly ProjectMoveListener[];
+  /**
+   * The data root before it moved (Windows' `%APPDATA%\Codehydra`), or null. Source
+   * code still under it is migrated to the data root without asking.
+   */
+  readonly legacyDataRoot: Path | null;
   readonly logger: Logger;
 }
 
@@ -118,6 +127,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
   });
 
   const rootFrom = (value: string | null): Path => (value === null ? dataRoot : new Path(value));
+  let heading = "The workspaces folder changed";
   const root = createWorkspacesRoot(() => rootFrom(currentRoot.get()));
 
   // ---------------------------------------------------------------------------
@@ -182,7 +192,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
 
   function header(from: Path, to: Path): DialogSection[] {
     return [
-      { type: "text", content: "The workspaces folder changed", style: "heading" },
+      { type: "text", content: heading, style: "heading" },
       { type: "text", content: `From ${from.toNative()}`, style: "subtitle" },
       { type: "text", content: `To ${to.toNative()}`, style: "subtitle" },
     ];
@@ -331,23 +341,38 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     if (resolved instanceof Path && resolved.equals(from)) return;
     const to = resolved instanceof Path ? resolved : configured;
 
-    logger.info("Workspaces root changed", { from: from.toString(), to: to.toString() });
+    // The data root moved and left the source code behind: nothing the user chose.
+    const automatic =
+      configuredRoot.get() === null &&
+      deps.legacyDataRoot !== null &&
+      from.equals(deps.legacyDataRoot) &&
+      resolved instanceof Path &&
+      (await isEmpty(to));
+    if (automatic) heading = "Moving workspaces to the new data folder";
+
+    logger.info("Workspaces root changed", {
+      from: from.toString(),
+      to: to.toString(),
+      automatic,
+    });
     const handle = ui.dialog({ sections: header(from, to) }, { kind: "modal" });
     try {
-      const problem = resolved instanceof Path ? await problemWith(to) : resolved.problem;
-      if (problem !== null) {
-        handle.update(problemConfig(from, to, problem));
-        const action = await nextAction(handle);
-        if (action === ACTION_QUIT) await quit();
-        return; // continue with the current folder
-      }
+      if (!automatic) {
+        const problem = resolved instanceof Path ? await problemWith(to) : resolved.problem;
+        if (problem !== null) {
+          handle.update(problemConfig(from, to, problem));
+          const action = await nextAction(handle);
+          if (action === ACTION_QUIT) await quit();
+          return; // continue with the current folder
+        }
 
-      handle.update(choiceConfig(from, to, await isEmpty(to)));
-      const choice = await nextAction(handle);
-      if (choice === ACTION_QUIT) await quit();
-      if (choice === ACTION_ADOPT) {
-        await useRoot(to);
-        return;
+        handle.update(choiceConfig(from, to, await isEmpty(to)));
+        const choice = await nextAction(handle);
+        if (choice === ACTION_QUIT) await quit();
+        if (choice === ACTION_ADOPT) {
+          await useRoot(to);
+          return;
+        }
       }
 
       // Migrate, until it succeeds or the user stops trying.

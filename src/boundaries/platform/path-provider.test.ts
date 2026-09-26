@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMockPathProvider } from "./path-provider.test-utils";
-import { DefaultPathProvider, type PathProvider } from "./path-provider";
+import { DefaultPathProvider, legacyWindowsDataRoot, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../utils/path/path";
@@ -399,7 +399,8 @@ describe("DefaultPathProvider", () => {
   });
 
   describe.skipIf(process.platform !== "win32")("production mode - Windows", () => {
-    it("returns <home>/AppData/Roaming/Codehydra/ based paths", () => {
+    it("returns <home>/AppData/Local/Codehydra/ based paths", () => {
+      vi.stubEnv("LOCALAPPDATA", "");
       const buildInfo = createMockBuildInfo({
         isDevelopment: false,
         isPackaged: true,
@@ -412,10 +413,35 @@ describe("DefaultPathProvider", () => {
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
 
       expect(pp.dataPath("projects").toString()).toBe(
-        "c:/users/testuser/appdata/roaming/codehydra/projects"
+        "c:/users/testuser/appdata/local/codehydra/projects"
       );
       expect(pp.dataPath("vscode").toString()).toBe(
-        "c:/users/testuser/appdata/roaming/codehydra/vscode"
+        "c:/users/testuser/appdata/local/codehydra/vscode"
+      );
+    });
+
+    it("follows a redirected %LOCALAPPDATA%", () => {
+      vi.stubEnv("LOCALAPPDATA", "D:/Profiles/TestUser/Local");
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
+      const platformInfo = createMockPlatformInfo({
+        platform: "win32",
+        homeDir: "C:/Users/TestUser",
+      });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.dataPath("projects").toString()).toBe(
+        "d:/profiles/testuser/local/codehydra/projects"
+      );
+    });
+
+    it("names the legacy root after %APPDATA%", () => {
+      vi.stubEnv("APPDATA", "");
+      expect(new Path(legacyWindowsDataRoot("C:/Users/TestUser")).toString()).toBe(
+        "c:/users/testuser/appdata/roaming/codehydra"
+      );
+      vi.stubEnv("APPDATA", "D:/Profiles/TestUser/Roaming");
+      expect(new Path(legacyWindowsDataRoot("C:/Users/TestUser")).toString()).toBe(
+        "d:/profiles/testuser/roaming/codehydra"
       );
     });
 
@@ -457,6 +483,21 @@ describe("DefaultPathProvider", () => {
 
       expect(pp.dataPath("projects").toString()).toBe("/tmp/ch-root/projects");
       expect(pp.bundlePath("opencode").toString()).toBe("/tmp/ch-root/opencode");
+    });
+
+    it("platformRoot replaces the production root, but not _CH_ROOT_DIR", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo, { platformRoot: "/old/root" });
+
+      expect(pp.dataPath("state.json").toString()).toBe("/old/root/state.json");
+      expect(pp.bundlePath("vscodium").toString()).toBe("/old/root/vscodium");
+
+      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+      const overridden = new DefaultPathProvider(buildInfo, platformInfo, {
+        platformRoot: "/old/root",
+      });
+      expect(overridden.dataPath("state.json").toString()).toBe("/tmp/ch-root/state.json");
     });
   });
 });

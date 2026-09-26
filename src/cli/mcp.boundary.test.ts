@@ -34,8 +34,11 @@ const WORKSPACE = "/repo/wt/feature";
  * the browser stub here too, which has no server.
  */
 function wsEngine(): ServerOptions["wsEngine"] {
+  // Through socket.io: engine.io is its dependency, not ours, so pnpm does not
+  // link it at the root.
   const fromRoot = createRequire(join(process.cwd(), "package.json"));
-  const fromEngine = createRequire(fromRoot.resolve("engine.io"));
+  const fromSocketIo = createRequire(fromRoot.resolve("socket.io"));
+  const fromEngine = createRequire(fromSocketIo.resolve("engine.io"));
   const wsRoot = dirname(fromEngine.resolve("ws/package.json"));
   return fromEngine(join(wsRoot, "lib", "websocket-server.js")) as ServerOptions["wsEngine"];
 }

@@ -54,6 +54,10 @@ interface SetupOptions {
   readonly current?: string | null;
   readonly entries?: Record<string, Entry>;
   readonly failRepair?: boolean;
+  /** The data root before it moved (`legacyDataRoot`). */
+  readonly legacyDataRoot?: Path;
+  /** Seed the clone under the data root (default true). */
+  readonly dataClone?: boolean;
 }
 
 /** The entries plus a directory entry for every ancestor, as a real tree has. */
@@ -81,7 +85,9 @@ function setup(options: SetupOptions = {}) {
       [new Path(records, managedProjectDirName(URL), "config.json").toString()]: file(
         JSON.stringify({ remoteUrl: URL })
       ),
-      [new Path(OLD_CLONE, ".git", "HEAD").toString()]: file("ref: refs/heads/main"),
+      ...(options.dataClone === false
+        ? {}
+        : { [new Path(OLD_CLONE, ".git", "HEAD").toString()]: file("ref: refs/heads/main") }),
       [new Path(
         DATA,
         "screenshots",
@@ -135,6 +141,7 @@ function setup(options: SetupOptions = {}) {
         moves.push([...m]);
       },
     ],
+    legacyDataRoot: options.legacyDataRoot ?? null,
     logger: SILENT_LOGGER,
   });
   if (options.configured !== undefined && options.configured !== null) {
@@ -381,6 +388,50 @@ describe("WorkspacesRootModule", () => {
 
       expect(s.root.current().equals(DATA)).toBe(true);
       expect(s.state.getEffective()[CURRENT_ROOT_STATE_KEY]).toBeNull();
+    });
+
+    describe("after the data root moved", () => {
+      // NEW_ROOT stands in for the old data root, still holding the source code.
+      const moved = (options: SetupOptions = {}) =>
+        setup({
+          current: NEW_ROOT.toNative(),
+          legacyDataRoot: NEW_ROOT,
+          dataClone: false,
+          entries: {
+            [new Path(NEW_CLONE, ".git", "HEAD").toString()]: file("ref: refs/heads/main"),
+          },
+          ...options,
+        });
+
+      it("migrates the source code without asking", async () => {
+        const s = moved();
+        await s.migrations();
+
+        expect(s.dialogs.handles).toHaveLength(1);
+        expect(buttonState(s.dialogs.lastHandle!.config, "migrate")).toBeUndefined();
+        expect(s.dialogs.lastHandle!.closed).toBe(true);
+        expect(exists(s.fs, new Path(OLD_CLONE, ".git", "HEAD"))).toBe(true);
+        expect(exists(s.fs, NEW_CLONE)).toBe(false);
+        expect(s.root.current().equals(DATA)).toBe(true);
+        expect(s.state.getEffective()[CURRENT_ROOT_STATE_KEY]).toBeNull();
+      });
+
+      it("asks when the user set a workspaces folder", async () => {
+        const s = moved({ configured: testPath("/elsewhere").toNative() });
+        const done = s.migrations();
+        await press(s.dialogs, "adopt");
+        await done;
+
+        expect(s.root.current().equals(testPath("/elsewhere"))).toBe(true);
+      });
+
+      it("asks when the data root already holds clones", async () => {
+        const s = moved({ dataClone: true });
+        const done = s.migrations();
+        expect((await waitForButton(s.dialogs, "migrate")).disabled).toBe(true);
+        await press(s.dialogs, "adopt");
+        await done;
+      });
     });
   });
 });

@@ -332,7 +332,15 @@ the `logs/` folder:
 
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
-- **Windows**: `%USERPROFILE%\AppData\Roaming\Codehydra\`
+- **Windows**: `%LOCALAPPDATA%\Codehydra\`
+
+Windows versions before this one kept it in `%APPDATA%\Codehydra\` (the
+roaming profile). The first start of a newer version moves settings, state,
+logs and binaries to `%LOCALAPPDATA%` and then migrates the workspaces without
+asking, as **Migrate** below does: cloned repositories move, existing
+workspaces stay in the old folder and keep working, new ones are created in
+the new one. While an older CodeHydra is still running from the old folder,
+nothing moves and the next start tries again.
 
 ### From a shell or an agent
 

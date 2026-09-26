@@ -19,8 +19,18 @@
 import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
+import { Path } from "./utils/path/path";
 // Boundaries - Platform
-import { DefaultPathProvider, type PathProvider } from "./boundaries/platform/path-provider";
+import {
+  DefaultPathProvider,
+  legacyWindowsDataRoot,
+  windowsDataRoot,
+  type PathProvider,
+} from "./boundaries/platform/path-provider";
+import {
+  relocateDataRoot,
+  type DataRootRelocation,
+} from "./boundaries/platform/data-root-relocation";
 import type { BuildInfo } from "./boundaries/platform/build-info";
 import { ElectronLog, type Logging } from "./boundaries/platform/logging";
 import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem";
@@ -208,9 +218,38 @@ asyncWatcher.enable();
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
 const platformInfo = new NodePlatformInfo();
-const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
+// Windows releases keep their data in %LOCALAPPDATA% since they stopped using the
+// roaming profile. Move an existing install's data before anything opens it; when
+// that fails (an older instance still running), this run stays in the old folder.
+const legacyDataRoot =
+  platformInfo.platform === "win32" && !buildInfo.isDevelopment && !process.env._CH_ROOT_DIR
+    ? legacyWindowsDataRoot(platformInfo.homeDir)
+    : null;
+const dataRootRelocation: DataRootRelocation =
+  legacyDataRoot === null
+    ? { status: "nothing" }
+    : relocateDataRoot(legacyDataRoot, windowsDataRoot(platformInfo.homeDir));
+const pathProvider: PathProvider = new DefaultPathProvider(
+  buildInfo,
+  platformInfo,
+  dataRootRelocation.status === "failed" ? { platformRoot: dataRootRelocation.from } : {}
+);
 const loggingService: Logging = new ElectronLog(pathProvider);
 const appLogger = loggingService.createLogger("app");
+if (dataRootRelocation.status === "moved") {
+  appLogger.info("Moved the data folder", {
+    from: dataRootRelocation.from,
+    to: dataRootRelocation.to,
+    sourceCodeKept: dataRootRelocation.sourceCodeKept,
+  });
+  for (const warning of dataRootRelocation.warnings) appLogger.warn(warning);
+} else if (dataRootRelocation.status === "failed") {
+  appLogger.warn("Could not move the data folder; using the old one until the next start", {
+    from: dataRootRelocation.from,
+    to: dataRootRelocation.to,
+    error: dataRootRelocation.error,
+  });
+}
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemBoundary(loggingService.createLogger("fs"));
 
@@ -744,6 +783,7 @@ const workspacesRootModule = createWorkspacesRootModule({
   dispatcher,
   // Built further down; read only when a migration runs.
   moveListeners: () => [hooksModule.moveProjects, autoWorkspaceModule.moveProjects],
+  legacyDataRoot: legacyDataRoot === null ? null : new Path(legacyDataRoot),
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
