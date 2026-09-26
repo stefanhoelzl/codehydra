@@ -21,7 +21,8 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
 import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/plugin";
-import { NotConnectedError, type Client } from "./client";
+import { connect, NotConnectedError, type Client } from "./client";
+import type { Connection } from "./discovery";
 
 /**
  * Cross-tool guidance an agent needs before it has loaded any tool schema.
@@ -91,6 +92,24 @@ export function reconnecting(first: Client, connect: () => Promise<Client>): Cli
       current.close();
     },
   };
+}
+
+/**
+ * Open `ch mcp`'s connection to the app.
+ *
+ * It presents itself as the MCP shim, which is what makes the app shape its
+ * calls as MCP's tools: a tool's `workspace` argument names the target, where
+ * the CLI's shaping would drop it and act on the caller instead. It is the
+ * agent's own workspace — `_CH_WORKSPACE_PATH`, which the agent config passes
+ * explicitly, since an MCP server has no meaningful working directory.
+ */
+export function connectMcp(
+  connection: Connection,
+  env: NodeJS.ProcessEnv,
+  cwd: string
+): Promise<Client> {
+  const own = env._CH_WORKSPACE_PATH;
+  return connect({ connection, kind: "mcp", cwd, ...(own !== undefined && { workspace: own }) });
 }
 
 /** A tool result, in the shape the protocol expects. */
