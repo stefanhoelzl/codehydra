@@ -45,8 +45,17 @@ export const ROOT_DIR =
     `codehydra-e2e-${createHash("sha256").update(realpathSync(REPO_ROOT)).digest("hex").slice(0, 8)}`
   );
 
-/** One root: the app puts config.json, projects/, and the binary bundles all here. */
+/** One root: the app puts projects/ and the binary bundles here, and its home (HOME_ROOT) inside. */
 export const DATA_ROOT = ROOT_DIR;
+
+/**
+ * The app's home root: config.json and plugins/. `_CH_ROOT_DIR` puts it inside
+ * the data root, so a run never reads or writes the user's real `~/.codehydra`.
+ */
+export const HOME_ROOT = join(DATA_ROOT, "home");
+
+/** The config file the app reads and `ch config set` writes. */
+export const CONFIG_FILE = join(HOME_ROOT, "config.json");
 
 /**
  * Compare paths the way the filesystem does, not the way they were typed. `resolve()`
@@ -98,11 +107,14 @@ export function resetRoot(): void {
  * Wipe the app's mutable state without touching bundles or installed extensions.
  * Safe by construction — it deletes named children, never the root itself.
  *
- * `keepConfig: true` preserves the agent choice, so warm specs skip the wizard.
+ * `keepConfig: true` preserves the home's config.json (the agent choice), so warm
+ * specs skip the wizard.
  */
 export function resetDataState(options: { keepConfig: boolean }): void {
-  const entries = ["projects", "state.json", join("vscode", "user-data")];
-  if (!options.keepConfig) entries.push("config.json");
+  // Plugins go with every reset: a spec that installs one must not leave it
+  // running scripts in the next spec's workspaces.
+  const entries = ["projects", "state.json", join("vscode", "user-data"), join("home", "plugins")];
+  if (!options.keepConfig) entries.push("home");
 
   for (const entry of entries) {
     rmSync(join(DATA_ROOT, entry), {

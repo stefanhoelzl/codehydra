@@ -255,7 +255,8 @@ const fileSystemLayer = new DefaultFileSystemBoundary(loggingService.createLogge
 
 // Config — constructed before modules so they can register keys
 const configService = new DefaultConfig({
-  configPath: pathProvider.dataPath("config.json"),
+  configPath: pathProvider.homePath("config.json"),
+  legacyConfigPath: pathProvider.dataPath("config.json"),
   fileSystem: fileSystemLayer,
   logger: loggingService.createLogger("config"),
   isDevelopment: buildInfo.isDevelopment,

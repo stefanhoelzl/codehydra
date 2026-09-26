@@ -12,10 +12,12 @@
  */
 import { expect, test } from "@playwright/test";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CONFIG_FILE,
   DATA_ROOT,
+  HOME_ROOT,
   ROOT_DIR,
   expectNoNativeDialogs,
   failFastOnSetupError,
@@ -67,7 +69,8 @@ test("--download-binaries fetches every binary, and the app starts on it", async
   expect(existsSync(join(DATA_ROOT, "projects")), output).toBe(false);
 
   // --- Seed the agent choice, then start the app on the seeded root ---
-  writeFileSync(join(DATA_ROOT, "config.json"), `${JSON.stringify({ agent: "opencode" })}\n`);
+  mkdirSync(HOME_ROOT, { recursive: true });
+  writeFileSync(CONFIG_FILE, `${JSON.stringify({ agent: "opencode" })}\n`);
 
   const driver = app();
   await launchApp(driver, { agent: "opencode" });

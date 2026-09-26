@@ -156,6 +156,14 @@ describe("DefaultPathProvider", () => {
       expect(pp.dataPath("bin").toString()).toMatch(/app-data\/bin$/);
     });
 
+    it("homePath resolves under app-data/home, never the real home", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux", homeDir: "/home/testuser" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.homePath("config.json").toString()).toMatch(/app-data\/home\/config\.json$/);
+    });
+
     it("tempPath returns paths under app-data/temp/", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
@@ -292,6 +300,15 @@ describe("DefaultPathProvider", () => {
         "/opt/codehydra/resources/app.asar/out/main/assets/manifest.json"
       );
       expect(pp.dataPath("bin").toString()).toBe("/home/testuser/.local/share/codehydra/bin");
+    });
+
+    it("homePath resolves under ~/.codehydra, apart from the data root", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
+      const platformInfo = createMockPlatformInfo({ platform: "linux", homeDir: "/home/testuser" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.homePath("config.json").toString()).toBe("/home/testuser/.codehydra/config.json");
+      expect(pp.homePath("plugins").toString()).toBe("/home/testuser/.codehydra/plugins");
     });
 
     it("tempPath resolves under data root", () => {
@@ -498,6 +515,16 @@ describe("DefaultPathProvider", () => {
         platformRoot: "/old/root",
       });
       expect(overridden.dataPath("state.json").toString()).toBe("/tmp/ch-root/state.json");
+    });
+
+    it("_CH_ROOT_DIR relocates the home root inside it", () => {
+      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+      const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux", homeDir: "/home/testuser" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      // A test run must never touch the user's real ~/.codehydra.
+      expect(pp.homePath("plugins").toString()).toBe("/tmp/ch-root/home/plugins");
     });
   });
 });

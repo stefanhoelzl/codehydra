@@ -651,7 +651,7 @@ The main process uses a composition-root pattern in `src/main.ts`. All services 
 
 On first startup (no `config.json` exists), the application follows this flow:
 
-1. **Config Loading**: `Config.load()` reads `{dataRootDir}/config.json`. If missing, returns defaults with `agent: null`.
+1. **Config Loading**: `Config.load()` reads `{homeRootDir}/config.json` (`~/.codehydra/`; moved there from `{dataRootDir}` on the first start that finds none). If missing, returns defaults with `agent: null`.
 
 2. **Agent Selection**: When `agent` is null, UI shows `AgentSelectionDialog`. User selects Claude or OpenCode, which calls `lifecycle.setAgent()` to save the choice.
 

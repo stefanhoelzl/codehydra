@@ -11,7 +11,9 @@ import { join } from "node:path";
 // under bare node (which requires extensions in relative ESM specifiers).
 import { DEV_ELECTRON, DRIVER_APP_ARGS, createDriver, type AppDriver } from "../scripts/appctrl.ts";
 import {
+  CONFIG_FILE,
   DATA_ROOT,
+  HOME_ROOT,
   REPO_ROOT,
   ROOT_DIR,
   mode,
@@ -614,4 +616,4 @@ export function workspacesDir(): string {
   return join(projects, entries[0]!, "workspaces");
 }
 
-export { DATA_ROOT, ROOT_DIR, mode };
+export { CONFIG_FILE, DATA_ROOT, HOME_ROOT, ROOT_DIR, mode };

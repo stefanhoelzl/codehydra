@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
 import { BIN_DIR, CH, bareEnv, ch, chAsync, chSpawn, json } from "./ch.ts";
 import {
+  CONFIG_FILE,
   DATA_ROOT,
   createWorkspace,
   expandSidebar,
@@ -117,7 +118,7 @@ test.describe("ch CLI", () => {
   });
 
   test("sets, reads and resets a config value through config.json", () => {
-    const configFile = join(DATA_ROOT, "config.json");
+    const configFile = CONFIG_FILE;
     const onDisk = () => JSON.parse(readFileSync(configFile, "utf-8")) as Record<string, unknown>;
 
     // Warm specs keep config.json, so whatever this writes must not outlive it.
