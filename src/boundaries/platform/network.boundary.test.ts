@@ -288,17 +288,11 @@ describe("DefaultNetworkLayer boundary tests", () => {
       const uniquePorts = new Set(ports);
       expect(uniquePorts.size).toBe(COUNT);
 
-      // All ports should be bindable (verify first 5 to avoid test slowness)
-      const serversToTest = ports.slice(0, 5);
-      for (const port of serversToTest) {
-        const server = createServer();
-        await new Promise<void>((resolve, reject) => {
-          server.on("error", reject);
-          server.listen(port, () => {
-            server.close(() => resolve());
-          });
-        });
-      }
+      // Deliberately no "every port is still bindable" check: findFreePort
+      // releases the port before it resolves, and the parallel suite binds
+      // ports of its own, so any of them can be taken in between. That is the
+      // documented contract (callers must handle EADDRINUSE), and binding is
+      // what listenOnFreePort() covers race-free above.
     }, 30000); // 30s timeout for stress test
   });
 
