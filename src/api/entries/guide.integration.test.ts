@@ -54,7 +54,6 @@ function call(input: Record<string, unknown>): Promise<unknown> {
     reg.get("guide"),
     {
       workspacePath: null,
-      callerWorkspacePath: null,
       cwd: null,
       signal: new AbortController().signal,
     },

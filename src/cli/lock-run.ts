@@ -37,6 +37,8 @@ const SCHEMA = {
     reason: { type: "string" },
     scope: { type: "string" },
     noWait: { type: "boolean" },
+    workspace: { type: "string" },
+    project: { type: "string" },
   },
 };
 
@@ -44,8 +46,8 @@ export interface LockRunOptions {
   /** Arguments after `lock run`. */
   readonly argv: readonly string[];
   readonly isTty: boolean;
-  /** Open a connection, to an explicit workspace when `--workspace` named one. */
-  readonly connect: (workspace?: string) => Promise<Client>;
+  /** Open a connection. */
+  readonly connect: () => Promise<Client>;
   /** Run the command to completion and report its exit status. */
   readonly runCommand: (command: string, args: readonly string[]) => Promise<number>;
   /** Block until the process is killed. Injectable so tests can return. */
@@ -65,7 +67,7 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
   let client: Client | undefined;
   try {
     json = useJson(readFormat(own), options.isTty);
-    const { input, global } = parseArgs(own, SCHEMA, ["name", "reason"]);
+    const { input } = parseArgs(own, SCHEMA, ["name", "reason"]);
     if (typeof input.name !== "string") {
       throw new UsageError(
         "usage: ch lock run <name> [<reason>] [--scope …] [--no-wait] [-- <cmd…>]"
@@ -75,7 +77,7 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
       throw new UsageError("ch lock run: nothing after --; omit it to hold until killed");
     }
 
-    client = await options.connect(global.workspace);
+    client = await options.connect();
 
     // Ask before calling: an app without the channel never answers, and calls
     // have no timeout, so an older CodeHydra would leave this waiting forever.
@@ -105,9 +107,12 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
 
     if (held.acquired) {
       try {
+        // As whoever took it: `--workspace` holds on another's behalf.
         await client.call(`${OPERATION_CHANNEL_PREFIX}lock.release`, {
           name: held.name,
           scope: held.scope,
+          ...(input.workspace !== undefined && { workspace: input.workspace }),
+          ...(input.project !== undefined && { project: input.project }),
         });
       } catch {
         // Already gone — hibernated, say — or the app went away. Either way the

@@ -63,9 +63,11 @@ function categoryFrom(value: unknown): ApiErrorCategory {
 export interface ClientOptions {
   readonly connection: Connection;
   /**
-   * Which client this is. The app shapes every operation by it — `ch mcp` is
-   * offered MCP's tools, so it must say it is the MCP shim, or the app applies
-   * the CLI's shaping to arguments the CLI never sends. Default `cli`.
+   * Which client this is. The app mounts that client's operations with its
+   * defaults — `ch mcp` serves MCP's tools, so it must say it is the MCP shim,
+   * or a tool the CLI does not carry (`ui_show_message`) goes unanswered and
+   * one it defaults differently (`lock_take`) behaves as the CLI's. Default
+   * `cli`.
    */
   readonly kind?: "cli" | "mcp";
   /** Directory the command was run from; the app resolves it to a workspace. */

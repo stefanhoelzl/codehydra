@@ -62,7 +62,6 @@ function setup() {
   ): Promise<unknown> => {
     const ctx: OperationContext = {
       workspacePath: workspace,
-      callerWorkspacePath: workspace,
       cwd: null,
       signal,
     };

@@ -20,7 +20,14 @@ const DESCRIPTORS: readonly OperationDescriptor[] = [
     name: "workspace.status",
     kind: "command",
     description: "Get workspace status.",
-    inputSchema: { type: "object", properties: { refresh: { type: "boolean" } } },
+    inputSchema: {
+      type: "object",
+      properties: {
+        workspace: { type: "string" },
+        project: { type: "string" },
+        refresh: { type: "boolean" },
+      },
+    },
     path: ["ws", "status"],
   },
   {
@@ -152,19 +159,8 @@ describe("run", () => {
     });
   });
 
-  describe("--project", () => {
-    it("is a usage error without --workspace, before anything is called", async () => {
-      const calls: Recorded[] = [];
-      const result = await runWith(
-        ["ws", "status", "--project", "p0"],
-        fakeClient(() => ({}), calls)
-      );
-
-      expect(result.exitCode).toBe(EXIT.USAGE);
-      expect(calls).toEqual([]);
-    });
-
-    it("rides along with --workspace, sending nothing in the input", async () => {
+  describe("--workspace / --project", () => {
+    it("are sent as the command's own target fields", async () => {
       const calls: Recorded[] = [];
       const result = await runWith(
         ["ws", "status", "--workspace", "ws0", "--project", "p0"],
@@ -172,7 +168,18 @@ describe("run", () => {
       );
 
       expect(result.exitCode).toBe(EXIT.OK);
-      expect(calls[0]!.request).toEqual({});
+      expect(calls[0]!.request).toEqual({ workspace: "ws0", project: "p0" });
+    });
+
+    it("are a usage error for a command that acts on no workspace", async () => {
+      const calls: Recorded[] = [];
+      const result = await runWith(
+        ["project", "list", "--workspace", "ws0"],
+        fakeClient(() => [], calls)
+      );
+
+      expect(result.exitCode).toBe(EXIT.USAGE);
+      expect(calls).toEqual([]);
     });
   });
 

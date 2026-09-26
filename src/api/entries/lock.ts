@@ -4,9 +4,9 @@
  *
  * The table itself lives in the lock module and is reached through
  * `deps.locks`; these entries only turn a caller and its arguments into a lock
- * key and shape the answer. The holder is always the connection's workspace —
- * the one `ch` resolved from its working directory, or the one it was told with
- * `--workspace`. Naming the holder is therefore how someone else's lock is
+ * key and shape the answer. The holder is the workspace the call targets — the
+ * caller's own, or the one its `workspace` field (`--workspace`) names. Naming
+ * the holder is therefore how someone else's lock is
  * broken: `ch lock release <name> --workspace <holder>` releases it from any
  * shell. Nothing takes a lock implicitly; that explicit release is the only way.
  */
@@ -21,7 +21,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
 import { Path } from "../../utils/path/path";
 import { formatAge } from "../../utils/age";
-import { createWorkspaceNamer } from "./target";
+import { createTargetResolver, createWorkspaceNamer, targetFields } from "./target";
 
 const lockName = z
   .string()
@@ -33,7 +33,7 @@ type Scope = z.infer<typeof scopeSchema>;
 const SCOPE_DESCRIPTION =
   "Who contends for this name: every workspace of every open project, or only this project's";
 
-/** The caller's workspace. Entries that use it declare `requiresWorkspace`. */
+/** The caller's own workspace, for a listing scoped to its project. */
 function callerOf(ctx: OperationContext): WorkspacePath {
   if (ctx.workspacePath === null) {
     throw new ApiError("no-workspace", "No workspace to act on.");
@@ -44,19 +44,20 @@ function callerOf(ctx: OperationContext): WorkspacePath {
 export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher, locks } = deps;
   const nameOf = createWorkspaceNamer(dispatcher);
+  const targetOf = createTargetResolver(dispatcher);
 
-  /** The project the caller's workspace belongs to. */
-  const projectOf = async (ctx: OperationContext): Promise<ProjectPath> => {
+  /** The project a workspace belongs to. */
+  const projectOf = async (workspacePath: WorkspacePath): Promise<ProjectPath> => {
     const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: callerOf(ctx) },
+      payload: { workspacePath },
     });
     return resolved.projectPath;
   };
 
-  const keyOf = async (ctx: OperationContext, name: string, scope: Scope): Promise<LockKey> => ({
+  const keyOf = async (holder: WorkspacePath, name: string, scope: Scope): Promise<LockKey> => ({
     name,
-    project: scope === "project" ? await projectOf(ctx) : null,
+    project: scope === "project" ? await projectOf(holder) : null,
   });
 
   /** Whether a lock falls in the namespace a `--scope` filter names. */
@@ -64,6 +65,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     scope === undefined || (scope === "global" ? lock.project === null : lock.project === project);
 
   const takeInput = z.object({
+    ...targetFields,
     name: lockName.describe("Lock name: letters, digits, hyphens and underscores"),
     reason: z
       .string()
@@ -97,7 +99,8 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     input: takeInput,
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const result = await locks.take(callerOf(ctx), await keyOf(ctx, input.name, input.scope), {
+      const holder = await targetOf(ctx, input);
+      const result = await locks.take(holder, await keyOf(holder, input.name, input.scope), {
         reason: input.reason,
         wait: !input.noWait,
         signal: ctx.signal,
@@ -122,7 +125,8 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     input: takeInput,
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const result = await locks.take(callerOf(ctx), await keyOf(ctx, input.name, input.scope), {
+      const holder = await targetOf(ctx, input);
+      const result = await locks.take(holder, await keyOf(holder, input.name, input.scope), {
         reason: input.reason,
         wait: !input.noWait,
         signal: ctx.signal,
@@ -151,6 +155,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "`--workspace <holder>` releases as that workspace: the way to break a lock whose holder " +
       "is stuck. It does not stop whatever the holder is running, so make sure it is done.",
     input: z.object({
+      ...targetFields,
       name: lockName
         .optional()
         .describe("Lock to release. Omit to release all this workspace holds"),
@@ -162,14 +167,14 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const workspace = callerOf(ctx);
+      const workspace = await targetOf(ctx, input);
 
       if (input.name !== undefined) {
-        locks.release(workspace, await keyOf(ctx, input.name, input.scope ?? "global"));
+        locks.release(workspace, await keyOf(workspace, input.name, input.scope ?? "global"));
         return { released: [input.name] };
       }
 
-      const project = input.scope === "project" ? await projectOf(ctx) : null;
+      const project = input.scope === "project" ? await projectOf(workspace) : null;
       const mine = locks
         .list()
         .filter((lock) => new Path(lock.holder).equals(workspace))
@@ -196,7 +201,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     // know which project the caller is in.
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const project = input.scope === "project" ? await projectOf(ctx) : null;
+      const project = input.scope === "project" ? await projectOf(callerOf(ctx)) : null;
       const shown = locks
         .list()
         .filter((lock) => inScope(lock, input.scope, project))

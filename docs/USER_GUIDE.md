@@ -1038,16 +1038,17 @@ ch guide repository-hooks
 ```
 
 - `ch` acts on the workspace containing the current directory.
-  `--workspace <name|path>` targets another. Only an absolute path counts as a
-  path. A name is looked up in your own project first (the one the current
-  directory's workspace belongs to, or whose checkout you are in) and wins
-  there; otherwise it must be unique across the other open projects.
-  `--project <name|path>` looks the name up in that project only. A name that
-  matches no open workspace fails the first command that needs a workspace with
-  exit 6; one that matches several fails it with exit 2 — add `--project` or
-  pass a path. `--project` without `--workspace` is exit 2 (except on
-  `ws create` and `ws switch`, whose own `--project` it is). Commands that need no workspace
-  still run.
+  `--workspace <name|path>` targets another, on every command that acts on a
+  workspace. Only an absolute path counts as a path. A name is looked up in
+  your own project first (the one the current directory's workspace belongs
+  to, or whose checkout you are in) and wins there; otherwise it must be unique
+  across the other open projects. `--project <name|path>` looks the name up in
+  that project only. A name that matches no open workspace fails the command
+  with exit 6; one that matches several fails it with exit 2 — add `--project`
+  or pass a path. `--project` without `--workspace` is exit 2 (except on
+  `ws create` and `ws switch`, whose own `--project` it is). On a command that
+  acts on no workspace (`project`, `config`, `guide`, `log`, `lock ls`,
+  `ws create`, …) `--workspace` is exit 2 rather than ignored.
 - `project`, `config`, `guide`, `log`, `report-issue`, `lock ls`,
   `notification`, `ws switch`, `ws open` and `ws create --project …` work
   outside a workspace, and so does every workspace command given `--workspace`;
@@ -1056,7 +1057,10 @@ ch guide repository-hooks
   JSON when piped — errors too, as `{"error", "exitCode"}` on stderr;
   `--format json` or `--format text` forces either. `ch guide` prints markdown
   unless `--format json` is given. An unknown flag is a usage error (exit 2).
-  Progress (clones, deletions) goes to stderr when it is a terminal.
+  Progress (clones, deletions) goes to stderr when it is a terminal: the
+  progress of the workspace the command acts on (`ws delete --workspace other`
+  shows the other workspace's teardown), and of whatever a command with no
+  target starts (`ws create`, `project open`).
 - Exit codes: 0 ok, 1 failed, 2 usage, 3 CodeHydra not reachable, 4 not in a
   workspace, 5 conflict, 6 not found.
 - `ws browser` opens the URL in the editor's Simple Browser. `file://` URLs
@@ -1146,7 +1150,8 @@ agents launch):
 
 Tools that can act on another workspace take `workspace` (a name or an
 absolute path, looked up like `--workspace`: the agent's own project first) and
-`project`, like `ch`'s `--workspace` and `--project`.
+`project`. They are the same fields as `ch`'s `--workspace` and `--project` and
+the plugin API's `workspace` and `project`, and mean the same thing on each.
 
 You don't need to learn any of it. Just describe what you want in plain
 language:

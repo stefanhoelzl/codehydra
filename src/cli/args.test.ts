@@ -174,11 +174,11 @@ describe("parseArgs", () => {
   });
 
   describe("global flags", () => {
-    it("captures workspace and help without treating them as input", () => {
-      const { input, global } = parseArgs(["--workspace", "/wt/a", "--help"], DELETE);
+    it("captures help without treating it as input", () => {
+      const { input, global } = parseArgs(["--help"], DELETE);
 
       expect(input).toEqual({});
-      expect(global).toEqual({ workspace: "/wt/a", help: true });
+      expect(global).toEqual({ help: true });
     });
 
     it("records the output format", () => {
@@ -198,28 +198,22 @@ describe("parseArgs", () => {
       expect(parseArgs(["--progress", "--no-progress"], DELETE).input).toEqual({});
     });
 
-    it("takes --project as global for a command without a project field", () => {
-      const { input, global } = parseArgs(["--workspace", "ws0", "--project", "p0"], DELETE);
-
-      expect(input).toEqual({});
-      expect(global).toMatchObject({ workspace: "ws0", project: "p0" });
-    });
-
-    it("leaves --project to a command that has a project field of its own", () => {
-      const create: InputSchema = {
-        properties: { name: { type: "string" }, project: { type: "string" } },
+    it("fills a command's own workspace and project fields from --workspace / --project", () => {
+      const targeted: InputSchema = {
+        properties: { workspace: { type: "string" }, project: { type: "string" } },
       };
-      const { input, global } = parseArgs(["--project", "p0"], create);
+      const { input } = parseArgs(["--workspace", "ws0", "--project", "p0"], targeted);
 
-      expect(input).toEqual({ project: "p0" });
-      expect(global.project).toBeUndefined();
+      expect(input).toEqual({ workspace: "ws0", project: "p0" });
     });
 
-    it("lets a global flag win over a field of the same name", () => {
-      const schema: InputSchema = { properties: { workspace: { type: "string" } } };
-      const { input, global } = parseArgs(["--workspace", "/wt/a"], schema, ["workspace"]);
-      expect(input).toEqual({});
-      expect(global.workspace).toBe("/wt/a");
+    it("refuses --workspace and --project for a command without such fields", () => {
+      expect(() => parseArgs(["--workspace", "ws0"], DELETE)).toThrow(
+        /--workspace does not apply to this command/
+      );
+      expect(() => parseArgs(["--project", "p0"], DELETE)).toThrow(
+        /--project does not apply to this command/
+      );
     });
   });
 });

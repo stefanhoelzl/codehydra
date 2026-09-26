@@ -27,7 +27,7 @@ export interface OperationDescriptor {
   readonly kind: "command" | "event";
   readonly description: string;
   readonly instructions?: string;
-  /** JSON Schema for the input, already narrowed to this adapter's shaping. */
+  /** JSON Schema for the input, with the fields this adapter defaults made optional. */
   readonly inputSchema: unknown;
   /** MCP tool name, when describing the MCP view. */
   readonly tool?: string;
@@ -70,7 +70,7 @@ export function describe(
       kind: entry.kind,
       description: entry.description,
       ...(entry.instructions !== undefined && { instructions: entry.instructions }),
-      inputSchema: narrow(schema, mapping.pick, mapping.omit, mapping.defaults),
+      inputSchema: optionalDefaults(schema, mapping.defaults),
       ...("tool" in mapping && { tool: mapping.tool }),
       ...("path" in mapping && { path: mapping.path }),
       ...("positionals" in mapping &&
@@ -85,30 +85,17 @@ export function describe(
 }
 
 /**
- * Drop properties the adapter does not accept from a JSON Schema object, and
- * mark the ones it fills with a default as optional.
- *
- * Without this a client would offer arguments the adapter silently discards —
- * the plugin wire's workspace-scoped channels, for instance, take no target —
- * or demand one the adapter supplies itself, like the CLI's `ch ws title`.
+ * Mark the fields an adapter fills with a default as optional in a JSON Schema
+ * object, so a client does not demand one the adapter supplies itself, like
+ * the CLI's `ch ws title`.
  */
-function narrow(
+function optionalDefaults(
   schema: unknown,
-  pick: readonly string[] | undefined,
-  omit: readonly string[] | undefined,
   defaults: Readonly<Record<string, unknown>> | undefined
 ): unknown {
-  if (pick === undefined && omit === undefined && defaults === undefined) return schema;
+  if (defaults === undefined) return schema;
   if (schema === null || typeof schema !== "object") return schema;
-  const object = schema as { properties?: Record<string, unknown>; required?: string[] };
-  if (!object.properties) return schema;
-
-  const keep = (key: string): boolean =>
-    (pick === undefined || pick.includes(key)) && !(omit ?? []).includes(key);
-  const required = (key: string): boolean => keep(key) && !(key in (defaults ?? {}));
-  return {
-    ...object,
-    properties: Object.fromEntries(Object.entries(object.properties).filter(([key]) => keep(key))),
-    ...(object.required && { required: object.required.filter(required) }),
-  };
+  const object = schema as { required?: string[] };
+  if (!object.required) return schema;
+  return { ...object, required: object.required.filter((key) => !(key in defaults)) };
 }

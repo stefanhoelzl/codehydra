@@ -97,11 +97,11 @@ export function reconnecting(first: Client, connect: () => Promise<Client>): Cli
 /**
  * Open `ch mcp`'s connection to the app.
  *
- * It presents itself as the MCP shim, which is what makes the app shape its
- * calls as MCP's tools: a tool's `workspace` argument names the target, where
- * the CLI's shaping would drop it and act on the caller instead. It is the
+ * It presents itself as the MCP shim, which is what makes the app answer its
+ * calls as MCP's tools, with MCP's defaults. And it presents who it is: the
  * agent's own workspace — `_CH_WORKSPACE_PATH`, which the agent config passes
- * explicitly, since an MCP server has no meaningful working directory.
+ * explicitly, since an MCP server has no meaningful working directory. What a
+ * tool call acts on is its own `workspace` argument, never the connection.
  */
 export function connectMcp(
   connection: Connection,

@@ -23,26 +23,6 @@ const VERSION = "1.0.0";
 
 const fs: DiscoveryFs = { readFileSync, realpathSync };
 
-/** The value of `--<name>`, read straight from argv. */
-function flagValue(argv: readonly string[], name: string): string | undefined {
-  const index = argv.indexOf(`--${name}`);
-  if (index !== -1) return argv[index + 1];
-  const inline = argv.find((token) => token.startsWith(`--${name}=`));
-  return inline?.slice(`--${name}=`.length);
-}
-
-/**
- * Read `--workspace` (and the `--project` to look it up in) before anything
- * else: the handshake carries them. `--project` alone is not sent — it is then
- * either a command's own field (`ws create --project`) or a usage error.
- */
-function workspaceFlags(argv: readonly string[]): { workspace?: string; project?: string } {
-  const workspace = flagValue(argv, "workspace");
-  if (workspace === undefined) return {};
-  const project = flagValue(argv, "project");
-  return { workspace, ...(project !== undefined && { project }) };
-}
-
 /**
  * Run a command transparently: same stdio, same exit code.
  *
@@ -121,35 +101,28 @@ async function main(): Promise<number> {
     return passthrough(command, rest);
   }
 
-  // Flags are read only up to `--`: past it is a command `ch lock run` passes
-  // through, and its own `--workspace` is not ours.
-  const flagArgv = argv.includes("--") ? argv.slice(0, argv.indexOf("--")) : argv;
-
   /** See chooseConnection: `_CH_DATA_DIR`, then port + token, then state.json. */
   const connection = () => chooseConnection(process.argv[1] ?? __filename, process.env, fs);
 
   /**
-   * Open a connection, naming a workspace only when one was asked for.
+   * Open a connection. It says only where `ch` was run — the app resolves that
+   * to the caller's own workspace. What a command acts on is its own
+   * `--workspace` field, sent with the call.
    *
-   * `_CH_WORKSPACE_PATH` is deliberately NOT a fallback here. Every CodeHydra
+   * `_CH_WORKSPACE_PATH` is deliberately NOT consulted here. Every CodeHydra
    * terminal sets it to that terminal's workspace, so using it would make `ch`
    * ignore the directory it was run in — `cd` into another workspace and
    * commands would silently act on the terminal's own. The environment is only
-   * the right answer for `ch mcp`, whose agent config passes it explicitly and
-   * which has no meaningful working directory.
+   * the right answer for `ch mcp` (see connectMcp), whose agent config passes
+   * it explicitly and which has no meaningful working directory.
    */
-  const openConnection = async (target: { workspace?: string; project?: string } = {}) =>
-    connect({
-      connection: connection(),
-      cwd: process.cwd(),
-      ...target,
-    });
+  const openConnection = () => connect({ connection: connection(), cwd: process.cwd() });
 
   if (argv[0] === "lock" && argv[1] === "run") {
     return lockRun({
       argv: argv.slice(2),
       isTty: process.stdout.isTTY === true,
-      connect: (workspace) => openConnection(workspace === undefined ? {} : { workspace }),
+      connect: openConnection,
       runCommand,
       // The open socket keeps the process alive; the default signal handling
       // ends it, and the closing connection releases the lock.
@@ -188,7 +161,7 @@ async function main(): Promise<number> {
   const result = await run({
     argv,
     isTty: process.stdout.isTTY === true,
-    connect: () => openConnection(workspaceFlags(flagArgv)),
+    connect: openConnection,
     ...(process.stdin.isTTY !== true && { readStdin: readAllStdin }),
     ...(showProgress && {
       onProgress: (line: string) => process.stderr.write(`${line}\n`),

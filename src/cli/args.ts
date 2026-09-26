@@ -22,15 +22,14 @@ export type Format = "json" | "text" | "auto";
 
 const FORMATS: readonly Format[] = ["json", "text", "auto"];
 
-/** Flags that apply to every command rather than to one operation. */
+/**
+ * Flags that apply to every command rather than to one operation.
+ *
+ * `--workspace` / `--project` are not among them: they are the fields of the
+ * commands that act on a workspace (see `targetFields`), so a command that acts
+ * on none refuses them rather than ignoring them.
+ */
 export interface GlobalArgs {
-  /** Explicit workspace target, overriding the one derived from cwd. */
-  readonly workspace?: string;
-  /**
-   * Project to look the `--workspace` name up in. Global only for a command
-   * without a `project` field of its own (`ws create` has one, and keeps it).
-   */
-  readonly project?: string;
   /** Output format; undefined when `--format` was not given, which means `auto`. */
   readonly format?: Format;
   readonly help: boolean;
@@ -59,13 +58,9 @@ export class UsageError extends Error {
 
 type OptionSpec = { readonly type: "string" | "boolean"; readonly short?: string };
 
-/**
- * Flags every command accepts. They win over an operation field of the same
- * name, so `--workspace` always targets a workspace.
- */
+/** Flags every command accepts. They win over an operation field of the same name. */
 const GLOBAL_OPTIONS: Readonly<Record<string, OptionSpec>> = {
   help: { type: "boolean", short: "h" },
-  workspace: { type: "string" },
   input: { type: "string" },
   format: { type: "string" },
   // Consumed by the entry point before run() is called; declared here so they
@@ -250,17 +245,11 @@ export function parseArgs(
     }
   }
   Object.assign(options, GLOBAL_OPTIONS);
-  // `--project` scopes the `--workspace` lookup — unless the command has a
-  // `project` of its own, which it then simply is.
-  const projectIsGlobal = !fields.includes("project");
-  if (projectIsGlobal) options.project = { type: "string" };
 
   let input: Record<string, unknown> = {};
   const flags: Record<string, unknown> = {};
   const free: string[] = [];
-  const global: { workspace?: string; project?: string; format?: Format; help: boolean } = {
-    help: false,
-  };
+  const global: { format?: Format; help: boolean } = { help: false };
 
   // Everything after `--` arrives as positional tokens, so a value that looks
   // like a flag (a filename beginning with a dash, say) can still be passed.
@@ -273,6 +262,9 @@ export function parseArgs(
 
     const { name, rawName, value } = token;
     if (options[name] === undefined) {
+      if (name === "workspace" || name === "project") {
+        throw new UsageError(`--${name} does not apply to this command`);
+      }
       throw new UsageError(
         `unknown flag "${rawName}"` +
           (rawName.startsWith("--") ? "" : ` (put an argument starting with "-" after --)`)
@@ -292,14 +284,6 @@ export function parseArgs(
     if (name === "progress" || name === "no-progress") continue;
     if (name === "format") {
       global.format = parseFormat(value);
-      continue;
-    }
-    if (name === "workspace") {
-      global.workspace = required();
-      continue;
-    }
-    if (name === "project" && projectIsGlobal) {
-      global.project = required();
       continue;
     }
     if (name === "input") {

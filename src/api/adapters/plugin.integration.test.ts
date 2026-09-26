@@ -20,6 +20,7 @@ import type { AnyOperationEntry } from "../types";
 import { workspacePathSchema } from "../../intents/contract";
 import { createRegistry } from "../entries";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { targetFields } from "../entries/target";
 import { testPath } from "../../shared/test-fixtures";
 
 /** The real registry, for the tests that assert on the real mappings. */
@@ -398,6 +399,41 @@ describe("client kinds", () => {
     // A tool takes structured arguments already, so MCP keeps only the general form.
     expect(realWire("mcp").channels()).not.toContain("api:operation:vscode.notify");
     expect(realWire("mcp").channels()).toContain("api:operation:vscode.message");
+  });
+
+  it.each([
+    ["sidekick", "api:workspace:setMetadata"],
+    ["cli", "api:operation:metadata.set"],
+    ["mcp", "api:operation:metadata.set"],
+  ] as const)("hands the %s a call's target fields untouched", async (kind, channel) => {
+    // Every surface accepts the same fields: a target named on one is never
+    // dropped by another's shaping and acted out on the caller instead.
+    const inputs: unknown[] = [];
+    const harness = fakeSocket();
+    attachPluginAdapter({
+      socket: harness.socket,
+      registry: new OperationRegistry([
+        defineEntry({
+          name: "metadata.set",
+          kind: "command",
+          description: "Set metadata.",
+          input: z.object({ ...targetFields, key: z.string(), value: z.string().nullable() }),
+          requiresWorkspace: true,
+          handler: async (_ctx, input) => {
+            inputs.push(input);
+            return null;
+          },
+        }),
+      ]),
+      workspacePath: WS,
+      logger: SILENT_LOGGER,
+      kind,
+    });
+
+    const request = { workspace: "other", project: "p", key: "k", value: "v" };
+    await expect(harness.call(channel, request)).resolves.toMatchObject({ success: true });
+
+    expect(inputs).toEqual([request]);
   });
 
   it("answers describe on every kind", () => {

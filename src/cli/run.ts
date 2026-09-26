@@ -102,15 +102,11 @@ export async function run(options: RunOptions): Promise<RunResult> {
       return { stdout: renderCommandHelp(resolved.match), stderr: "", exitCode: EXIT.OK };
     }
 
-    const { input, global } = parseArgs(
+    const { input } = parseArgs(
       resolved.rest,
       resolved.match.inputSchema as { properties?: Record<string, { type?: string | string[] }> },
       resolved.match.positionals ?? []
     );
-
-    if (global.project !== undefined && global.workspace === undefined) {
-      throw new UsageError("--project only says where to look up --workspace: name one too.");
-    }
 
     const stdinField = resolved.match.stdin;
     if (stdinField !== undefined && input[stdinField] === "-") {

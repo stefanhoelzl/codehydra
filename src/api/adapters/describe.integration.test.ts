@@ -132,16 +132,19 @@ suite("describe", () => {
     );
   });
 
-  it("hides fields the adapter does not accept", () => {
-    const status = describe(registry(), "cli").find((d) => d.name === "workspace.status")!;
-    const properties = Object.keys(
-      (status.inputSchema as { properties: Record<string, unknown> }).properties
-    );
+  it("offers every adapter the same fields, target included", () => {
+    const properties = (target: "cli" | "mcp") =>
+      Object.keys(
+        (
+          describe(registry(), target).find((d) => d.name === "workspace.status")!.inputSchema as {
+            properties: Record<string, unknown>;
+          }
+        ).properties
+      );
 
-    // The CLI names a target with its global --workspace / --project instead.
-    expect(properties).not.toContain("workspace");
-    expect(properties).not.toContain("project");
-    expect(properties).toContain("refresh");
+    // `--workspace` / `--project` on the command line, arguments of a tool.
+    expect(properties("cli")).toEqual(["workspace", "project", "refresh"]);
+    expect(properties("mcp")).toEqual(properties("cli"));
   });
 
   it("marks a field the adapter defaults as optional, and only for that adapter", () => {
