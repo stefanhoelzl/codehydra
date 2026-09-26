@@ -65,6 +65,17 @@ jobs:
       - run: pnpm test
       - run: git diff --exit-code
 
+      # Per-file and per-test durations (vitest's JSON reporter, CI only), for
+      # finding slow files and tests running close to their timeout.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-timings-${{ matrix.os }}
+          path: test-results/vitest.json
+          retention-days: 14
+          if-no-files-found: warn
+
   # Maximal-contamination run: --no-file-parallelism puts every file of a project
   # into one worker, so they share one module registry. Under isolate:false the
   # default parallel run only catches a cross-file module-state regression when
@@ -89,6 +100,15 @@ jobs:
         uses: ./.github/actions/install-claude
 
       - run: pnpm test:canary
+
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vitest-timings-canary
+          path: test-results/vitest.json
+          retention-days: 14
+          if-no-files-found: warn
 
   build:
     uses: ./.github/workflows/build.yaml
