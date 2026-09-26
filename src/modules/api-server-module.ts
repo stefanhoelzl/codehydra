@@ -1,15 +1,15 @@
 /**
- * PluginServerModule - Socket.IO server for VS Code extension communication.
+ * ApiServerModule - Socket.IO server for VS Code extension communication.
  *
- * Closure-based module that manages the full plugin server lifecycle:
+ * Closure-based module that manages the full API server lifecycle:
  * - Socket.IO server start/stop
  * - Client connection handling and authentication
  * - Per-workspace config management
- * - Plugin API event handlers that dispatch intents
+ * - CodeHydra API event handlers that dispatch intents
  * - VS Code UI event proxying (notifications, status bar, quick pick, input box)
  * - VS Code command execution
  *
- * Provides `pluginPort` capability for ide-server-module.
+ * Provides `apiPort` capability for ide-server-module.
  */
 
 import { Server, type Socket } from "socket.io";
@@ -19,10 +19,10 @@ import { stat } from "node:fs/promises";
 
 import type { OperationRegistry } from "../api/registry";
 import {
-  attachPluginAdapter,
+  attachApiServerAdapter,
   type ClientKind,
-  type PluginConnection,
-} from "../api/adapters/plugin";
+  type ApiServerConnection,
+} from "../api/adapters/api-server";
 import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import {
@@ -46,8 +46,8 @@ import type {
   ClientToServerEvents,
   SocketData,
   CommandRequest,
-  PluginResult,
-  PluginConfig,
+  ApiResult,
+  ApiConfig,
   AgentType,
   SetMetadataRequest,
   DeleteWorkspaceRequest,
@@ -64,7 +64,7 @@ import type {
   ShowQuickPickResponse,
   ShowInputBoxRequest,
   ShowInputBoxResponse,
-} from "../shared/plugin-protocol";
+} from "../shared/api-protocol";
 import {
   COMMAND_TIMEOUT_MS,
   validateSetMetadataRequest,
@@ -75,8 +75,8 @@ import {
   validateGetWorkspaceStatusRequest,
   validateLogRequest,
   validateAgentLifecycleRequest,
-} from "../shared/plugin-protocol";
-import type { OpenSystemPathRequest } from "../shared/plugin-protocol";
+} from "../shared/api-protocol";
+import type { OpenSystemPathRequest } from "../shared/api-protocol";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type {
@@ -156,7 +156,7 @@ const AGENT_CLOSE_TIMEOUT_MS = 5_000;
 // Dependency Interfaces
 // =============================================================================
 
-export interface PluginServerModuleDeps {
+export interface ApiServerModuleDeps {
   readonly portManager: Pick<PortManager, "listenOnFreePort">;
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
@@ -176,10 +176,10 @@ export interface PluginServerModuleDeps {
    * the correct posture before a token exists.
    */
   readonly cliToken?: () => string | null;
-  readonly options?: PluginServerOptions;
+  readonly options?: ApiServerOptions;
 }
 
-export interface PluginServerOptions {
+export interface ApiServerOptions {
   /** Socket.IO transports to use. Default: ["websocket"] */
   readonly transports?: readonly ("polling" | "websocket")[];
   /** Whether the app is running in development mode. Default: false */
@@ -209,7 +209,7 @@ export interface PluginServerOptions {
  * Do NOT use either to pre-check a command whose failure actually matters — the
  * hook still throws, and that error is the real signal.
  */
-export interface PluginServerModuleHandle {
+export interface ApiServerModuleHandle {
   readonly module: IntentModule;
   /**
    * True once the Socket.IO server is listening — workspaces may still be
@@ -274,7 +274,7 @@ const SERVER_DISCONNECT_REASONS: ReadonlySet<string> = new Set([
   "forced server close",
 ]);
 
-export function createPluginServerModule(deps: PluginServerModuleDeps): PluginServerModuleHandle {
+export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModuleHandle {
   const { portManager, dispatcher, appLayer, logger } = deps;
   const transports: readonly ("polling" | "websocket")[] = deps.options?.transports ?? [
     "websocket",
@@ -283,7 +283,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   const extensionLogger: Logger = deps.options?.extensionLogger ?? SILENT_LOGGER;
 
   // ---------------------------------------------------------------------------
-  // Closure state (replaces PluginServer class fields)
+  // Closure state (replaces ApiServer class fields)
   // ---------------------------------------------------------------------------
 
   let httpServer: HttpServer | null = null;
@@ -400,7 +400,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     command: string,
     args?: readonly unknown[],
     timeoutMs: number = COMMAND_TIMEOUT_MS
-  ): Promise<PluginResult<unknown>> {
+  ): Promise<ApiResult<unknown>> {
     const normalized = new Path(workspacePath).toString();
     const socket = connections.get(normalized);
 
@@ -421,7 +421,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         resolve({ success: false, error: "Command timed out" });
       }, timeoutMs);
 
-      socket.emit("command", request, (result: PluginResult<unknown>) => {
+      socket.emit("command", request, (result: ApiResult<unknown>) => {
         clearTimeout(timeoutId);
         logger.debug("Command result", {
           workspace: normalized,
@@ -446,7 +446,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    */
   const eventClients = new Set<{
     readonly socket: TypedSocket;
-    readonly connection: PluginConnection;
+    readonly connection: ApiServerConnection;
   }>();
 
   /** Unsubscribe callbacks for the forwarded-event subscriptions. */
@@ -457,7 +457,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    *
    * A client hears about what it is doing: the workspace a call in flight
    * targets, and anything that names no workspace — a clone, a project opening
-   * (see `PluginConnection.concerns`). Where the caller stands does not matter,
+   * (see `ApiServerConnection.concerns`). Where the caller stands does not matter,
    * so `ch ws delete --workspace other` shows the other workspace's teardown.
    */
   function forwardEvent(event: DomainEvent): void {
@@ -585,7 +585,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     request: TReq,
     timeoutMs: number = COMMAND_TIMEOUT_MS,
     options?: { readonly modal?: boolean }
-  ): Promise<PluginResult<TRes>> {
+  ): Promise<ApiResult<TRes>> {
     const normalized = workspacePathSchema.parse(new Path(workspacePath).toString());
     const socket = connections.get(normalized);
 
@@ -627,7 +627,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       }
 
       // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate generic event dispatch
-      socket.emit(event, request, (result: PluginResult<TRes>) => {
+      socket.emit(event, request, (result: ApiResult<TRes>) => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
         closeModal();
         logger.debug("UI event result", {
@@ -705,21 +705,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     workspacePath: WorkspacePath,
     request: ShowNotificationRequest,
     timeoutMs: number = 0
-  ): Promise<PluginResult<ShowNotificationResponse>> {
+  ): Promise<ApiResult<ShowNotificationResponse>> {
     return sendUiEvent(workspacePath, "ui:showNotification", request, timeoutMs, { modal: true });
   }
 
   async function updateStatusBar(
     workspacePath: WorkspacePath,
     request: StatusBarUpdateRequest
-  ): Promise<PluginResult<void>> {
+  ): Promise<ApiResult<void>> {
     return sendUiEvent(workspacePath, "ui:statusBarUpdate", request);
   }
 
   async function disposeStatusBar(
     workspacePath: WorkspacePath,
     request: StatusBarDisposeRequest
-  ): Promise<PluginResult<void>> {
+  ): Promise<ApiResult<void>> {
     return sendUiEvent(workspacePath, "ui:statusBarDispose", request);
   }
 
@@ -727,7 +727,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     workspacePath: WorkspacePath,
     request: ShowQuickPickRequest,
     timeoutMs: number = 0
-  ): Promise<PluginResult<ShowQuickPickResponse>> {
+  ): Promise<ApiResult<ShowQuickPickResponse>> {
     return sendUiEvent(workspacePath, "ui:showQuickPick", request, timeoutMs, { modal: true });
   }
 
@@ -735,7 +735,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     workspacePath: WorkspacePath,
     request: ShowInputBoxRequest,
     timeoutMs: number = 0
-  ): Promise<PluginResult<ShowInputBoxResponse>> {
+  ): Promise<ApiResult<ShowInputBoxResponse>> {
     return sendUiEvent(workspacePath, "ui:showInputBox", request, timeoutMs, { modal: true });
   }
 
@@ -899,9 +899,9 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
     // Registry operations are mounted for every kind of client. Which operations
     // that is, and what they are called, follows the client kind.
-    const connection: PluginConnection = deps.registry
-      ? attachPluginAdapter({
-          socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
+    const connection: ApiServerConnection = deps.registry
+      ? attachApiServerAdapter({
+          socket: socket as unknown as Parameters<typeof attachApiServerAdapter>[0]["socket"],
           registry: deps.registry,
           workspacePath: resolved,
           cwd: handshake.cwd ?? null,
@@ -992,7 +992,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       const agentTypeValue: AgentType | null = storedConfig?.agentType ?? null;
       const resetWorkspace: boolean = storedConfig?.resetWorkspace ?? true;
 
-      const config: PluginConfig = {
+      const config: ApiConfig = {
         isDevelopment,
         env,
         workspaceEnv,
@@ -1049,14 +1049,14 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   // ---------------------------------------------------------------------------
 
   /**
-   * Wrap a dispatcher call with error handling, returning a PluginResult.
+   * Wrap a dispatcher call with error handling, returning a ApiResult.
    */
-  async function handlePluginApiCall<T>(
+  async function handleApiCall<T>(
     workspacePath: WorkspacePath,
     operation: string,
     fn: () => Promise<T>,
     logContext?: Record<string, unknown>
-  ): Promise<PluginResult<T>> {
+  ): Promise<ApiResult<T>> {
     try {
       const result = await fn();
       logger.debug(`${operation} success`, { workspace: workspacePath, ...logContext });
@@ -1079,13 +1079,13 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     eventName: string,
     workspacePath: WorkspacePath,
     dispatchFn: () => Promise<R>
-  ): (ack: (result: PluginResult<R>) => void) => void {
+  ): (ack: (result: ApiResult<R>) => void) => void {
     return (ack) => {
       logger.debug("API call", { event: eventName, workspace: workspacePath });
 
-      // handlePluginApiCall never rejects (it converts all errors into a
-      // PluginResult), so this guard only covers ack() itself throwing.
-      handlePluginApiCall(workspacePath, eventName, dispatchFn)
+      // handleApiCall never rejects (it converts all errors into a
+      // ApiResult), so this guard only covers ack() itself throwing.
+      handleApiCall(workspacePath, eventName, dispatchFn)
         .then((result) => ack(result))
         .catch(() => {});
     };
@@ -1100,9 +1100,9 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
     validator: (
       payload: unknown
     ) => { valid: true; request?: TValidated } | { valid: false; error: string },
-    dispatchFn: (request: TValidated) => Promise<PluginResult<R>>,
+    dispatchFn: (request: TValidated) => Promise<ApiResult<R>>,
     logContext?: (request: TReq) => Record<string, unknown>
-  ): (request: TReq, ack: (result: PluginResult<R>) => void) => void {
+  ): (request: TReq, ack: (result: ApiResult<R>) => void) => void {
     return (request, ack) => {
       const validation = validator(request);
       if (!validation.valid) {
@@ -1122,7 +1122,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         ...logContext?.(request),
       });
 
-      // Every dispatchFn resolves through handlePluginApiCall, which never
+      // Every dispatchFn resolves through handleApiCall, which never
       // rejects, so this guard only covers ack() itself throwing.
       dispatchFn(validatedRequest)
         .then((result) => ack(result))
@@ -1143,7 +1143,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         GetWorkspaceStatusRequest,
         WorkspaceStatus
       >("api:workspace:getStatus", workspacePath, validateGetWorkspaceStatusRequest, (req) =>
-        handlePluginApiCall(workspacePath, "getStatus", async () => {
+        handleApiCall(workspacePath, "getStatus", async () => {
           const intent: GetWorkspaceStatusIntent = {
             type: INTENT_GET_WORKSPACE_STATUS,
             payload: {
@@ -1209,7 +1209,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         workspacePath,
         validateSetMetadataRequest,
         (req) =>
-          handlePluginApiCall(workspacePath, "setMetadata", async () => {
+          handleApiCall(workspacePath, "setMetadata", async () => {
             const intent: SetMetadataIntent = {
               type: INTENT_SET_METADATA,
               payload: {
@@ -1236,7 +1236,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         workspacePath,
         validateDeleteWorkspaceRequest,
         (req) =>
-          handlePluginApiCall(workspacePath, "delete", async () => {
+          handleApiCall(workspacePath, "delete", async () => {
             const intent: DeleteWorkspaceIntent = {
               type: INTENT_DELETE_WORKSPACE,
               payload: {
@@ -1264,7 +1264,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         workspacePath,
         validateExecuteCommandRequest,
         (req) =>
-          handlePluginApiCall(workspacePath, "executeCommand", async () => {
+          handleApiCall(workspacePath, "executeCommand", async () => {
             const intent: VscodeCommandIntent = {
               type: INTENT_VSCODE_COMMAND,
               payload: {
@@ -1286,7 +1286,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         workspacePath,
         validateOpenSystemPathRequest,
         (req) =>
-          handlePluginApiCall(workspacePath, "openSystemPath", async () => {
+          handleApiCall(workspacePath, "openSystemPath", async () => {
             if (req.app === "explorer") {
               const isDir = await isDirectory(req.path);
               const target = isDir ? req.path : dirname(req.path);
@@ -1306,7 +1306,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         workspacePath,
         validateWorkspaceCreateRequest,
         (req) =>
-          handlePluginApiCall(workspacePath, "create", async () => {
+          handleApiCall(workspacePath, "create", async () => {
             const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
               type: INTENT_RESOLVE_WORKSPACE,
               payload: { workspacePath },
@@ -1324,7 +1324,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
                 ...(req.stealFocus !== undefined && {
                   stealFocus: req.stealFocus,
                 }),
-                source: "plugin-server",
+                source: "api-server",
               },
             };
             const result = await dispatcher.dispatch(intent);
@@ -1478,7 +1478,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    * to a disconnect is not worth a caller's error path. A workspace that is not
    * connected simply answers false.
    */
-  /** True when `workspacePath` has a live socket. See PluginServerModuleHandle. */
+  /** True when `workspacePath` has a live socket. See ApiServerModuleHandle. */
   function isConnected(workspacePath: string): boolean {
     const socket = connections.get(new Path(workspacePath).toString());
     return socket?.connected === true;
@@ -1493,25 +1493,25 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   }
 
   const module: IntentModule = {
-    name: "plugin-server",
+    name: "api-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<HookOutput> => {
-            // pluginPort stays null on failure; the key is still provided (null,
-            // not undefined) so the IDE server's `requires: { pluginPort: ANY_VALUE }`
+            // apiPort stays null on failure; the key is still provided (null,
+            // not undefined) so the IDE server's `requires: { apiPort: ANY_VALUE }`
             // gate is satisfied and it runs in degraded mode.
-            let pluginPort: number | null = null;
+            let apiPort: number | null = null;
 
             try {
-              pluginPort = await start();
-              logger.info("Plugin server started", { port: pluginPort });
+              apiPort = await start();
+              logger.info("API server started", { port: apiPort });
             } catch (error) {
               const message = error instanceof Error ? error.message : "Unknown error";
-              logger.warn("PluginServer start failed", { error: message });
+              logger.warn("ApiServer start failed", { error: message });
             }
 
-            return { provides: { pluginPort } };
+            return { provides: { apiPort } };
           },
         },
       },
@@ -1610,7 +1610,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
               }
             } catch (error) {
               if (!payload.force) throw error;
-              logger.warn("PluginServerModule: error in force mode (ignored)", {
+              logger.warn("ApiServerModule: error in force mode (ignored)", {
                 error: getErrorMessage(error),
               });
             }
@@ -1624,7 +1624,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         show: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShowHookResult>> => {
             if (!io) {
-              throw new Error("Plugin server not available");
+              throw new Error("API server not available");
             }
 
             const { workspacePath } = ctx as ShowHookInput;
@@ -1651,7 +1651,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
         execute: {
           handler: async (ctx: HookContext): Promise<HookOutput<ExecuteHookResult>> => {
             if (!io) {
-              throw new Error("Plugin server not available");
+              throw new Error("API server not available");
             }
 
             const { workspacePath } = ctx as ExecuteHookInput;

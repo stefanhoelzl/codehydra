@@ -1327,12 +1327,12 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(command).toBe(testPath("/ide/node").toNative());
       expect(args).toEqual([testPath("/data/bin/ch.cjs").toNative(), "mcp"]);
       expect(env._CH_WORKSPACE_PATH).toBe(testPath("/workspace/feature-a").toString());
-      expect(env._CH_PLUGIN_PORT).toBe("9999");
-      expect(env._CH_PLUGIN_TOKEN).toBe("test-token");
+      expect(env._CH_API_PORT).toBe("9999");
+      expect(env._CH_API_TOKEN).toBe("test-token");
     });
 
     it("omits the MCP server entirely when there is no config to give it", async () => {
-      // Never called setMcpConfig: the plugin server has not bound yet.
+      // Never called setMcpConfig: the API server has not bound yet.
       await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 
       const mcp = readGeneratedConfig("codehydra-mcp.json") as {
@@ -1363,7 +1363,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
       expect(mcp.mcpServers.codehydra.command).toBe("C:\\ide\\node.exe");
       expect(mcp.mcpServers.codehydra.args[0]).toBe('C:\\Program Files\\"ch"\\ch.cjs');
-      expect(mcp.mcpServers.codehydra.env._CH_PLUGIN_TOKEN).toBe('tok"en\nwith\tcontrol');
+      expect(mcp.mcpServers.codehydra.env._CH_API_TOKEN).toBe('tok"en\nwith\tcontrol');
     });
   });
 
@@ -1399,8 +1399,8 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("generates configs under the temp root, not app data", async () => {
-      // The generated files bake in this launch's bridge port, plugin port and
-      // plugin token, so one that outlives the launch is wrong, not merely
+      // The generated files bake in this launch's bridge port, API server port and
+      // API token, so one that outlives the launch is wrong, not merely
       // stale. temp-dir-module clears the temp root on every app:start; app
       // data is never cleared, which is how these accumulated forever.
       await serverManager.startServer("/workspace/feature-a");

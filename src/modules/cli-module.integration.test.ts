@@ -4,7 +4,7 @@
  *
  * Runs the module through a real dispatcher so the assertions cover the seam
  * `ch` actually depends on: what ends up in state.json after app:start, and what
- * the plugin server sees when it asks for the token.
+ * the API server sees when it asks for the token.
  */
 
 import { describe, it, expect } from "vitest";
@@ -22,12 +22,12 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 const INTENT_APP_START = "app:start";
 
 /**
- * Drive the module's start hook with a given plugin port.
+ * Drive the module's start hook with a given API server port.
  *
- * The port arrives as a capability the plugin server provides, so the test
+ * The port arrives as a capability the API server provides, so the test
  * seeds it the same way the real operation would.
  */
-async function startWith(pluginPort: number | null) {
+async function startWith(apiPort: number | null) {
   const state = createMockState();
   const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
 
@@ -35,14 +35,14 @@ async function startWith(pluginPort: number | null) {
   dispatcher.registerModule(handle.module);
   dispatcher.registerOperation(
     createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-      // The port reaches the hook as a capability the plugin server provides,
+      // The port reaches the hook as a capability the API server provides,
       // and as hook context; the module reads it from the context.
       // Capabilities only. Supplying the port on the context as well let a
       // handler that read it from the wrong place pass here and still fail
       // against the real dispatcher — which is exactly what happened once.
       hookContext: (ctx) => ({
         intent: ctx.intent,
-        capabilities: { pluginPort },
+        capabilities: { apiPort },
       }),
     })
   );
@@ -83,7 +83,7 @@ function createObservingState(): {
 }
 
 /** Drive app:start then app:shutdown against one module instance. */
-async function startThenStop(pluginPort: number) {
+async function startThenStop(apiPort: number) {
   const state = createMockState();
   const handle = createCliModule({ stateService: state, logger: SILENT_LOGGER });
 
@@ -91,7 +91,7 @@ async function startThenStop(pluginPort: number) {
   dispatcher.registerModule(handle.module);
   dispatcher.registerOperation(
     createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { pluginPort } }),
+      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { apiPort } }),
     })
   );
   dispatcher.registerOperation(
@@ -122,20 +122,20 @@ describe("CliModule", () => {
     it("writes the bound port so ch can find the instance", async () => {
       const { state } = await startWith(45123);
 
-      expect(state.getEffective()["plugin.port"]).toBe(45123);
+      expect(state.getEffective()["api.port"]).toBe(45123);
     });
 
     it("writes a token the CLI must present", async () => {
       const { state, handle } = await startWith(45123);
 
-      const token = state.getEffective()["plugin.token"];
+      const token = state.getEffective()["api.token"];
       expect(typeof token).toBe("string");
       expect((token as string).length).toBeGreaterThan(32);
       expect(handle.token()).toBe(token);
     });
 
     it("has no token before app:start has run", async () => {
-      // The plugin server is constructed first and reads this lazily; a null
+      // The API server is constructed first and reads this lazily; a null
       // must refuse CLI connections rather than admit unauthenticated ones.
       const handle = createCliModule({
         stateService: createMockState(),
@@ -157,7 +157,7 @@ describe("CliModule", () => {
       dispatcher.registerModule(handle.module);
       dispatcher.registerOperation(
         createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { pluginPort: 45123 } }),
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { apiPort: 45123 } }),
         })
       );
 
@@ -165,8 +165,8 @@ describe("CliModule", () => {
 
       expect(snapshots.length).toBeGreaterThan(1);
       for (const snapshot of snapshots) {
-        const port = snapshot["plugin.port"];
-        const token = snapshot["plugin.token"];
+        const port = snapshot["api.port"];
+        const token = snapshot["api.token"];
         if (typeof port === "number" && port > 0) {
           expect(typeof token === "string" && token.length > 0).toBe(true);
         }
@@ -190,29 +190,29 @@ describe("CliModule", () => {
       // is not running — and would point it at whatever binds that port next.
       const { state } = await startThenStop(45123);
 
-      expect(state.getEffective()["plugin.port"]).toBe(0);
+      expect(state.getEffective()["api.port"]).toBe(0);
     });
 
     it("withdraws the token, so it is never presented to a stranger", async () => {
       const { state, handle } = await startThenStop(45123);
 
-      expect(state.getEffective()["plugin.token"]).toBeNull();
+      expect(state.getEffective()["api.token"]).toBeNull();
       expect(handle.token()).toBeNull();
     });
   });
 
-  describe("when the plugin server did not start", () => {
+  describe("when the API server did not start", () => {
     it("publishes no port, so ch reports the app as not running", async () => {
       const { state } = await startWith(null);
 
       // 0 is the sentinel discovery treats as absent.
-      expect(state.getEffective()["plugin.port"]).toBe(0);
+      expect(state.getEffective()["api.port"]).toBe(0);
     });
 
     it("publishes no token", async () => {
       const { state, handle } = await startWith(null);
 
-      expect(state.getEffective()["plugin.token"]).toBeNull();
+      expect(state.getEffective()["api.token"]).toBeNull();
       expect(handle.token()).toBeNull();
     });
   });

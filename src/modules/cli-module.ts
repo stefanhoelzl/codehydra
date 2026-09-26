@@ -7,7 +7,7 @@
  * 1. Declare the CLI's scripts, so script-module keeps them in the bin directory
  *    alongside `code` and the agent wrappers.
  * 2. Generate the shared secret that separates a deliberate caller from any
- *    local process that guessed the plugin port.
+ *    local process that guessed the API server port.
  * 3. Publish the port and that secret into state.json, which is how `ch` finds
  *    its instance — it resolves its own path to the data directory and reads
  *    them there, needing no environment variables at all.
@@ -35,7 +35,7 @@ import { getErrorMessage } from "../shared/error-utils";
  *
  * Anything that needs the token — notably the agent modules, which bake it into
  * the MCP config they write — must order itself after this. Requiring only
- * `pluginPort` is not enough: both would then be satisfied at the same moment,
+ * `apiPort` is not enough: both would then be satisfied at the same moment,
  * so an agent could read a token that had not been minted yet and write an MCP
  * config with an empty command and no credentials, leaving that agent with no
  * CodeHydra tools at all.
@@ -65,7 +65,7 @@ export interface CliModuleHandle {
   /**
    * The token CLI clients must present, or null before app:start has run.
    *
-   * Read lazily by the plugin server, which is constructed before this module
+   * Read lazily by the API server, which is constructed before this module
    * has generated anything. Null refuses every CLI connection, which is the
    * right posture while no token exists.
    */
@@ -75,16 +75,16 @@ export interface CliModuleHandle {
 export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
   const { stateService, logger } = deps;
 
-  // 0 means "not published": the plugin server never binds port 0, so the
+  // 0 means "not published": the API server never binds port 0, so the
   // sentinel cannot be mistaken for a real value, and storeNumber has no
   // nullable form.
-  const portState = stateService.register("plugin.port", {
+  const portState = stateService.register("api.port", {
     default: 0,
-    description: "Port the plugin server bound, published for the ch CLI (0 = not running)",
+    description: "Port the API server bound, published for the ch CLI (0 = not running)",
     ...storeNumber({ min: 0 }),
   });
 
-  const tokenState = stateService.register("plugin.token", {
+  const tokenState = stateService.register("api.token", {
     default: null,
     description: "Shared secret the ch CLI presents when connecting",
     // Never leaves the machine in a bug report: possession of it is authority
@@ -108,17 +108,16 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
           },
 
           start: {
-            // The port is only known once the plugin server has bound one.
-            requires: { pluginPort: ANY_VALUE },
+            // The port is only known once the API server has bound one.
+            requires: { apiPort: ANY_VALUE },
             handler: async (ctx: HookContext): Promise<HookOutput> => {
               // Capabilities arrive on ctx.capabilities, not on the context
-              // itself — the plugin server provides this one from its own start
+              // itself — the API server provides this one from its own start
               // hook, and `requires` above is what orders us after it.
-              const pluginPort =
-                (ctx.capabilities?.pluginPort as number | null | undefined) ?? null;
+              const apiPort = (ctx.capabilities?.apiPort as number | null | undefined) ?? null;
 
-              if (pluginPort === null) {
-                // The plugin server failed to start. Clearing the published
+              if (apiPort === null) {
+                // The API server failed to start. Clearing the published
                 // details is what stops `ch` from attempting a stale port and
                 // reporting a confusing connection error instead of "not running".
                 // Port first here, mirroring the publish order: withdrawing the
@@ -126,7 +125,7 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
                 // live port with no token behind it.
                 await portState.set(0);
                 await tokenState.set(null);
-                logger.warn("Plugin server did not start; the ch CLI will report it as offline");
+                logger.warn("API server did not start; the ch CLI will report it as offline");
                 return { provides: { [CLI_CONNECTION_CAPABILITY]: true } };
               }
 
@@ -144,8 +143,8 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
                 // token. The reverse order left a window, tens of milliseconds
                 // wide on a loaded machine, in which a healthy app looked dead.
                 await tokenState.set(token);
-                await portState.set(pluginPort);
-                logger.debug("Published CLI connection details", { port: pluginPort });
+                await portState.set(apiPort);
+                logger.debug("Published CLI connection details", { port: apiPort });
               } catch (error) {
                 // Not fatal: the app runs fine, only `ch` cannot find it.
                 logger.warn("Could not publish CLI connection details", {

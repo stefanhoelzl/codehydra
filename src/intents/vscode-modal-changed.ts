@@ -2,7 +2,7 @@
  * VscodeModalChangedOperation - Reports that a workspace gained or lost its open modals.
  *
  * Every `vscode:show-message` modal (notification, quick pick, input box) blocks the
- * workspace's editor on the user until it is dismissed, whoever raised it. The plugin
+ * workspace's editor on the user until it is dismissed, whoever raised it. The API server
  * server tracks each one from emit until the sidekick acks its dismissal (or the socket
  * drops) and dispatches this intent on the edges: `open: true` when the first modal
  * appears, `open: false` when the last one goes.

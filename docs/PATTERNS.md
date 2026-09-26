@@ -10,7 +10,7 @@
 - [Service Layer Patterns](#service-layer-patterns) - See [INTENTS.md](INTENTS.md)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration) - See [AGENTS.md](AGENTS.md)
-- [Plugin Interface](#plugin-interface)
+- [API Server Interface](#api-server-interface)
 
 ---
 
@@ -730,7 +730,7 @@ agentStatusManager.onStatusChanged((path, status, counts) => {
 
 ---
 
-## Plugin Interface
+## API Server Interface
 
 CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 
@@ -741,7 +741,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │                  CodeHydra (Electron Main Process)                  │
 │                                                                     │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                    PluginServer (Socket.IO)                   │  │
+│  │                    ApiServer (Socket.IO)                   │  │
 │  │                         :dynamic port                         │  │
 │  │                                                               │  │
 │  │   connections: Map<normalizedWorkspacePath, Socket>           │  │
@@ -752,7 +752,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  └───────────────────────────────────────────────────────────────┘  │
 │                              │                                       │
 │            IdeServerModule spawns with:                             │
-│            _CH_PLUGIN_PORT=<port>                             │
+│            _CH_API_PORT=<port>                             │
 └──────────────────────────────┼───────────────────────────────────────┘
                                │ localhost:port (WebSocket)
                                ▼
@@ -767,8 +767,8 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 
 ### Connection Lifecycle
 
-1. **PluginServer starts** on dynamic port in main process
-2. **The IDE server spawns** with `_CH_PLUGIN_PORT` env var
+1. **ApiServer starts** on dynamic port in main process
+2. **The IDE server spawns** with `_CH_API_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (path.normalize'd)
 5. **Server validates** auth and stores connection by normalized path
@@ -776,7 +776,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 
 ### Startup Commands
 
-When an extension connects to PluginServer, CodeHydra automatically sends startup commands to configure the workspace layout:
+When an extension connects to ApiServer, CodeHydra automatically sends startup commands to configure the workspace layout:
 
 | Command                                      | Purpose                                    |
 | -------------------------------------------- | ------------------------------------------ |
@@ -786,13 +786,13 @@ When an extension connects to PluginServer, CodeHydra automatically sends startu
 | `workbench.action.unlockEditorGroup`         | Unlock editor group for tab reuse          |
 | `workbench.action.closeEditorsInOtherGroups` | Clean up empty editor groups               |
 
-Commands are sent sequentially after a brief delay (100ms) for UI stabilization. Failures are non-fatal and logged as warnings with `[plugin]` logger.
+Commands are sent sequentially after a brief delay (100ms) for UI stabilization. Failures are non-fatal and logged as warnings with `[api-server]` logger.
 
 ### Environment Variable
 
-| Variable          | Purpose                                  |
-| ----------------- | ---------------------------------------- |
-| `_CH_PLUGIN_PORT` | Port for VS Code extension to connect to |
+| Variable       | Purpose                                  |
+| -------------- | ---------------------------------------- |
+| `_CH_API_PORT` | Port for VS Code extension to connect to |
 
 Set automatically by the IDE server manager when spawning the IDE server. If not set, extension skips connection (graceful degradation).
 
@@ -800,11 +800,11 @@ Set automatically by the IDE server manager when spawning the IDE server. If not
 
 **Server → Client Events:**
 
-| Event      | Payload             | Ack Type                | Description                                       |
-| ---------- | ------------------- | ----------------------- | ------------------------------------------------- |
-| `config`   | `{ isDevelopment }` | (none)                  | Configuration sent after connection               |
-| `command`  | `CommandRequest`    | `PluginResult<unknown>` | Execute VS Code command                           |
-| `shutdown` | (none)              | `PluginResult<void>`    | Terminate extension host (for workspace deletion) |
+| Event      | Payload             | Ack Type             | Description                                       |
+| ---------- | ------------------- | -------------------- | ------------------------------------------------- |
+| `config`   | `{ isDevelopment }` | (none)               | Configuration sent after connection               |
+| `command`  | `CommandRequest`    | `ApiResult<unknown>` | Execute VS Code command                           |
+| `shutdown` | (none)              | `ApiResult<void>`    | Terminate extension host (for workspace deletion) |
 
 **Command request structure:**
 
@@ -818,7 +818,7 @@ interface CommandRequest {
 **Acknowledgment result:**
 
 ```typescript
-type PluginResult<T> = { success: true; data: T } | { success: false; error: string };
+type ApiResult<T> = { success: true; data: T } | { success: false; error: string };
 ```
 
 ### Extension Host Shutdown
@@ -840,7 +840,7 @@ The `shutdown` event is sent during workspace deletion to terminate the extensio
 
 ### Logging
 
-Logger name: `[plugin]`
+Logger name: `[api-server]`
 
 Events logged:
 

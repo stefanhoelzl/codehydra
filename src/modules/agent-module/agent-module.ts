@@ -14,7 +14,7 @@ import type { IntentModule } from "../../intents/lib/module";
 import { ANY_VALUE, type HookContext, type HookOutput } from "../../intents/lib/operation";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
-import type { AgentType } from "../../shared/plugin-protocol";
+import type { AgentType } from "../../shared/api-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
@@ -98,9 +98,9 @@ export interface AgentModuleDeps {
    * How agents should launch CodeHydra's MCP server, or null when they cannot.
    *
    * Resolved by the composition root, which is the only place that knows all
-   * four pieces — the interpreter, the CLI bundle, the plugin port and the
+   * four pieces — the interpreter, the CLI bundle, the API server port and the
    * token. Read at app:start rather than injected as a value because the port
-   * and token only exist once the plugin server has bound.
+   * and token only exist once the API server has bound.
    */
   readonly resolveMcpConfig: () => McpConfig | null;
 }
@@ -258,13 +258,13 @@ export function createAgentModule(
         },
 
         start: {
-          // The MCP config carries the plugin port AND the CLI's token, so it
-          // cannot be resolved until the plugin server has bound and cli-module
-          // has minted and published one. Requiring only `pluginPort` would let
+          // The MCP config carries the API server port AND the CLI's token, so it
+          // cannot be resolved until the API server has bound and cli-module
+          // has minted and published one. Requiring only `apiPort` would let
           // this run alongside cli-module and read a token that does not exist
           // yet, writing an MCP config with an empty command and no credentials
           // — an agent with no CodeHydra tools at all.
-          requires: { pluginPort: ANY_VALUE, [CLI_CONNECTION_CAPABILITY]: ANY_VALUE },
+          requires: { apiPort: ANY_VALUE, [CLI_CONNECTION_CAPABILITY]: ANY_VALUE },
           handler: async (): Promise<void> => {
             capturedMcpConfig = deps.resolveMcpConfig();
             // Initialization is deferred until the first workspace using this

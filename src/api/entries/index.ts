@@ -1,7 +1,7 @@
 /**
  * The registry's contents.
  *
- * This is the one list. Everything the MCP, plugin and CLI adapters expose is
+ * This is the one list. Everything the MCP, API server and CLI adapters expose is
  * assembled here, so a surface cannot gain or lose an operation by accident.
  */
 

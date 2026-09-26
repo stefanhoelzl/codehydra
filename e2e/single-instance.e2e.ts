@@ -29,21 +29,21 @@ import { DATA_ROOT, launchCommand, useApp, waitForConnectionDetails } from "./fi
 
 const STATE_FILE = join(DATA_ROOT, "state.json");
 
-interface PluginState {
+interface ApiState {
   readonly port: number;
   readonly token: string | null;
 }
 
 /**
  * The CLI connection details `ch` resolves an instance by. StateService writes
- * dot-separated keys flat, so these are `state["plugin.port"]`, not a nested
- * `plugin` object.
+ * dot-separated keys flat, so these are `state["api.port"]`, not a nested
+ * `api` object.
  */
-function readPluginState(): PluginState {
+function readApiState(): ApiState {
   expect(existsSync(STATE_FILE), `expected ${STATE_FILE} to exist`).toBe(true);
   const state = JSON.parse(readFileSync(STATE_FILE, "utf-8")) as Record<string, unknown>;
-  const port = state["plugin.port"];
-  const token = state["plugin.token"];
+  const port = state["api.port"];
+  const token = state["api.token"];
   return {
     port: typeof port === "number" ? port : 0,
     token: typeof token === "string" ? token : null,
@@ -53,12 +53,12 @@ function readPluginState(): PluginState {
 const app = useApp();
 
 test("a second launch exits quietly and leaves the first instance untouched", async () => {
-  // The UI is up two hook points before `start`, where the plugin server binds
+  // The UI is up two hook points before `start`, where the API server binds
   // and publishes. Reading state.json without this races startup.
   await waitForConnectionDetails();
 
   // Sanity: the running instance published connection details for `ch`.
-  const before = readPluginState();
+  const before = readApiState();
   expect(before.port).toBeGreaterThan(0);
   expect(before.token).not.toBeNull();
 
@@ -93,7 +93,7 @@ test("a second launch exits quietly and leaves the first instance untouched", as
 
   // The running instance still owns state.json. A second instance that reached
   // app:shutdown would have reset these to 0 / null on its way out.
-  expect(readPluginState()).toEqual(before);
+  expect(readApiState()).toEqual(before);
 
   // And it is still a working app, not just a healthy-looking file.
   const driver = app();

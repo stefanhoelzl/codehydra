@@ -28,7 +28,7 @@ import type {
   StopServerResult,
   RestartServerResult,
 } from "./types";
-import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
+import type { AgentType, AgentLifecycleEvent } from "../../shared/api-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type { DownloadProgressCallback } from "../../utils/binary-download";
 import {
@@ -531,7 +531,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     // --- Cleanup ---
     clearWorkspaceTracking(workspacePath: WorkspacePath): void {
-      // The plugin server reports the close when the workspace's socket drops,
+      // The API server reports the close when the workspace's socket drops,
       // but that report resolves the agent from metadata that teardown may
       // already have removed, so it can land in another agent's module.
       modalOpen.delete(workspacePath);

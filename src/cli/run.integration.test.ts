@@ -125,7 +125,7 @@ function runWith(argv: readonly string[], client: Client, isTty = false) {
 
 describe("run", () => {
   describe("dispatch", () => {
-    it("addresses the operation by registry name, not by plugin channel", async () => {
+    it("addresses the operation by registry name, not by API server channel", async () => {
       const calls: Recorded[] = [];
       await runWith(
         ["ws", "status"],

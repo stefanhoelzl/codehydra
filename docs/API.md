@@ -8,7 +8,7 @@ CodeHydra exposes APIs at two levels:
 | **Public**  | Workspace-only | VS Code extensions, external systems |
 
 Every operation the Public API exposes comes from one **operation registry**
-(`src/api/`). MCP, the plugin wire and the `ch` CLI are generic adapters over it:
+(`src/api/`). MCP, the API server wire and the `ch` CLI are generic adapters over it:
 none contains per-operation code, so an operation cannot exist on one surface and
 be missing — or behave differently — on another. See
 [CLAUDE.md](../CLAUDE.md#key-concepts) for the registry's shape.
@@ -379,7 +379,7 @@ interface CodehydraApi {
 
 ## WebSocket Access
 
-External systems can connect directly to CodeHydra's plugin server via Socket.IO WebSocket.
+External systems can connect directly to CodeHydra's API server via Socket.IO WebSocket.
 
 ### Architecture
 
@@ -388,7 +388,7 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 │               CodeHydra (Electron Main Process)               │
 │                                                               │
 │   ┌─────────────────────────────────────────────────────┐     │
-│   │              PluginServer (Socket.IO)               │     │
+│   │              ApiServer (Socket.IO)               │     │
 │   │                   :dynamic port                     │     │
 │   │                                                     │     │
 │   │   Handles: api:workspace:* events                   │     │
@@ -407,7 +407,7 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 
 ### Connection
 
-1. Read port from `_CH_PLUGIN_PORT` environment variable
+1. Read port from `_CH_API_PORT` environment variable
 2. Connect via Socket.IO to `http://localhost:${port}`
 3. Authenticate with workspace path
 
@@ -448,7 +448,7 @@ acts on the caller's own workspace), and `ch` spells them `--workspace` /
 
 Two further differences matter for anyone writing a client:
 
-- **Token.** `cli` and `mcp` clients must present the token from `plugin.token`
+- **Token.** `cli` and `mcp` clients must present the token from `api.token`
   in `state.json`. An extension's handshake carries none and is unaffected.
 - **Non-exclusive.** A `cli`/`mcp` connection never becomes the workspace's
   registered socket, so it cannot displace an extension or strand a teardown
@@ -458,7 +458,7 @@ Two further differences matter for anyone writing a client:
 ```typescript
 import { io, Socket } from "socket.io-client";
 
-const port = process.env._CH_PLUGIN_PORT;
+const port = process.env._CH_API_PORT;
 if (!port) {
   throw new Error("Not running inside CodeHydra workspace");
 }
@@ -482,43 +482,43 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                              | Request Payload                        | Response                                   |
-| ---------------------------------- | -------------------------------------- | ------------------------------------------ |
-| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `PluginResult<WorkspaceStatus>`            |
-| `api:workspace:getAgentSession`    | None                                   | `PluginResult<AgentSession \| null>`       |
-| `api:workspace:restartAgentServer` | None                                   | `PluginResult<number>`                     |
-| `api:workspace:getMetadata`        | None                                   | `PluginResult<Record<string, string>>`     |
-| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `PluginResult<void>`                       |
-| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `PluginResult<unknown>`                    |
-| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `PluginResult<void>`                       |
-| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `PluginResult<DeleteWorkspaceResponse>`    |
-| `api:workspace:create`             | `WorkspaceCreateRequest`               | `PluginResult<Workspace>`                  |
-| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                    |
-| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                    |
-| `api:workspace:hibernate`          | None                                   | `PluginResult<{ started: boolean }>`       |
-| `api:workspace:wake`               | None                                   | `PluginResult<Workspace>`                  |
-| `api:workspace:setTitle`           | `{ title: string \| null }`            | `PluginResult<void>`                       |
-| `api:workspace:listTags`           | None                                   | `PluginResult<WorkspaceTag[]>`             |
-| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `PluginResult<void>`                       |
-| `api:workspace:removeTag`          | `{ name: string }`                     | `PluginResult<void>`                       |
-| `api:workspace:openAgent`          | None                                   | `PluginResult<unknown>`                    |
-| `api:workspace:closeAgent`         | None                                   | `PluginResult<{ closed: boolean }>`        |
-| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `PluginResult<null>`                       |
-| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `PluginResult<void>`                       |
-| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `PluginResult<{ result: string \| null }>` |
-| `api:workspace:openBrowser`        | `{ url: string }`                      | `PluginResult<unknown>`                    |
-| `api:workspace:openDiff`           | `{ left, right, title? }`              | `PluginResult<unknown>`                    |
-| `api:workspace:goto`               | `{ location: string }`                 | `PluginResult<unknown>`                    |
-| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `PluginResult<unknown>`                    |
-| `api:project:list`                 | None                                   | `PluginResult<Project[]>`                  |
-| `api:reportIssue`                  | `{ description: string }`              | `PluginResult<{ submitted: true }>`        |
-| `api:config:get`                   | `{ key: string }`                      | `PluginResult<unknown>`                    |
-| `api:config:list`                  | None                                   | `PluginResult<ConfigRow[]>`                |
-| `api:config:set`                   | `{ key: string, value: string }`       | `PluginResult<ConfigRow>`                  |
-| `api:config:reset`                 | `{ key: string }`                      | `PluginResult<ConfigRow>`                  |
-| `api:notification:show`            | `NotificationShowRequest`              | `PluginResult<{ id } \| { choice }>`       |
-| `api:notification:close`           | `{ id: string }`                       | `PluginResult<{ closed: true }>`           |
-| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `PluginResult<OperationDescriptor[]>`      |
+| Event                              | Request Payload                        | Response                                |
+| ---------------------------------- | -------------------------------------- | --------------------------------------- |
+| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `ApiResult<WorkspaceStatus>`            |
+| `api:workspace:getAgentSession`    | None                                   | `ApiResult<AgentSession \| null>`       |
+| `api:workspace:restartAgentServer` | None                                   | `ApiResult<number>`                     |
+| `api:workspace:getMetadata`        | None                                   | `ApiResult<Record<string, string>>`     |
+| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `ApiResult<void>`                       |
+| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `ApiResult<unknown>`                    |
+| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `ApiResult<void>`                       |
+| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `ApiResult<DeleteWorkspaceResponse>`    |
+| `api:workspace:create`             | `WorkspaceCreateRequest`               | `ApiResult<Workspace>`                  |
+| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                 |
+| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                 |
+| `api:workspace:hibernate`          | None                                   | `ApiResult<{ started: boolean }>`       |
+| `api:workspace:wake`               | None                                   | `ApiResult<Workspace>`                  |
+| `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                       |
+| `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`             |
+| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                       |
+| `api:workspace:removeTag`          | `{ name: string }`                     | `ApiResult<void>`                       |
+| `api:workspace:openAgent`          | None                                   | `ApiResult<unknown>`                    |
+| `api:workspace:closeAgent`         | None                                   | `ApiResult<{ closed: boolean }>`        |
+| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `ApiResult<null>`                       |
+| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `ApiResult<void>`                       |
+| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `ApiResult<{ result: string \| null }>` |
+| `api:workspace:openBrowser`        | `{ url: string }`                      | `ApiResult<unknown>`                    |
+| `api:workspace:openDiff`           | `{ left, right, title? }`              | `ApiResult<unknown>`                    |
+| `api:workspace:goto`               | `{ location: string }`                 | `ApiResult<unknown>`                    |
+| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `ApiResult<unknown>`                    |
+| `api:project:list`                 | None                                   | `ApiResult<Project[]>`                  |
+| `api:reportIssue`                  | `{ description: string }`              | `ApiResult<{ submitted: true }>`        |
+| `api:config:get`                   | `{ key: string }`                      | `ApiResult<unknown>`                    |
+| `api:config:list`                  | None                                   | `ApiResult<ConfigRow[]>`                |
+| `api:config:set`                   | `{ key: string, value: string }`       | `ApiResult<ConfigRow>`                  |
+| `api:config:reset`                 | `{ key: string }`                      | `ApiResult<ConfigRow>`                  |
+| `api:notification:show`            | `NotificationShowRequest`              | `ApiResult<{ id } \| { choice }>`       |
+| `api:notification:close`           | `{ id: string }`                       | `ApiResult<{ closed: true }>`           |
+| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `ApiResult<OperationDescriptor[]>`      |
 
 Everything below `api:log` is new: these operations existed only as MCP tools
 before the registry, and are now on both surfaces. Purely additive — no existing
@@ -537,23 +537,23 @@ It also gained `ignoreWarnings`, which the MCP tool already had.
 
 ### Event Channels (Server → Client)
 
-| Event                 | Request Payload           | Response                                 | Description                                     |
-| --------------------- | ------------------------- | ---------------------------------------- | ----------------------------------------------- |
-| `config`              | `PluginConfig`            | (none)                                   | Configuration sent after connection             |
-| `command`             | `CommandRequest`          | `PluginResult<unknown>`                  | Execute VS Code command                         |
-| `shutdown`            | None                      | `PluginResult<void>`                     | Terminate extension host for workspace deletion |
-| `ui:showNotification` | `ShowNotificationRequest` | `PluginResult<ShowNotificationResponse>` | Show a modal notification; acked on dismissal   |
-| `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `PluginResult<void>`                     | Create or update a status bar item              |
-| `ui:statusBarDispose` | `StatusBarDisposeRequest` | `PluginResult<void>`                     | Dispose a status bar item                       |
-| `ui:showQuickPick`    | `ShowQuickPickRequest`    | `PluginResult<ShowQuickPickResponse>`    | Show a quick pick list                          |
-| `ui:showInputBox`     | `ShowInputBoxRequest`     | `PluginResult<ShowInputBoxResponse>`     | Show an input box                               |
+| Event                 | Request Payload           | Response                              | Description                                     |
+| --------------------- | ------------------------- | ------------------------------------- | ----------------------------------------------- |
+| `config`              | `ApiConfig`               | (none)                                | Configuration sent after connection             |
+| `command`             | `CommandRequest`          | `ApiResult<unknown>`                  | Execute VS Code command                         |
+| `shutdown`            | None                      | `ApiResult<void>`                     | Terminate extension host for workspace deletion |
+| `ui:showNotification` | `ShowNotificationRequest` | `ApiResult<ShowNotificationResponse>` | Show a modal notification; acked on dismissal   |
+| `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `ApiResult<void>`                     | Create or update a status bar item              |
+| `ui:statusBarDispose` | `StatusBarDisposeRequest` | `ApiResult<void>`                     | Dispose a status bar item                       |
+| `ui:showQuickPick`    | `ShowQuickPickRequest`    | `ApiResult<ShowQuickPickResponse>`    | Show a quick pick list                          |
+| `ui:showInputBox`     | `ShowInputBoxRequest`     | `ApiResult<ShowInputBoxResponse>`     | Show an input box                               |
 
-The authoritative declarations for all events and payloads are in `src/shared/plugin-protocol.ts` (compiled by both the CodeHydra server and the sidekick extension).
+The authoritative declarations for all events and payloads are in `src/shared/api-protocol.ts` (compiled by both the CodeHydra server and the sidekick extension).
 
 ### Response Format
 
 ```typescript
-type PluginResult<T> =
+type ApiResult<T> =
   | { success: true; data: T }
   | { success: false; error: string; category?: ApiErrorCategory };
 ```
@@ -691,7 +691,7 @@ class CodehydraClient {
         reject(new Error("Request timeout"));
       }, 10000);
 
-      const callback = (result: PluginResult<T>) => {
+      const callback = (result: ApiResult<T>) => {
         clearTimeout(timeout);
         if (result.success) {
           resolve(result.data);
@@ -714,7 +714,7 @@ class CodehydraClient {
 }
 
 // Usage
-const port = process.env._CH_PLUGIN_PORT;
+const port = process.env._CH_API_PORT;
 if (!port) {
   throw new Error("Not running inside CodeHydra workspace");
 }
@@ -737,7 +737,7 @@ interface CommandRequest {
 }
 
 // Handle incoming commands
-socket.on("command", (request: CommandRequest, ack: (result: PluginResult<unknown>) => void) => {
+socket.on("command", (request: CommandRequest, ack: (result: ApiResult<unknown>) => void) => {
   try {
     // Execute the command
     const result = executeCommand(request.command, request.args);
@@ -786,7 +786,7 @@ operations that instance actually has.
 | **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides on every command that acts on a workspace (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the command with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). On a command that acts on no workspace, `--workspace` is exit `2`. |
 | **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                                                                                                |
 | **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                                                                                                   |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `api.port` and `api.token` from `state.json`. `_CH_API_PORT` + `_CH_API_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                                                                                                               |
 
 ### Exit codes
 
@@ -860,7 +860,7 @@ $ ch bg ch lock run device "long session"                 # hold until killed
 
 ### Sidebar notifications
 
-`ch notification show|close` (MCP `notification_show` / `notification_close`, plugin
+`ch notification show|close` (MCP `notification_show` / `notification_close`, API server
 `api:notification:show` / `api:notification:close`) raises cards in CodeHydra's own
 sidebar — the ones CodeHydra uses for clone progress and errors — through the
 `notification:show` / `notification:close` intents. Unlike `ch ws notify` (a toast in one
@@ -896,7 +896,7 @@ attach?, workspace?, project?, wait?, timeout? (seconds) }`.
 
 ### Agent messages
 
-`ch ws agent message <text>` (MCP `workspace_send_agent_message`, plugin
+`ch ws agent message <text>` (MCP `workspace_send_agent_message`, API server
 `api:workspace:sendAgentMessage`) puts text into a workspace's **running** agent's
 conversation through the `agent:send-message` intent. It is the agent's channel, as the
 notifications above, `ws notify`, `ws status-bar` and `ws ask` are the user's.
@@ -931,7 +931,7 @@ the message (sent, not read).
 
 ### Progress events
 
-The plugin server pushes selected domain events to CLI and MCP clients on
+The API server pushes selected domain events to CLI and MCP clients on
 `api:event`, as `{ type, payload }`. Forwarding is opt-in per event, so an event
 reaches clients because it was declared, not because it was emitted:
 
@@ -1001,7 +1001,7 @@ this way, and any MCP client can:
   "type": "stdio",
   "command": "<node>",
   "args": ["<dataRoot>/bin/ch.cjs", "mcp"],
-  "env": { "_CH_WORKSPACE_PATH": "…", "_CH_PLUGIN_PORT": "…", "_CH_PLUGIN_TOKEN": "…" },
+  "env": { "_CH_WORKSPACE_PATH": "…", "_CH_API_PORT": "…", "_CH_API_TOKEN": "…" },
 }
 ```
 
@@ -1504,9 +1504,9 @@ CodeHydra sets environment variables in workspace terminals for integration with
 
 ### General Variables
 
-| Variable          | Description                                            |
-| ----------------- | ------------------------------------------------------ |
-| `_CH_PLUGIN_PORT` | Socket.IO plugin server port for WebSocket connections |
+| Variable       | Description                                         |
+| -------------- | --------------------------------------------------- |
+| `_CH_API_PORT` | Socket.IO API server port for WebSocket connections |
 
 ### Claude Provider Variables
 
@@ -1518,7 +1518,7 @@ These variables are set when using the Claude agent provider.
 | `_CH_CLAUDE_MCP_CONFIG`    | Path to MCP configuration file                                                                                                                                                                                                                                                                                                 |
 | `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
 | `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
-| `_CH_PLUGIN_TOKEN`         | Token `ch` and `ch mcp` present when connecting to the plugin server                                                                                                                                                                                                                                                           |
+| `_CH_API_TOKEN`            | Token `ch` and `ch mcp` present when connecting to the API server                                                                                                                                                                                                                                                              |
 | `_CH_WORKSPACE_PATH`       | Absolute path to the workspace directory                                                                                                                                                                                                                                                                                       |
 | `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
@@ -1526,16 +1526,16 @@ These variables are set when using the Claude agent provider.
 
 ## Source Files
 
-| Purpose              | File                            |
-| -------------------- | ------------------------------- |
-| Operation registry   | `src/api/registry.ts`           |
-| Operation vocabulary | `src/api/names.ts`              |
-| Operations           | `src/api/entries/`              |
-| Adapter mappings     | `src/api/adapters/*-map.ts`     |
-| `ch` CLI             | `src/cli/`                      |
-| Core Interface       | `src/shared/api/interfaces.ts`  |
-| Type Definitions     | `src/shared/api/types.ts`       |
-| IPC Channels         | `src/shared/ipc.ts`             |
-| Preload (window.api) | `src/preload/index.ts`          |
-| Plugin Protocol      | `src/shared/plugin-protocol.ts` |
-| External API Types   | `extensions/sidekick/api.d.ts`  |
+| Purpose              | File                           |
+| -------------------- | ------------------------------ |
+| Operation registry   | `src/api/registry.ts`          |
+| Operation vocabulary | `src/api/names.ts`             |
+| Operations           | `src/api/entries/`             |
+| Adapter mappings     | `src/api/adapters/*-map.ts`    |
+| `ch` CLI             | `src/cli/`                     |
+| Core Interface       | `src/shared/api/interfaces.ts` |
+| Type Definitions     | `src/shared/api/types.ts`      |
+| IPC Channels         | `src/shared/ipc.ts`            |
+| Preload (window.api) | `src/preload/index.ts`         |
+| API Protocol         | `src/shared/api-protocol.ts`   |
+| External API Types   | `extensions/sidekick/api.d.ts` |

@@ -98,8 +98,8 @@ export interface AppBoundary {
    * the user asked for CodeHydra and CodeHydra is now in front of them. The
    * exit is hard (`app.exit`, not `app.quit`) so it skips `before-quit` →
    * `app:shutdown`. A second instance never started anything, and running the
-   * stop hooks would have it withdraw the *running* instance's `plugin.port`
-   * and `plugin.token` from the shared `state.json`, breaking `ch` there.
+   * stop hooks would have it withdraw the *running* instance's `api.port`
+   * and `api.token` from the shared `state.json`, breaking `ch` there.
    *
    * @returns `true` when this process is the primary instance. In production it
    *   never returns otherwise; the boolean exists so a mock can drive the same

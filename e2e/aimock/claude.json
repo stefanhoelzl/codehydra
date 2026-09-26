@@ -30,7 +30,7 @@
       }
     },
     {
-      "_comment": "Turn 2. CodeHydra's MCP tool is now advertised, so call it. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the plugin token, and served its tool list.",
+      "_comment": "Turn 2. CodeHydra's MCP tool is now advertised, so call it. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the API token, and served its tool list.",
       "match": {
         "systemMessage": "You are running inside CodeHydra.",
         "toolName": "mcp__codehydra__workspace_set_title"

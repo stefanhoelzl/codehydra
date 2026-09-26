@@ -1,8 +1,8 @@
 /**
- * The plugin wire's view of the operation vocabulary.
+ * The API server wire's view of the operation vocabulary.
  *
  * Exhaustive by construction: `Record<OperationName, …>` means an operation
- * added to the vocabulary fails to compile until this file says what the plugin
+ * added to the vocabulary fails to compile until this file says what the API server
  * wire does with it. An operation the wire deliberately does not carry is
  * written as `null`, so "absent" is always a decision someone made rather than
  * something nobody noticed.
@@ -14,7 +14,7 @@
 import type { OperationName } from "../names";
 import type { InputShaping } from "../registry";
 
-export interface PluginMapping extends InputShaping {
+export interface ApiServerMapping extends InputShaping {
   /** Socket.IO channel, e.g. `api:workspace:delete`. */
   readonly channel: string;
   /**
@@ -28,7 +28,7 @@ export interface PluginMapping extends InputShaping {
   readonly fireAndForget?: boolean;
 }
 
-export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> = {
+export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | null>> = {
   // Every channel takes the entry's full input, target fields included: an
   // extension is its own workspace, and names another the way any caller does.
   "workspace.status": { channel: "api:workspace:getStatus" },
@@ -59,7 +59,7 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "vscode.message": { channel: "api:workspace:showMessage" },
   // The notify / status-bar / ask forms exist to give the CLI three commands
   // instead of one with a mode flag. On the wire that split buys nothing, so the
-  // plugin carries only the general form above.
+  // API server carries only the general form above.
   "vscode.notify": null,
   "vscode.status-bar": null,
   "vscode.ask": null,
@@ -74,7 +74,7 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "project.list": { channel: "api:project:list" },
   "project.open": { channel: "api:project:open" },
   "project.close": { channel: "api:project:close" },
-  // No extension needs locks, and the plugin surface is a published contract —
+  // No extension needs locks, and the API server surface is a published contract —
   // it grows when a consumer does, not before.
   "lock.take": null,
   "lock.release": null,

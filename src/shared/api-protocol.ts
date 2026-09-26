@@ -1,5 +1,5 @@
 /**
- * Plugin communication protocol types.
+ * API server communication protocol types.
  *
  * Defines the Socket.IO event types for communication between
  * CodeHydra (server) and VS Code extensions (clients).
@@ -18,7 +18,7 @@ import { agentSpecSchema } from "../intents/contract";
  * Result wrapper for all acknowledgment responses.
  * Provides a discriminated union for success/failure handling.
  */
-export type PluginResult<T> =
+export type ApiResult<T> =
   | { readonly success: true; readonly data: T }
   | { readonly success: false; readonly error: string };
 
@@ -117,7 +117,7 @@ export type AgentType = "opencode" | "claude";
  * Configuration sent from server to client on connection.
  * Contains all data needed for extension startup.
  */
-export interface PluginConfig {
+export interface ApiConfig {
   /** True when running in development mode */
   readonly isDevelopment: boolean;
   /** Agent environment variables for terminal integration (null if agent not ready) */
@@ -162,7 +162,7 @@ export interface ServerToClientEvents {
    *
    * @param config - Configuration object with isDevelopment flag
    */
-  config: (config: PluginConfig) => void;
+  config: (config: ApiConfig) => void;
 
   /**
    * Execute a VS Code command in the connected workspace.
@@ -170,7 +170,7 @@ export interface ServerToClientEvents {
    * @param request - The command request containing command ID and optional args
    * @param ack - Acknowledgment callback to return the result
    */
-  command: (request: CommandRequest, ack: (result: PluginResult<unknown>) => void) => void;
+  command: (request: CommandRequest, ack: (result: ApiResult<unknown>) => void) => void;
 
   /**
    * Shutdown the extension host process for workspace deletion.
@@ -184,7 +184,7 @@ export interface ServerToClientEvents {
    *
    * @param ack - Acknowledgment callback to confirm shutdown received
    */
-  shutdown: (ack: (result: PluginResult<void>) => void) => void;
+  shutdown: (ack: (result: ApiResult<void>) => void) => void;
 
   /**
    * Show a modal notification in VS Code.
@@ -196,7 +196,7 @@ export interface ServerToClientEvents {
    */
   "ui:showNotification": (
     request: ShowNotificationRequest,
-    ack: (result: PluginResult<ShowNotificationResponse>) => void
+    ack: (result: ApiResult<ShowNotificationResponse>) => void
   ) => void;
 
   /**
@@ -213,7 +213,7 @@ export interface ServerToClientEvents {
    */
   "ui:statusBarUpdate": (
     request: StatusBarUpdateRequest,
-    ack: (result: PluginResult<void>) => void
+    ack: (result: ApiResult<void>) => void
   ) => void;
 
   /**
@@ -221,7 +221,7 @@ export interface ServerToClientEvents {
    */
   "ui:statusBarDispose": (
     request: StatusBarDisposeRequest,
-    ack: (result: PluginResult<void>) => void
+    ack: (result: ApiResult<void>) => void
   ) => void;
 
   /**
@@ -229,7 +229,7 @@ export interface ServerToClientEvents {
    */
   "ui:showQuickPick": (
     request: ShowQuickPickRequest,
-    ack: (result: PluginResult<ShowQuickPickResponse>) => void
+    ack: (result: ApiResult<ShowQuickPickResponse>) => void
   ) => void;
 
   /**
@@ -237,7 +237,7 @@ export interface ServerToClientEvents {
    */
   "ui:showInputBox": (
     request: ShowInputBoxRequest,
-    ack: (result: PluginResult<ShowInputBoxResponse>) => void
+    ack: (result: ApiResult<ShowInputBoxResponse>) => void
   ) => void;
 }
 
@@ -534,7 +534,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:getStatus": (
     request: GetWorkspaceStatusRequest | undefined,
-    ack: (result: PluginResult<WorkspaceStatus>) => void
+    ack: (result: ApiResult<WorkspaceStatus>) => void
   ) => void;
 
   /**
@@ -542,25 +542,21 @@ export interface ClientToServerEvents {
    *
    * @param ack - Acknowledgment callback with session info (null if not running)
    */
-  "api:workspace:getAgentSession": (
-    ack: (result: PluginResult<AgentSession | null>) => void
-  ) => void;
+  "api:workspace:getAgentSession": (ack: (result: ApiResult<AgentSession | null>) => void) => void;
 
   /**
    * Restart the agent server for the connected workspace, preserving the same port.
    *
    * @param ack - Acknowledgment callback with port number after restart
    */
-  "api:workspace:restartAgentServer": (ack: (result: PluginResult<number>) => void) => void;
+  "api:workspace:restartAgentServer": (ack: (result: ApiResult<number>) => void) => void;
 
   /**
    * Get all metadata for the connected workspace.
    *
    * @param ack - Acknowledgment callback with metadata record
    */
-  "api:workspace:getMetadata": (
-    ack: (result: PluginResult<Record<string, string>>) => void
-  ) => void;
+  "api:workspace:getMetadata": (ack: (result: ApiResult<Record<string, string>>) => void) => void;
 
   /**
    * Set or delete a metadata key for the connected workspace.
@@ -570,7 +566,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:setMetadata": (
     request: SetMetadataRequest,
-    ack: (result: PluginResult<void>) => void
+    ack: (result: ApiResult<void>) => void
   ) => void;
 
   /**
@@ -581,7 +577,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:executeCommand": (
     request: ExecuteCommandRequest,
-    ack: (result: PluginResult<unknown>) => void
+    ack: (result: ApiResult<unknown>) => void
   ) => void;
 
   /**
@@ -593,7 +589,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:openSystemPath": (
     request: OpenSystemPathRequest,
-    ack: (result: PluginResult<void>) => void
+    ack: (result: ApiResult<void>) => void
   ) => void;
 
   /**
@@ -605,7 +601,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:delete": (
     request: DeleteWorkspaceRequest | undefined,
-    ack: (result: PluginResult<DeleteWorkspaceResponse>) => void
+    ack: (result: ApiResult<DeleteWorkspaceResponse>) => void
   ) => void;
 
   /**
@@ -616,7 +612,7 @@ export interface ClientToServerEvents {
    */
   "api:workspace:create": (
     request: WorkspaceCreateRequest,
-    ack: (result: PluginResult<Workspace>) => void
+    ack: (result: ApiResult<Workspace>) => void
   ) => void;
 
   /**

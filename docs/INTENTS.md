@@ -445,7 +445,7 @@ Creation-form submit (`workspace:open`) and the startup gestures
 modules. Dialog/notification interactions (`dialog-action` / `dialog-change` /
 `dialog-dismiss` / `notification-event`) and `log` are other `ui:event` kinds the
 presenter routes internally, not to intents. Non-IPC consumers (MCP Server,
-Plugin API) dispatch intents directly through the Dispatcher.
+CodeHydra API) dispatch intents directly through the Dispatcher.
 
 ---
 
@@ -499,7 +499,7 @@ The `open-workspace` operation uses these hook modules:
 - **provision**: HooksModule -- the repository's `.codehydra/hooks/after-worktree-created`, for a genuinely new worktree only (no `existingWorkspace`). Contributes `title`/`tags` as `metadata` (also written to git config). Best-effort with internal try/catch
 - **prepare**: HooksModule -- the repository's `.codehydra/hooks/before-workspace-opened`, on **every** open (new, app start, project open, wake). Contributes `env`, with any `_CH_*` key dropped. Best-effort with internal try/catch. The merged result becomes the setup and finalize enrichment `workspaceEnv`
 - **setup**: AgentModule (starts agent server, fatal) -- passed `workspaceEnv`, which OpenCode's server manager spawns `opencode serve` with (kept in memory for restarts, forgotten on stop). Both repository hook points precede this one, so the agent never starts against a tree a setup script is still preparing, nor without its environment
-- **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), PluginServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's `codehydra.*` metadata)
+- **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), ApiServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's `codehydra.*` metadata)
 
 The metadata a `workspace:open` reports is the `create` snapshot plus whatever provision, setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads git config. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what git config actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
 
@@ -535,7 +535,7 @@ The `app-start` operation runs these hook points in sequence:
 - **migrations**: Bring data on disk in line with the configuration before anything reads it (state.json is loaded by now; projects are not). The workspaces-root module settles a changed `paths.workspaces` here, asking on the starting screen. A handler may quit the app instead of returning (it dispatches `app:shutdown` and never resolves).
 - **register-agents** / **agent-selection** / **save-agent**: First run only (`Config.wasConfigured()` is false). Collect the selectable agents, show the picker, persist the choice. Wrapped in the same retry loop `app:setup` uses.
 - **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
-- **start**: Start servers with capability-based ordering (`pluginPort` → `ideServerPort` → downstream handlers).
+- **start**: Start servers with capability-based ordering (`apiPort` → `ideServerPort` → downstream handlers).
 
 Agent selection **must** precede `check-deps`: the deps check is agent-specific — each agent module reports its missing binary only when it is the configured agent — so checking before the agent is known yields an empty binary list and the chosen agent's binary is never downloaded. `check-deps` therefore receives a non-null `configuredAgent`.
 
@@ -617,7 +617,7 @@ index.ts (composition root)
               +-- "check-deps" (binary/extension checks -> app:setup if needed)
               |
               +-- "start" hook point (servers, wiring)
-              |     PluginServerModule -> IdeServerModule -> AgentModules,
+              |     ApiServerModule -> IdeServerModule -> AgentModules,
               |     TelemetryModule, AutoUpdaterModule, McpModule, etc.
               |
               +-- Renderer notified -> ready
@@ -792,11 +792,11 @@ NetworkLayer provides unified interfaces for all localhost network operations, d
 
 **Interface Responsibilities:**
 
-| Interface     | Methods                    | Purpose                                | Used By                                                |
-| ------------- | -------------------------- | -------------------------------------- | ------------------------------------------------------ |
-| `HttpClient`  | `fetch(url, options)`      | HTTP GET with timeout support          | IdeServerModule, OpenCodeServerManager                 |
-| `PortManager` | `listenOnFreePort(server)` | Bind a server to a free port (no race) | ClaudeCodeServerManager, McpServer, PluginServerModule |
-| `PortManager` | `findFreePort()`           | Find a free port without holding it    | IdeServerModule, OpenCodeServerManager                 |
+| Interface     | Methods                    | Purpose                                | Used By                                             |
+| ------------- | -------------------------- | -------------------------------------- | --------------------------------------------------- |
+| `HttpClient`  | `fetch(url, options)`      | HTTP GET with timeout support          | IdeServerModule, OpenCodeServerManager              |
+| `PortManager` | `listenOnFreePort(server)` | Bind a server to a free port (no race) | ClaudeCodeServerManager, McpServer, ApiServerModule |
+| `PortManager` | `findFreePort()`           | Find a free port without holding it    | IdeServerModule, OpenCodeServerManager              |
 
 `findFreePort()` releases the port before returning it, so the caller can lose it before binding
 (to another process, or briefly to the kernel still tearing down the probe socket) and must handle

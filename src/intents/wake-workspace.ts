@@ -55,7 +55,7 @@ export const EVENT_WORKSPACE_WAKE_FAILED = "workspace:wake-failed" as const;
 const workspaceOpenSourceSchema = z.enum([
   "ui-ipc",
   "mcp",
-  "plugin-server",
+  "api-server",
   "auto-workspace",
   "open-project",
   "creation",

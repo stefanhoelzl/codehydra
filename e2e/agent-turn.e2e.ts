@@ -110,7 +110,7 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
   const agent = currentAgent();
   const ui = app().uiPage();
 
-  // launchApp returns at the `show-ui` hook point, two before the plugin server
+  // launchApp returns at the `show-ui` hook point, two before the API server
   // binds and publishes its port — so `ch` would otherwise race startup and
   // report the app as not running.
   await waitForConnectionDetails();
@@ -340,7 +340,7 @@ test("deleting the workspace waits for the agent to exit, not for a timeout", as
   // Teardown Ctrl+Cs the agent and waits for its terminal's close, reported as
   // the "close" agent lifecycle event. The agent used to be typed into a shell
   // that outlived it, so the terminal never closed: every deletion of a
-  // workspace with a live agent sat out plugin-server's full timeout and fell
+  // workspace with a live agent sat out api-server's full timeout and fell
   // back to killing the orphaned shell. Only a real terminal running a real
   // agent shows that, which is why it is asserted here.
 

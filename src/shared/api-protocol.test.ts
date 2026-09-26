@@ -1,5 +1,5 @@
 /**
- * Unit tests for plugin protocol types and validators.
+ * Unit tests for API protocol types and validators.
  */
 
 import { describe, it, expect } from "vitest";
@@ -14,7 +14,7 @@ import {
   validateLogRequest,
   COMMAND_TIMEOUT_MS,
   type ServerToClientEvents,
-} from "./plugin-protocol";
+} from "./api-protocol";
 
 describe("validateSetMetadataRequest", () => {
   describe("valid requests", () => {
@@ -547,7 +547,7 @@ describe("shutdown event signature", () => {
     // Type-level test: verify the shutdown event signature compiles correctly
     // This test validates that the ServerToClientEvents interface has the correct type
     const mockHandler: ServerToClientEvents["shutdown"] = (ack) => {
-      // ack should accept PluginResult<void>
+      // ack should accept ApiResult<void>
       ack({ success: true, data: undefined });
       ack({ success: false, error: "test error" });
     };
@@ -556,8 +556,8 @@ describe("shutdown event signature", () => {
     expect(typeof mockHandler).toBe("function");
   });
 
-  it("ack callback matches PluginResult<void> type", () => {
-    // Verify the ack callback type is compatible with PluginResult<void>
+  it("ack callback matches ApiResult<void> type", () => {
+    // Verify the ack callback type is compatible with ApiResult<void>
     type ShutdownAck = Parameters<ServerToClientEvents["shutdown"]>[0];
     type AckParam = Parameters<ShutdownAck>[0];
 

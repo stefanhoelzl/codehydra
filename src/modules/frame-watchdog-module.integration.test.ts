@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createFrameWatchdogModule, RECONNECT_GRACE_MS } from "./frame-watchdog-module";
-import type { WorkspaceDisconnect } from "./plugin-server-module";
+import type { WorkspaceDisconnect } from "./api-server-module";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { IntentModule } from "../intents/lib/module";

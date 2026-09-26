@@ -212,16 +212,16 @@ function minimalCheckDeps(
 /**
  * The app:start "start" hook point.
  *
- * The agent module gates on two capabilities: `pluginPort`, because the MCP
- * config carries the plugin server's port, and `cliConnection`, because it also
+ * The agent module gates on two capabilities: `apiPort`, because the MCP
+ * config carries the API server's port, and `cliConnection`, because it also
  * carries the CLI's token — which cli-module mints in its own start hook, and
  * which would otherwise be read before it exists.
  */
-function minimalStart(pluginPort: number | null = null): Operation<OperationSchemas> {
+function minimalStart(apiPort: number | null = null): Operation<OperationSchemas> {
   return createMinimalOperation<void>(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
     hookContext: (ctx) => ({
       intent: ctx.intent,
-      capabilities: { pluginPort, [CLI_CONNECTION_CAPABILITY]: true },
+      capabilities: { apiPort, [CLI_CONNECTION_CAPABILITY]: true },
     }),
   });
 }

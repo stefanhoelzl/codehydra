@@ -101,7 +101,7 @@ interface IdeServerConfig {
   readonly extensionsDir: string;
   readonly userDataDir: string;
   readonly binDir: string;
-  pluginPort: number | undefined;
+  apiPort: number | undefined;
 }
 
 // =============================================================================
@@ -304,7 +304,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     extensionsDir: deps.pathProvider.dataPath("vscode/extensions").toNative(),
     userDataDir: deps.pathProvider.dataPath("vscode/user-data").toNative(),
     binDir: deps.pathProvider.dataPath("bin").toNative(),
-    pluginPort: undefined,
+    apiPort: undefined,
   };
 
   /** Resolve version-derived paths (call only after load()). */
@@ -792,9 +792,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       // Distribution-specific environment (from the active IdeServer descriptor)
       Object.assign(cleanEnv, ide.serveEnv());
 
-      // Set plugin port for VS Code extension communication
-      if (config.pluginPort !== undefined) {
-        cleanEnv._CH_PLUGIN_PORT = String(config.pluginPort);
+      // Set API server port for VS Code extension communication
+      if (config.apiPort !== undefined) {
+        cleanEnv._CH_API_PORT = String(config.apiPort);
       }
 
       // Concrete wrapper invocations resolved from the active descriptor, so
@@ -1016,12 +1016,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         // app-start -> start: start the IDE server, update port
         // -------------------------------------------------------------------
         start: {
-          requires: { pluginPort: ANY_VALUE },
+          requires: { apiPort: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<HookOutput> => {
-            // Read pluginPort from capabilities (provided by plugin-server-module)
-            const pluginPort = ctx.capabilities?.pluginPort as number | null;
-            if (pluginPort !== null) {
-              config.pluginPort = pluginPort;
+            // Read apiPort from capabilities (provided by api-server-module)
+            const apiPort = ctx.capabilities?.apiPort as number | null;
+            if (apiPort !== null) {
+              config.apiPort = apiPort;
             }
 
             // Before any workspace iframe loads, so the first webview already

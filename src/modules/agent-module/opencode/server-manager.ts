@@ -276,8 +276,8 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
           command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
           environment: {
             _CH_WORKSPACE_PATH: normalizedWorkspacePath,
-            _CH_PLUGIN_PORT: String(this.mcpConfig.port),
-            _CH_PLUGIN_TOKEN: this.mcpConfig.token,
+            _CH_API_PORT: String(this.mcpConfig.port),
+            _CH_API_TOKEN: this.mcpConfig.token,
           },
           enabled: true,
         },
@@ -306,8 +306,8 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       // right one without depending on the process's working directory.
       _CH_WORKSPACE_PATH: normalizedWorkspacePath,
       ...(this.mcpConfig && {
-        _CH_PLUGIN_PORT: String(this.mcpConfig.port),
-        _CH_PLUGIN_TOKEN: this.mcpConfig.token,
+        _CH_API_PORT: String(this.mcpConfig.port),
+        _CH_API_TOKEN: this.mcpConfig.token,
       }),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     };

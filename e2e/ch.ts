@@ -30,7 +30,7 @@ export interface Run {
  * PATH is kept because the shell needs one; the rest are dropped so the CLI has
  * to find its instance and its interpreter the way it would from a terminal
  * CodeHydra never touched. It also matters when the suite itself runs inside a
- * CodeHydra workspace: an inherited `_CH_PLUGIN_PORT` would point `ch` at that
+ * CodeHydra workspace: an inherited `_CH_API_PORT` would point `ch` at that
  * instance instead of the app under test.
  */
 export function bareEnv(): NodeJS.ProcessEnv {

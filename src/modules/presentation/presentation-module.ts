@@ -950,7 +950,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
   // Background-focus suppression
   //
-  // A workspace an agent opens in the background (MCP, the plugin server, an
+  // A workspace an agent opens in the background (MCP, the API server, an
   // auto-workspace source with focus: true) asks to steal the view by passing
   // stealFocus: true. That is jarring while the user is reading the expanded
   // sidebar — the view yanks out from under the cursor. This interceptor
@@ -971,7 +971,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // the intended bias: err toward not stealing focus.
   const BACKGROUND_OPEN_SOURCES: ReadonlySet<WorkspaceOpenSource> = new Set([
     "mcp",
-    "plugin-server",
+    "api-server",
     "auto-workspace",
   ]);
 
@@ -2288,7 +2288,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
       [DELETE_WORKSPACE_OPERATION_ID]: {
         // Release the workspace's IDE frame — but only after the agent has been
-        // stopped. `requires` defers this to a later wave than the plugin-server
+        // stopped. `requires` defers this to a later wave than the api-server
         // handler that asks the agent to exit, so the iframe (and with it the
         // IDE client connection the request travels over) survives until that
         // has either succeeded or hit its own timeout.

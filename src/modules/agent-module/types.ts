@@ -35,7 +35,7 @@ export interface McpConfig {
   readonly nodePath: string;
   /** Absolute path to the CLI bundle (`ch.cjs`). */
   readonly cliPath: string;
-  /** Plugin server port the shim connects back on. */
+  /** API server port the shim connects back on. */
   readonly port: number;
   /** Token the shim presents when connecting. */
   readonly token: string;

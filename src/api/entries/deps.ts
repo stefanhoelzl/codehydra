@@ -90,7 +90,7 @@ export interface EntryDeps {
   /**
    * Open a path with the OS. `reveal` shows it in the file manager (selecting a
    * file's containing folder), otherwise it opens with the default application.
-   * No intent covers this — the plugin server calls the app boundary directly.
+   * No intent covers this — the API server calls the app boundary directly.
    */
   readonly appLayer: Pick<AppBoundary, "openPath">;
   /**

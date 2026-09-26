@@ -376,29 +376,29 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
 // =============================================================================
 
 /**
- * Helper module that provides the pluginPort capability (null by default).
- * The IDE server module's start handler has `requires: { pluginPort: ANY_VALUE }`,
+ * Helper module that provides the apiPort capability (null by default).
+ * The IDE server module's start handler has `requires: { apiPort: ANY_VALUE }`,
  * so a provider must be registered before it.
  */
-function createPluginPortProvider(port: number | null = null): IntentModule {
+function createApiPortProvider(port: number | null = null): IntentModule {
   return {
-    name: "plugin-port-provider",
+    name: "api-port-provider",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async () => ({ provides: { pluginPort: port } }),
+          handler: async () => ({ provides: { apiPort: port } }),
         },
       },
     },
   };
 }
 
-function createTestSetup(mockDeps?: IdeServerModuleDeps, pluginPort: number | null = null) {
+function createTestSetup(mockDeps?: IdeServerModuleDeps, apiPort: number | null = null) {
   const deps = mockDeps ?? createMockDeps();
   const dispatcher = createMockDispatcher();
 
-  // Register pluginPort provider before the IDE server module so the capability is available
-  dispatcher.registerModule(createPluginPortProvider(pluginPort));
+  // Register apiPort provider before the IDE server module so the capability is available
+  dispatcher.registerModule(createApiPortProvider(apiPort));
 
   const { module } = createIdeServerModule(deps);
   dispatcher.registerModule(module);
@@ -1177,7 +1177,7 @@ describe("IdeServerModule", () => {
 
       // Create single setup with both operations
       const dispatcher = createMockDispatcher();
-      dispatcher.registerModule(createPluginPortProvider());
+      dispatcher.registerModule(createApiPortProvider());
       const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
@@ -1223,7 +1223,7 @@ describe("IdeServerModule", () => {
     it("writes no environment to the workspace file", async () => {
       const deps = createMockDeps();
       const dispatcher = createMockDispatcher();
-      dispatcher.registerModule(createPluginPortProvider());
+      dispatcher.registerModule(createApiPortProvider());
       const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation(new MinimalStartOperation());
@@ -1232,7 +1232,7 @@ describe("IdeServerModule", () => {
       dispatcher.registerOperation(
         new MinimalFinalizeOperation({
           workspacePath: wsPath("/test/project/.worktrees/feature-1"),
-          envVars: { _CH_PLUGIN_TOKEN: "secret", DATABASE_URL: "postgres://x" },
+          envVars: { _CH_API_TOKEN: "secret", DATABASE_URL: "postgres://x" },
           workspaceEnv: { DATABASE_URL: "postgres://x" },
         })
       );
@@ -1270,7 +1270,7 @@ describe("IdeServerModule", () => {
       });
 
       const dispatcher = createMockDispatcher();
-      dispatcher.registerModule(createPluginPortProvider());
+      dispatcher.registerModule(createApiPortProvider());
       const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
@@ -1391,11 +1391,11 @@ describe("IdeServerModule", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // pluginPort capability
+  // apiPort capability
   // ---------------------------------------------------------------------------
 
-  describe("pluginPort capability", () => {
-    it("makes plugin port available in spawned process environment via capability", async () => {
+  describe("apiPort capability", () => {
+    it("makes API server port available in spawned process environment via capability", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps, 9876);
 
@@ -1404,7 +1404,7 @@ describe("IdeServerModule", () => {
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
-      expect(env._CH_PLUGIN_PORT).toBe("9876");
+      expect(env._CH_API_PORT).toBe("9876");
     });
   });
 
@@ -1417,7 +1417,7 @@ describe("IdeServerModule", () => {
 
     beforeEach(() => {
       originalEnv = { ...process.env };
-      delete process.env._CH_PLUGIN_PORT;
+      delete process.env._CH_API_PORT;
     });
 
     afterEach(() => {
@@ -1507,7 +1507,7 @@ describe("IdeServerModule", () => {
       expect(env.VSCODE_PROXY_URI).toBeUndefined();
     });
 
-    it("omits _CH_PLUGIN_PORT when plugin port not set", async () => {
+    it("omits _CH_API_PORT when API server port not set", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
@@ -1516,7 +1516,7 @@ describe("IdeServerModule", () => {
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string | undefined>;
-      expect(env._CH_PLUGIN_PORT).toBeUndefined();
+      expect(env._CH_API_PORT).toBeUndefined();
     });
 
     it("points the wrappers at the vscodium remote-cli/node, plus opencode dir", async () => {

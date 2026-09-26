@@ -1,7 +1,7 @@
 /**
  * OperationRegistry — the operations, and the one path into them.
  *
- * The registry knows nothing about MCP, the plugin wire or the CLI. It holds
+ * The registry knows nothing about MCP, the API server wire or the CLI. It holds
  * entries and runs them; each adapter owns its own mapping from operation name
  * to whatever it calls things, and hands the shaping it wants to `invoke`.
  *

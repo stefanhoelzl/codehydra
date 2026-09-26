@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 import { run } from "./run";
 import { EXIT } from "./output";
 import { CallError, type Client } from "./client";
-import { attachPluginAdapter, type PluginResult } from "../api/adapters/plugin";
+import { attachApiServerAdapter, type ApiResult } from "../api/adapters/api-server";
 import { createRegistry } from "../api/entries";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
@@ -48,7 +48,7 @@ function wire(): { client: Client; writes: SetMetadataPayload[] } {
   );
 
   const handlers = new Map<string, (...args: unknown[]) => void>();
-  attachPluginAdapter({
+  attachApiServerAdapter({
     socket: { on: (event, listener) => void handlers.set(event, listener) },
     registry,
     workspacePath: WS,
@@ -58,7 +58,7 @@ function wire(): { client: Client; writes: SetMetadataPayload[] } {
 
   const client: Client = {
     async call<T>(channel: string, request?: unknown): Promise<T> {
-      const result = await new Promise<PluginResult<unknown>>((resolve) =>
+      const result = await new Promise<ApiResult<unknown>>((resolve) =>
         handlers.get(channel)!(request, resolve)
       );
       if (!result.success) throw new CallError(result.error, "failed");

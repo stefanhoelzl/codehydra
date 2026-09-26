@@ -41,11 +41,11 @@ export type LoggerName =
   | "ui" // Renderer UI components
   | "binary-download" // Binary download operations
   | "lifecycle" // LifecycleApi - app lifecycle
-  | "plugin" // PluginServer - VS Code extension communication
+  | "api-server" // ApiServer - sidekick, `ch` and MCP connections
   | "badge" // BadgeManager - app icon badge
   | "mcp" // McpServerManager - MCP server
   | "cli" // CliModule - the ch CLI's scripts and published connection details
-  | "extension" // PluginServer - extension-side logs forwarded to main
+  | "extension" // ApiServer - extension-side logs forwarded to main
   | "ext-manager" // ExtensionModule - extension manifest loading
   | "dialog" // DialogBoundary - system dialogs
   | "menu" // MenuBoundary - application menu

@@ -204,7 +204,7 @@ Services are pure Node.js for testability without Electron:
 | VS Code Setup Service        | First-run extension and config installation                                                        | Implemented |
 | Hooks Module                 | Run a repository's own `.codehydra` scripts at curated lifecycle moments                           | Implemented |
 | NetworkLayer                 | HTTP, SSE, port operations, local sockets (HttpClient, SseClient, PortManager, LocalSocketClient)  | Implemented |
-| PluginServer                 | Socket.IO server for VS Code extension communication                                               | Implemented |
+| ApiServer                    | Socket.IO server for VS Code extension communication                                               | Implemented |
 | McpServerManager             | MCP server for AI agent workspace API access                                                       | Implemented |
 | PosthogModule                | PostHog analytics for DAU, version, platform, errors                                               | Implemented |
 | AutoUpdater                  | Check for updates daily, apply on quit (electron-updater)                                          | Implemented |
@@ -256,7 +256,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 │              iframe hidden          ┌───────────────────────┐       │
 │              (still mounted)        │ Op 1: kill-terminals  │       │
 │                     │               │ "Terminating processes"│       │
-│                     │               │ (PluginServer command) │       │
+│                     │               │ (ApiServer command) │       │
 │                     │               └───────────┬───────────┘       │
 │                     │                           │                   │
 │                     │               ┌───────────────────────┐       │
@@ -668,7 +668,7 @@ On first startup (no `config.json` exists), the application follows this flow:
    - `done`: Complete (green checkmark)
    - `failed`: Error occurred (red X, shows Retry/Quit buttons)
 
-5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (IDE server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace. Earlier hook points (`register-config` through `check-deps`) handle configuration, Electron readiness, and dependency verification.
+5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (IDE server, API server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace. Earlier hook points (`register-config` through `check-deps`) handle configuration, Electron readiness, and dependency verification.
 
 **Key invariant**: The renderer ALWAYS goes through "loading" before "ready". The multi-phase `app:start` design ensures config is loaded, dependencies are checked, and servers are running before data is loaded. This allows the UI to display a loading screen during service startup.
 
@@ -944,7 +944,7 @@ CH_LOG__LEVEL=silly:presenter pnpm dev                # one scope, maximum detai
 | `[view]`      | ViewManager               | View lifecycle, mode changes          |
 | `[app]`       | Application Lifecycle     | Bootstrap, startup, shutdown          |
 | `[ui]`        | Renderer Components       | Dialog events, user actions           |
-| `[extension]` | PluginServer              | Extension-side logs forwarded to main |
+| `[extension]` | ApiServer                 | Extension-side logs forwarded to main |
 | `[presenter]` | PresentationModule        | ui:event intake, ui:state pushes      |
 
 (An abridged list — CLAUDE.md carries the full set of `LoggerName` values.)
@@ -1060,7 +1060,7 @@ For detailed agent system documentation including provider interface, status tra
 | `agent:get-all-statuses` | Command | `void`                              | Get all workspace statuses        |
 | `agent:refresh`          | Command | `void`                              | Trigger immediate scan            |
 
-## Plugin Interface
+## API Server Interface
 
 CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection. The protocol supports bidirectional communication:
 
@@ -1074,7 +1074,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │                      CodeHydra (Electron Main)                            │
 │                                                                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │  PluginServer                                                       │  │
+│  │  ApiServer                                                       │  │
 │  │                                                                     │  │
 │  │  connections: Map<workspacePath, Socket>                            │  │
 │  │                                                                     │  │
@@ -1082,19 +1082,19 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │  ───► "command" (execute VS Code commands)                          │  │
 │  │                                                                     │  │
 │  │  Client → Server:                                                   │  │
-│  │  ◄─── "api:workspace:getStatus" → PluginResult<WorkspaceStatus>     │  │
-│  │  ◄─── "api:workspace:getMetadata" → PluginResult<Record<...>>       │  │
-│  │  ◄─── "api:workspace:setMetadata" → PluginResult<void>              │  │
+│  │  ◄─── "api:workspace:getStatus" → ApiResult<WorkspaceStatus>     │  │
+│  │  ◄─── "api:workspace:getMetadata" → ApiResult<Record<...>>       │  │
+│  │  ◄─── "api:workspace:setMetadata" → ApiResult<void>              │  │
 │  │  ◄─── "api:log" → (fire-and-forget, no response)                    │  │
 │  │                                                                     │  │
 │  │  API handlers registered via onApiCall() callback pattern           │  │
-│  │  (PluginServer remains agnostic to API layer)                       │  │
+│  │  (ApiServer remains agnostic to API layer)                       │  │
 │  └─────────────────────────────────────────────────────────────────────┘  │
 │                                           ▲                               │
-│                                           │ plugin-server-module adds     │
+│                                           │ api-server-module adds     │
 │                                           │ handlers during app:start     │
 │  ┌────────────────────────────────────────┴────────────────────────────┐  │
-│  │  createPluginServerModule() - src/modules/plugin-server-module.ts   │  │
+│  │  createApiServerModule() - src/modules/api-server-module.ts   │  │
 │  │                                                                     │  │
 │  │  Workspace path resolution:                                         │  │
 │  │  1. appState.findProjectForWorkspace(workspacePath)                 │  │
@@ -1137,7 +1137,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │  }                                                                  │  │
 │  │                                                                     │  │
 │  │  Error handling: Returns rejected Promise with clear message        │  │
-│  │  (matches PluginResult pattern - no throwing)                       │  │
+│  │  (matches ApiResult pattern - no throwing)                       │  │
 │  │                                                                     │  │
 │  │  Timeout: 10s (matches COMMAND_TIMEOUT_MS)                          │  │
 │  └─────────────────────────────────────────────────────────────────────┘  │
@@ -1163,19 +1163,19 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 
 **Server → Client (Commands):**
 
-| Event     | Payload          | Response                | Description             |
-| --------- | ---------------- | ----------------------- | ----------------------- |
-| `command` | `CommandRequest` | `PluginResult<unknown>` | Execute VS Code command |
+| Event     | Payload          | Response             | Description             |
+| --------- | ---------------- | -------------------- | ----------------------- |
+| `command` | `CommandRequest` | `ApiResult<unknown>` | Execute VS Code command |
 
 **Client → Server (API Calls):**
 
-| Event                          | Payload                  | Response                              | Description                       |
-| ------------------------------ | ------------------------ | ------------------------------------- | --------------------------------- |
-| `api:workspace:getStatus`      | (none)                   | `PluginResult<WorkspaceStatus>`       | Get workspace dirty/agent status  |
-| `api:workspace:getMetadata`    | (none)                   | `PluginResult<Record<string,string>>` | Get all workspace metadata        |
-| `api:workspace:setMetadata`    | `SetMetadataRequest`     | `PluginResult<void>`                  | Set or delete metadata key        |
-| `api:workspace:executeCommand` | `ExecuteCommandRequest`  | `PluginResult<unknown>`               | Execute a VS Code command         |
-| `api:workspace:create`         | `WorkspaceCreateRequest` | `PluginResult<Workspace>`             | Create a new workspace in project |
+| Event                          | Payload                  | Response                           | Description                       |
+| ------------------------------ | ------------------------ | ---------------------------------- | --------------------------------- |
+| `api:workspace:getStatus`      | (none)                   | `ApiResult<WorkspaceStatus>`       | Get workspace dirty/agent status  |
+| `api:workspace:getMetadata`    | (none)                   | `ApiResult<Record<string,string>>` | Get all workspace metadata        |
+| `api:workspace:setMetadata`    | `SetMetadataRequest`     | `ApiResult<void>`                  | Set or delete metadata key        |
+| `api:workspace:executeCommand` | `ExecuteCommandRequest`  | `ApiResult<unknown>`               | Execute a VS Code command         |
+| `api:workspace:create`         | `WorkspaceCreateRequest` | `ApiResult<Workspace>`             | Create a new workspace in project |
 
 **Types:**
 
@@ -1190,13 +1190,13 @@ interface SetMetadataRequest {
   readonly value: string | null; // null deletes the key
 }
 
-type PluginResult<T> = { success: true; data: T } | { success: false; error: string };
+type ApiResult<T> = { success: true; data: T } | { success: false; error: string };
 ```
 
 ### Connection Lifecycle
 
-1. **PluginServer starts** on dynamic port in main process
-2. **The IDE server spawns** with `_CH_PLUGIN_PORT` env var
+1. **ApiServer starts** on dynamic port in main process
+2. **The IDE server spawns** with `_CH_API_PORT` env var
 3. **Extension activates** and reads env var
 4. **Extension connects** with `auth: { workspacePath }` (normalized path)
 5. **Server validates** auth and stores connection by normalized path
@@ -1204,11 +1204,11 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 
 ### API Wiring
 
-The Plugin API connects PluginServer to the intent dispatcher via MCP handlers that dispatch intents directly:
+The CodeHydra API connects ApiServer to the intent dispatcher via MCP handlers that dispatch intents directly:
 
 ```typescript
 // MCP handlers dispatch intents directly through the Dispatcher
-function createMcpHandlers(dispatcher: Dispatcher, pluginServer: PluginServer) {
+function createMcpHandlers(dispatcher: Dispatcher, apiServer: ApiServer) {
   return {
     getStatus: async (workspacePath) => {
       // 1. Resolve workspace path

@@ -1,12 +1,12 @@
 // @vitest-environment node
 /**
- * Integration tests for PluginServerModule through the Dispatcher.
+ * Integration tests for ApiServerModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  * Uses minimal test operations that exercise specific hook points.
  *
  * API handler tests (Socket.IO round-trip with mock dispatcher) are in
- * plugin-server.boundary.test.ts.
+ * api-server.boundary.test.ts.
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -33,11 +33,11 @@ import type {
   DeletePipelineHookInput,
   DeleteHookResult,
 } from "../intents/delete-workspace";
-import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
+import { createApiServerModule, type ApiServerModuleDeps } from "./api-server-module";
 import { createPortManagerMock } from "../boundaries/platform/port-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
-import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
+import { COMMAND_TIMEOUT_MS } from "../shared/api-protocol";
 import { wsPath, testPath } from "../shared/test-fixtures";
 import { projPath } from "../shared/test-fixtures";
 import type { WorkspaceName } from "../intents/contract";
@@ -63,7 +63,7 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    return (capabilities.pluginPort as number | null) ?? null;
+    return (capabilities.apiPort as number | null) ?? null;
   }
 }
 
@@ -121,10 +121,10 @@ function createMinimalDeleteOperation() {
 // Mock Factories
 // =============================================================================
 
-function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServerModuleDeps {
+function createMockDeps(overrides?: Partial<ApiServerModuleDeps>): ApiServerModuleDeps {
   return {
     portManager: createPortManagerMock(),
-    dispatcher: { dispatch: vi.fn() } as unknown as PluginServerModuleDeps["dispatcher"],
+    dispatcher: { dispatch: vi.fn() } as unknown as ApiServerModuleDeps["dispatcher"],
     appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
     logger: SILENT_LOGGER,
     ...overrides,
@@ -135,21 +135,21 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
 // Test Setup
 // =============================================================================
 
-function createTestSetup(mockDeps?: PluginServerModuleDeps) {
+function createTestSetup(mockDeps?: ApiServerModuleDeps) {
   const deps = mockDeps ?? createMockDeps();
   const dispatcher = createMockDispatcher();
-  const pluginServer = createPluginServerModule(deps);
+  const apiServer = createApiServerModule(deps);
 
-  dispatcher.registerModule(pluginServer.module);
+  dispatcher.registerModule(apiServer.module);
 
-  return { deps, dispatcher, pluginServer };
+  return { deps, dispatcher, apiServer };
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
 
-describe("PluginServerModule", () => {
+describe("ApiServerModule", () => {
   // ---------------------------------------------------------------------------
   // Constants (absorbed from old unit tests)
   // ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ describe("PluginServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("start", () => {
-    it("degrades gracefully when port allocation fails, provides null pluginPort", async () => {
+    it("degrades gracefully when port allocation fails, provides null apiPort", async () => {
       const deps = createMockDeps({
         portManager: {
           listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
@@ -174,15 +174,15 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
 
-      const pluginPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
+      const apiPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(pluginPort).toBeNull();
+      expect(apiPort).toBeNull();
     });
 
-    it("provides pluginPort capability when started successfully", async () => {
+    it("provides apiPort capability when started successfully", async () => {
       // This is tested with real Socket.IO in boundary tests.
       // Integration test only verifies graceful degradation above.
-      // The start hook catches errors and returns null pluginPort.
+      // The start hook catches errors and returns null apiPort.
     });
   });
 
@@ -192,25 +192,25 @@ describe("PluginServerModule", () => {
 
   describe("isReady", () => {
     it("is false before start", () => {
-      const { pluginServer } = createTestSetup();
-      expect(pluginServer.isReady()).toBe(false);
+      const { apiServer } = createTestSetup();
+      expect(apiServer.isReady()).toBe(false);
     });
 
     it("stays false when the server failed to start", async () => {
       // The failure path a caller must not dispatch into: the start hook
       // degrades to a null port rather than throwing, so "app started" is not
-      // the same question as "the plugin server is up".
+      // the same question as "the API server is up".
       const deps = createMockDeps({
         portManager: {
           listenOnFreePort: vi.fn().mockRejectedValue(new Error("bind failed")),
         },
       });
-      const { dispatcher, pluginServer } = createTestSetup(deps);
+      const { dispatcher, apiServer } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(pluginServer.isReady()).toBe(false);
+      expect(apiServer.isReady()).toBe(false);
     });
   });
 
@@ -293,7 +293,7 @@ describe("PluginServerModule", () => {
       ).resolves.not.toThrow();
     });
 
-    it("does not provide workspaceUrl capability (plugin server has no URL)", async () => {
+    it("does not provide workspaceUrl capability (API server has no URL)", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
 

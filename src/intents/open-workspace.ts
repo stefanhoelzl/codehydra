@@ -79,7 +79,7 @@ export const WORKSPACE_ENV_DEFAULTS: Readonly<Record<string, string>> = {
 // Contract schemas (single source of truth)
 // =============================================================================
 
-/** Selected agent backend. Local schema (not in contract); mirrors plugin-protocol's AgentType. */
+/** Selected agent backend. Local schema (not in contract); mirrors api-protocol's AgentType. */
 const agentTypeSchema = z.enum(["opencode", "claude"]);
 type AgentType = z.infer<typeof agentTypeSchema>;
 
@@ -87,7 +87,7 @@ type AgentType = z.infer<typeof agentTypeSchema>;
 export const workspaceOpenSourceSchema = z.enum([
   "ui-ipc",
   "mcp",
-  "plugin-server",
+  "api-server",
   "auto-workspace",
   "open-project",
   "creation",

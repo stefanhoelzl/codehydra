@@ -102,12 +102,12 @@ test("teardown stops the agent before releasing its IDE frame", async () => {
     // `modules` is the run order across capability waves, so this reads the
     // actual sequence rather than mere registration.
     const ran = String(entry.context?.["modules"] ?? "").split(",");
-    const stopsAgent = ran.indexOf("plugin-server");
+    const stopsAgent = ran.indexOf("api-server");
     const releasesFrame = ran.indexOf("presentation");
 
     expect(
       stopsAgent,
-      `plugin-server did not run in the shutdown hook: ${ran.join(",")}`
+      `api-server did not run in the shutdown hook: ${ran.join(",")}`
     ).toBeGreaterThanOrEqual(0);
     expect(
       releasesFrame,

@@ -1,5 +1,5 @@
 /**
- * Boundary tests for the CLI and MCP client kinds on the plugin wire.
+ * Boundary tests for the CLI and MCP client kinds on the API server wire.
  *
  * These run against a real Socket.IO server, because the things worth proving
  * here are all handshake behaviour: who is admitted, what they may call, and —
@@ -9,11 +9,7 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { z } from "zod/v4";
-import {
-  createPluginServerEnv,
-  waitForConnect,
-  waitForDisconnect,
-} from "./plugin-server.test-utils";
+import { createApiServerEnv, waitForConnect, waitForDisconnect } from "./api-server.test-utils";
 import { OperationRegistry } from "../api/registry";
 import { defineEntry } from "../api/types";
 import { workspacePathSchema, type WorkspacePath } from "../intents/contract";
@@ -119,7 +115,7 @@ function testRegistry(seen: Seen[] = [], hold = gate()) {
   ]);
 }
 
-type Env = Awaited<ReturnType<typeof createPluginServerEnv>>;
+type Env = Awaited<ReturnType<typeof createApiServerEnv>>;
 let env: Env | undefined;
 
 afterEach(async () => {
@@ -167,10 +163,10 @@ const PROJECTS: readonly ProjectLocation[] = [
   { name: "third", path: "/third", workspaces: [{ name: "twin", path: "/third/wt/twin" }] },
 ];
 
-describe("CLI clients on the plugin wire", () => {
+describe("CLI clients on the API server wire", () => {
   describe("authentication", () => {
     it("admits a client presenting the right token", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const client = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
 
       client.connect();
@@ -178,7 +174,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("turns away a client presenting the wrong token", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const client = env.createCliClient({ client: "cli", token: "guessed", cwd: WS });
 
       client.connect();
@@ -186,7 +182,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("turns away a client presenting no token at all", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const client = env.createCliClient({ client: "cli", cwd: WS });
 
       client.connect();
@@ -196,7 +192,7 @@ describe("CLI clients on the plugin wire", () => {
     it("refuses every CLI client when no token has been published", async () => {
       // The posture before app:start has generated one: refuse, rather than
       // silently accepting unauthenticated callers.
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: null });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: null });
       const client = env.createCliClient({ client: "cli", token: "anything", cwd: WS });
 
       client.connect();
@@ -204,7 +200,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("turns away an unknown client kind", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const client = env.createCliClient({ client: "impostor", token: TOKEN, cwd: WS });
 
       client.connect();
@@ -213,7 +209,7 @@ describe("CLI clients on the plugin wire", () => {
 
     it("still admits a sidekick, whose handshake carries no token", async () => {
       // The extension handshake is a published contract and must not change.
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const sidekick = env.createClient(WS);
 
       sidekick.connect();
@@ -226,7 +222,7 @@ describe("CLI clients on the plugin wire", () => {
       // The whole reason CLI clients stay out of the connection registry: a
       // duplicate sidekick connection disconnects the incumbent, and every `ch`
       // invocation would otherwise do exactly that.
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const sidekick = env.createClient(WS);
       sidekick.connect();
       await waitForConnect(sidekick);
@@ -239,7 +235,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("admits several CLI clients on one workspace at once", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
 
       const first = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       const second = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
@@ -256,7 +252,7 @@ describe("CLI clients on the plugin wire", () => {
   describe("operations", () => {
     it("addresses operations by registry name", async () => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -275,7 +271,7 @@ describe("CLI clients on the plugin wire", () => {
       // Those exist for backwards compatibility with extensions; `ch` must not
       // depend on them, so it cannot reach them.
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -293,7 +289,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("serves the registry description so a client can build its surface", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       cli.connect();
       await waitForConnect(cli);
@@ -308,7 +304,7 @@ describe("CLI clients on the plugin wire", () => {
   describe("workspace-less clients", () => {
     it("admits a client that names no workspace", async () => {
       // A shell standing outside any worktree is a legitimate caller.
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const cli = env.createCliClient({ client: "cli", token: TOKEN });
 
       cli.connect();
@@ -317,7 +313,7 @@ describe("CLI clients on the plugin wire", () => {
 
     it("runs app-global operations for it", async () => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -332,7 +328,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("refuses workspace-scoped operations with a message naming the reason", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
       const cli = env.createCliClient({ client: "cli", token: TOKEN });
       cli.connect();
       await waitForConnect(cli);
@@ -345,7 +341,7 @@ describe("CLI clients on the plugin wire", () => {
 
     it("runs a workspace operation that names the workspace to act on", async () => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -366,7 +362,7 @@ describe("CLI clients on the plugin wire", () => {
   describe("who the caller is", () => {
     it("is the workspace a shell stands in", async () => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -382,7 +378,7 @@ describe("CLI clients on the plugin wire", () => {
 
     it("is the workspace the MCP shim presents, wherever it runs", async () => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -405,7 +401,7 @@ describe("CLI clients on the plugin wire", () => {
       // A `ch` older than the app named its target there. Honouring it as the
       // caller would sign messages and resolve names as the wrong workspace.
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -433,7 +429,7 @@ describe("CLI clients on the plugin wire", () => {
       ["the MCP shim", { client: "mcp", token: TOKEN, workspacePath: WS }],
     ])("reaches the operation from %s", async (_kind, auth) => {
       const seen: Seen[] = [];
-      env = await createPluginServerEnv(undefined, {
+      env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
@@ -474,7 +470,7 @@ describe("forwarded events", () => {
   /** A shell in WS with `channel` in flight, held open until `hold.open()`. */
   async function callInFlight(channel: string, request: unknown = {}) {
     const hold = gate();
-    env = await createPluginServerEnv(undefined, {
+    env = await createApiServerEnv(undefined, {
       registry: testRegistry([], hold),
       cliToken: TOKEN,
     });
@@ -541,7 +537,7 @@ describe("forwarded events", () => {
   });
 
   it("pushes nothing to a client with no call in flight", async () => {
-    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
     listProjectsReturns(PROJECTS);
     const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     cli.connect();
@@ -557,7 +553,7 @@ describe("forwarded events", () => {
 
   it("does not push events to a sidekick", async () => {
     // The extension has its own channels; this one exists for CLI clients.
-    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
     const sidekick = env.createClient(WS);
     sidekick.connect();
     await waitForConnect(sidekick);
@@ -602,7 +598,7 @@ describe("locks tied to a CLI connection", () => {
 
   it("releases a `lock.hold` when the socket that took it disconnects", async () => {
     const { registry, locks } = lockRegistry();
-    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry, cliToken: TOKEN });
     listProjectsReturns(PROJECTS);
     const run = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     run.connect();
@@ -621,7 +617,7 @@ describe("locks tied to a CLI connection", () => {
 
   it("keeps a `lock.take` after the socket that took it disconnects", async () => {
     const { registry, locks } = lockRegistry();
-    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry, cliToken: TOKEN });
     listProjectsReturns(PROJECTS);
     const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     cli.connect();
@@ -640,7 +636,7 @@ describe("locks tied to a CLI connection", () => {
     // The documented way to break a stuck lock: `ch lock release <name>
     // --workspace <holder>`, run from anywhere.
     const { registry, locks } = lockRegistry();
-    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry, cliToken: TOKEN });
     listProjectsReturns(PROJECTS);
     const holder = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     holder.connect();
@@ -661,7 +657,7 @@ describe("locks tied to a CLI connection", () => {
 
   it("drops a queued waiter whose socket disconnects", async () => {
     const { registry, locks } = lockRegistry();
-    env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
+    env = await createApiServerEnv(undefined, { registry, cliToken: TOKEN });
     listProjectsReturns(PROJECTS);
     const holder = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     const waiter = env.createCliClient({ client: "cli", token: TOKEN, cwd: "/other/wt/shared" });

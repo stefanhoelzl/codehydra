@@ -2,7 +2,7 @@
  * Integration tests for the sidekick extension's agent terminal lifecycle emits.
  *
  * Verifies that opening the agent terminal emits api:workspace:agentLifecycle
- * { event: "open" } and closing it emits { event: "close" } over the plugin
+ * { event: "open" } and closing it emits { event: "close" } over the API server
  * socket (replacing the wrapper's WrapperStart/WrapperEnd POSTs).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -96,12 +96,12 @@ describe("sidekick agent lifecycle emits", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetVscodeFake();
-    process.env._CH_PLUGIN_PORT = "8123";
+    process.env._CH_API_PORT = "8123";
   });
 
   afterEach(() => {
     deactivate();
-    delete process.env._CH_PLUGIN_PORT;
+    delete process.env._CH_API_PORT;
   });
 
   it("emits agentLifecycle 'open' when the agent terminal is created", async () => {
@@ -256,12 +256,12 @@ describe("sidekick workspace environment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetVscodeFake();
-    process.env._CH_PLUGIN_PORT = "8123";
+    process.env._CH_API_PORT = "8123";
   });
 
   afterEach(() => {
     deactivate();
-    delete process.env._CH_PLUGIN_PORT;
+    delete process.env._CH_API_PORT;
   });
 
   it("gives terminals the user opens the workspace environment, without persisting it", async () => {
@@ -293,12 +293,12 @@ describe("sidekick modal notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetVscodeFake();
-    process.env._CH_PLUGIN_PORT = "8123";
+    process.env._CH_API_PORT = "8123";
   });
 
   afterEach(() => {
     deactivate();
-    delete process.env._CH_PLUGIN_PORT;
+    delete process.env._CH_API_PORT;
   });
 
   it.each([

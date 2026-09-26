@@ -9,7 +9,7 @@
  * the CLI, and the CLI's shaping then dropped every tool's `workspace` argument
  * so the call acted on the calling agent's own workspace instead. The server's
  * side of the contract is covered with hand-built handshakes
- * (plugin-server-cli.boundary.test.ts); this pins the side the shim sends.
+ * (api-server-cli.boundary.test.ts); this pins the side the shim sends.
  *
  * The compiled bundle rather than `connect()` in-process: under vitest,
  * `require("ws")` resolves to ws's browser stub, so Socket.IO's websocket
@@ -74,8 +74,8 @@ function startMcp(port: number, env: Record<string, string>, cwd: string): void 
     cwd,
     env: {
       PATH: process.env.PATH ?? "",
-      _CH_PLUGIN_PORT: String(port),
-      _CH_PLUGIN_TOKEN: TOKEN,
+      _CH_API_PORT: String(port),
+      _CH_API_TOKEN: TOKEN,
       ...env,
     },
     stdio: ["pipe", "ignore", "ignore"],

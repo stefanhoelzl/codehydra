@@ -19,7 +19,7 @@
       "response": { "content": "Renamed the workspace." }
     },
     {
-      "_comment": "Turn 1. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the plugin token, and served its tool list. OpenCode namespaces MCP tools as <server>_<tool>, and configures them at server start — so unlike Claude there is no wait-for-servers step.",
+      "_comment": "Turn 1. Gating on the tool name is the assertion: it is in this list only because `ch mcp` started, authenticated with the API token, and served its tool list. OpenCode namespaces MCP tools as <server>_<tool>, and configures them at server start — so unlike Claude there is no wait-for-servers step.",
       "match": {
         "systemMessage": "You are running inside CodeHydra.",
         "toolName": "codehydra_workspace_set_title",

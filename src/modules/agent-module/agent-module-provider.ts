@@ -6,7 +6,7 @@
  * keeping the module itself a thin adapter between the intent system and the provider.
  */
 
-import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
+import type { AgentType, AgentLifecycleEvent } from "../../shared/api-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type {
   AgentMessage,

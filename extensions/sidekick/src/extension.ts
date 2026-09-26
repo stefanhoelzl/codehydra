@@ -6,8 +6,8 @@ import type { CodehydraApi } from "../api";
 import type {
   TypedSocket,
   WorkspaceStatus,
-  PluginResult,
-  PluginConfig,
+  ApiResult,
+  ApiConfig,
   CommandRequest,
   LogContext,
   WorkspaceCreateRequest,
@@ -74,7 +74,7 @@ const vscodeFactories: VscodeFactories = {
 let isDevelopment = false;
 let debugOutputChannel: vscode.OutputChannel | null = null;
 let currentWorkspacePath = "";
-let currentPluginPort: number | null = null;
+let currentApiPort: number | null = null;
 let extensionContext: vscode.ExtensionContext | null = null;
 let currentAgentType: AgentType | null = null;
 let currentAgentEnv: Record<string, string> | null = null;
@@ -118,7 +118,7 @@ function emitAgentLifecycle(event: "open" | "close"): void {
  * The terminal must close when the agent exits. Its close is the "close" agent
  * lifecycle event, which is what workspace teardown waits for after asking the
  * agent to stop — a bare `ch claude` leaves the shell at its prompt, the terminal
- * open, and every deletion waiting out plugin-server's full timeout.
+ * open, and every deletion waiting out api-server's full timeout.
  *
  * The shell is the terminal's default profile, so the syntax follows
  * `vscode.env.shell`. PowerShell gets `finally` rather than `; exit` because
@@ -306,7 +306,7 @@ const AGENT_CLOSE_SIGNAL_DEADLINE_MS = 6000;
  * All a dispose achieves is firing onDidCloseTerminal, which the main process
  * reads as "the agent exited" and proceeds to remove a worktree the agent is
  * still sitting in. Reporting a close we cannot back up is worse than not
- * reporting one: the caller has its own bound (plugin-server-module's
+ * reporting one: the caller has its own bound (api-server-module's
  * AGENT_CLOSE_TIMEOUT_MS) and can fall back to process cleanup, which it cannot
  * do if we tell it everything is fine.
  *
@@ -400,7 +400,7 @@ function emitApiCall<T>(event: string, request?: unknown): Promise<T> {
       reject(new Error(`API call timed out: ${event}`));
     }, API_TIMEOUT_MS);
 
-    const handleResult = (result: PluginResult<T>): void => {
+    const handleResult = (result: ApiResult<T>): void => {
       clearTimeout(timeout);
       if (result.success) {
         resolve(result.data);
@@ -667,7 +667,7 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
       const info = {
         connected: isConnected,
         workspacePath: currentWorkspacePath,
-        pluginPort: currentPluginPort,
+        apiPort: currentApiPort,
         socketId: socket?.id ?? null,
         isDevelopment: isDevelopment,
       };
@@ -730,12 +730,12 @@ async function killAllTerminalsAndWait(): Promise<void> {
 }
 
 // ============================================================================
-// PluginServer Connection
+// ApiServer Connection
 // ============================================================================
 
-function connectToPluginServer(port: number, workspacePath: string): void {
+function connectToApiServer(port: number, workspacePath: string): void {
   currentWorkspacePath = workspacePath;
-  currentPluginPort = port;
+  currentApiPort = port;
 
   const url = `http://127.0.0.1:${port}`;
   socket = io(url, {
@@ -750,7 +750,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     autoConnect: false,
   }) as TypedSocket;
 
-  socket.on("config", async (config: PluginConfig) => {
+  socket.on("config", async (config: ApiConfig) => {
     if (typeof config !== "object" || config === null) {
       return;
     }
@@ -776,7 +776,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
     await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
 
-    // Skip setup on reconnect — the plugin is already configured
+    // Skip setup on reconnect — the sidekick is already configured
     if (hasReceivedInitialConfig) {
       return;
     }
@@ -822,11 +822,11 @@ function connectToPluginServer(port: number, workspacePath: string): void {
   });
 
   socket.on("connect", () => {
-    codehydraApi.log.info("Connected to PluginServer");
+    codehydraApi.log.info("Connected to ApiServer");
   });
 
   socket.on("disconnect", (reason) => {
-    codehydraApi.log.info("Disconnected from PluginServer", { reason });
+    codehydraApi.log.info("Disconnected from ApiServer", { reason });
     isConnected = false;
   });
 
@@ -879,7 +879,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     "ui:showNotification",
     (
       request: ShowNotificationRequest,
-      ack: (result: PluginResult<ShowNotificationResponse>) => void
+      ack: (result: ApiResult<ShowNotificationResponse>) => void
     ) => {
       const showFn =
         request.severity === "error"
@@ -913,7 +913,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
   socket.on(
     "ui:statusBarUpdate",
-    (request: StatusBarUpdateRequest, ack: (result: PluginResult<void>) => void) => {
+    (request: StatusBarUpdateRequest, ack: (result: ApiResult<void>) => void) => {
       try {
         let item = mcpStatusBarItems.get(request.id);
         if (!item) {
@@ -937,7 +937,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
   socket.on(
     "ui:statusBarDispose",
-    (request: StatusBarDisposeRequest, ack: (result: PluginResult<void>) => void) => {
+    (request: StatusBarDisposeRequest, ack: (result: ApiResult<void>) => void) => {
       const item = mcpStatusBarItems.get(request.id);
       if (item) {
         item.dispose();
@@ -949,7 +949,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
   socket.on(
     "ui:showQuickPick",
-    (request: ShowQuickPickRequest, ack: (result: PluginResult<ShowQuickPickResponse>) => void) => {
+    (request: ShowQuickPickRequest, ack: (result: ApiResult<ShowQuickPickResponse>) => void) => {
       const items: vscode.QuickPickItem[] = request.items.map((i) => ({
         label: i.label,
         ...(i.description !== undefined && { description: i.description }),
@@ -969,7 +969,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
   socket.on(
     "ui:showInputBox",
-    (request: ShowInputBoxRequest, ack: (result: PluginResult<ShowInputBoxResponse>) => void) => {
+    (request: ShowInputBoxRequest, ack: (result: ApiResult<ShowInputBoxResponse>) => void) => {
       void vscode.window
         .showInputBox({
           ...(request.title !== undefined && { title: request.title }),
@@ -1283,13 +1283,13 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
     )
   );
 
-  const pluginPortStr = process.env._CH_PLUGIN_PORT;
-  if (!pluginPortStr) {
+  const apiPortStr = process.env._CH_API_PORT;
+  if (!apiPortStr) {
     return { codehydra: codehydraApi };
   }
 
-  const pluginPort = parseInt(pluginPortStr, 10);
-  if (isNaN(pluginPort) || pluginPort <= 0 || pluginPort > 65535) {
+  const apiPort = parseInt(apiPortStr, 10);
+  if (isNaN(apiPort) || apiPort <= 0 || apiPort > 65535) {
     return { codehydra: codehydraApi };
   }
 
@@ -1309,7 +1309,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
   }
   const workspacePath = path.normalize(firstFolder.uri.fsPath);
 
-  connectToPluginServer(pluginPort, workspacePath);
+  connectToApiServer(apiPort, workspacePath);
 
   return { codehydra: codehydraApi };
 }
@@ -1354,7 +1354,7 @@ export function deactivate(): void {
   extensionContext = null;
   isDevelopment = false;
   currentWorkspacePath = "";
-  currentPluginPort = null;
+  currentApiPort = null;
 
   const pending = pendingReady;
   pendingReady = [];

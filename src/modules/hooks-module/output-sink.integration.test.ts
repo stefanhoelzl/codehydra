@@ -10,7 +10,7 @@ import { createHookOutputSink, HOOK_OUTPUT_CHANNEL } from "./output-sink";
 
 const WS = "/workspaces/feature-x";
 
-/** A plugin server stand-in: workspaces are connected or not, and appends land in `shown`. */
+/** A API server stand-in: workspaces are connected or not, and appends land in `shown`. */
 function createTransport() {
   const connected = new Set<string>();
   const shown: Array<{ workspacePath: string; channel: string; lines: string[] }> = [];

@@ -11,7 +11,7 @@
  * #2: start abort on IdeServer failure
  * #3: start abort on MCP failure (non-optional)
  * #4: start hook failure (data) propagates
- * #5: PluginServer graceful degradation
+ * #5: ApiServer graceful degradation
  * #6: check hooks -- no setup needed
  * #7: check hooks -- agent-selection precedes check-deps (first-run binary regression)
  * #8: check hooks -- setup needed (binaries)
@@ -176,13 +176,13 @@ function createViewModule(state: TestState): IntentModule {
 }
 
 /**
- * Simulates PluginServer graceful degradation inside IdeServerModule.
- * In the real implementation, IdeServerModule tries to start PluginServer
- * internally and catches its error, then starts the IDE server without the plugin port.
+ * Simulates ApiServer graceful degradation inside IdeServerModule.
+ * In the real implementation, IdeServerModule tries to start ApiServer
+ * internally and catches its error, then starts the IDE server without the API server port.
  */
-function createIdeServerModuleWithGracefulPluginDegradation(
+function createIdeServerModuleWithGracefulApiServerDegradation(
   state: TestState,
-  pluginFails: boolean
+  apiServerFails: boolean
 ): IntentModule {
   return {
     name: "test",
@@ -190,22 +190,22 @@ function createIdeServerModuleWithGracefulPluginDegradation(
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<HookOutput> => {
-            // Simulate PluginServer start attempt (internal try/catch)
-            let pluginPort: number | undefined;
+            // Simulate ApiServer start attempt (internal try/catch)
+            let apiPort: number | undefined;
             try {
-              if (pluginFails) {
-                throw new Error("PluginServer failed to bind");
+              if (apiServerFails) {
+                throw new Error("ApiServer failed to bind");
               }
-              pluginPort = 3000;
+              apiPort = 3000;
             } catch {
-              // Graceful degradation -- PluginServer is optional
-              pluginPort = undefined;
+              // Graceful degradation -- ApiServer is optional
+              apiPort = undefined;
             }
 
             // Code-server starts regardless
             state.ideServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            void pluginPort; // Used for IDE server config in real impl
+            void apiPort; // Used for IDE server config in real impl
             return { provides: { ideServerPort: 8080 } };
           },
         },
@@ -393,17 +393,17 @@ describe("AppStart Operation", () => {
     });
   });
 
-  describe("PluginServer graceful degradation (#5)", () => {
-    it("IdeServerModule catches PluginServer error, startup succeeds", async () => {
+  describe("ApiServer graceful degradation (#5)", () => {
+    it("IdeServerModule catches ApiServer error, startup succeeds", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createIdeServerModuleWithGracefulPluginDegradation(state, true),
+        createIdeServerModuleWithGracefulApiServerDegradation(state, true),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
       ]);
 
-      // Should not throw despite PluginServer failure
+      // Should not throw despite ApiServer failure
       await dispatcher.dispatch(appStartIntent());
 
       expect(state.ideServerStarted).toBe(true);

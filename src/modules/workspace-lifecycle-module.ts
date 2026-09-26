@@ -23,7 +23,7 @@
  * with "Permission denied" on the directory itself, which surfaces to the user
  * as a failed delete that succeeds on retry.
  *
- * The pattern was already present, privately, in plugin-server-module (a
+ * The pattern was already present, privately, in api-server-module (a
  * `deletingWorkspaces` set gating sidekick reconnects). This module lifts it out
  * so every holder of a handle under the workspace can see the same fact.
  *

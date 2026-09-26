@@ -20,7 +20,7 @@
  */
 
 import { OperationRegistry } from "../registry";
-import { PLUGIN_MAP, type PluginMapping } from "./plugin-map";
+import { API_SERVER_MAP, type ApiServerMapping } from "./api-server-map";
 import { MCP_MAP } from "./mcp-map";
 import { CLI_MAP } from "./cli-map";
 import { DESCRIBE_CHANNEL, describe, type DescribeTarget } from "./describe";
@@ -33,13 +33,13 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
 
 /**
- * Result wrapper the plugin protocol acknowledges every command with.
+ * Result wrapper the API protocol acknowledges every command with.
  *
  * `category` rides along on a failure so the CLI can pick an exit code from what
  * went wrong rather than from the wording of the message. Additive: a client that
  * does not know it reads `error` exactly as before.
  */
-export type PluginResult<T> =
+export type ApiResult<T> =
   | { readonly success: true; readonly data: T }
   | { readonly success: false; readonly error: string; readonly category?: ApiErrorCategory };
 
@@ -59,7 +59,7 @@ export type ClientKind = "sidekick" | "cli" | "mcp";
 /** Prefix new clients address operations by, keyed on the registry name. */
 export const OPERATION_CHANNEL_PREFIX = "api:operation:";
 
-export interface PluginAdapterOptions {
+export interface ApiServerAdapterOptions {
   readonly socket: AdapterSocket;
   readonly registry: OperationRegistry;
   /** The client's own workspace, or null for a shell standing outside every one. */
@@ -69,7 +69,7 @@ export interface PluginAdapterOptions {
   readonly logger: Logger;
   readonly kind: ClientKind;
   /** Channel mapping override. Injectable so tests can drive the loop directly. */
-  readonly map?: Readonly<Record<string, PluginMapping | null>>;
+  readonly map?: Readonly<Record<string, ApiServerMapping | null>>;
 }
 
 /**
@@ -78,7 +78,7 @@ export interface PluginAdapterOptions {
  * Progress is shown for what a caller is doing, so which forwarded events a
  * connection receives follows the calls it has in flight.
  */
-export interface PluginConnection {
+export interface ApiServerConnection {
   /**
    * Whether an event about `eventWorkspace` (undefined: about no workspace in
    * particular) concerns a call this connection is making right now. One that
@@ -106,10 +106,10 @@ interface Mount {
  */
 function mountsFor(
   kind: ClientKind,
-  override: Readonly<Record<string, PluginMapping | null>> | undefined
+  override: Readonly<Record<string, ApiServerMapping | null>> | undefined
 ): readonly Mount[] {
   if (override !== undefined || kind === "sidekick") {
-    return Object.entries(override ?? PLUGIN_MAP)
+    return Object.entries(override ?? API_SERVER_MAP)
       .filter(([, mapping]) => mapping !== null)
       .map(([name, mapping]) => ({
         name: name as OperationName,
@@ -140,19 +140,19 @@ function mountsFor(
  */
 function splitArgs(args: readonly unknown[]): {
   request: unknown;
-  ack?: (result: PluginResult<unknown>) => void;
+  ack?: (result: ApiResult<unknown>) => void;
 } {
   const last = args[args.length - 1];
   if (typeof last === "function") {
     return {
       request: args.length > 1 ? args[0] : undefined,
-      ack: last as (result: PluginResult<unknown>) => void,
+      ack: last as (result: ApiResult<unknown>) => void,
     };
   }
   return { request: args[0] };
 }
 
-export function attachPluginAdapter(options: PluginAdapterOptions): PluginConnection {
+export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiServerConnection {
   const { socket, registry, workspacePath, logger, kind, map } = options;
 
   // One per connection, not per call: a handler may tie state to its caller

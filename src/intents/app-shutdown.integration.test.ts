@@ -31,7 +31,7 @@ import { createIdempotencyModule } from "./lib/idempotency-module";
 interface DisposalState {
   serverManagerDisposed: boolean;
   mcpDisposed: boolean;
-  pluginServerClosed: boolean;
+  apiServerClosed: boolean;
   telemetryFlushed: boolean;
   viewsDestroyed: boolean;
   badgeDisposed: boolean;
@@ -42,7 +42,7 @@ function createDisposalState(): DisposalState {
   return {
     serverManagerDisposed: false,
     mcpDisposed: false,
-    pluginServerClosed: false,
+    apiServerClosed: false,
     telemetryFlushed: false,
     viewsDestroyed: false,
     badgeDisposed: false,
@@ -95,10 +95,7 @@ function createMcpShutdownModule(state: DisposalState): IntentModule {
   };
 }
 
-function createPluginServerModule(
-  state: DisposalState,
-  options?: { fail?: boolean }
-): IntentModule {
+function createApiServerModule(state: DisposalState, options?: { fail?: boolean }): IntentModule {
   return {
     name: "test",
     hooks: {
@@ -107,12 +104,12 @@ function createPluginServerModule(
           handler: async () => {
             try {
               if (options?.fail) {
-                throw new Error("PluginServer.close failed");
+                throw new Error("ApiServer.close failed");
               }
-              state.pluginServerClosed = true;
+              state.apiServerClosed = true;
             } catch {
               // Best-effort
-              state.pluginServerClosed = false;
+              state.apiServerClosed = false;
             }
           },
         },
@@ -232,7 +229,7 @@ describe("AppShutdown Operation", () => {
       const { dispatcher } = createTestSetup([
         createServerManagerModule(state),
         createMcpShutdownModule(state),
-        createPluginServerModule(state),
+        createApiServerModule(state),
         createTelemetryModule(state),
         createViewShutdownModule(state),
         createBadgeShutdownModule(state),
@@ -243,7 +240,7 @@ describe("AppShutdown Operation", () => {
 
       expect(state.serverManagerDisposed).toBe(true);
       expect(state.mcpDisposed).toBe(true);
-      expect(state.pluginServerClosed).toBe(true);
+      expect(state.apiServerClosed).toBe(true);
       expect(state.telemetryFlushed).toBe(true);
       expect(state.viewsDestroyed).toBe(true);
       expect(state.badgeDisposed).toBe(true);
@@ -257,7 +254,7 @@ describe("AppShutdown Operation", () => {
       const { dispatcher } = createTestSetup([
         createServerManagerModule(state, { fail: true }),
         createMcpShutdownModule(state),
-        createPluginServerModule(state),
+        createApiServerModule(state),
         createTelemetryModule(state),
         createViewShutdownModule(state),
       ]);
@@ -267,7 +264,7 @@ describe("AppShutdown Operation", () => {
 
       expect(state.serverManagerDisposed).toBe(false);
       expect(state.mcpDisposed).toBe(true);
-      expect(state.pluginServerClosed).toBe(true);
+      expect(state.apiServerClosed).toBe(true);
       expect(state.telemetryFlushed).toBe(true);
       expect(state.viewsDestroyed).toBe(true);
     });
@@ -278,7 +275,7 @@ describe("AppShutdown Operation", () => {
       const state = createDisposalState();
       const { dispatcher } = createTestSetup([
         createServerManagerModule(state, { fail: true }),
-        createPluginServerModule(state, { fail: true }),
+        createApiServerModule(state, { fail: true }),
         createMcpShutdownModule(state),
         createTelemetryModule(state),
         createViewShutdownModule(state),
@@ -290,7 +287,7 @@ describe("AppShutdown Operation", () => {
       await dispatcher.dispatch(appShutdownIntent());
 
       expect(state.serverManagerDisposed).toBe(false);
-      expect(state.pluginServerClosed).toBe(false);
+      expect(state.apiServerClosed).toBe(false);
       expect(state.mcpDisposed).toBe(true);
       expect(state.telemetryFlushed).toBe(true);
       expect(state.viewsDestroyed).toBe(true);
