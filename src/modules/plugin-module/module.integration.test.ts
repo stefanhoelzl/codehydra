@@ -75,6 +75,11 @@ import { defineEntry } from "../../api/types";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { Config } from "../../boundaries/platform/config";
+import {
+  INTENT_VSCODE_SHOW_MESSAGE,
+  type VscodeShowMessageIntent,
+} from "../../intents/vscode-show-message";
+import type { Operation, OperationContext, OperationSchemas } from "../../intents/lib/operation";
 import type { HookOutputSink } from "./output-sink";
 
 const PROJECT_ROOT = projPath("/project");
@@ -114,6 +119,10 @@ interface SetupOptions {
   readonly legacySources?: string;
   /** Seeds `auto-workspaces` tracking entries. */
   readonly tracking?: Record<string, unknown>;
+  /** Old hook files in the worktree's `.codehydra/hooks`. */
+  readonly legacyHooks?: readonly string[];
+  /** What the editor's notification answers (a button, or null for dismissed). */
+  readonly editorAnswer?: string | null;
 }
 
 interface TestSetup {
@@ -143,6 +152,10 @@ interface TestSetup {
   killedCount(): number;
   /** Start the app's automations (and stop them again when the test ends). */
   startApp(): Promise<void>;
+  /** The workspace's editor connects. */
+  connectEditor(): Promise<void>;
+  /** Messages shown in the workspace's editor, in order. */
+  readonly editorMessages: VscodeShowMessageIntent["payload"][];
 }
 
 function manifestEntries(
@@ -200,8 +213,33 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       [HOME.toString()]: directory(),
       ...manifestEntries(LOCAL_PLUGINS, options?.local),
       ...manifestEntries(WORKSPACE_PLUGINS, options?.workspace),
+      ...manifestEntries(
+        new Path(WORKSPACE_PATH, ".codehydra", "hooks"),
+        options?.legacyHooks === undefined
+          ? undefined
+          : Object.fromEntries(options.legacyHooks.map((name) => [name, "#!/bin/sh\n"]))
+      ),
     },
   });
+
+  const editorMessages: VscodeShowMessageIntent["payload"][] = [];
+  const showMessageSchemas = {
+    type: INTENT_VSCODE_SHOW_MESSAGE,
+    payload: z.custom<VscodeShowMessageIntent["payload"]>(),
+    result: z.string().nullable(),
+  } satisfies OperationSchemas;
+  class ShowMessageOp implements Operation<typeof showMessageSchemas> {
+    readonly id = "vscode-show-message";
+    readonly schemas = showMessageSchemas;
+    async execute(
+      ctx: OperationContext<VscodeShowMessageIntent, typeof showMessageSchemas>
+    ): Promise<string | null> {
+      editorMessages.push(ctx.intent.payload);
+      return ctx.intent.payload.options === undefined ? null : (options?.editorAnswer ?? null);
+    }
+  }
+  dispatcher.registerOperation(new ShowMessageOp());
+  const connected: Array<(workspacePath: string) => void> = [];
 
   const outcomes = options?.outcomes ?? {};
   const processRunner = createMockProcessRunner({
@@ -358,6 +396,10 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     pathProvider: createMockPathProvider({ homeRootDir: HOME }),
     binDir: new Path(testPath("/data/bin")),
     sink,
+    workspaceConnected: (listener) => {
+      connected.push(listener);
+      return () => {};
+    },
     registry: () => registry,
     platform: "linux",
     env: { PATH: "/usr/bin" },
@@ -397,6 +439,11 @@ function createTestSetup(options?: SetupOptions): TestSetup {
           intent: { type: "app:shutdown", payload: {} },
         })
       );
+    },
+    editorMessages,
+    connectEditor: async () => {
+      for (const listener of connected) listener(WORKSPACE_PATH);
+      await settle();
     },
     killedCount: () =>
       Array.from({ length: processRunner.$.spawnedCount }, (_, i) =>
@@ -983,5 +1030,53 @@ describe("automations", () => {
     expect(setup.notifications.map((n) => n.title)).toContain(
       "Auto-workspace sources are now a plugin"
     );
+  });
+});
+
+describe("repository hooks from before plugins", () => {
+  it("never runs them", async () => {
+    const setup = createTestSetup({ legacyHooks: ["after-worktree-created"] });
+    await openWorkspace(setup);
+
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("offers to migrate them in the editor, and writes the plugin on Migrate", async () => {
+    const setup = createTestSetup({
+      legacyHooks: ["after-worktree-created", "on-workspace-opened.win.cmd"],
+      editorAnswer: "Migrate",
+    });
+
+    await setup.connectEditor();
+
+    expect(setup.editorMessages[0]).toMatchObject({ type: "warning", options: ["Migrate"] });
+    expect(setup.editorMessages[0]!.message).toContain(
+      "after-worktree-created, on-workspace-opened.win.cmd"
+    );
+    const manifest = await setup.fileSystem.readFile(new Path(WORKSPACE_PLUGINS, "hooks.yaml"));
+    expect(manifest).toContain("$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created");
+    expect(setup.editorMessages[1]?.message).toMatch(/Wrote \.codehydra\/plugins\/hooks\.yaml/);
+  });
+
+  it("writes nothing when the offer is dismissed", async () => {
+    const setup = createTestSetup({ legacyHooks: ["after-worktree-created"], editorAnswer: null });
+
+    await setup.connectEditor();
+
+    expect(setup.editorMessages).toHaveLength(1);
+    await expect(
+      setup.fileSystem.readFile(new Path(WORKSPACE_PLUGINS, "hooks.yaml"))
+    ).rejects.toThrow();
+  });
+
+  it("stays quiet once the repository has a plugin", async () => {
+    const setup = createTestSetup({
+      legacyHooks: ["after-worktree-created"],
+      workspace: { "setup.yaml": "hooks: {}\n" },
+    });
+
+    await setup.connectEditor();
+
+    expect(setup.editorMessages).toEqual([]);
   });
 });

@@ -93,7 +93,11 @@ import {
   INTENT_RESOLVE_WORKSPACE,
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
-import type { WorkspacePath } from "../../intents/contract";
+import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import {
+  INTENT_VSCODE_SHOW_MESSAGE,
+  type VscodeShowMessageIntent,
+} from "../../intents/vscode-show-message";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
@@ -128,7 +132,13 @@ import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-
 import type { HookOutputSink } from "./output-sink";
 import { createAutomations, type AutomationSource } from "./automations";
 import { convertLegacySources, LEGACY_SOURCES_PLUGIN } from "./legacy-sources";
-import { MANIFEST_FILE } from "./discovery";
+import { MANIFEST_FILE, discoverPlugins } from "./discovery";
+import {
+  LEGACY_HOOKS_DIR,
+  MIGRATED_PLUGIN_FILE,
+  listLegacyHooks,
+  migrateLegacyHooks,
+} from "./legacy-hooks";
 
 // =============================================================================
 // Dependencies
@@ -146,6 +156,12 @@ export interface PluginModuleDeps {
   /** Directory holding the `ch` CLI, prepended to every script's PATH. */
   readonly binDir: Path;
   readonly sink: HookOutputSink;
+  /**
+   * Subscribe to a workspace's editor connecting (it does on every open). The
+   * migration offer for old `.codehydra/hooks` is shown there, so it needs an
+   * editor to show in.
+   */
+  readonly workspaceConnected: (listener: (workspacePath: string) => void) => () => void;
   /**
    * The operation registry, for automations' actions. A getter: the registry's
    * `plugin.*` entries reach this module, so it is built after it.
@@ -239,6 +255,9 @@ const booleanMapStore = storeCustom<Record<string, boolean>>({
 // =============================================================================
 // Module
 // =============================================================================
+
+/** The migration offer's button. */
+const ACTION_MIGRATE = "Migrate";
 
 /** How long an automation's script may run before it is killed. */
 const AUTOMATION_TIMEOUT_MS = 30_000;
@@ -1104,6 +1123,87 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Repository hooks from before plugins
+  // ---------------------------------------------------------------------------
+
+  /** Workspaces with an offer on screen, so a reconnect does not stack a second. */
+  const offering = new Set<string>();
+
+  /**
+   * Offer to migrate a worktree's old `.codehydra/hooks`, which no longer run.
+   *
+   * Raised on every open while the hook files are there and the repository
+   * has no plugin — loud on purpose: the hooks stopped running silently, and
+   * a setup step that no longer happens is easy to miss. Migrate writes
+   * `.codehydra/plugins/hooks.yaml` (legacy-hooks.ts) for the user to commit.
+   */
+  async function offerHookMigration(workspacePath: string): Promise<void> {
+    if (offering.has(workspacePath)) return;
+    offering.add(workspacePath);
+    try {
+      const worktree = new Path(workspacePath);
+      const files = await listLegacyHooks(deps.fileSystem, worktree);
+      if (files.length === 0) return;
+      const pluginsDir = workspacePluginsDir(worktree);
+      if ((await discoverPlugins(deps.fileSystem, pluginsDir, "workspace")).plugins.length > 0) {
+        return;
+      }
+
+      const target = workspacePathSchema.parse(workspacePath);
+      const answer = await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
+        type: INTENT_VSCODE_SHOW_MESSAGE,
+        payload: {
+          workspacePath: target,
+          type: "warning",
+          message:
+            `This repository's ${LEGACY_HOOKS_DIR.join("/")} (${files.join(", ")}) no longer ` +
+            `run: CodeHydra runs plugins now. Migrate writes .codehydra/plugins/` +
+            `${MIGRATED_PLUGIN_FILE}, which runs them again.`,
+          options: [ACTION_MIGRATE],
+        },
+      });
+      if (answer !== ACTION_MIGRATE) return;
+
+      const migrated = migrateLegacyHooks(files);
+      await deps.fileSystem.mkdir(pluginsDir);
+      await deps.fileSystem.writeFile(
+        new Path(pluginsDir, MIGRATED_PLUGIN_FILE),
+        migrated.manifest,
+        {
+          exclusive: true,
+        }
+      );
+      const skipped = migrated.ambiguous.map(
+        (item) => `${item.entry} on ${item.platform} (${item.files.join(", ")})`
+      );
+      await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
+        type: INTENT_VSCODE_SHOW_MESSAGE,
+        payload: {
+          workspacePath: target,
+          type: "info",
+          message:
+            `Wrote .codehydra/plugins/${MIGRATED_PLUGIN_FILE}: commit it. The hooks run again ` +
+            `from the next time a workspace opens.` +
+            (skipped.length > 0
+              ? ` Left out, since several files claimed them: ${skipped.join("; ")}.`
+              : ""),
+        },
+      });
+    } catch (error) {
+      deps.logger.warn("Could not offer to migrate .codehydra/hooks", {
+        workspacePath,
+        error: getErrorMessage(error),
+      });
+    } finally {
+      offering.delete(workspacePath);
+    }
+  }
+
+  deps.workspaceConnected((workspacePath) => {
+    void offerHookMigration(workspacePath);
+  });
 
   // ---------------------------------------------------------------------------
   // `ch plugin`
