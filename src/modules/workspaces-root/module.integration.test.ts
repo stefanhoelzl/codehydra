@@ -14,6 +14,7 @@ import {
   createFileSystemMock,
   directory,
   file,
+  symlink,
 } from "../../boundaries/platform/filesystem.state-mock";
 import { createMockGitClient } from "../../boundaries/platform/git-client.state-mock";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
@@ -32,6 +33,7 @@ import { INTENT_APP_SHUTDOWN } from "../../intents/app-shutdown";
 import type { HookContext } from "../../intents/lib/operation";
 import type { DialogConfig } from "../../shared/dialog-types";
 import { testPath } from "../../shared/test-fixtures";
+import type { Entry } from "../../boundaries/platform/filesystem.state-mock";
 import { Path } from "../../utils/path/path";
 import { generateProjectId } from "../local-project-module";
 import { createWorkspacesRootModule, CURRENT_ROOT_STATE_KEY, WORKSPACES_ROOT_KEY } from "./module";
@@ -50,14 +52,12 @@ const CLONE_WT = new Path(workspacesDirUnder(DATA, OLD_CLONE), "fix");
 interface SetupOptions {
   readonly configured?: string | null;
   readonly current?: string | null;
-  readonly entries?: Record<string, ReturnType<typeof directory> | ReturnType<typeof file>>;
+  readonly entries?: Record<string, Entry>;
   readonly failRepair?: boolean;
 }
 
 /** The entries plus a directory entry for every ancestor, as a real tree has. */
-function withParents(
-  entries: Record<string, ReturnType<typeof directory> | ReturnType<typeof file>>
-): Record<string, ReturnType<typeof directory> | ReturnType<typeof file>> {
+function withParents(entries: Record<string, Entry>): Record<string, Entry> {
   const out = { ...entries };
   for (const key of Object.keys(entries)) {
     // Walk on strings: Path rejects a bare drive (`c:`), which is what the parent
@@ -335,6 +335,36 @@ describe("WorkspacesRootModule", () => {
       await done;
       expect(s.root.current().equals(DATA)).toBe(true);
       expect(s.moves).toEqual([]);
+    });
+
+    it("records a folder reached through a symlink as git will report it", async () => {
+      const link = testPath("/links/devdrive");
+      const s = setup({
+        configured: link.toNative(),
+        entries: {
+          [NEW_ROOT.toString()]: directory(),
+          [link.toString()]: symlink(NEW_ROOT.toString()),
+        },
+      });
+      const done = s.migrations();
+      await press(s.dialogs, "adopt");
+      await done;
+
+      // Worktrees created under the root must lie inside it once git names them.
+      expect(s.root.current().equals(NEW_ROOT)).toBe(true);
+    });
+
+    it("asks nothing when the setting names the current root through a symlink", async () => {
+      const link = testPath("/links/data");
+      const s = setup({
+        configured: link.toNative(),
+        entries: { [link.toString()]: symlink(DATA.toString()) },
+      });
+
+      await s.migrations();
+
+      expect(s.dialogs.handles).toHaveLength(0);
+      expect(s.root.current().equals(DATA)).toBe(true);
     });
 
     it("migrates back to the data root", async () => {

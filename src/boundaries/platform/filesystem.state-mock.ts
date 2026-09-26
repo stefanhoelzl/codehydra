@@ -484,6 +484,12 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
         return;
       }
 
+      // A symlink to a directory is that directory, as for the real mkdir -p.
+      if (existing?.type === "symlink") {
+        const target = state.entries.get(normalizePath(existing.target));
+        if (target?.type === "directory") return;
+      }
+
       // If file exists at path, error
       if (existing?.type === "file" || existing?.type === "symlink") {
         throw new FileSystemError("EEXIST", path, `File exists at path: ${path}`);
@@ -736,6 +742,27 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       state.setEntry(tempPath, directory());
       return new Path(tempPath);
     },
+
+    async realpath(target: PathLike): Promise<Path> {
+      // Replace the longest symlinked prefix with its target until none is left.
+      let current = normalizePath(target);
+      for (let hops = 0; hops < 40; hops++) {
+        let replaced = false;
+        for (let prefix: string | null = current; prefix !== null; prefix = getParentPath(prefix)) {
+          const entry = state.entries.get(prefix);
+          if (entry?.type === "symlink") {
+            current = normalizePath(entry.target + current.substring(prefix.length));
+            replaced = true;
+            break;
+          }
+        }
+        if (!replaced) break;
+      }
+      if (!state.entries.has(current)) {
+        throw new FileSystemError("ENOENT", current, `Not found: ${current}`);
+      }
+      return new Path(current);
+    },
   };
 
   return Object.assign(layer, { $: state });
@@ -962,6 +989,7 @@ export interface SpyFileSystemBoundary extends FileSystemBoundary {
   readFileBuffer: Mock<FileSystemBoundary["readFileBuffer"]>;
   rename: Mock<FileSystemBoundary["rename"]>;
   mkdtemp: Mock<FileSystemBoundary["mkdtemp"]>;
+  realpath: Mock<FileSystemBoundary["realpath"]>;
   /** State access for behavioral mock */
   $: FileSystemMockState;
 }
@@ -1001,6 +1029,7 @@ export function createSpyFileSystemBoundary(
     readFileBuffer: vi.fn(mock.readFileBuffer.bind(mock)),
     rename: vi.fn(mock.rename.bind(mock)),
     mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
+    realpath: vi.fn(mock.realpath.bind(mock)),
     $: mock.$,
   } as SpyFileSystemBoundary;
 }
