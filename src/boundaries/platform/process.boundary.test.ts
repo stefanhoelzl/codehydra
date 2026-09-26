@@ -4,7 +4,12 @@ import { mkdtemp, writeFile, chmod, rm, realpath } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createServer, type Server } from "node:net";
-import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
+import {
+  ExecaProcessRunner,
+  LISTENER_DETAILS_TIMEOUT_MS,
+  type SpawnedProcess,
+  type ProcessRunner,
+} from "./process";
 import { SILENT_LOGGER } from "./logging";
 import { createBehavioralLogger } from "./logging.test-utils";
 import {
@@ -322,6 +327,10 @@ describe("ExecaProcessRunner", () => {
     // The real platform tool against a real socket: the parsers are tested on
     // canned output, but only this shows the query itself still works (a
     // mangled one just prints nothing, which reads as "nobody").
+    // Room for the whole scan: on Windows, naming a holder is a cold PowerShell
+    // plus a WMI query, which has a budget of its own well past TEST_TIMEOUT.
+    const SCAN_TEST_TIMEOUT = LISTENER_DETAILS_TIMEOUT_MS + 5000;
+
     async function listen(): Promise<{ server: Server; port: number }> {
       const server = createServer();
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -341,7 +350,7 @@ describe("ExecaProcessRunner", () => {
           await new Promise((resolve) => server.close(resolve));
         }
       },
-      TEST_TIMEOUT
+      SCAN_TEST_TIMEOUT
     );
 
     it(
@@ -352,7 +361,7 @@ describe("ExecaProcessRunner", () => {
 
         expect(await runner.findListeningProcesses(port)).toEqual([]);
       },
-      TEST_TIMEOUT
+      SCAN_TEST_TIMEOUT
     );
   });
 
