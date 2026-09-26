@@ -873,9 +873,10 @@ editor.
 
 The agent terminal runs `ch claude`, which starts the `claude` on your `PATH`
 (or the version set by `version.claude`) with CodeHydra's additions: its status
-hooks, the CodeHydra MCP server, the system prompt below, and
+hooks, the CodeHydra MCP server, the system prompt below,
 `--allow-dangerously-skip-permissions` (so bypass mode is available through
-Shift+Tab, not switched on). It resumes the workspace's last conversation
+Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
+[Pages and browsers](#pages-and-browsers)). It resumes the workspace's last conversation
 (`--continue`) unless the workspace is new.
 
 ### OpenCode
@@ -952,6 +953,24 @@ prompt raised by the agent, `ch` or a repository hook. The workspace reads idle
 until you dismiss it, even while the agent keeps working and even with no agent
 running, then returns to its real status.
 
+### Pages and browsers
+
+Agents are told to show you pages inside the workspace rather than in your OS
+browser:
+
+- **What they open** — a dev server, docs, a PR page, a report they
+  generated — goes to the editor's Simple Browser with `ch ws browser`. Login
+  and OAuth pages are the exception; they need your signed-in browser. An agent
+  opens a page unasked only when it made it for you to look at (a report, a dev
+  server showing its change) and prints other links.
+- **Claude Code cannot publish claude.ai Artifacts**: CodeHydra launches it
+  with `--disallowedTools=Artifact`, so pages it builds stay on disk and open
+  in Simple Browser.
+
+This is guidance, not enforcement: a tool that opens a browser by itself
+(`gh … --web`, a dev server) still uses your OS browser, and so does anything
+opened on purpose with `xdg-open`, `open` or `ch ws open`.
+
 ### What agents are told
 
 You don't have to explain CodeHydra to your agent. Every session gets a short
@@ -960,7 +979,8 @@ you), that the worktree's lifecycle belongs to CodeHydra, that an `index.lock`
 that survives a retry while no git process is running is stale and can be
 deleted (otherwise it gives you the lock's path), that creating another
 workspace is your call, that `ch` is on its `PATH`, that
-`code <path>` opens a file in your editor, and that `ch guide` explains
+`code <path>` opens a file in your editor, how to
+[show you pages](#pages-and-browsers), and that `ch guide` explains
 CodeHydra. Claude Code is also told about `ch bg`. The MCP server adds: pass a
 prompt when creating a workspace, and file a bug report only when asked.
 

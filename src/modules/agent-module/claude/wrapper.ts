@@ -417,11 +417,16 @@ async function main(): Promise<never> {
   // --mcp-config: Our MCP config (merges with user's)
   // --append-system-prompt-file: What every agent in a CodeHydra workspace is
   //   told about the environment it runs in (busy/idle, ch-bg, the worktree).
+  // --disallowedTools=Artifact: Pages stay local and are shown in the
+  //   workspace's simple browser, not published to claude.ai. The `=` form
+  //   because the option is variadic: spaced, it would swallow a positional
+  //   prompt in the user args that follow.
   // Initial prompt args come first (prompt as positional, then --model/--agent)
   // User args can override these if they come after
   const args = [
     ...initialPromptArgs,
     ...buildPermissionArgs(initialPromptConfig?.permissionMode),
+    "--disallowedTools=Artifact",
     "--ide",
     "--settings",
     settingsPath,

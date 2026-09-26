@@ -202,6 +202,7 @@ describe("ch claude boundary tests", () => {
       expect(output!.args).toContain("--append-system-prompt-file");
       expect(output!.args).toContain("/tmp/codehydra-prompt.md");
       expect(output!.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output!.args).toContain("--disallowedTools=Artifact");
     });
 
     it("deletes CLAUDECODE env var before spawning", async () => {

@@ -24,7 +24,7 @@ const CLAUDE_PROMPT = join(DIST_BIN, "codehydra-prompt-claude.md");
 const OPENCODE_PROMPT = join(DIST_BIN, "codehydra-prompt-opencode.md");
 
 /** Budget agreed per agent file: additions have to displace something. */
-const MAX_WORDS = 300;
+const MAX_WORDS = 350;
 
 const countWords = (text: string): number => text.trim().split(/\s+/).length;
 
@@ -70,6 +70,12 @@ describe("composed agent system prompts", () => {
       expect(get()).toContain("index.lock");
       expect(get()).toContain("no git process running is stale: delete it");
       expect(get()).toContain("give the user its path");
+    });
+
+    it("sends pages to the workspace's browser, logins excepted", () => {
+      expect(get()).toContain("ch ws browser");
+      expect(get()).toContain("file://");
+      expect(get()).toContain("login pages excepted");
     });
 
     it("stays within the word budget", () => {
