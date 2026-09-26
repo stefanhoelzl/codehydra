@@ -563,6 +563,92 @@ describe("Config", () => {
     });
   });
 
+  describe("moving config.json to the home root", () => {
+    const LEGACY_PATH = testPath("/data/config.json");
+
+    /** A sync filesystem the move can read, write and delete in. */
+    function createSyncFiles(initial: Record<string, string>): {
+      files: Map<string, string>;
+      deps: Pick<ConfigDeps, "readFileSync" | "writeFileSync" | "unlinkSync" | "mkdirSync">;
+    } {
+      const files = new Map(
+        Object.entries(initial).map(([key, content]) => [testPath(key).toString(), content])
+      );
+      const enoent = (path: string): Error => {
+        const err = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        return err;
+      };
+      return {
+        files,
+        deps: {
+          readFileSync: (path) => {
+            const content = files.get(testPath(path).toString());
+            if (content === undefined) throw enoent(path);
+            return content;
+          },
+          writeFileSync: (path, content) => void files.set(testPath(path).toString(), content),
+          unlinkSync: (path) => {
+            if (!files.delete(testPath(path).toString())) throw enoent(path);
+          },
+          mkdirSync: () => {},
+        },
+      };
+    }
+
+    it("moves the old file into the home when the home has none", () => {
+      const { files, deps } = createSyncFiles({ "/data/config.json": '{"test.key":"kept"}' });
+      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
+      const key = svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      expect(key.get()).toBe("kept");
+      expect(svc.wasConfigured()).toBe(true);
+      expect(files.get(CONFIG_PATH.toString())).toBe('{"test.key":"kept"}');
+      expect(files.has(LEGACY_PATH.toString())).toBe(false);
+    });
+
+    it("leaves a stale old file alone when the home already has one", () => {
+      const { files, deps } = createSyncFiles({
+        "/app/config.json": '{"test.key":"current"}',
+        "/data/config.json": '{"test.key":"stale"}',
+      });
+      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
+      const key = svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      expect(key.get()).toBe("current");
+      expect(files.get(LEGACY_PATH.toString())).toBe('{"test.key":"stale"}');
+    });
+
+    it("reads the old file this time when the move fails, keeping it", () => {
+      const { files, deps } = createSyncFiles({ "/data/config.json": '{"test.key":"kept"}' });
+      const svc = createService({
+        ...deps,
+        legacyConfigPath: LEGACY_PATH,
+        mkdirSync: () => {
+          throw new Error("EACCES: no home");
+        },
+      });
+      const key = svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      // Neither the settings nor the "already configured" answer are lost.
+      expect(key.get()).toBe("kept");
+      expect(svc.wasConfigured()).toBe(true);
+      expect(files.has(LEGACY_PATH.toString())).toBe(true);
+    });
+
+    it("is a first run when neither file exists", () => {
+      const { deps } = createSyncFiles({});
+      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
+      svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      expect(svc.wasConfigured()).toBe(false);
+    });
+  });
+
   describe("invalid JSON in config.json", () => {
     it("load() renames the file to config.json.broken and uses defaults", () => {
       const renames: Array<{ from: string; to: string }> = [];

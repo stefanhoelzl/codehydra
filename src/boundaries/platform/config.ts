@@ -24,9 +24,14 @@
  * config.json on load; the sync rename fires only when config.json contains invalid JSON
  * and is moved aside to config.json.broken. This is a documented exception. accessor.set()
  * uses the async FileSystemBoundary for writes (all callers are post-ready).
+ *
+ * config.json lives in the home root (`~/.codehydra`), next to the user's plugins.
+ * It used to live in the data root; load() moves a file found there on the first
+ * start that has none in the home (mkdirSync / writeFileSync / unlinkSync — a copy
+ * and delete rather than a rename, since the two roots may be on different drives).
  */
 
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import type {
   PersistedKeyDefinition,
   ComputedDefaultContext,
@@ -230,6 +235,11 @@ export interface Config {
 
 export interface ConfigDeps {
   readonly configPath: Path;
+  /**
+   * Where config.json lived before it moved to the home root. load() moves a
+   * file found here to `configPath` when there is none there yet.
+   */
+  readonly legacyConfigPath?: Path;
   readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly isDevelopment: boolean;
@@ -242,6 +252,10 @@ export interface ConfigDeps {
   readonly writeFileSync?: (path: string, content: string) => void;
   /** Override sync file renamer (for testing). Defaults to node:fs renameSync. */
   readonly renameSync?: (oldPath: string, newPath: string) => void;
+  /** Override sync recursive mkdir (for testing). Defaults to node:fs mkdirSync. */
+  readonly mkdirSync?: (path: string) => void;
+  /** Override sync file delete (for testing). Defaults to node:fs unlinkSync. */
+  readonly unlinkSync?: (path: string) => void;
 }
 
 // =============================================================================
@@ -471,8 +485,9 @@ export class DefaultConfig implements Config {
     //    so getHelpText()/getEffective() work even if we throw below.
     const defaults = this.store.seedDefaults(computedDefaultCtx);
 
-    // 2. config.json: read (I/O) → validate (typed values).
-    const file = readConfigFile(configPath, syncRead, syncRename);
+    // 2. config.json: move it from its old home first, then read (I/O) → validate.
+    const readPath = this.moveLegacyConfig(syncRead);
+    const file = readConfigFile(readPath, syncRead, syncRename);
     this.configFileExisted = file.existed;
     const fileResult = this.store.validate(file.data);
 
@@ -527,6 +542,67 @@ export class DefaultConfig implements Config {
         });
       }
     }
+  }
+
+  /**
+   * Move config.json from the data root to the home root, once.
+   *
+   * Only when the home has none: a file there is the one in use, and a stale
+   * copy left in the data root (a downgrade wrote it, say) must not overwrite
+   * it. Copy-then-delete, so a crash in between leaves both files rather than
+   * neither, and the next start finds the new one and leaves the old alone.
+   *
+   * Returns the file to read this time: the home's, or — when the move failed —
+   * the old one, so a failed move costs neither the user's settings for this
+   * session nor a spurious first-run wizard. Writes still go to the home.
+   */
+  private moveLegacyConfig(syncRead: (path: string) => string): Path {
+    const { configPath, legacyConfigPath, logger } = this.deps;
+    if (legacyConfigPath === undefined || legacyConfigPath.equals(configPath)) return configPath;
+
+    try {
+      syncRead(configPath.toNative());
+      return configPath;
+    } catch (error) {
+      if (!isEnoent(error)) return configPath;
+    }
+
+    let content: string;
+    try {
+      content = syncRead(legacyConfigPath.toNative());
+    } catch {
+      return configPath;
+    }
+
+    const syncMkdir =
+      this.deps.mkdirSync ?? ((p: string) => void mkdirSync(p, { recursive: true }));
+    const syncWrite =
+      this.deps.writeFileSync ?? ((p: string, c: string) => writeFileSync(p, c, "utf-8"));
+    const syncUnlink = this.deps.unlinkSync ?? unlinkSync;
+    try {
+      syncMkdir(configPath.dirname.toNative());
+      syncWrite(configPath.toNative(), content);
+    } catch (error) {
+      logger.warn("Could not move config.json to its new location", {
+        from: legacyConfigPath.toString(),
+        to: configPath.toString(),
+        error: getErrorMessage(error),
+      });
+      return legacyConfigPath;
+    }
+    try {
+      syncUnlink(legacyConfigPath.toNative());
+    } catch (error) {
+      logger.warn("Moved config.json, but could not remove the old file", {
+        path: legacyConfigPath.toString(),
+        error: getErrorMessage(error),
+      });
+    }
+    logger.info("Moved config.json", {
+      from: legacyConfigPath.toString(),
+      to: configPath.toString(),
+    });
+    return configPath;
   }
 
   /**

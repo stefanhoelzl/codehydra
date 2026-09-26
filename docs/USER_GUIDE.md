@@ -325,7 +325,13 @@ The same keys work in three places, highest precedence first:
   a `config.json` that is not valid JSON is renamed to `config.json.broken` and
   defaults are used.
 
-`config.json` lives in the data directory, next to `state.json` (what the app
+`config.json` lives in your CodeHydra home, `~/.codehydra/`
+(`%USERPROFILE%\.codehydra\` on Windows), the one folder for what you write
+yourself — the same place on every platform, so it can live in your dotfiles.
+A `config.json` left in the data directory by an older version is moved there
+on the first start.
+
+What the app writes lives in the data directory: `state.json` (what the app
 itself remembers: trusted hook answers, the hide-hibernated toggle, tracked
 automatic workspaces, a dismissed update, the workspaces folder in use) and
 the `logs/` folder:
@@ -365,7 +371,7 @@ An unknown key exits with 6, an invalid value with 2, and no running app with 3.
 Worktrees and cloned repositories live in the data directory by default. Set
 `paths.workspaces` to an absolute folder to keep them elsewhere — for example
 on a Windows Dev Drive. The settings dialog has a **Browse…** button for it.
-Binaries, logs and settings stay in the data directory.
+Binaries and logs stay in the data directory, and settings in your CodeHydra home.
 
 The change applies at the next start, which asks what to do with what is
 already there:

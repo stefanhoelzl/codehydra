@@ -19,6 +19,8 @@ export interface MockPathProviderOptions {
   assetsRootDir?: Path | string;
   /** Root for temp paths (default: /test/temp) */
   tempRootDir?: Path | string;
+  /** Root for home paths (default: /test/home) */
+  homeRootDir?: Path | string;
   /** App icon path (default: /test/resources/icon.png) */
   appIconPath?: Path | string;
   /** Platform for cmd option (default: "linux") */
@@ -49,6 +51,7 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
   const runtimeRootDir = ensurePath(overrides?.runtimeRootDir, "/mock/runtime");
   const assetsRootDir = ensurePath(overrides?.assetsRootDir, "/mock/assets");
   const tempRootDir = ensurePath(overrides?.tempRootDir, "/test/temp");
+  const homeRootDir = ensurePath(overrides?.homeRootDir, "/test/home");
   const platform = overrides?.platform ?? "linux";
 
   return {
@@ -67,6 +70,9 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     },
     tempPath(subpath: string): Path {
       return new Path(tempRootDir, subpath);
+    },
+    homePath(subpath: string): Path {
+      return new Path(homeRootDir, subpath);
     },
     appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
   };

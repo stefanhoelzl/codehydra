@@ -35,6 +35,13 @@ export interface PathProvider {
   /** `<dataRoot>/temp/subpath` — temporary files, cleaned on startup and shutdown */
   tempPath(subpath: string): Path;
 
+  /**
+   * `<homeRoot>/subpath` — what the user authors: `config.json` and `plugins/`.
+   * Kept apart from the data root, which holds what the app writes.
+   * (prod: `~/.codehydra`, dev: ./app-data/home, or `<_CH_ROOT_DIR>/home`)
+   */
+  homePath(subpath: string): Path;
+
   /** Application icon (process.cwd()-based, fixed) */
   readonly appIconPath: Path;
 }
@@ -51,6 +58,11 @@ export interface PathProvider {
  *   data-root-relocation.ts)
  *
  * `_CH_ROOT_DIR` overrides both roots at once, in either build flavor.
+ *
+ * The home root (user-authored files) is `~/.codehydra` in production — the
+ * same directory on every platform, so dotfiles can carry it — and sits inside
+ * the data root whenever that is relocated (dev, `_CH_ROOT_DIR`), so a dev build
+ * or a test run never reads or writes the user's real config and plugins.
  */
 export class DefaultPathProvider implements PathProvider {
   readonly appIconPath: Path;
@@ -65,6 +77,8 @@ export class DefaultPathProvider implements PathProvider {
   private readonly runtimeRoot: Path;
   /** Temp root for ephemeral files */
   private readonly tempRoot: Path;
+  /** Home root for user-authored files (config.json, plugins/) */
+  private readonly homeRoot: Path;
   /** Platform for platform-specific path construction */
   private readonly platform: "darwin" | "linux" | "win32";
 
@@ -87,6 +101,7 @@ export class DefaultPathProvider implements PathProvider {
       ? new Path(buildInfo.resourcesPath)
       : this.assetsRoot;
     this.tempRoot = new Path(this.dataRoot, "temp");
+    this.homeRoot = new Path(this.computeHomeRootDir(buildInfo, platformInfo));
     this.appIconPath = this.computeAppIconPath();
   }
 
@@ -109,6 +124,10 @@ export class DefaultPathProvider implements PathProvider {
 
   tempPath(subpath: string): Path {
     return new Path(this.tempRoot, subpath);
+  }
+
+  homePath(subpath: string): Path {
+    return new Path(this.homeRoot, subpath);
   }
 
   private computeAppIconPath(): Path {
@@ -143,6 +162,17 @@ export class DefaultPathProvider implements PathProvider {
       default:
         return join(homeDir, ".local", "share", "codehydra");
     }
+  }
+
+  private computeHomeRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
+    const override = DefaultPathProvider.rootOverride();
+    if (override) {
+      return join(override, "home");
+    }
+    if (buildInfo.isDevelopment) {
+      return join(process.cwd(), "app-data", "home");
+    }
+    return join(platformInfo.homeDir, ".codehydra");
   }
 
   private computeDataRootDir(buildInfo: BuildInfo, platformInfo: PlatformInfo): string {
