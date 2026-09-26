@@ -28,6 +28,16 @@ import { Path } from "../utils/path/path";
 import { delay } from "@shared/test-fixtures";
 
 const isWindows = process.platform === "win32";
+
+/**
+ * Budget for one detection scan, deliberately well inside TEST_TIMEOUT.
+ *
+ * With the two equal, a slow scan surfaced as a bare "Test timed out" from
+ * vitest instead of `timedOut: true` from runDetectAction — which is the one
+ * result that says the scan, and not the locker spawn or the assertions, ran
+ * out of time.
+ */
+const SCAN_TIMEOUT = 20000;
 const TEST_TIMEOUT = 30000;
 
 /**
@@ -148,14 +158,15 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const { pid } = await spawnFileLockingProcess();
 
         // Detect blocking processes
-        const { processes } = await runDetectAction(
+        const { processes, timedOut } = await runDetectAction(
           processRunner,
           scriptPath,
           new Path(tempDir),
           "Detect",
           createMockLogger(),
-          TEST_TIMEOUT
+          SCAN_TIMEOUT
         );
+        expect(timedOut, "detection scan timed out").toBe(false);
 
         // Verify the blocking process is detected
         expect(processes.length).toBeGreaterThan(0);
@@ -165,7 +176,9 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
         const detected = processes.find((p) => p.pid === pid);
         expect(detected).toBeDefined();
         expect(detected!.name.toLowerCase()).toContain("powershell");
-        expect(typeof detected!.commandLine).toBe("string");
+        // The locker's own script text, which only a real command-line read
+        // yields — the fallback when that read fails is the process name.
+        expect(detected!.commandLine).toContain("LOCKED");
         expect(Array.isArray(detected!.files)).toBe(true);
         expect(detected!.files.length).toBeGreaterThan(0);
         expect(detected!.files.some((f) => f.includes("locked-file.txt"))).toBe(true);
@@ -186,7 +199,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
           new Path(tempDir),
           "Detect",
           createMockLogger(),
-          TEST_TIMEOUT
+          SCAN_TIMEOUT
         );
 
         // Find our process
@@ -210,7 +223,7 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
           new Path(tempDir),
           "Detect",
           createMockLogger(),
-          TEST_TIMEOUT
+          SCAN_TIMEOUT
         );
 
         expect(processes).toEqual([]);
