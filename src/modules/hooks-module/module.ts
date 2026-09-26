@@ -33,6 +33,13 @@
  * which offers a Cancel for it (the loading surface, a notification, or the
  * deletion panel). Cancel kills the hook's process tree and counts as that
  * hook failing, with that entry's usual consequence.
+ *
+ * Quitting cancels every hook still running, `on-` entries included, and
+ * starts no new ones. Nothing else would: a hook is a child of the app, and
+ * the OS does not take it down with its parent. A setup script or deletion
+ * gate that never finishes would then outlive CodeHydra, still sitting in its
+ * worktree — which on Windows is enough to keep that directory from ever
+ * being removed.
  */
 
 import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
@@ -51,6 +58,7 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import { storeBoolean, storeCustom } from "../../boundaries/platform/store-definition";
 import { Path } from "../../utils/path/path";
 import { getErrorMessage } from "../../shared/error-utils";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { TAGS_METADATA_KEY_PREFIX, TITLE_METADATA_KEY } from "../../shared/api/types";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
@@ -236,6 +244,48 @@ export function createHooksModule(deps: HooksModuleDeps): HooksModule {
   };
 
   // ---------------------------------------------------------------------------
+  // Runs in flight, for shutdown
+  // ---------------------------------------------------------------------------
+
+  /** One promise per hook run in progress, settling once that run is over. */
+  const inFlight = new Set<Promise<void>>();
+  /** Aborted at shutdown: every run started from then on is canceled before it spawns. */
+  const shutdown = new AbortController();
+
+  /**
+   * Run a hook under a signal that shutdown aborts — and `cancel` too, when
+   * given — and keep it listed until it is over.
+   */
+  async function inFlightRun<T>(
+    run: (signal: AbortSignal) => Promise<T>,
+    cancel?: AbortSignal
+  ): Promise<T> {
+    const running = run(
+      cancel === undefined ? shutdown.signal : AbortSignal.any([cancel, shutdown.signal])
+    );
+    const settled = running.then(
+      () => undefined,
+      () => undefined
+    );
+    inFlight.add(settled);
+    try {
+      return await running;
+    } finally {
+      inFlight.delete(settled);
+    }
+  }
+
+  /** Cancel every hook still running and wait until each one's kill is done. */
+  async function cancelAllHooks(): Promise<void> {
+    shutdown.abort();
+    const pending = [...inFlight.values()];
+    if (pending.length > 0) {
+      deps.logger.info("Canceling repository hooks at shutdown", { count: pending.length });
+    }
+    await Promise.all(pending);
+  }
+
+  // ---------------------------------------------------------------------------
   // after-worktree-created
   // ---------------------------------------------------------------------------
 
@@ -355,7 +405,7 @@ export function createHooksModule(deps: HooksModuleDeps): HooksModule {
           })
         : undefined;
     try {
-      return await run(controller.signal);
+      return await inFlightRun(run, controller.signal);
     } finally {
       untrack?.();
     }
@@ -370,6 +420,8 @@ export function createHooksModule(deps: HooksModuleDeps): HooksModule {
       entry: found.entry,
       error: getErrorMessage(error),
     });
+    // Canceled by the quit itself: nobody is left to read a notification.
+    if (shutdown.signal.aborted) return;
     notify(deps.dispatcher, {
       type: "error",
       title: "Repository hook failed",
@@ -518,14 +570,22 @@ export function createHooksModule(deps: HooksModuleDeps): HooksModule {
           return;
         }
 
-        await runEventHook(runnerDeps, found, worktree, {
-          workspaceName: payload.workspaceName,
-          workspacePath: payload.workspacePath,
-          projectPath: payload.projectPath,
-          ...(payload.branch !== undefined && { branch: payload.branch }),
-          ...(payload.base !== undefined && { base: payload.base }),
-          reopened: payload.reopened === true,
-        });
+        await inFlightRun((signal) =>
+          runEventHook(
+            runnerDeps,
+            found,
+            worktree,
+            {
+              workspaceName: payload.workspaceName,
+              workspacePath: payload.workspacePath,
+              projectPath: payload.projectPath,
+              ...(payload.branch !== undefined && { branch: payload.branch }),
+              ...(payload.base !== undefined && { base: payload.base }),
+              reopened: payload.reopened === true,
+            },
+            { signal }
+          )
+        );
       } catch (error) {
         deps.logger.warn("Event hook could not be dispatched", {
           entry: ON_WORKSPACE_OPENED.name,
@@ -614,6 +674,9 @@ export function createHooksModule(deps: HooksModuleDeps): HooksModule {
     [DELETE_WORKSPACE_OPERATION_ID]: {
       preflight: { handler: announceDeleteHook },
       "pre-delete": { handler: beforeWorktreeDeleted },
+    },
+    [APP_SHUTDOWN_OPERATION_ID]: {
+      stop: { handler: cancelAllHooks },
     },
   };
 

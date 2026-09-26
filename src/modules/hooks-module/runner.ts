@@ -273,6 +273,8 @@ export async function runHook<S extends z.ZodType>(
   options?: RunHookOptions
 ): Promise<z.infer<S>> {
   if (found.kind === "ambiguous") throw ambiguityError(found);
+  // Canceled before it started (the app is quitting): nothing to spawn and kill.
+  if (options?.signal?.aborted === true) throw canceledError(deps, found.entry);
 
   const commandLine = quoteForShell(found.path.toNative());
 
@@ -289,10 +291,7 @@ export async function runHook<S extends z.ZodType>(
   });
 
   const result = await waitUnlessCanceled(proc, options?.signal);
-  if (result === "canceled") {
-    deps.logger.warn("Hook canceled", { entry: found.entry });
-    throw new HookFailedError(found.entry, `${found.entry} was canceled`);
-  }
+  if (result === "canceled") throw canceledError(deps, found.entry);
 
   reportStderr(deps, worktree, found.entry, result.stderr);
 
@@ -312,13 +311,16 @@ export async function runHook<S extends z.ZodType>(
  * The fire-and-forget half: nothing is waiting on this, so nothing it does can
  * fail anything. Callers do not await it. An ambiguous entry is the caller's to
  * report (it is a repository mistake, not a run), so this takes only a file.
+ * Aborting `options.signal` kills it, as it does a blocking hook.
  */
 export async function runEventHook(
   deps: HookRunnerDeps,
   found: RunnableHook,
   worktree: Path,
-  input: unknown
+  input: unknown,
+  options?: RunHookOptions
 ): Promise<void> {
+  if (options?.signal?.aborted === true) return;
   try {
     const commandLine = quoteForShell(found.path.toNative());
     const proc = deps.processRunner.run(commandLine, [], {
@@ -327,7 +329,11 @@ export async function runEventHook(
       env: hookEnv(deps.binDir),
       input: JSON.stringify(input),
     });
-    const result = await proc.wait();
+    const result = await waitUnlessCanceled(proc, options?.signal);
+    if (result === "canceled") {
+      deps.logger.info("Event hook canceled", { entry: found.entry });
+      return;
+    }
     reportStderr(deps, worktree, found.entry, result.stderr);
     if (result.exitCode !== 0) {
       // A log line and no more. Nothing is waiting on this, and a notification
@@ -343,6 +349,11 @@ export async function runEventHook(
       error: getErrorMessage(error),
     });
   }
+}
+
+function canceledError(deps: HookRunnerDeps, entry: string): HookFailedError {
+  deps.logger.warn("Hook canceled", { entry });
+  return new HookFailedError(entry, `${entry} was canceled`);
 }
 
 /**
