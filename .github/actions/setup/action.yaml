@@ -4,7 +4,17 @@ description: Setup pnpm with caching
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v6
+    # Corepack, not pnpm/action-setup: the action `npm ci`s a bootstrap pnpm
+    # (v11) and then self-updates to ours, and that `npm ci` alone took ~40s on
+    # Windows. Corepack ships with Node and fetches exactly the version in
+    # package.json's packageManager, once. `pnpm --version` makes that download
+    # happen here, where a failure names corepack, not in `pnpm install`.
+    - shell: bash
+      env:
+        COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      run: |
+        corepack enable pnpm
+        pnpm --version
 
     # Tell pnpm where its store is rather than asking: `pnpm store path` is a
     # cold pnpm start that took ~9-13s on Windows just to print a path. pnpm
