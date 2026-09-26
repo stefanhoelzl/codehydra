@@ -193,6 +193,90 @@ describe("ch lock run", () => {
     ]);
   });
 
+  describe("several locks", () => {
+    /** A hold that grants whatever it is asked for. */
+    const grant = (request: unknown) => ({
+      name: (request as { name: string }).name,
+      scope: "global",
+      acquired: true,
+    });
+    const holds = (h: ReturnType<typeof harness>) =>
+      h.steps.filter((s) => s.step === "api:operation:lock.hold").map((s) => s.detail);
+    const releases = (h: ReturnType<typeof harness>) =>
+      h.steps
+        .filter((s) => s.step === "api:operation:lock.release")
+        .map((s) => (s.detail as { name: string }).name);
+
+    it("takes them in name order, deduped, with the same reason and scope, then releases them", async () => {
+      const h = harness({
+        argv: ["port,device,port", "e2e", "--scope", "project", "--", "npm", "test"],
+        hold: grant,
+      });
+
+      const code = await h.run();
+
+      expect(code).toBe(EXIT.OK);
+      expect(holds(h)).toEqual([
+        { name: "device", reason: "e2e", scope: "project" },
+        { name: "port", reason: "e2e", scope: "project" },
+      ]);
+      expect(h.steps.map((s) => s.step).indexOf("run")).toBe(3);
+      expect(releases(h)).toEqual(["device", "port"]);
+    });
+
+    it("releases the ones it took and runs nothing when a later take is refused", async () => {
+      const h = harness({
+        argv: ["device,port", "--", "npm", "test"],
+        hold: (request) =>
+          (request as { name: string }).name === "port"
+            ? new CallError("Taking 'port' for 'alpha' would deadlock: …", "conflict")
+            : grant(request),
+      });
+
+      const code = await h.run();
+
+      expect(code).toBe(EXIT.CONFLICT);
+      expect(h.steps.map((s) => s.step)).not.toContain("run");
+      expect(releases(h)).toEqual(["device"]);
+      expect(h.err).toEqual(["Taking 'port' for 'alpha' would deadlock: …"]);
+    });
+
+    it("releases only the names the workspace did not already hold", async () => {
+      const h = harness({
+        argv: ["device,port", "--", "npm", "test"],
+        hold: (request) => ({
+          ...grant(request),
+          acquired: (request as { name: string }).name !== "device",
+        }),
+      });
+
+      await h.run();
+
+      expect(releases(h)).toEqual(["port"]);
+    });
+
+    it("holds every lock it took until killed", async () => {
+      const h = harness({ argv: ["port,device"], hold: grant });
+
+      await h.run();
+
+      expect(h.out).toEqual(["held 'device', 'port' — release by killing this process"]);
+      expect(h.steps.map((s) => s.step)).toContain("hold-forever");
+    });
+
+    it.each([["device,,port"], ["device,phone 2"]])(
+      "is a usage error with an invalid name in %j, before taking anything",
+      async (names) => {
+        const h = harness({ argv: [names, "--", "npm", "test"], hold: grant });
+
+        const code = await h.run();
+
+        expect(code).toBe(EXIT.USAGE);
+        expect(holds(h)).toEqual([]);
+      }
+    );
+  });
+
   it.each([
     [[], "no lock name"],
     [["device", "--"], "nothing after --"],

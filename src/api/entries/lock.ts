@@ -91,6 +91,11 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "a race in: when this returns, the lock is yours. It prints nothing while it waits — " +
       "run `ch lock ls` to see who holds it and who is queued.\n\n" +
       "Taking a lock this workspace already holds succeeds immediately and changes nothing.\n\n" +
+      "A workspace can hold several locks. A take that would close a waiting loop — this " +
+      "workspace waiting for a lock whose holder (or someone queued ahead) waits, directly or " +
+      "through others, for a lock this workspace holds — fails at once as a conflict naming the " +
+      "loop. Release what you hold and take the locks together with `ch lock run a,b` (it " +
+      "takes them in name order), or retry later.\n\n" +
       "The lock releases when you run `ch lock release`, when the workspace hibernates, and " +
       "when it is deleted. Closing the agent terminal does not release it. Nothing takes it " +
       "from you implicitly — a waiter never steals it. To break a lock someone else holds " +
@@ -121,7 +126,8 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     description: "Take a lock for as long as this connection lives",
     instructions:
       "What `ch lock run` is built on: a take that is also released when the caller's " +
-      "connection closes, so the hold is the process. From a shell, use `ch lock run`.",
+      "connection closes, so the hold is the process. From a shell, use `ch lock run`, " +
+      "which also takes several locks (`ch lock run a,b`).",
     input: takeInput,
     requiresWorkspace: true,
     handler: async (ctx, input) => {
