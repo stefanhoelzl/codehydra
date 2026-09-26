@@ -170,24 +170,46 @@ function processTable(): ProcessEntry[] {
  */
 function processTree(root: number): ProcessEntry[] {
   const table = processTable();
+  const byPid = new Map(table.map((entry) => [entry.pid, entry]));
   const childrenOf = new Map<number, ProcessEntry[]>();
   for (const entry of table) {
-    // Windows' System Idle Process is its own parent.
-    if (entry.pid === entry.ppid) continue;
+    const parent = byPid.get(entry.ppid);
+    if (parent !== undefined && !plausibleParent(parent, entry)) continue;
     const siblings = childrenOf.get(entry.ppid) ?? [];
     siblings.push(entry);
     childrenOf.set(entry.ppid, siblings);
   }
 
+  // Visited once each: Windows keeps a process's parent pid after that parent
+  // exits, and pids are reused, so the parent links can form a cycle.
+  const seen = new Set([root]);
   const found = table.filter((entry) => entry.pid === root);
   const stack = [root];
   while (stack.length > 0) {
     for (const child of childrenOf.get(stack.pop()!) ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
       found.push(child);
       stack.push(child.pid);
     }
   }
   return found;
+}
+
+/**
+ * Whether `parent` can really be the process that started `child`.
+ *
+ * On Windows a parent pid is only a record of who started the process: it
+ * outlives that parent, and a later process can reuse the pid. A child that
+ * started before its supposed parent names a pid that has since been recycled
+ * (Windows' own tools apply the same test). Unix reparents orphans instead, so
+ * its links are always current.
+ */
+function plausibleParent(parent: ProcessEntry, child: ProcessEntry): boolean {
+  if (process.platform !== "win32") return true;
+  // CreationDate is null for a few system processes; nothing to compare then.
+  if (parent.started === "" || child.started === "") return true;
+  return BigInt(parent.started) <= BigInt(child.started);
 }
 
 /** Whether a process with this pid exists (`kill(pid, 0)` works on Windows too). */
