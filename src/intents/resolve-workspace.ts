@@ -28,6 +28,7 @@ import {
 import type { ProjectPath, WorkspaceClosing } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 import { WorkspaceError } from "../shared/errors/service-errors";
+import { Path } from "../utils/path/path";
 
 export const INTENT_RESOLVE_WORKSPACE = "workspace:resolve" as const;
 export const RESOLVE_WORKSPACE_OPERATION_ID = "resolve-workspace";
@@ -158,6 +159,14 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
         "WORKSPACE_NOT_FOUND"
       );
     }
+
+    // The resolve step is where a workspace path becomes a name: tag this
+    // dispatch, and the operation that asked, with it.
+    ctx.setLogTarget({
+      project: new Path(projectPath).basename,
+      ws: workspaceName,
+      path: payload.workspacePath,
+    });
 
     return { projectPath, workspaceName, active, branch, metadata, closing };
   }

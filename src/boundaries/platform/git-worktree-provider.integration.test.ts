@@ -14,7 +14,7 @@ import {
   symlink,
   file,
 } from "./filesystem.state-mock";
-import { SILENT_LOGGER } from "./logging";
+import { SILENT_LOGGER, createMockLogger } from "./logging";
 import { WorkspaceError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
 import type { IGitClient } from "./git-client";
@@ -92,20 +92,23 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("logs each skipped worktree so a missing tab stays diagnosable", async () => {
-      const warn = vi.fn();
-      const provider = await createProvider(PROJECT_ROOT, mixedRepo(), WORKSPACES_DIR, mockFs, {
-        ...SILENT_LOGGER,
-        warn,
-      });
+      const logger = createMockLogger();
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mixedRepo(),
+        WORKSPACES_DIR,
+        mockFs,
+        logger
+      );
 
       await provider.discover(PROJECT_ROOT);
 
-      expect(warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
-        path: testPath("/code/repo-login").toString(),
+      expect(logger.warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
+        "scope.path": testPath("/code/repo-login").toString(),
         branch: "feature/login",
       });
-      expect(warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
-        path: testPath("/tmp/wt-8fa2").toString(),
+      expect(logger.warn).toHaveBeenCalledWith("Skipping unmanaged worktree", {
+        "scope.path": testPath("/tmp/wt-8fa2").toString(),
         branch: null,
       });
     });

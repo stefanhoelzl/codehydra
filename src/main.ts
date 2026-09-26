@@ -392,6 +392,7 @@ const agentBinaryResolvers = {
 
 const dispatcher = new Dispatcher({
   logger: loggingService.createLogger("dispatcher"),
+  logScope: loggingService.scope,
   initialCapabilities: {
     platform: platformInfo.platform,
     posix: platformInfo.posix,
@@ -657,6 +658,7 @@ const apiServerModule = createApiServerModule({
   options: {
     isDevelopment: buildInfo.isDevelopment,
     extensionLogger: loggingService.createLogger("extension"),
+    logScope: loggingService.scope,
   },
 });
 
@@ -1194,10 +1196,13 @@ if (downloadBinariesConfig.get()) {
 function startApp(): void {
   // Dispatch app:start — orchestrates the entire startup flow via hook points
   void dispatcher
-    .dispatch<AppStartIntent>({
-      type: INTENT_APP_START,
-      payload: {},
-    })
+    .dispatch<AppStartIntent>(
+      {
+        type: INTENT_APP_START,
+        payload: {},
+      },
+      { origin: "startup" }
+    )
     .catch((error: unknown) => {
       appLogger.error(
         "Startup failed",

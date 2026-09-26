@@ -75,7 +75,103 @@ export type LoggerName =
  * - No functions or symbols (not serializable)
  * - null allowed for explicit "no value" cases
  */
-export type LogContext = Record<string, string | number | boolean | null>;
+export type LogContext = Record<string, LogValue> & {
+  /** `scope.*` is reserved for the ambient {@link LogScope}; a line's own context may not use it. */
+  readonly [key: `scope.${string}`]: never;
+};
+
+/** A single value in a {@link LogContext}. */
+export type LogValue = string | number | boolean | null;
+
+/**
+ * Accept context built at runtime (from another process, a parsed payload) as a
+ * {@link LogContext}: `scope.*` keys are dropped rather than rejected, since the
+ * type cannot check what only exists at runtime.
+ */
+export function toLogContext(record: Readonly<Record<string, LogValue>>): LogContext {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => !key.startsWith("scope."))
+  ) as LogContext;
+}
+
+/**
+ * Ambient context of a log line: who and what a line was written on behalf of.
+ *
+ * Not passed by the caller — the logger reads it from the {@link LogScopeStore}
+ * at the moment the line is written, so a `git` line written while an intent
+ * runs names that intent without the git client knowing intents exist. The
+ * dispatcher is the only writer of the ambient part; a call site adds what it
+ * knows itself through {@link Logger.scoped}. Rendered as a compact block in
+ * text, as the `scope` object in JSON.
+ */
+export interface LogScope {
+  /** Id of the dispatch the line belongs to (one per dispatch, short hex). */
+  readonly trace?: string;
+  /** Intent type of that dispatch. */
+  readonly intent?: string;
+  /** Name of the project the dispatch acts on. */
+  readonly project?: string;
+  /** Name of the workspace the dispatch acts on. */
+  readonly ws?: string;
+  /** Path of that workspace, when known. JSON only; the text block shows the name. */
+  readonly path?: string;
+  /** Where the work entered the app (cli, mcp, sidekick, ui, shortcut, …). */
+  readonly origin?: string;
+  /** The calling workspace of an API call, as `<project>/<name>`. */
+  readonly caller?: string;
+  /** The API operation (or channel) an API call invoked. */
+  readonly api?: string;
+  /** The intent module whose hook handler is running. */
+  readonly module?: string;
+  /** The hook point that handler runs on, or `event:<type>` for an event handler. */
+  readonly hook?: string;
+}
+
+/**
+ * What a call site knows about a line's scope, given to {@link Logger.scoped}.
+ */
+export interface LogScopeHint {
+  /**
+   * The workspace, or a file or directory, the line is about. Resolved when
+   * the line is written against the workspaces the app has named so far: the
+   * workspace itself becomes the line's `project/ws` (and no `path=` is
+   * written); a path inside one becomes that workspace plus `path=` relative to
+   * it; any other path is written as `path=` in full, and the line then claims
+   * no workspace at all — not even an ambient one, which may belong to another
+   * workspace than the one the line is about. Null: no path (a caller that has none).
+   */
+  readonly path?: string | null;
+  /** Where the work entered the app, for lines that arrive outside any dispatch. */
+  readonly origin?: string;
+}
+
+/** A workspace by name, as the log scope shows it. */
+export interface LogWorkspaceName {
+  readonly project: string;
+  readonly ws: string;
+}
+
+/**
+ * Holds the ambient {@link LogScope} for the current async execution.
+ *
+ * Owned by {@link Logging}; loggers read it on every line. `run` takes a
+ * reader rather than a value so a writer can keep mutating what it describes
+ * (the dispatcher learns a dispatch's workspace mid-flight) and every later
+ * line sees the update.
+ */
+export interface LogScopeStore {
+  /** Run `fn` with `read` as the ambient scope; everything `fn` starts inherits it. */
+  run<T>(read: () => LogScope, fn: () => T): T;
+  /** The ambient scope right now, or undefined outside any `run`. */
+  current(): LogScope | undefined;
+  /** Record a workspace's name, so a line scoped to its path can show it. */
+  nameWorkspace(path: string, name: LogWorkspaceName): void;
+  /**
+   * The named workspace a path is, or lies inside (the deepest one), with its
+   * own path; undefined when none contains it.
+   */
+  workspaceAt(path: string): (LogWorkspaceName & { readonly path: string }) | undefined;
+}
 
 /**
  * Log output format.
@@ -151,6 +247,21 @@ export interface Logger {
    * @param error - Optional Error object for stack trace inclusion
    */
   error(message: string, context?: LogContext, error?: Error): void;
+
+  /**
+   * A logger whose lines also carry what the caller knows about their scope.
+   *
+   * Cheap: an object that belongs to one workspace can hold one for life, and
+   * a one-off line can make one inline. Resolved at write time, so a workspace
+   * named after the logger was made still shows by name.
+   *
+   * @example
+   * ```typescript
+   * const log = logger.scoped({ path: workspacePath });
+   * log.debug("Hook received", { hookName });
+   * ```
+   */
+  scoped(hint: LogScopeHint): Logger;
 }
 
 /**
@@ -194,6 +305,11 @@ export interface Logging {
    * Must be called before renderer logs can be received.
    */
   initialize(): void;
+
+  /**
+   * The ambient scope every logger of this service merges into its lines.
+   */
+  readonly scope: LogScopeStore;
 
   /**
    * Get the current session's log file path.

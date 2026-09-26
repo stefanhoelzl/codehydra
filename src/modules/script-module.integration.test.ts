@@ -16,6 +16,7 @@ import type { RequiredScript } from "../intents/app-start";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import { FileSystemError } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
+import { createMockLogger } from "../boundaries/platform/logging";
 import { testPath } from "../shared/test-fixtures";
 
 // =============================================================================
@@ -92,7 +93,7 @@ function createFakeFileSystem(options?: FakeFsOptions) {
   };
 }
 
-const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), silly: vi.fn() };
+const logger = createMockLogger();
 
 function createHarness(
   scripts: readonly RequiredScript[],

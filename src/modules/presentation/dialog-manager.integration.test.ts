@@ -373,6 +373,7 @@ describe("DialogManager", () => {
         warn: vi.fn(),
         error: vi.fn(),
         silly: vi.fn(),
+        scoped: vi.fn(),
       };
       const loggedManager = new DialogManager(notifyChange, logger);
 
@@ -391,6 +392,7 @@ describe("DialogManager", () => {
         warn: vi.fn(),
         error: vi.fn(),
         silly: vi.fn(),
+        scoped: vi.fn(),
       };
       const loggedManager = new DialogManager(notifyChange, logger);
 

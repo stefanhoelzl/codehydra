@@ -448,7 +448,8 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
 
     await vi.waitFor(() => {
       expect(s.deps.dispatcher.dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_APP_SHUTDOWN })
+        expect.objectContaining({ type: INTENT_APP_SHUTDOWN }),
+        { origin: "app" }
       );
     });
   });

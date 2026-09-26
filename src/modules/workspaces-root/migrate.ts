@@ -245,10 +245,9 @@ export async function migrateWorkspacesRoot(
       try {
         await fs.rm(project.from.dirname, { recursive: true, force: true });
       } catch (error) {
-        logger.warn("Could not delete an old clone", {
-          path: project.from.toString(),
-          error: getErrorMessage(error),
-        });
+        logger
+          .scoped({ path: project.from.toString() })
+          .warn("Could not delete an old clone", { error: getErrorMessage(error) });
         leftovers.push(project.from.dirname.toString());
       }
     }

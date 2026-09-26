@@ -169,15 +169,19 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
         // front *and* land on it.
         windowManager.focus();
         void dispatcher
-          .dispatch<SwitchWorkspaceIntent>({
-            type: INTENT_SWITCH_WORKSPACE,
-            payload: { workspacePath, focus: true },
-          })
+          .dispatch<SwitchWorkspaceIntent>(
+            {
+              type: INTENT_SWITCH_WORKSPACE,
+              payload: { workspacePath, focus: true },
+            },
+            { origin: "notification" }
+          )
           .catch((error: unknown) => {
-            logger.warn("Failed to switch to workspace from notification click", {
-              workspacePath,
-              error: getErrorMessage(error),
-            });
+            logger
+              .scoped({ path: workspacePath })
+              .warn("Failed to switch to workspace from notification click", {
+                error: getErrorMessage(error),
+              });
           });
       },
     });

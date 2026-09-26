@@ -55,6 +55,7 @@ export class ClaudeCodeProvider implements AgentProvider {
   constructor(deps: ClaudeCodeProviderDeps) {
     this.serverManager = deps.serverManager;
     this.workspacePath = deps.workspacePath;
+    // Everything this provider logs is about its one workspace.
     this.logger = deps.logger;
   }
 
@@ -75,10 +76,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       this.notifyStatusChange(status);
     });
 
-    this.logger.info("Provider connected", {
-      workspacePath: this.workspacePath,
-      port: this.port,
-    });
+    this.logger.info("Provider connected", { port: this.port });
   }
 
   /**
@@ -92,9 +90,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
     // Keep port for reconnect
 
-    this.logger.info("Provider disconnected", {
-      workspacePath: this.workspacePath,
-    });
+    this.logger.info("Provider disconnected");
   }
 
   /**
@@ -103,9 +99,7 @@ export class ClaudeCodeProvider implements AgentProvider {
    */
   async reconnect(): Promise<void> {
     if (this.port === null) {
-      this.logger.warn("Cannot reconnect: no port stored", {
-        workspacePath: this.workspacePath,
-      });
+      this.logger.warn("Cannot reconnect: no port stored");
       return;
     }
 
@@ -114,10 +108,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       this.notifyStatusChange(status);
     });
 
-    this.logger.info("Provider reconnected", {
-      workspacePath: this.workspacePath,
-      port: this.port,
-    });
+    this.logger.info("Provider reconnected", { port: this.port });
   }
 
   /**
@@ -221,9 +212,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     this.port = null;
     this.statusCallbacks.clear();
 
-    this.logger.info("Provider disposed", {
-      workspacePath: this.workspacePath,
-    });
+    this.logger.info("Provider disposed");
   }
 
   /**

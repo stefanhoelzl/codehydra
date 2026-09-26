@@ -244,18 +244,15 @@ export async function runDetectAction(
   const result = await proc.wait(timeoutMs);
 
   if (result.running) {
-    logger.warn("Blocking process detection timed out", {
-      path: path.toString(),
-      action,
-      timeoutMs,
-    });
+    logger
+      .scoped({ path: path.toString() })
+      .warn("Blocking process detection timed out", { action, timeoutMs });
     await proc.kill(1000, 1000);
     return { processes: [], timedOut: true };
   }
 
   if (result.exitCode !== 0) {
-    logger.warn("Blocking process detection failed", {
-      path: path.toString(),
+    logger.scoped({ path: path.toString() }).warn("Blocking process detection failed", {
       action,
       exitCode: result.exitCode,
       stderr: result.stderr,
@@ -376,10 +373,9 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
               }
               return { result: { blockingProcesses: scan.processes } };
             } catch (error) {
-              deps.logger.warn("Detection failed", {
-                workspacePath,
-                error: getErrorMessage(error),
-              });
+              deps.logger
+                .scoped({ path: workspacePath })
+                .warn("Detection failed", { error: getErrorMessage(error) });
               return { result: { blockingProcesses: [], error: getErrorMessage(error) } };
             }
           },
@@ -453,10 +449,11 @@ async function runCwdReleaseKill(
       return undefined;
     }
 
-    deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
-      workspacePath,
-      pids: scan.processes.map((p) => p.pid).join(","),
-    });
+    deps.logger
+      .scoped({ path: workspacePath })
+      .info(`Killing CWD-blocking processes before ${phase}`, {
+        pids: scan.processes.map((p) => p.pid).join(","),
+      });
     const survivors = await killBlockingProcesses(
       deps.processRunner,
       scan.processes.map((p) => p.pid),

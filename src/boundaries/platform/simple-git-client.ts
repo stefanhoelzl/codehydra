@@ -89,11 +89,9 @@ export class SimpleGitClient implements IGitClient {
         isBare = isBareResult.trim() === "true";
       } catch {
         // revparse fails for non-git directories - this is expected, return false
-        this.logger.debug("IsRepositoryRoot", {
-          path: repoPath.toString(),
-          result: false,
-          reason: "not a repo (revparse failed)",
-        });
+        this.logger
+          .scoped({ path: repoPath.toString() })
+          .debug("IsRepositoryRoot", { result: false, reason: "not a repo (revparse failed)" });
         return false;
       }
 
@@ -101,22 +99,18 @@ export class SimpleGitClient implements IGitClient {
         // For bare repos, check if --git-dir returns "." (meaning we're at the root)
         const gitDir = await git.revparse(["--git-dir"]);
         const isRoot = gitDir.trim() === ".";
-        this.logger.debug("IsRepositoryRoot (bare)", {
-          path: repoPath.toString(),
-          gitDir: gitDir.trim(),
-          result: isRoot,
-        });
+        this.logger
+          .scoped({ path: repoPath.toString() })
+          .debug("IsRepositoryRoot (bare)", { gitDir: gitDir.trim(), result: isRoot });
         return isRoot;
       }
 
       // For non-bare repos, first verify we're inside a git repo
       const isRepo = await git.checkIsRepo();
       if (!isRepo) {
-        this.logger.debug("IsRepositoryRoot", {
-          path: repoPath.toString(),
-          result: false,
-          reason: "not a repo",
-        });
+        this.logger
+          .scoped({ path: repoPath.toString() })
+          .debug("IsRepositoryRoot", { result: false, reason: "not a repo" });
         return false;
       }
 
@@ -127,11 +121,9 @@ export class SimpleGitClient implements IGitClient {
 
       // Compare normalized paths
       const isRoot = rootPath.equals(repoPath);
-      this.logger.debug("IsRepositoryRoot", {
-        path: repoPath.toString(),
-        root: rootPath.toString(),
-        result: isRoot,
-      });
+      this.logger
+        .scoped({ path: repoPath.toString() })
+        .debug("IsRepositoryRoot", { root: rootPath.toString(), result: isRoot });
       return isRoot;
     } catch (error: unknown) {
       // If the path doesn't exist or is inaccessible, throw GitError
@@ -195,7 +187,9 @@ export class SimpleGitClient implements IGitClient {
       return worktreesResult;
     }, "Failed to list worktrees");
 
-    this.logger.debug("ListWorktrees", { path: repoPath.toString(), count: worktrees.length });
+    this.logger
+      .scoped({ path: repoPath.toString() })
+      .debug("ListWorktrees", { count: worktrees.length });
     return worktrees;
   }
 
@@ -205,7 +199,7 @@ export class SimpleGitClient implements IGitClient {
       // Pass native path to git command
       await git.raw(["worktree", "add", worktreePath.toNative(), branch]);
     }, `Failed to add worktree at ${worktreePath.toString()}`);
-    this.logger.debug("AddWorktree", { path: worktreePath.toString(), branch });
+    this.logger.scoped({ path: worktreePath.toString() }).debug("AddWorktree", { branch });
   }
 
   async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {
@@ -214,7 +208,7 @@ export class SimpleGitClient implements IGitClient {
       // Pass native path to git command
       await git.raw(["worktree", "remove", worktreePath.toNative(), "--force"]);
     }, `Failed to remove worktree at ${worktreePath.toString()}`);
-    this.logger.debug("RemoveWorktree", { path: worktreePath.toString() });
+    this.logger.scoped({ path: worktreePath.toString() }).debug("RemoveWorktree");
   }
 
   async pruneWorktrees(repoPath: Path): Promise<void> {
@@ -267,11 +261,9 @@ export class SimpleGitClient implements IGitClient {
 
     const localCount = branches.filter((b) => !b.isRemote).length;
     const remoteCount = branches.filter((b) => b.isRemote).length;
-    this.logger.debug("ListBranches", {
-      path: repoPath.toString(),
-      local: localCount,
-      remote: remoteCount,
-    });
+    this.logger
+      .scoped({ path: repoPath.toString() })
+      .debug("ListBranches", { local: localCount, remote: remoteCount });
     return branches;
   }
 
@@ -294,7 +286,7 @@ export class SimpleGitClient implements IGitClient {
       // Use -D to force delete (handles unmerged branches)
       await git.branch(["-D", name]);
     }, `Failed to delete branch ${name}`);
-    this.logger.debug("DeleteBranch", { path: repoPath.toString(), branch: name });
+    this.logger.scoped({ path: repoPath.toString() }).debug("DeleteBranch", { branch: name });
   }
 
   async getCurrentBranch(repoPath: Path): Promise<string | null> {
@@ -333,7 +325,7 @@ export class SimpleGitClient implements IGitClient {
       };
     }, "Failed to get status");
 
-    this.logger.debug("GetStatus", { path: repoPath.toString(), dirty: status.isDirty });
+    this.logger.scoped({ path: repoPath.toString() }).debug("GetStatus", { dirty: status.isDirty });
     return status;
   }
 
@@ -345,7 +337,7 @@ export class SimpleGitClient implements IGitClient {
       await git.fetch([remote, "--prune"]);
     }, `Failed to fetch from ${remote}`);
     await this.updateRemoteHead(repoPath, remote);
-    this.logger.debug("Fetch", { path: repoPath.toString(), remote });
+    this.logger.scoped({ path: repoPath.toString() }).debug("Fetch", { remote });
   }
 
   /**
@@ -358,11 +350,9 @@ export class SimpleGitClient implements IGitClient {
       const git = this.getGit(repoPath);
       await git.raw(["remote", "set-head", remote, "--auto"]);
     } catch (error: unknown) {
-      this.logger.warn("Failed to update remote HEAD", {
-        path: repoPath.toString(),
-        remote,
-        error: getErrorMessage(error),
-      });
+      this.logger
+        .scoped({ path: repoPath.toString() })
+        .warn("Failed to update remote HEAD", { remote, error: getErrorMessage(error) });
     }
   }
 
@@ -509,7 +499,7 @@ export class SimpleGitClient implements IGitClient {
         await git.commit(options.initialCommit, { "--allow-empty": null });
       }
     }, `Failed to initialize repository at ${targetPath.toString()}`);
-    this.logger.debug("Init", { path: targetPath.toString() });
+    this.logger.scoped({ path: targetPath.toString() }).debug("Init");
   }
 
   async countUnmergedCommits(repoPath: Path, branch: string, base: string): Promise<number> {

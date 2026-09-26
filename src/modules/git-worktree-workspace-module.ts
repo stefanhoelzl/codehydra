@@ -474,8 +474,7 @@ export function createGitWorktreeWorkspaceModule(
                 await gitWorktreeProvider.adoptWorktree(projectPathObj, wt.path, wt.branch);
               } catch (error: unknown) {
                 failed.push(wt.name);
-                logger.warn("Failed to adopt worktree", {
-                  path: wt.path.toString(),
+                logger.scoped({ path: wt.path.toString() }).warn("Failed to adopt worktree", {
                   branch: wt.branch,
                   error: getErrorMessage(error),
                 });
@@ -703,10 +702,11 @@ export function createGitWorktreeWorkspaceModule(
             } catch (error: unknown) {
               // Best-effort: a workspace whose metadata cannot be read still
               // opens, carrying the snapshot it already had.
-              logger.warn("Failed to re-read workspace metadata on finalize", {
-                workspacePath,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              logger
+                .scoped({ path: workspacePath })
+                .warn("Failed to re-read workspace metadata on finalize", {
+                  error: error instanceof Error ? error.message : String(error),
+                });
               return { result: {} };
             }
           },
@@ -874,10 +874,9 @@ export function createGitWorktreeWorkspaceModule(
               // Same answer isDirty already gives for a torn-down worktree
               // (see GitWorktreeProvider.isDirty) — a workspace on its way out
               // has no uncommitted work to report.
-              logger.debug("Skipping git status for closing workspace", {
-                workspacePath: wsPath,
-                reason: closingReason,
-              });
+              logger
+                .scoped({ path: wsPath })
+                .debug("Skipping git status for closing workspace", { reason: closingReason });
               return { result: { isDirty: false, unmergedCommits: 0 } };
             }
 

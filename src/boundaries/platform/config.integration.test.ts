@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../utils/path/path";
-import { SILENT_LOGGER } from "./logging";
+import { SILENT_LOGGER, createMockLogger } from "./logging";
 import { createFileSystemMock, file, directory } from "./filesystem.state-mock";
 import { DefaultConfig, parseEnvVars, parseCliArgs, resolveFileReferences } from "./config";
 import type { Config, ConfigDeps } from "./config";
@@ -258,7 +258,7 @@ describe("Config", () => {
   describe("validation", () => {
     it("strips unknown keys from config.json and warns (does not throw)", () => {
       const writes: Array<{ path: string; content: string }> = [];
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         fileEntries: {
           "/app": directory(),
@@ -374,7 +374,7 @@ describe("Config", () => {
     });
 
     it("warns and ignores unknown env vars instead of crashing", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         env: { CH_TEST__KEY: "kept", CH_UNKNOWN__OLD: "leftover" },
         logger,
@@ -390,7 +390,7 @@ describe("Config", () => {
     });
 
     it("warns and ignores unknown CLI flags instead of crashing", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({ argv: ["--test.key=cli", "--inspect=9229"], logger });
       const key = svc.register("test.key", stringDef("test.key"));
 
@@ -652,7 +652,7 @@ describe("Config", () => {
   describe("invalid JSON in config.json", () => {
     it("load() renames the file to config.json.broken and uses defaults", () => {
       const renames: Array<{ from: string; to: string }> = [];
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         fileEntries: {
           "/app": directory(),
@@ -672,7 +672,7 @@ describe("Config", () => {
       expect(logger.warn).toHaveBeenCalledWith(
         "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
         expect.objectContaining({
-          path: CONFIG_PATH.toString(),
+          "scope.path": CONFIG_PATH.toString(),
           backup: backupPath.toString(),
         })
       );
@@ -873,7 +873,7 @@ describe("Config", () => {
     });
 
     it("new key wins on conflict in config.json; legacy ignored with warn", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         fileEntries: {
           "/app": directory(),
@@ -895,7 +895,7 @@ describe("Config", () => {
     });
 
     it("falls back to default when translator returns undefined", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         fileEntries: {
           "/app": directory(),
@@ -914,7 +914,7 @@ describe("Config", () => {
     });
 
     it("applies the new key's redact policy to an untranslatable legacy value", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         fileEntries: {
           "/app": directory(),
@@ -960,7 +960,7 @@ describe("Config", () => {
     });
 
     it("new key wins over legacy via env var (legacy shadowed)", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({
         env: { CH_LEGACY__OLD_NAME: "raw", CH_TEST__NEW: "explicit" },
         logger,
@@ -977,7 +977,7 @@ describe("Config", () => {
     });
 
     it("warns at register() on legacy-name collision (last writer wins)", () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const logger = createMockLogger();
       const svc = createService({ logger });
       svc.register("test.first", defWithLegacy("test.first"));
       svc.register("test.second", defWithLegacy("test.second"));

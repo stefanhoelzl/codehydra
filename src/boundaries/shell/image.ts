@@ -93,7 +93,7 @@ export class DefaultImageBoundary implements ImageBoundary {
 
     const id = `image-${this.nextId++}`;
     this.images.set(id, image);
-    this.logger.debug("Image created from path", { id, path });
+    this.logger.scoped({ path: path }).debug("Image created from path", { id });
     return createImageHandle(id);
   }
 

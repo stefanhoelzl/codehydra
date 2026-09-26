@@ -390,7 +390,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
 
   async readFile(filePath: PathLike): Promise<string> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("Read", { path: nativePath });
+    this.logger.scoped({ path: nativePath }).debug("Read");
     try {
       return await fs.readFile(nativePath, "utf-8");
     } catch (error) {
@@ -404,7 +404,9 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     options?: { exclusive?: boolean }
   ): Promise<void> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("Write", { path: nativePath, exclusive: options?.exclusive ?? false });
+    this.logger
+      .scoped({ path: nativePath })
+      .debug("Write", { exclusive: options?.exclusive ?? false });
     try {
       await fs.writeFile(nativePath, content, {
         encoding: "utf-8",
@@ -417,7 +419,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
 
   async mkdir(dirPath: PathLike): Promise<void> {
     const nativePath = toNativePath(dirPath);
-    this.logger.debug("Mkdir", { path: nativePath });
+    this.logger.scoped({ path: nativePath }).debug("Mkdir");
     try {
       await fs.mkdir(nativePath, { recursive: true });
     } catch (error) {
@@ -435,7 +437,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
         isFile: entry.isFile(),
         isSymbolicLink: entry.isSymbolicLink(),
       }));
-      this.logger.debug("Readdir", { path: nativePath, count: result.length });
+      this.logger.scoped({ path: nativePath }).debug("Readdir", { count: result.length });
       return result;
     } catch (error) {
       throw mapError(error, nativePath);
@@ -444,7 +446,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
 
   async unlink(filePath: PathLike): Promise<void> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("Unlink", { path: nativePath });
+    this.logger.scoped({ path: nativePath }).debug("Unlink");
     try {
       await fs.unlink(nativePath);
     } catch (error) {
@@ -456,7 +458,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     const nativePath = toNativePath(targetPath);
     const recursive = options?.recursive ?? false;
     const force = options?.force ?? false;
-    this.logger.debug("Rm", { path: nativePath, recursive });
+    this.logger.scoped({ path: nativePath }).debug("Rm", { recursive });
     try {
       if (recursive) {
         // Use fs.rm for recursive deletion
@@ -542,7 +544,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
 
   async writeFileBuffer(filePath: PathLike, content: Buffer): Promise<void> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("WriteBuffer", { path: nativePath, size: content.length });
+    this.logger.scoped({ path: nativePath }).debug("WriteBuffer", { size: content.length });
     try {
       await fs.writeFile(nativePath, content);
     } catch (error) {
@@ -552,7 +554,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
 
   async readFileBuffer(filePath: PathLike): Promise<Buffer> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("ReadBuffer", { path: nativePath });
+    this.logger.scoped({ path: nativePath }).debug("ReadBuffer");
     try {
       return await fs.readFile(nativePath);
     } catch (error) {
@@ -585,7 +587,7 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     try {
       const tmpDir = tmpdir();
       const created = await fs.mkdtemp(`${tmpDir}/${prefix}`);
-      this.logger.debug("Mkdtemp created", { path: created });
+      this.logger.scoped({ path: created }).debug("Mkdtemp created");
       return new Path(created);
     } catch (error) {
       throw mapError(error, prefix);

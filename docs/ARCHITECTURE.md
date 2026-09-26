@@ -930,6 +930,26 @@ CH_LOG__LEVEL=silly:presenter pnpm dev                # one scope, maximum detai
 - Development (isDevelopment=true): `debug` (computed default)
 - Production (isDevelopment=false): `warn`
 
+### Ambient Scope
+
+Each line carries the **log scope** of the dispatch it was written for (see INTENTS.md, Log scope) without its caller passing anything: `ElectronLog` owns a `LogScopeStore` (`log-scope.ts`, over `AsyncLocalStorage`) that the dispatcher writes and every logger reads at write time. A line buffered before `configure()` keeps the scope it was written in.
+
+- **Text** — a positional block after the logger name, empty parts left out; a project without a workspace keeps its slash:
+
+  ```
+  [..] [debug] (git) [7f3a01 codehydra/ws-logs workspace:switch@git-worktree/create shortcut] ListBranches …
+  [..] [info]  (dispatcher) [9c2144 codehydra/ project:resolve ui] dispatch parent=7f3a01 causation=…
+  ```
+
+  `caller`/`api` are not in the block; they are on the dispatch line where they enter the tree.
+
+- **JSON** — `scope` is an object: `{"logger":"git","trace":"7f3a01","intent":…,"project":…,"ws":…,"path":…,"origin":…,"caller":…,"api":…,"module":…,"hook":…}`.
+
+- **A line's own path goes in its scope, never its context.** A call site that knows which workspace, file or directory a line is about says so with `logger.scoped({ path })` — held for life by an object that belongs to one workspace (the agent providers), made inline for a one-off line. It is resolved at write time against a path→name index the store keeps, filled by the dispatcher whenever a resolve step names a workspace with its path (`setLogTarget`): the workspace itself shows as `project/ws` and writes no `path=`; a path inside one shows that workspace plus `path=` relative to it; any other path is written in full and the line claims **no** workspace — not even the ambient one, which may be another workspace's (a callback inheriting a foreign frame). So `workspacePath=`/`workspace=` context keys do not exist any more; `path=` in a line is always what is left after that resolution.
+- `scope.*` is reserved: `LogContext` rejects such keys by type, and `toLogContext` drops them from runtime records (extension-sent context).
+- Extension logs (`api:log`) arrive outside any dispatch; each sidekick connection's logger is `extensionLogger.scoped({ path: <its workspace>, origin: "sidekick" })`. Renderer lines are unscoped.
+- Test loggers (`createMockLogger`, `createBehavioralLogger`) fold a `scoped` hint into the line's context as `scope.path`/`scope.origin`, so a test asserts it like any context key. Spreading `SILENT_LOGGER` into a spy logger loses scoped lines (its `scoped` is silent) — use `createMockLogger()`.
+
 ### Logger Names/Scopes
 
 | Logger        | Module                    | Description                           |

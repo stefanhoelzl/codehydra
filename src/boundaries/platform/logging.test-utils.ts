@@ -12,11 +12,36 @@ import type {
   LoggingConfigureOptions,
   Logging,
   LogContext,
+  LogScopeHint,
 } from "./logging-types";
+import { AsyncLogScopeStore } from "./log-scope";
+
+/**
+ * A test logger's `scoped`: a logger writing to the same `target`, with the
+ * hint folded into each line's context as `scope.path` / `scope.origin` — so a
+ * test asserts what a line was scoped to the way it asserts its context:
+ * `expect(logger.warn).toHaveBeenCalledWith("…", expect.objectContaining({ "scope.path": ws }))`.
+ */
+function scopedTestLogger(target: Logger, hint: LogScopeHint): Logger {
+  const fold = (context: LogContext | undefined): LogContext =>
+    ({
+      ...(hint.path !== undefined && hint.path !== null && { "scope.path": hint.path }),
+      ...(hint.origin !== undefined && { "scope.origin": hint.origin }),
+      ...context,
+    }) as LogContext;
+  return {
+    silly: (message, context) => target.silly(message, fold(context)),
+    debug: (message, context) => target.debug(message, fold(context)),
+    info: (message, context) => target.info(message, fold(context)),
+    warn: (message, context) => target.warn(message, fold(context)),
+    error: (message, context, error) => target.error(message, fold(context), error),
+    scoped: (more) => scopedTestLogger(target, { ...hint, ...more }),
+  };
+}
 
 /**
  * Mock logger with vitest spy methods.
- * All method calls are recorded for assertion.
+ * All method calls are recorded for assertion; see `scopedTestLogger` for `scoped`.
  */
 export interface MockLogger extends Logger {
   silly: Mock<(message: string, context?: LogContext) => void>;
@@ -63,13 +88,15 @@ export interface MockLogging extends Logging {
  * ```
  */
 export function createMockLogger(): MockLogger {
-  return {
+  const logger: MockLogger = {
     silly: vi.fn(),
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    scoped: (hint) => scopedTestLogger(logger, hint),
   };
+  return logger;
 }
 
 /**
@@ -103,6 +130,7 @@ export function createMockLogging(): MockLogging {
 
     configure: vi.fn(),
     initialize: vi.fn(),
+    scope: new AsyncLogScopeStore(),
     getLogFilePath: vi.fn().mockReturnValue("/mock/logs/test-session.log"),
 
     getCreatedLoggerNames(): LoggerName[] {
@@ -128,6 +156,7 @@ export const SILENT_LOGGER: Logger = {
   info: () => {},
   warn: () => {},
   error: () => {},
+  scoped: () => SILENT_LOGGER,
 };
 
 // ============================================================================
@@ -191,7 +220,7 @@ export interface BehavioralLogger extends Logger {
 export function createBehavioralLogger(): BehavioralLogger {
   const messages: LoggedMessage[] = [];
 
-  return {
+  const logger: BehavioralLogger = {
     silly: (message: string, context?: LogContext) => {
       messages.push({ level: "silly", message, context });
     },
@@ -212,5 +241,7 @@ export function createBehavioralLogger(): BehavioralLogger {
     clear: () => {
       messages.length = 0;
     },
+    scoped: (hint) => scopedTestLogger(logger, hint),
   };
+  return logger;
 }

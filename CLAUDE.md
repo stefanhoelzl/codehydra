@@ -412,6 +412,8 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 - **macOS**: `~/Library/Application Support/Codehydra/logs/`
 - **Windows**: `%LOCALAPPDATA%\Codehydra\logs\` (moved from `%APPDATA%` by `relocateDataRoot` at first start)
 
+Text lines carry the dispatch they were written for as a block after the logger name — `[<trace> <project>/<ws> <intent>@<module>/<hook> <origin>]` — so `grep 'codehydra/ws-logs'` finds one workspace's lines and `grep <trace>` one dispatch's (`parent=` on a `dispatch` line links a nested one to its parent). JSON puts the same in the `scope` object. A line about a workspace, file or directory says so with `logger.scoped({ path }).debug(…)` — never a `workspacePath`/`workspace`/`path` context key; the logger turns a workspace path into its name. See docs/ARCHITECTURE.md (Ambient Scope).
+
 ```bash
 # Debug mode (env var form of log.level=debug, log.output=console)
 CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev

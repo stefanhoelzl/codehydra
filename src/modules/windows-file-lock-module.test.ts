@@ -310,7 +310,7 @@ describe("runDetectAction", () => {
     expect(result).toEqual({ processes: [], timedOut: true });
     expect(logger.warn).toHaveBeenCalledWith(
       "Blocking process detection timed out",
-      expect.objectContaining({ path: testPath.toString() })
+      expect.objectContaining({ "scope.path": testPath.toString() })
     );
     expect(runner.$.spawned(0)).toHaveBeenKilledWith(1000, 1000);
   });

@@ -119,10 +119,11 @@ async function pruneStaleScripts(
   try {
     entries = await deps.fileSystem.readdir(binDir);
   } catch (error) {
-    deps.logger.warn("Could not list the bin directory to prune stale scripts", {
-      path: binDir.toNative(),
-      error: getErrorMessage(error),
-    });
+    deps.logger
+      .scoped({ path: binDir.toNative() })
+      .warn("Could not list the bin directory to prune stale scripts", {
+        error: getErrorMessage(error),
+      });
     return;
   }
 
@@ -134,10 +135,9 @@ async function pruneStaleScripts(
     try {
       await deps.fileSystem.rm(stalePath, { recursive: entry.isDirectory, force: true });
     } catch (error) {
-      deps.logger.warn("Could not remove stale script", {
-        path: stalePath.toNative(),
-        error: getErrorMessage(error),
-      });
+      deps.logger
+        .scoped({ path: stalePath.toNative() })
+        .warn("Could not remove stale script", { error: getErrorMessage(error) });
     }
   }
 }
@@ -168,11 +168,9 @@ async function writeScript(deps: ScriptModuleDeps, destPath: Path, content: stri
           { cause: error }
         );
       }
-      deps.logger.warn("Script is locked, retrying", {
-        path: destPath.toNative(),
-        attempt,
-        error: getErrorMessage(error),
-      });
+      deps.logger
+        .scoped({ path: destPath.toNative() })
+        .warn("Script is locked, retrying", { attempt, error: getErrorMessage(error) });
       await sleep(WRITE_RETRY_DELAY_MS * attempt);
     }
   }

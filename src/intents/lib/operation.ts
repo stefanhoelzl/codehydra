@@ -16,10 +16,7 @@ import type { Intent, IntentResult, DomainEvent } from "./types";
  * Dispatch function signature for nested intent dispatch.
  * Available in OperationContext for operations that need to trigger sub-intents.
  */
-export type DispatchFn = <I extends Intent>(
-  intent: I,
-  causation?: readonly string[]
-) => Promise<IntentResult<I>>;
+export type DispatchFn = <I extends Intent>(intent: I) => Promise<IntentResult<I>>;
 
 // =============================================================================
 // Hook System
@@ -201,6 +198,14 @@ export interface ResolvedHooks<S extends OperationSchemas = OperationSchemas> {
 // Operation
 // =============================================================================
 
+/** The workspace (or only the project) a dispatch acts on, by name — see `setLogTarget`. */
+export interface LogTarget {
+  readonly project: string;
+  readonly ws?: string;
+  /** The workspace's path, when known: lines stop repeating it as explicit context. */
+  readonly path?: string;
+}
+
 /**
  * Context injected into operations by the dispatcher.
  *
@@ -218,6 +223,12 @@ export interface OperationContext<
   readonly emit: (event: EventOf<S>) => Promise<void>;
   readonly hooks: ResolvedHooks<S>;
   readonly causation: readonly string[];
+  /**
+   * Name the workspace (or project) this dispatch acts on, for its log scope —
+   * and for the dispatch that requested it, so a resolve step tags the
+   * operation that asked. The first target a dispatch names wins.
+   */
+  readonly setLogTarget: (target: LogTarget) => void;
 }
 
 /**

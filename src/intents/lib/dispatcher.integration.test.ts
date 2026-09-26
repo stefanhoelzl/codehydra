@@ -21,7 +21,8 @@ import type {
   HookResult,
 } from "./operation";
 import { ANY_VALUE } from "./operation";
-import type { Logger } from "../../boundaries/platform/logging-types";
+import type { Logger, LogScope } from "../../boundaries/platform/logging-types";
+import { AsyncLogScopeStore, ScopedLogger } from "../../boundaries/platform/log-scope";
 import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
@@ -72,7 +73,7 @@ function createMockLogger(): Logger & {
   calls: { level: string; message: string; context?: unknown }[];
 } {
   const calls: { level: string; message: string; context?: unknown }[] = [];
-  return {
+  const logger = {
     calls,
     silly(message: string, context?: unknown) {
       calls.push({ level: "silly", message, context });
@@ -89,7 +90,9 @@ function createMockLogger(): Logger & {
     error(message: string, context?: unknown) {
       calls.push({ level: "error", message, context });
     },
+    scoped: (): Logger => logger,
   };
+  return logger;
 }
 
 function createDispatcher(
@@ -827,49 +830,282 @@ describe("Dispatcher", () => {
       expect(childDispatchLog).toBeDefined();
       expect((childDispatchLog!.context as Record<string, unknown>).causation).toBe("test:parent");
     });
+  });
 
-    it("explicit causation takes precedence over ALS context", async () => {
-      const dispatcher = createDispatcher();
+  describe("log scope", () => {
+    /** A logger recording the ambient scope each line was written in. */
+    function createScopedLogger(store: AsyncLogScopeStore): Logger & {
+      lines: { message: string; context?: unknown; scope: LogScope | undefined }[];
+    } {
+      const lines: { message: string; context?: unknown; scope: LogScope | undefined }[] = [];
+      const record = (message: string, context?: unknown): void => {
+        lines.push({ message, context, scope: store.current() });
+      };
+      const logger: Logger & {
+        lines: { message: string; context?: unknown; scope: LogScope | undefined }[];
+      } = {
+        lines,
+        silly: record,
+        debug: record,
+        info: record,
+        warn: record,
+        error: record,
+        scoped: (hint) => new ScopedLogger(logger, store, hint),
+      };
+      return logger;
+    }
 
-      const capturedCausation: (readonly string[])[] = [];
+    function setup(): {
+      dispatcher: Dispatcher;
+      lines: { message: string; context?: unknown; scope: LogScope | undefined }[];
+      /** A logger standing in for any other (git, process…): records under the same store. */
+      other: Logger;
+    } {
+      const store = new AsyncLogScopeStore();
+      const logger = createScopedLogger(store);
+      const dispatcher = new Dispatcher({ logger, logScope: store });
+      return { dispatcher, lines: logger.lines, other: logger };
+    }
+
+    function line(
+      lines: { message: string; context?: unknown; scope: LogScope | undefined }[],
+      message: string,
+      intent?: string
+    ): { message: string; context?: unknown; scope: LogScope | undefined } {
+      const found = lines.find(
+        (l) =>
+          l.message === message &&
+          (intent === undefined ||
+            (l.context as { intent?: string } | undefined)?.intent === intent)
+      );
+      expect(found, `line "${message}" ${intent ?? ""}`).toBeDefined();
+      return found!;
+    }
+
+    it("tags every line an operation causes with its trace and intent", async () => {
+      const { dispatcher, lines, other } = setup();
       dispatcher.registerOperation(
-        defineOp("test:child", {
-          id: "child-op",
-          execute: async (ctx) => {
-            capturedCausation.push(ctx.causation);
+        defineOp("test:action", {
+          id: "op",
+          execute: async () => {
+            other.debug("inside");
           },
         })
       );
 
+      await dispatcher.dispatch(createActionIntent());
+
+      const inside = line(lines, "inside");
+      expect(inside.scope).toEqual({
+        trace: expect.stringMatching(/^[0-9a-f]{6}$/),
+        intent: "test:action",
+      });
+      expect(line(lines, "dispatch").scope?.trace).toBe(inside.scope?.trace);
+      expect(line(lines, "completed").scope?.trace).toBe(inside.scope?.trace);
+    });
+
+    it("gives a nested dispatch its own trace and links it to its parent", async () => {
+      const { dispatcher, lines } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:child", { id: "child-op", execute: async () => {} })
+      );
       dispatcher.registerOperation(
         defineOp("test:parent", {
           id: "parent-op",
           execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
+            await ctx.dispatch({ type: "test:child", payload: {} });
           },
         })
       );
 
-      // Hook handler passes explicit causation — should override ALS
-      const hookModule: IntentModule = {
-        name: "explicit-causation-hook",
-        hooks: {
-          "parent-op": {
-            run: {
-              handler: async () => {
-                await dispatcher.dispatch({ type: "test:child", payload: {} }, ["custom:origin"]);
-              },
-            },
+      await dispatcher.dispatch({ type: "test:parent", payload: {} });
+
+      const parent = line(lines, "dispatch", "test:parent");
+      const child = line(lines, "dispatch", "test:child");
+      expect(child.scope?.trace).not.toBe(parent.scope?.trace);
+      expect(child.context).toEqual(
+        expect.objectContaining({ parent: parent.scope?.trace, causation: "test:parent" })
+      );
+      expect(parent.context).not.toHaveProperty("parent");
+    });
+
+    it("names the module and hook whose handler is running, and the event it handles", async () => {
+      const { dispatcher, lines, other } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            await ctx.hooks.collect("run", { intent: ctx.intent });
+            await ctx.emit({ type: "test:happened", payload: {} });
           },
-        },
-      };
-      dispatcher.registerModule(hookModule);
+        })
+      );
+      dispatcher.registerModule({
+        name: "worker",
+        hooks: { "action-op": { run: { handler: async () => other.debug("in hook") } } },
+        events: { "test:happened": { handler: async () => other.debug("in event") } },
+      });
+
+      await dispatcher.dispatch(createActionIntent());
+
+      expect(line(lines, "in hook").scope).toEqual(
+        expect.objectContaining({ intent: "test:action", module: "worker", hook: "run" })
+      );
+      expect(line(lines, "in event").scope).toEqual(
+        expect.objectContaining({ module: "worker", hook: "event:test:happened" })
+      );
+      // The dispatcher's own lines are the operation's, not a handler's.
+      expect(line(lines, "completed").scope).not.toHaveProperty("module");
+    });
+
+    it("tags a dispatch, and the one that asked, with the target a resolve step names", async () => {
+      const { dispatcher, lines, other } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:resolve", {
+          id: "resolve-op",
+          execute: async (ctx) => {
+            ctx.setLogTarget({ project: "proj", ws: (ctx.intent.payload as { ws: string }).ws });
+          },
+        })
+      );
+      dispatcher.registerOperation(
+        defineOp("test:action", {
+          id: "action-op",
+          execute: async (ctx) => {
+            other.debug("before");
+            await ctx.dispatch({ type: "test:resolve", payload: { ws: "a" } });
+            other.debug("after");
+            // A second workspace does not retag the operation: the first one it named wins.
+            await ctx.dispatch({ type: "test:resolve", payload: { ws: "b" } });
+            other.debug("later");
+          },
+        })
+      );
+
+      await dispatcher.dispatch(createActionIntent());
+
+      expect(line(lines, "before").scope).not.toHaveProperty("ws");
+      expect(line(lines, "after").scope).toEqual(
+        expect.objectContaining({ project: "proj", ws: "a" })
+      );
+      expect(line(lines, "later").scope).toEqual(expect.objectContaining({ ws: "a" }));
+      expect(line(lines, "completed", "test:action").scope).toEqual(
+        expect.objectContaining({ ws: "a" })
+      );
+      const resolves = lines.filter(
+        (l) =>
+          l.message === "completed" && (l.context as { intent: string }).intent === "test:resolve"
+      );
+      expect(resolves.map((l) => l.scope?.ws)).toEqual(["a", "b"]);
+    });
+
+    it("lets a nested dispatch replace an inherited target with its own", async () => {
+      const { dispatcher, lines, other } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:child", {
+          id: "child-op",
+          execute: async (ctx) => {
+            other.debug("inherited");
+            ctx.setLogTarget({ project: "proj", ws: "child" });
+            other.debug("own");
+          },
+        })
+      );
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async (ctx) => {
+            ctx.setLogTarget({ project: "proj", ws: "parent" });
+            await ctx.dispatch({ type: "test:child", payload: {} });
+          },
+        })
+      );
 
       await dispatcher.dispatch({ type: "test:parent", payload: {} });
 
-      // Explicit causation should be used, not ALS
-      expect(capturedCausation).toHaveLength(1);
-      expect(capturedCausation[0]).toEqual(["custom:origin", "test:child"]);
+      expect(line(lines, "inherited").scope?.ws).toBe("parent");
+      expect(line(lines, "own").scope?.ws).toBe("child");
+      expect(line(lines, "completed", "test:parent").scope?.ws).toBe("parent");
+    });
+
+    it("carries the origin down the tree, and logs caller and api where they enter it", async () => {
+      const { dispatcher, lines, other } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:child", { id: "child-op", execute: async () => other.debug("child") })
+      );
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async (ctx) => {
+            await ctx.dispatch({ type: "test:child", payload: {} });
+          },
+        })
+      );
+
+      await dispatcher.withOrigin({ origin: "cli", caller: "proj/me", api: "do.it" }, () =>
+        dispatcher.dispatch({ type: "test:parent", payload: {} })
+      );
+
+      expect(line(lines, "child").scope).toEqual(
+        expect.objectContaining({ origin: "cli", caller: "proj/me", api: "do.it" })
+      );
+      expect(line(lines, "dispatch", "test:parent").context).toEqual(
+        expect.objectContaining({ caller: "proj/me", api: "do.it" })
+      );
+      expect(line(lines, "dispatch", "test:child").context).not.toHaveProperty("caller");
+    });
+
+    it("lets a dispatch's own origin override the one it would inherit", async () => {
+      const { dispatcher, lines, other } = setup();
+      dispatcher.registerOperation(
+        defineOp("test:child", { id: "child-op", execute: async () => other.debug("child") })
+      );
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async () => {
+            await dispatcher.dispatch(
+              { type: "test:child", payload: {} },
+              { origin: "agent-hook" }
+            );
+          },
+        })
+      );
+
+      await dispatcher.dispatch({ type: "test:parent", payload: {} }, { origin: "startup" });
+
+      expect(line(lines, "child").scope?.origin).toBe("agent-hook");
+      expect(line(lines, "completed", "test:parent").scope?.origin).toBe("startup");
+    });
+
+    it("names a workspace, for lines scoped to its path anywhere, once a resolve step named it", async () => {
+      const { dispatcher, lines, other } = setup();
+      const ws = testPath("/ws/a").toString();
+      dispatcher.registerOperation(
+        defineOp("test:resolve", {
+          id: "resolve-op",
+          execute: async (ctx) => {
+            ctx.setLogTarget({ project: "proj", ws: "a", path: ws });
+          },
+        })
+      );
+
+      other.scoped({ path: ws }).debug("before");
+      await dispatcher.dispatch({ type: "test:resolve", payload: {} });
+      other.scoped({ path: ws }).debug("after");
+      other.scoped({ path: testPath("/ws/a/src").toString() }).debug("inside");
+
+      expect(line(lines, "before").scope).toEqual({});
+      expect(line(lines, "before").context).toEqual({ path: ws });
+      expect(line(lines, "after").scope).toEqual({ project: "proj", ws: "a", path: ws });
+      expect(line(lines, "after").context).toBeUndefined();
+      expect(line(lines, "inside").context).toEqual({ path: "src" });
+    });
+
+    it("writes nothing into the scope outside a dispatch", () => {
+      const { lines, other } = setup();
+      other.debug("outside");
+      expect(line(lines, "outside").scope).toBeUndefined();
     });
   });
 

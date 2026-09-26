@@ -765,7 +765,12 @@ export function createAutomations(deps: AutomationsDeps): Automations {
     return changed;
   }
 
-  async function reconcile(): Promise<void> {
+  /** One poll cycle; everything it dispatches has origin "auto-workspace". */
+  function reconcile(): Promise<void> {
+    return deps.dispatcher.withOrigin({ origin: "auto-workspace" }, reconcileSources);
+  }
+
+  async function reconcileSources(): Promise<void> {
     if (!deps.enabled()) return;
     const sources = await deps.sources();
 

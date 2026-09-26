@@ -271,7 +271,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   /** Wire retry/dismiss event handlers on a dialog handle. */
   function wireEvents(handle: DialogHandle, workspacePath: WorkspacePath): void {
     function dismiss(keepBranch: boolean): void {
-      deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
+      deps.logger.scoped({ path: workspacePath }).debug("Deletion dismiss");
       handle.close();
       activeDialog = null;
       dispatchDelete(deps.dispatcher, {
@@ -288,10 +288,10 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       if (!progress) return;
 
       if (evt.actionId === "cancel-hook") {
-        deps.logger.debug("Deletion hook cancel", { workspace: workspacePath });
+        deps.logger.scoped({ path: workspacePath }).debug("Deletion hook cancel");
         deps.ui.cancelRunningHooks(workspacePath);
       } else if (evt.actionId === "retry") {
-        deps.logger.debug("Deletion retry", { workspace: workspacePath });
+        deps.logger.scoped({ path: workspacePath }).debug("Deletion retry");
         const pids = progress.blockingProcesses?.map((p) => p.pid);
         dispatchDelete(deps.dispatcher, {
           workspacePath,
@@ -424,10 +424,9 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
           base: metadata["base"],
         };
       } catch (error) {
-        deps.logger.warn("Remove-confirm status check failed", {
-          workspace: input.workspacePath,
-          error: getErrorMessage(error),
-        });
+        deps.logger
+          .scoped({ path: input.workspacePath })
+          .warn("Remove-confirm status check failed", { error: getErrorMessage(error) });
         state = { ...state, checking: false, checkFailed: true };
       }
       if (dialogOpen) {

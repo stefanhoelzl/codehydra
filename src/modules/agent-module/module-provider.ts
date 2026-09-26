@@ -312,17 +312,17 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       if (providers.has(workspacePath)) {
         try {
           await reconnectProvider(workspacePath);
-          logger.info("Reconnected agent provider after restart", {
-            workspacePath,
-            port,
-            agentType: spec.type,
-          });
+          logger
+            .scoped({ path: workspacePath })
+            .info("Reconnected agent provider after restart", { port, agentType: spec.type });
         } catch (error) {
-          logger.error(
-            "Failed to reconnect agent provider",
-            { workspacePath, port, agentType: spec.type },
-            error instanceof Error ? error : undefined
-          );
+          logger
+            .scoped({ path: workspacePath })
+            .error(
+              "Failed to reconnect agent provider",
+              { port, agentType: spec.type },
+              error instanceof Error ? error : undefined
+            );
         }
         return;
       }
@@ -335,11 +335,13 @@ export function createAgentModuleProvider<P extends AgentProvider>(
         addProvider(workspacePath, provider);
         await spec.onProviderRegistered?.(workspacePath, provider, extra);
       } catch (error) {
-        logger.error(
-          "Failed to initialize agent provider",
-          { workspacePath, port, agentType: spec.type },
-          error instanceof Error ? error : undefined
-        );
+        logger
+          .scoped({ path: workspacePath })
+          .error(
+            "Failed to initialize agent provider",
+            { port, agentType: spec.type },
+            error instanceof Error ? error : undefined
+          );
       }
     } finally {
       serverStartedPromises.delete(workspacePath);

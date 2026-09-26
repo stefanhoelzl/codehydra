@@ -293,7 +293,9 @@ export class GitWorktreeProvider {
     if (hasPrunable) {
       for (const wt of worktrees) {
         if (wt.prunable) {
-          this.logger.warn("Pruning stale worktree", { name: wt.name, path: wt.path.toString() });
+          this.logger
+            .scoped({ path: wt.path.toString() })
+            .warn("Pruning stale worktree", { name: wt.name });
         }
       }
       await this.gitClient.pruneWorktrees(projectRoot);
@@ -321,10 +323,9 @@ export class GitWorktreeProvider {
 
       const own = wt.path.isChildOf(registration.workspacesDir);
       if (!own && metadata[EXTERNAL_TAG_METADATA_KEY] === undefined) {
-        this.logger.warn("Skipping unmanaged worktree", {
-          path: wt.path.toString(),
-          branch: wt.branch,
-        });
+        this.logger
+          .scoped({ path: wt.path.toString() })
+          .warn("Skipping unmanaged worktree", { branch: wt.branch });
         continue;
       }
 
@@ -781,10 +782,9 @@ export class GitWorktreeProvider {
       } catch (error) {
         // git worktree remove can fail for various reasons (stale .git,
         // Windows long paths, locked files, etc.) — fall back to rm + prune
-        this.logger.warn("Worktree removal failed; trying recursive rm", {
-          path: workspacePath.toString(),
-          error: getErrorMessage(error),
-        });
+        this.logger
+          .scoped({ path: workspacePath.toString() })
+          .warn("Worktree removal failed; trying recursive rm", { error: getErrorMessage(error) });
         // Time the fallback. `fs.rm`'s internal retries are invisible from
         // here — a removal rescued on the third attempt looks exactly like one
         // that succeeded immediately — so the only signal that a holder let go
@@ -801,10 +801,9 @@ export class GitWorktreeProvider {
             timeout: GitWorktreeProvider.RM_FALLBACK_TIMEOUT_MS,
           });
           await this.gitClient.pruneWorktrees(projectRoot);
-          this.logger.info("Removed workspace via fallback", {
-            path: workspacePath.toString(),
-            elapsedMs: Date.now() - rmStart,
-          });
+          this.logger
+            .scoped({ path: workspacePath.toString() })
+            .info("Removed workspace via fallback", { elapsedMs: Date.now() - rmStart });
         } catch (fallbackError) {
           // Log BOTH failures. Reports of this only ever carried the git error,
           // which names the directory but never says what was holding it; the
@@ -812,11 +811,12 @@ export class GitWorktreeProvider {
           // usually gone. The rm error carries the errno (EPERM/EBUSY/ENOTEMPTY
           // /ETIMEDOUT), which at least distinguishes "still locked" from "took
           // too long".
-          this.logger.warn("Recursive rm fallback failed too", {
-            path: workspacePath.toString(),
-            error: getErrorMessage(fallbackError),
-            elapsedMs: Date.now() - rmStart,
-          });
+          this.logger
+            .scoped({ path: workspacePath.toString() })
+            .warn("Recursive rm fallback failed too", {
+              error: getErrorMessage(fallbackError),
+              elapsedMs: Date.now() - rmStart,
+            });
           worktreeError = error as Error;
         }
       }
@@ -1158,14 +1158,13 @@ export class GitWorktreeProvider {
       // Delete the orphaned directory
       try {
         await this.fileSystemLayer.rm(fullPath, { recursive: true, force: true });
-        this.logger.info("Removed orphaned workspace", { path: fullPath.toString() });
+        this.logger.scoped({ path: fullPath.toString() }).info("Removed orphaned workspace");
         removedCount++;
       } catch (error) {
         const errorMessage = getErrorMessage(error);
-        this.logger.warn("Failed to remove orphaned workspace", {
-          path: fullPath.toString(),
-          error: errorMessage,
-        });
+        this.logger
+          .scoped({ path: fullPath.toString() })
+          .warn("Failed to remove orphaned workspace", { error: errorMessage });
         failedPaths.push({ path: fullPath.toString(), error: errorMessage });
       }
     }

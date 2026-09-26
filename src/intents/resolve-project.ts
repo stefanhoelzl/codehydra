@@ -20,6 +20,7 @@ import type { Operation, OperationContext, OperationSchemas, HookContext } from 
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, projectIdSchema, projectPathSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
+import { Path } from "../utils/path/path";
 
 export const INTENT_RESOLVE_PROJECT = "project:resolve" as const;
 export const RESOLVE_PROJECT_OPERATION_ID = "resolve-project";
@@ -113,6 +114,8 @@ export class ResolveProjectOperation implements Operation<typeof schemas> {
     if (!projectId) {
       throw new Error(`Project not found for path: ${payload.projectPath}`);
     }
+
+    ctx.setLogTarget({ project: new Path(payload.projectPath).basename });
 
     return { projectId, projectName: projectName ?? "" };
   }

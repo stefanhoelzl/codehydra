@@ -88,10 +88,11 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
               });
             } catch (error) {
               // Cosmetic — never fail a workspace creation over a tag.
-              deps.logger.warn("Failed to tag background workspace", {
-                workspacePath,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              deps.logger
+                .scoped({ path: workspacePath })
+                .warn("Failed to tag background workspace", {
+                  error: error instanceof Error ? error.message : String(error),
+                });
               return {};
             }
 
@@ -136,8 +137,7 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
             });
           } catch (error) {
             // Leave it in the set — the next switch retries.
-            deps.logger.warn("Failed to clear new tag", {
-              workspacePath: payload.path,
+            deps.logger.scoped({ path: payload.path }).warn("Failed to clear new tag", {
               error: error instanceof Error ? error.message : String(error),
             });
           }

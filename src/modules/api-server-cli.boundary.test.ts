@@ -376,6 +376,22 @@ describe("CLI clients on the API server wire", () => {
       expect(seen).toEqual([{ workspacePath: WS }]);
     });
 
+    it("tags the work a call dispatches with the client kind, the caller and the operation", async () => {
+      env = await createApiServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: `${WS}/src` });
+      cli.connect();
+      await waitForConnect(cli);
+
+      await call(cli, "api:operation:workspace.status");
+
+      expect(env.origins).toContainEqual({
+        origin: "cli",
+        caller: "repo/feature",
+        api: "workspace.status",
+      });
+    });
+
     it("is the workspace the MCP shim presents, wherever it runs", async () => {
       const seen: Seen[] = [];
       env = await createApiServerEnv(undefined, {

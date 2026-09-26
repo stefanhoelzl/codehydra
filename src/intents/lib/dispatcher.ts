@@ -5,7 +5,12 @@
  * Stores hook handlers internally and runs them with capability-based ordering.
  *
  * Logs:
- * - Intent dispatch start (info)
+ * - Intent dispatch start (info), with the parent dispatch's trace and the causation chain
+ *
+ * Every line written while a dispatch runs — by any logger — carries that
+ * dispatch's log scope (see `LogScope`): its trace id, intent, target workspace,
+ * origin, and the module/hook whose handler is running. The dispatcher is the
+ * only writer of that scope.
  * - Interceptor blocks (debug)
  * - Hook point execution with timing, module names in execution order, results, errors (debug)
  * - Hook modules skipped due to unsatisfied capabilities (debug)
@@ -15,6 +20,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import type { z } from "zod/v4";
 import type { Intent, IntentResult, DomainEvent } from "./types";
 import type {
@@ -31,10 +37,11 @@ import type {
   HookHandlerReturn,
   HookOutput,
   HookResult,
+  LogTarget,
 } from "./operation";
 import { ANY_VALUE } from "./operation";
 import type { IntentModule } from "./module";
-import type { Logger } from "../../boundaries/platform/logging-types";
+import type { Logger, LogScope, LogScopeStore } from "../../boundaries/platform/logging-types";
 
 // =============================================================================
 // Internal types (not exposed to operations)
@@ -48,6 +55,120 @@ interface SkippedHandler {
 interface CollectResult<T = unknown> extends HookResult<T> {
   readonly ran: readonly string[];
   readonly skipped: readonly SkippedHandler[];
+}
+
+// =============================================================================
+// Dispatch origin + log scope
+// =============================================================================
+
+/** Where work entered the app — the entry point that started a dispatch. */
+export type DispatchOrigin =
+  | "startup"
+  | "app"
+  | "system"
+  | "ui"
+  | "shortcut"
+  | "notification"
+  | "cli"
+  | "mcp"
+  | "sidekick"
+  | "auto-workspace"
+  | "agent-hook";
+
+/**
+ * Who a dispatch is on behalf of, for its log scope. Given by the entry point
+ * that starts it; inherited by every dispatch nested in it.
+ */
+export interface DispatchOptions {
+  readonly origin?: DispatchOrigin;
+  /** The calling workspace of an API call, as `<project>/<name>`. */
+  readonly caller?: string;
+  /** The API operation (or channel) the call invoked. */
+  readonly api?: string;
+}
+
+/** A store that keeps no scope: for a dispatcher built without logging. */
+const NO_LOG_SCOPE: LogScopeStore = {
+  run: (_read, fn) => fn(),
+  current: () => undefined,
+  nameWorkspace: () => {},
+  workspaceAt: () => undefined,
+};
+
+/**
+ * One dispatch's identity for logging: created when it is dispatched, mutated
+ * once its target is known, read by every line written while it runs.
+ */
+class DispatchFrame {
+  readonly trace = randomBytes(3).toString("hex");
+  intent: string;
+  readonly origin: DispatchOrigin | undefined;
+  readonly caller: string | undefined;
+  readonly api: string | undefined;
+  private project: string | undefined;
+  private ws: string | undefined;
+  private path: string | undefined;
+  /** Set once this dispatch named its own target; until then it shows its parent's. */
+  private ownProject = false;
+  private ownWs = false;
+
+  constructor(
+    intent: string,
+    readonly parent: DispatchFrame | undefined,
+    options: DispatchOptions
+  ) {
+    this.intent = intent;
+    this.origin = options.origin ?? parent?.origin;
+    this.caller = options.caller ?? parent?.caller;
+    this.api = options.api ?? parent?.api;
+    this.project = parent?.project;
+    this.ws = parent?.ws;
+    this.path = parent?.path;
+  }
+
+  /** The intent-type chain from the root dispatch down to (and including) this one. */
+  get chain(): readonly string[] {
+    return [...(this.parent?.chain ?? []), this.intent];
+  }
+
+  /**
+   * Record the target. The first one this dispatch names wins — an inherited
+   * target is replaced, a project-only one may still gain its workspace, but a
+   * workspace once named stays (switch A→B shows B in the switch it dispatches).
+   */
+  setTarget(target: LogTarget): void {
+    // The workspace's path may become known after its name (a creation learns
+    // it from the worktree it makes): it completes the target, never changes it.
+    if (
+      this.ownWs &&
+      target.ws === this.ws &&
+      target.project === this.project &&
+      this.path === undefined
+    ) {
+      this.path = target.path;
+      return;
+    }
+    if (this.ownWs) return;
+    if (this.ownProject && target.project !== this.project) return;
+    this.project = target.project;
+    this.ws = target.ws;
+    this.path = target.path;
+    this.ownProject = true;
+    this.ownWs = target.ws !== undefined;
+  }
+
+  scope(): LogScope {
+    return {
+      trace: this.trace,
+      intent: this.intent,
+      ...(this.project !== undefined && { project: this.project }),
+      ...(this.ws !== undefined && { ws: this.ws }),
+      ...(this.path !== undefined && { path: this.path }),
+      ...(this.origin !== undefined && { origin: this.origin }),
+      ...(this.caller !== undefined && { caller: this.caller }),
+      ...(this.api !== undefined && { api: this.api }),
+    };
+  }
 }
 
 // =============================================================================
@@ -129,10 +250,14 @@ export interface IntentInterceptor {
  * Dispatcher interface for dispatching intents and subscribing to domain events.
  */
 export interface IDispatcher {
-  dispatch<I extends Intent>(
-    intent: I,
-    causation?: readonly string[]
-  ): IntentHandle<IntentResult<I>>;
+  dispatch<I extends Intent>(intent: I, options?: DispatchOptions): IntentHandle<IntentResult<I>>;
+  /**
+   * Run `fn` so every dispatch it starts carries `options` (a dispatch's own
+   * options still win). For an entry point whose dispatches are spread over
+   * code it does not own — the plugin adapter invoking registry entries.
+   * Lines `fn` logs before dispatching get no scope.
+   */
+  withOrigin<T>(options: DispatchOptions, fn: () => T): T;
   subscribe(eventType: string, handler: (event: DomainEvent) => void): () => void;
   addInterceptor(interceptor: IntentInterceptor): void;
   registerModule(module: IntentModule): void;
@@ -145,7 +270,10 @@ export interface IDispatcher {
 export class Dispatcher implements IDispatcher {
   private readonly operations = new Map<string, Operation>();
   private readonly interceptors: IntentInterceptor[] = [];
-  private readonly causationContext = new AsyncLocalStorage<readonly string[]>();
+  /** The dispatch the current code runs on behalf of. */
+  private readonly frames = new AsyncLocalStorage<DispatchFrame>();
+  /** Options set by `withOrigin` for the dispatches started inside it. */
+  private readonly origins = new AsyncLocalStorage<DispatchOptions>();
   private readonly handlers = new Map<string, Map<string, HookHandler[]>>();
   /** operationId → schemas (payload/result/hooks), indexed at registerOperation. */
   private readonly operationSchemas = new Map<string, OperationSchemas>();
@@ -153,12 +281,16 @@ export class Dispatcher implements IDispatcher {
   private readonly eventSchemas = new Map<string, z.ZodType>();
   private readonly initialCapabilities: Readonly<Record<string, unknown>>;
   private readonly logger: Logger;
+  private readonly logScope: LogScopeStore;
 
   constructor(options: {
     logger: Logger;
     initialCapabilities?: Readonly<Record<string, unknown>>;
+    /** The logging service's scope store; without it, lines carry no dispatch scope. */
+    logScope?: LogScopeStore;
   }) {
     this.logger = options.logger;
+    this.logScope = options.logScope ?? NO_LOG_SCOPE;
     this.initialCapabilities = Object.freeze({ ...options.initialCapabilities });
   }
 
@@ -245,13 +377,34 @@ export class Dispatcher implements IDispatcher {
     };
   }
 
-  dispatch<I extends Intent>(
+  dispatch<I extends Intent>(intent: I, options?: DispatchOptions): IntentHandle<IntentResult<I>> {
+    return this.start(intent, this.frames.getStore(), options);
+  }
+
+  withOrigin<T>(options: DispatchOptions, fn: () => T): T {
+    return this.origins.run(options, fn);
+  }
+
+  /**
+   * Start a dispatch nested in `parent` (undefined for a root). Its frame is
+   * entered synchronously, so everything the pipeline starts inherits it.
+   */
+  private start<I extends Intent>(
     intent: I,
-    causation?: readonly string[]
+    parent: DispatchFrame | undefined,
+    options: DispatchOptions | undefined
   ): IntentHandle<IntentResult<I>> {
     const handle = new IntentHandle<IntentResult<I>>();
-    const resolvedCausation = causation ?? this.causationContext.getStore();
-    void this.runPipeline(intent, resolvedCausation, handle);
+    const frame = new DispatchFrame(intent.type, parent, {
+      ...this.origins.getStore(),
+      ...options,
+    });
+    this.frames.run(frame, () =>
+      this.logScope.run(
+        () => frame.scope(),
+        () => void this.runPipeline(intent, frame, handle)
+      )
+    );
     return handle;
   }
 
@@ -281,9 +434,11 @@ export class Dispatcher implements IDispatcher {
     hookHandlers: HookHandler[],
     inputCtx: HookContext,
     initialCaps: Readonly<Record<string, unknown>>,
+    hookLabel: string,
     onYield?: (frame: unknown) => void | Promise<void>,
     hookSchemas?: HookPointSchemas
   ): Promise<CollectResult> {
+    const frame = this.frames.getStore();
     const capabilities: Record<string, unknown> = {
       ...initialCaps,
       ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
@@ -315,11 +470,20 @@ export class Dispatcher implements IDispatcher {
             // async generator: drain its yielded progress frames to onYield (host-side),
             // and use its return value as the output. The non-generator path stays a
             // plain await (no extra microtask hop) to preserve emit/dispatch timing.
-            const invoked = entry.handler(frozenCtx);
+            // The handler runs in a scope naming its module and hook, so every
+            // line it causes says which handler that was.
+            const run = (): Promise<HookOutput | void> => {
+              const invoked = entry.handler(frozenCtx);
+              return isAsyncGenerator(invoked) ? drainGenerator(invoked, onYield) : invoked;
+            };
+            const name = entry.name;
             const output: HookOutput =
-              (isAsyncGenerator(invoked)
-                ? await drainGenerator(invoked, onYield)
-                : await invoked) ?? {};
+              (await (name === undefined
+                ? run()
+                : this.logScope.run(
+                    () => ({ ...frame?.scope(), module: name, hook: hookLabel }),
+                    run
+                  ))) ?? {};
             if (output.result !== undefined && output.result !== null) {
               // Validate + normalize (strip) each handler's partial result. A failure is
               // isolated to this handler (pushed to errors[]), like a throwing handler.
@@ -399,6 +563,7 @@ export class Dispatcher implements IDispatcher {
           hookHandlers,
           ctx,
           initCaps,
+          operationId.startsWith("event:") ? operationId : hookPointId,
           options?.onYield,
           opHooks?.[hookPointId]
         );
@@ -453,15 +618,22 @@ export class Dispatcher implements IDispatcher {
 
   private async runPipeline<I extends Intent>(
     intent: I,
-    causation: readonly string[] | undefined,
+    frame: DispatchFrame,
     handle: IntentHandle<IntentResult<I>>
   ): Promise<void> {
     const pipelineStart = performance.now();
+    const parent = frame.parent;
 
     try {
+      // Caller and api are logged where they enter the tree, not on every line:
+      // the parent links lead any nested dispatch back here.
+      const introducesCaller = frame.caller !== parent?.caller || frame.api !== parent?.api;
       this.logger.info("dispatch", {
         intent: intent.type,
-        causation: causation?.join(" > ") ?? "",
+        ...(parent && { parent: parent.trace }),
+        causation: parent?.chain.join(" > ") ?? "",
+        ...(introducesCaller && frame.caller !== undefined && { caller: frame.caller }),
+        ...(introducesCaller && frame.api !== undefined && { api: frame.api }),
       });
 
       // Run interceptor pipeline
@@ -479,6 +651,7 @@ export class Dispatcher implements IDispatcher {
         }
       }
       handle.signalAccepted(true);
+      frame.intent = current.type;
 
       // Resolve operation
       const operation = this.operations.get(current.type);
@@ -493,17 +666,11 @@ export class Dispatcher implements IDispatcher {
         current = { ...current, payload: opSchemas.payload.parse(current.payload) };
       }
 
-      // Build causation chain using intent type
-      const causationChain = [...(causation ?? []), current.type];
-
-      // Build dispatch function for nested dispatch
+      // Nested dispatch names this frame as its parent explicitly, so it nests
+      // correctly even when called from a callback that lost the async context.
       const nestedDispatch: DispatchFn = async <NI extends Intent>(
-        nestedIntent: NI,
-        nestedCausation?: readonly string[]
-      ): Promise<IntentResult<NI>> => {
-        const mergedCausation = [...causationChain, ...(nestedCausation ?? [])];
-        return await this.dispatch(nestedIntent, mergedCausation);
-      };
+        nestedIntent: NI
+      ): Promise<IntentResult<NI>> => await this.start(nestedIntent, frame, undefined);
 
       // Resolve hooks for this operation
       const hooks = this.resolveHooks(operation.id);
@@ -514,18 +681,25 @@ export class Dispatcher implements IDispatcher {
         dispatch: nestedDispatch,
         emit: (event: DomainEvent) => this.emitEvent(event),
         hooks,
-        causation: causationChain,
+        causation: frame.chain,
+        setLogTarget: (target: LogTarget) => {
+          frame.setTarget(target);
+          parent?.setTarget(target);
+          // Every line scoped to this path, in any dispatch or none, can now name it.
+          if (target.path !== undefined && target.ws !== undefined) {
+            this.logScope.nameWorkspace(target.path, { project: target.project, ws: target.ws });
+          }
+        },
       };
 
-      // Execute operation within causation context so that any dispatcher.dispatch() calls
-      // from hooks inherit the chain. The stored operation is erased to `Operation` (any
-      // schema); its `execute` is typed to its own IntentOf, so the generic `ctx` is bridged
-      // with a cast here (the intent's phantom result carrier never exists at runtime — the
-      // payload was already validated above). Call `execute` as a METHOD so `this` stays bound.
+      // The operation runs inside this dispatch's frame (entered in `start`), so any
+      // dispatcher.dispatch() call from its hooks nests under it. The stored operation is
+      // erased to `Operation` (any schema); its `execute` is typed to its own IntentOf, so
+      // the generic `ctx` is bridged with a cast here (the intent's phantom result carrier
+      // never exists at runtime — the payload was already validated above). Call `execute`
+      // as a METHOD so `this` stays bound.
       const opCtx = ctx as unknown as OperationContext<IntentOf<OperationSchemas>>;
-      const result = await this.causationContext.run(causationChain, () =>
-        operation.execute(opCtx)
-      );
+      const result = await operation.execute(opCtx);
 
       // Validate + normalize the operation's return value (fail → reject via outer catch).
       const validatedResult = opSchemas?.result ? opSchemas.result.parse(result) : result;

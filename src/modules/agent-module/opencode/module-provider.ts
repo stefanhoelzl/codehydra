@@ -104,16 +104,16 @@ export function createOpenCodeModuleProvider(
             }
           );
           if (!promptResult.ok) {
-            logger.error("Failed to send initial prompt", {
-              workspacePath,
-              error: promptResult.error.message,
-            });
+            logger
+              .scoped({ path: workspacePath })
+              .error("Failed to send initial prompt", { error: promptResult.error.message });
           }
         } else {
-          logger.error("Failed to create session for initial prompt", {
-            workspacePath,
-            error: sessionResult.error.message,
-          });
+          logger
+            .scoped({ path: workspacePath })
+            .error("Failed to create session for initial prompt", {
+              error: sessionResult.error.message,
+            });
         }
       },
 

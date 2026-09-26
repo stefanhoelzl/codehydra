@@ -292,7 +292,8 @@ export async function expectNoNativeDialogs(driver: AppDriver): Promise<void> {
 export interface LogEntry {
   readonly timestamp?: string;
   readonly level?: string;
-  readonly scope?: string;
+  /** The logger name (`logger`) plus the line's ambient scope (trace, intent, ws…). */
+  readonly scope?: { readonly logger?: string } & Record<string, unknown>;
   readonly message?: string;
   readonly context?: Record<string, unknown>;
 }
@@ -326,7 +327,10 @@ function mainProcessLog(since: number): LogEntry[] {
 
 /** Render an entry the way a human would want to read it in a failure. */
 function formatEntry(entry: LogEntry): string {
-  const scope = entry.scope === undefined ? "" : `[${entry.scope}] `;
+  const { logger, ...ambient } = entry.scope ?? {};
+  const scope =
+    (logger === undefined ? "" : `[${logger}] `) +
+    (Object.keys(ambient).length === 0 ? "" : `${JSON.stringify(ambient)} `);
   const context =
     entry.context === undefined || Object.keys(entry.context).length === 0
       ? ""

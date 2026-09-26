@@ -133,10 +133,9 @@ export class DefaultStateService implements StateService {
     } catch (error) {
       // Corrupt state.json: log and fall back to defaults. The next write will
       // back the file up to <file>.broken via PersistedStore.persistMutation.
-      logger.warn("Invalid JSON in state.json; using defaults", {
-        path: statePath.toString(),
-        error: getErrorMessage(error),
-      });
+      logger
+        .scoped({ path: statePath.toString() })
+        .warn("Invalid JSON in state.json; using defaults", { error: getErrorMessage(error) });
       return;
     }
 
