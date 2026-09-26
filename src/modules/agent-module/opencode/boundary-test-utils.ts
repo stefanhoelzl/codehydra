@@ -8,7 +8,7 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { onTestFinished } from "vitest";
+import { onTestFailed, onTestFinished, vi } from "vitest";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
 import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
@@ -107,9 +107,9 @@ export interface OpencodeProcess {
   /** Stop the process gracefully */
   stop(): Promise<void>;
   /**
-   * Whatever the process has written so far, for a failure message. Reads it
-   * without waiting for exit, so it is usable on a server that came up wrong
-   * and is still running.
+   * Everything the process wrote, for a failure message. Empty while it is
+   * still running — SpawnedProcess.wait() hands over output only once the
+   * process has exited — so stop() it first.
    */
   output(): Promise<string>;
 }
@@ -172,7 +172,9 @@ async function startOpencode(
   // Start the opencode serve process
   const proc: SpawnedProcess = runner.run(
     config.binaryPath,
-    ["serve", "--port", String(config.port)],
+    // opencode logs only to a file unless asked, which leaves output() with
+    // nothing to say about a scenario that hangs after startup.
+    ["serve", "--port", String(config.port), "--print-logs", "--log-level", "DEBUG"],
     {
       cwd: config.cwd,
       env,
@@ -192,7 +194,6 @@ async function startOpencode(
       await proc.kill(5000, 1000);
     },
     output: async () => {
-      // running=true comes back with whatever was buffered, which is the point.
       const result = await proc.wait(1000);
       return [result.stdout, result.stderr].filter((part) => part.length > 0).join("\n");
     },
@@ -209,6 +210,20 @@ async function startOpencode(
  * startup failure in terms of opencode rather than of vitest.
  */
 const STARTUP_TIMEOUT_MS = Math.round(CI_TIMEOUT_MS * 0.6);
+
+/**
+ * When every step of a scenario must be done, measured from its start. The
+ * rest of the budget is for tearing down and reporting, so a step that
+ * overruns fails with its own name, the timeline and opencode's log instead of
+ * vitest's bare "Test timed out".
+ */
+const SCENARIO_DEADLINE_MS = Math.round(CI_TIMEOUT_MS * 0.8);
+
+/** How much of opencode's log a failure report carries. */
+const REPORT_LOG_LINES = 80;
+
+/** Opens every failure report, so a failure that already carries one is told apart. */
+const REPORT_HEADER = "timeline (ms since the scenario started";
 
 /**
  * Options for withOpencode helper.
@@ -236,6 +251,21 @@ export interface OpencodeTestContext {
   readonly cwd: string;
   /** Mock LLM server (for mode changes mid-test if needed) */
   readonly mockLlm: MockLlmServer;
+  /**
+   * Await `work` as a named step of the scenario: it is recorded on the
+   * timeline a failure prints, and fails by name, with the report, if it is not
+   * done by the scenario deadline.
+   */
+  step<T>(label: string, work: Promise<T>): Promise<T>;
+  /** `vi.waitFor` as a named step, bounded by the scenario deadline. */
+  waitFor(label: string, assertion: () => void): Promise<void>;
+}
+
+/** One entry of a scenario's timeline, in ms since the scenario started. */
+interface TimelineEntry {
+  readonly label: string;
+  readonly start: number;
+  end?: number;
 }
 
 /**
@@ -244,15 +274,21 @@ export interface OpencodeTestContext {
  * Creates a fresh mock LLM server, temp git repo, and opencode process
  * for each test. All resources are cleaned up after the test completes.
  *
+ * Await the scenario's work through `step` and `waitFor`: they bound it by the
+ * scenario deadline and record it on the timeline. A failure of any kind —
+ * a step overrunning, an assertion, or vitest's own timeout on something not
+ * wrapped in a step — then reports the timeline, the requests the mock LLM
+ * served and the tail of opencode's log.
+ *
  * @param options - Configuration for the test environment
  * @param fn - Test function receiving the context
  *
  * @example
  * ```ts
  * it("fetches sessions", async () => {
- *   await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
- *     await sdk.session.create({ body: {} });
- *     const result = await client.fetchRootSessions();
+ *   await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk, step }) => {
+ *     await step("create session", sdk.session.create({ body: {} }));
+ *     const result = await step("list sessions", client.listSessions());
  *     expect(result.ok).toBe(true);
  *   });
  * }, CI_TIMEOUT_MS);
@@ -262,47 +298,56 @@ export async function withOpencode(
   options: WithOpencodeOptions,
   fn: (ctx: OpencodeTestContext) => Promise<void>
 ): Promise<void> {
-  // Create temp git repo
-  const repo = await createTestGitRepo();
+  const startedAt = Date.now();
+  const elapsed = (): number => Date.now() - startedAt;
+  const timeline: TimelineEntry[] = [];
+  const begin = (label: string): TimelineEntry => {
+    const entry: TimelineEntry = { label, start: elapsed() };
+    timeline.push(entry);
+    return entry;
+  };
 
-  // Start mock LLM server
-  const mockLlm = createMockLlmServer();
-  await mockLlm.start();
-  mockLlm.setMode(options.mockLlmMode);
-
-  // Find free port for opencode
-  const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
-  const port = await networkLayer.findFreePort();
-
-  // Start opencode process
-  const opencodeProcess = await startOpencode({
-    binaryPath: options.binaryPath,
-    port,
-    cwd: repo.path,
-    config: {
-      provider: {
-        mock: {
-          npm: "@ai-sdk/openai-compatible",
-          options: { baseURL: `http://127.0.0.1:${mockLlm.port}/v1` },
-          models: { test: { name: "Test Model" } },
-        },
-      },
-      model: "mock/test",
-      permission: options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" },
-    },
-  });
-
+  // Each is set once the scenario gets that far; cleanup and the report handle
+  // whatever exists.
+  let repo: Awaited<ReturnType<typeof createTestGitRepo>> | null = null;
+  let mockLlm: MockLlmServer | null = null;
+  let opencodeProcess: OpencodeProcess | null = null;
   let client: OpenCodeClient | null = null;
+
+  const report = async (): Promise<string> => {
+    const ms = (value: number): string => String(value).padStart(6);
+    const lines = [`${REPORT_HEADER}; now ${elapsed()}):`];
+    for (const entry of timeline) {
+      const took = entry.end === undefined ? "unfinished" : `took ${entry.end - entry.start}`;
+      lines.push(`  ${ms(entry.start)}  ${entry.label} (${took})`);
+    }
+    const requests = mockLlm?.requests() ?? [];
+    lines.push(`mock LLM requests (${requests.length}):`);
+    for (const request of requests) {
+      lines.push(
+        `  ${ms(request.timestamp - startedAt)}  ${request.method} ${request.path} -> ${request.response.status}`
+      );
+    }
+    // Its output is only readable once it has exited, and the scenario is
+    // failing anyway; cleanup's own stop() then finds it gone.
+    await opencodeProcess?.stop().catch(() => {});
+    const output = (await opencodeProcess?.output().catch(() => "")) ?? "";
+    const tail = output.split(/\r?\n/).slice(-REPORT_LOG_LINES);
+    lines.push(`opencode output (last ${tail.length} lines):`, ...tail.map((line) => `  ${line}`));
+    return lines.join("\n");
+  };
 
   let cleanedUp = false;
   const cleanup = async (): Promise<void> => {
     if (cleanedUp) return;
     cleanedUp = true;
+    const entry = begin("teardown");
     // Reverse order of creation.
     client?.dispose();
-    await opencodeProcess.stop().catch(() => {});
-    await mockLlm.stop().catch(() => {});
-    await repo.cleanup().catch(() => {});
+    await opencodeProcess?.stop().catch(() => {});
+    await mockLlm?.stop().catch(() => {});
+    await repo?.cleanup().catch(() => {});
+    entry.end = elapsed();
   };
 
   // `finally` alone loses the race with a timeout: vitest abandons the pending
@@ -313,7 +358,83 @@ export async function withOpencode(
   // second call a no-op.
   onTestFinished(cleanup);
 
+  // The same race is why the report hangs off onTestFailed too: a timeout from
+  // vitest names no step, and can also overtake a step's own report while that
+  // is still being written. It runs after onTestFinished, so opencode has
+  // exited and its output is complete.
+  onTestFailed(async ({ task }) => {
+    if (task.result?.errors?.some((error) => error.message.includes(REPORT_HEADER))) return;
+    console.error(`opencode scenario "${task.name}" failed.\n${await report()}`);
+  });
+
+  const step = async <T>(label: string, work: Promise<T>): Promise<T> => {
+    const entry = begin(label);
+    let timer: NodeJS.Timeout | undefined;
+    const overrun = new Promise<"overrun">((resolve) => {
+      timer = setTimeout(() => resolve("overrun"), Math.max(SCENARIO_DEADLINE_MS - entry.start, 0));
+    });
+    try {
+      const outcome = await Promise.race([work.then((value) => ({ value })), overrun]);
+      if (outcome === "overrun") {
+        throw new Error(
+          `step "${label}" was not done ${SCENARIO_DEADLINE_MS}ms into the scenario.\n${await report()}`
+        );
+      }
+      entry.end = elapsed();
+      return outcome.value;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const waitFor = async (label: string, assertion: () => void): Promise<void> => {
+    const entry = begin(label);
+    try {
+      await vi.waitFor(assertion, { timeout: Math.max(SCENARIO_DEADLINE_MS - entry.start, 0) });
+    } catch (error) {
+      throw new Error(
+        `"${label}" still did not hold ${SCENARIO_DEADLINE_MS}ms into the scenario: ` +
+          `${error instanceof Error ? error.message : String(error)}\n${await report()}`,
+        { cause: error }
+      );
+    }
+    entry.end = elapsed();
+  };
+
   try {
+    const repoEntry = begin("create temp git repo");
+    repo = await createTestGitRepo();
+    repoEntry.end = elapsed();
+
+    const mockEntry = begin("start mock LLM");
+    const llm = createMockLlmServer();
+    mockLlm = llm;
+    await llm.start();
+    llm.setMode(options.mockLlmMode);
+    mockEntry.end = elapsed();
+
+    // Find free port for opencode
+    const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
+    const port = await networkLayer.findFreePort();
+
+    const startEntry = begin(`start opencode on port ${port}`);
+    opencodeProcess = await startOpencode({
+      binaryPath: options.binaryPath,
+      port,
+      cwd: repo.path,
+      config: {
+        provider: {
+          mock: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: `http://127.0.0.1:${llm.port}/v1` },
+            models: { test: { name: "Test Model" } },
+          },
+        },
+        model: "mock/test",
+        permission: options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" },
+      },
+    });
+
     // Wait for opencode to be ready.
     //
     // A slice of the budget, not all of it: callers give `it` CI_TIMEOUT_MS, so
@@ -335,20 +456,19 @@ export async function withOpencode(
         intervalMs: 100,
       });
     } catch (error) {
-      const output = await opencodeProcess.output().catch(() => "");
       throw new Error(
-        `opencode did not answer on port ${port} within ${STARTUP_TIMEOUT_MS}ms` +
-          (output ? `. Process output:\n${output}` : " (no process output)."),
+        `opencode did not answer on port ${port} within ${STARTUP_TIMEOUT_MS}ms.\n${await report()}`,
         { cause: error }
       );
     }
+    startEntry.end = elapsed();
 
     // Create clients
     const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${port}` });
     client = new OpenCodeClient(port, SILENT_LOGGER);
 
     // Run the test
-    await fn({ port, sdk, client, cwd: repo.path, mockLlm });
+    await fn({ port, sdk, client, cwd: repo.path, mockLlm: llm, step, waitFor });
   } finally {
     // The normal path: free the port and the temp repo now rather than at the
     // end of the test, so the next scenario starts from a quiet machine.

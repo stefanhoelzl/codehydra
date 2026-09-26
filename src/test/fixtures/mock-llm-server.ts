@@ -24,7 +24,7 @@
  * ```
  */
 
-import { LLMock } from "@copilotkit/aimock";
+import { LLMock, type JournalEntry } from "@copilotkit/aimock";
 
 // ============================================================================
 // Types
@@ -55,6 +55,11 @@ export interface MockLlmServer {
   stop(): Promise<void>;
   /** Set the response mode */
   setMode(mode: MockLlmMode): void;
+  /**
+   * Every request served so far, oldest first. Kept after stop(), so a failed
+   * test can still say what the model was asked and when.
+   */
+  requests(): readonly JournalEntry[];
 }
 
 // ============================================================================
@@ -166,6 +171,8 @@ export function createMockLlmServer(port = 0): MockLlmServer {
   const mock = new LLMock({ port, host: "127.0.0.1" });
   applyMode(mock, "instant");
   let started = false;
+  // aimock's journal goes with its server, so stop() keeps a copy.
+  let stoppedRequests: readonly JournalEntry[] = [];
 
   return {
     get port(): number {
@@ -183,6 +190,7 @@ export function createMockLlmServer(port = 0): MockLlmServer {
 
     async stop(): Promise<void> {
       if (!started) return;
+      stoppedRequests = mock.getRequests();
       await mock.stop();
       started = false;
     },
@@ -192,6 +200,10 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       // Sequence counts are per fixture group; a mode swap must not inherit the
       // previous mode's counter.
       mock.resetMatchCounts();
+    },
+
+    requests(): readonly JournalEntry[] {
+      return started ? mock.getRequests() : stoppedRequests;
     },
   };
 }
