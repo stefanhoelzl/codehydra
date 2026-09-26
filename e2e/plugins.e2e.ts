@@ -405,7 +405,8 @@ test("the repository's title wins, and a tag set with ch in a hook shows", async
   await expect(row.getByText("e2e", { exact: true })).toBeVisible();
   // on-workspace-opened is fire-and-forget: it lands after the open returned.
   await expect(row.getByText("via-ch", { exact: true })).toBeVisible({ timeout: 60_000 });
-  expect(marker("alpha", MARK.event)).toBe(true);
+  // Local plugins run first, so the tag can show before the repository's plugin has run.
+  await expect.poll(() => marker("alpha", MARK.event), { timeout: 60_000 }).toBe(true);
   await collapseSidebar(ui);
 });
 

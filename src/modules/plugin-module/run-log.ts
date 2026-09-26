@@ -46,7 +46,8 @@ export interface RunRecord {
   readonly stderr: string;
 }
 
-const LOG_NAME = /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f]+\.(ok|failed)\.log$/;
+// Case-insensitive: `Path` lowercases on Windows, so a log is written as `…t…z-….log` there.
+const LOG_NAME = /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f]+\.(ok|failed)\.log$/i;
 
 /** A sortable, collision-free file name for a run. */
 function logFileName(startedAt: Date, outcome: RunOutcome): string {

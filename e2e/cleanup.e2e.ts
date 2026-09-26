@@ -61,9 +61,10 @@ function seedStaleData(): void {
   }
 }
 
+/** The session logs: `logs/plugins/` holds plugin run logs, which have their own cap. */
 function logFiles(): string[] {
   const logsDir = join(DATA_ROOT, "logs");
-  return existsSync(logsDir) ? readdirSync(logsDir) : [];
+  return existsSync(logsDir) ? readdirSync(logsDir).filter((name) => name.endsWith(".log")) : [];
 }
 
 test.beforeAll(async () => {
