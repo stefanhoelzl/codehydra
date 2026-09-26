@@ -254,7 +254,9 @@ describe("cancel", () => {
 
       controller.abort();
       await expect(running).rejects.toThrow(new HookFailedError("hangs", "hangs was canceled"));
-      expect(alive(sleepPid!)).toBe(false);
+      // Poll: the run settles once the root exits, while the orphaned sleep is
+      // still being reaped — and a zombie answers kill(pid, 0) as alive.
+      await expect.poll(() => alive(sleepPid!), { timeout: 2000 }).toBe(false);
     },
     10_000
   );
