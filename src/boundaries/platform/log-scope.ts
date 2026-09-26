@@ -6,6 +6,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import * as nodePath from "node:path";
 import { Path } from "../../utils/path/path";
 import type {
   LogContext,
@@ -53,8 +54,10 @@ export class AsyncLogScopeStore implements LogScopeStore {
       const key = at.toString();
       const name = this.names.get(key);
       if (name) return { ...name, path: key };
-      const parent = at.dirname;
-      at = parent.equals(at) ? undefined : parent;
+      // Walked by string, not `Path.dirname`: the top is `/` on POSIX but `c:` on
+      // Windows, which is no absolute path and which `Path` would throw on.
+      const parent = nodePath.posix.dirname(key);
+      at = parent === key ? undefined : normalize(parent);
     }
     return undefined;
   }
