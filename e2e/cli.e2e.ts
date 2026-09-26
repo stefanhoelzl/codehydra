@@ -147,6 +147,18 @@ test.describe("ch CLI", () => {
     expect(error.error).toContain('Unknown config key "no.such.key"');
   });
 
+  test("lists no plugins on a fresh home, and names a missing one as not found", () => {
+    // Every spec starts with an empty ~/.codehydra/plugins (resetDataState).
+    expect(json(ch(["plugin", "list"]))).toEqual([]);
+
+    const run = ch(["plugin", "enable", "local:nope"]);
+    expect(run.status).toBe(6);
+    expect((JSON.parse(run.stderr) as { error: string }).error).toContain("No plugin local:nope");
+
+    const usage = ch(["plugin", "disable", "nope"]);
+    expect(usage.status).toBe(2);
+  });
+
   test("builds its help from the running app's registry", () => {
     const run = ch(["--help"]);
 
