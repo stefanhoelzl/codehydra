@@ -1,0 +1,136 @@
+/**
+ * What is wrong with plugins right now: the source of `ch plugin errors` and of
+ * the error notifications.
+ *
+ * Two kinds of entry, kept in memory:
+ *
+ * - a **problem** stops a plugin running at all — a manifest that does not
+ *   parse, a plugins directory entry that is not a plugin, a shell that is not
+ *   installed. It stays until the next read of the plugin no longer has it.
+ * - a **failure** is the last failed run of one hook or automation, with its
+ *   exit and its run log. It stays until that entry next succeeds, or the app
+ *   restarts.
+ *
+ * A notification is raised when an entry appears or its message changes, never
+ * for the same message again: an automation fails every poll cycle until it is
+ * fixed, and one card saying so is enough. The text never quotes a script's
+ * output — that can carry credentials — only the exit and the path of the run
+ * log that holds the rest.
+ */
+
+import { notify } from "../presentation/notification-card";
+
+export interface PluginErrorEntry {
+  /** `local:<name>` or `workspace:<name>`. */
+  readonly plugin: string;
+  /** The project a workspace plugin belongs to. */
+  readonly project?: string;
+  /** The hook entry or automation that failed; absent for a problem. */
+  readonly entry?: string;
+  readonly message: string;
+  /** The failed run's log file. */
+  readonly logPath?: string;
+  /** ISO time it was recorded. */
+  readonly at: string;
+}
+
+export interface ErrorKey {
+  readonly plugin: string;
+  readonly project?: string;
+  readonly entry?: string;
+}
+
+/** Which plugins one read of a plugins directory speaks for. */
+export interface ProblemScope {
+  readonly origin: "local" | "workspace";
+  /** The project, for a repository's plugins. */
+  readonly project?: string;
+}
+
+export interface PluginErrorBook {
+  /**
+   * The problems one read of a plugins directory found, replacing whatever
+   * that directory had before — a plugin fixed or removed since is forgotten.
+   */
+  setProblems(
+    scope: ProblemScope,
+    problems: readonly { readonly plugin: string; readonly message: string }[]
+  ): void;
+  /** A run failed. */
+  failure(
+    key: Required<Pick<ErrorKey, "entry">> & ErrorKey,
+    message: string,
+    logPath?: string
+  ): void;
+  /** A run succeeded: forget its entry's failure. */
+  success(key: Required<Pick<ErrorKey, "entry">> & ErrorKey): void;
+  list(): readonly PluginErrorEntry[];
+}
+
+function keyOf(key: ErrorKey): string {
+  return JSON.stringify([key.plugin, key.project ?? null, key.entry ?? null]);
+}
+
+function describe(entry: PluginErrorEntry): string {
+  const where = entry.entry !== undefined ? `${entry.plugin} ${entry.entry}` : entry.plugin;
+  const log = entry.logPath !== undefined ? ` — log: ${entry.logPath}` : "";
+  return `${where}: ${entry.message}${log}`;
+}
+
+export function createPluginErrorBook(deps: {
+  readonly dispatcher: Parameters<typeof notify>[0];
+  readonly now?: () => Date;
+}): PluginErrorBook {
+  const entries = new Map<string, PluginErrorEntry>();
+  const now = deps.now ?? ((): Date => new Date());
+
+  function record(key: ErrorKey, message: string, logPath?: string): void {
+    const id = keyOf(key);
+    const previous = entries.get(id);
+    const entry: PluginErrorEntry = {
+      plugin: key.plugin,
+      ...(key.project !== undefined && { project: key.project }),
+      ...(key.entry !== undefined && { entry: key.entry }),
+      message,
+      ...(logPath !== undefined && { logPath }),
+      at: now().toISOString(),
+    };
+    entries.set(id, entry);
+    if (previous?.message === message) return;
+    notify(deps.dispatcher, {
+      type: "error",
+      title: key.entry !== undefined ? "Plugin failed" : "Plugin cannot run",
+      message: describe(entry),
+      dismissible: true,
+    });
+  }
+
+  function inScope(entry: PluginErrorEntry, scope: ProblemScope): boolean {
+    return (
+      entry.entry === undefined &&
+      entry.plugin.startsWith(`${scope.origin}:`) &&
+      entry.project === scope.project
+    );
+  }
+
+  return {
+    setProblems(scope, problems) {
+      const current = new Set(problems.map((problem) => keyOf({ ...scope, ...problem })));
+      for (const [id, entry] of entries) {
+        if (inScope(entry, scope) && !current.has(id)) entries.delete(id);
+      }
+      for (const problem of problems) {
+        record(
+          {
+            plugin: problem.plugin,
+            ...(scope.project !== undefined && { project: scope.project }),
+          },
+          problem.message
+        );
+      }
+    },
+    failure: (key, message, logPath) => record(key, message, logPath),
+    success: (key) => void entries.delete(keyOf(key)),
+    list: () => [...entries.values()],
+  };
+}

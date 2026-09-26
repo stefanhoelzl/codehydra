@@ -1,9 +1,10 @@
 /**
- * Where a hook's human output goes.
+ * Where a plugin hook's output goes.
  *
- * A hook's stderr is written for a person, and the place that person will look
- * is the workspace it belongs to — so it lands in a `CodeHydra Hooks` output
- * channel in that workspace's IDE.
+ * A hook's output is written for a person, and the place that person will look
+ * is the workspace it belongs to — so its stderr and stdout land in a
+ * `CodeHydra Plugins` output channel in that workspace's IDE (the run's log
+ * file has them too).
  *
  * The catch is timing: the open hooks (`after-worktree-created`,
  * `before-workspace-opened`) produce their output *before* the IDE that will
@@ -14,7 +15,7 @@
  *
  * `before-worktree-deleted` is the opposite case and has no answer: its IDE was
  * torn down in the shutdown stage and is not coming back. The hooks module says
- * so (`closed`) before that hook runs, so its lines reach the log file — and,
+ * so (`closed`) before that hook runs, so its lines reach the run log — and,
  * on failure, the deletion progress row — but are never held for an IDE that
  * will not connect. A deleted workspace's buffer is dropped the same way. Only
  * an open (`opening`) makes a closed workspace's output worth holding again:
@@ -23,10 +24,23 @@
  */
 
 import type { Logger } from "../../boundaries/platform/logging-types";
-import type { HookOutputSink } from "./runner";
 
-/** The channel a repository's hook output appears in. */
-export const HOOK_OUTPUT_CHANNEL = "CodeHydra Hooks";
+/** Where a hook's output should be shown, beyond its run log. */
+export interface HookOutputSink {
+  /** One line of a hook's output, tagged with the plugin and entry that produced it. */
+  write(workspacePath: string, source: string, line: string): void;
+  /** The workspace is opening: its editor is on the way, so hold output for it. */
+  opening(workspacePath: string): void;
+  /**
+   * The workspace's editor is gone and is not coming back (torn down for a
+   * deletion, or the workspace is deleted): drop what is held for it, and hold
+   * nothing more until it opens again. The run log keeps every line regardless.
+   */
+  closed(workspacePath: string): void;
+}
+
+/** The channel plugin hook output appears in. */
+export const HOOK_OUTPUT_CHANNEL = "CodeHydra Plugins";
 
 /**
  * Most a single workspace may hold while its IDE starts.
@@ -54,8 +68,8 @@ export interface HookOutputSinkDeps {
 /**
  * A sink that writes to a workspace's IDE, buffering until it can.
  *
- * The runner logs every line before it reaches here, so nothing a hook printed
- * is ever only in a buffer that might be dropped.
+ * Every line is in the run's log file before it reaches here, so nothing a hook
+ * printed is ever only in a buffer that might be dropped.
  */
 export function createHookOutputSink(deps: HookOutputSinkDeps): HookOutputSink {
   const buffered = new Map<string, { source: string; text: string }[]>();
@@ -77,8 +91,8 @@ export function createHookOutputSink(deps: HookOutputSinkDeps): HookOutputSink {
   });
 
   return {
-    write(workspacePath: string, entry: string, line: string): void {
-      const payload = { source: entry, text: line };
+    write(workspacePath: string, source: string, line: string): void {
+      const payload = { source, text: line };
       if (
         deps.transport.appendOutput(workspacePath, {
           channel: HOOK_OUTPUT_CHANNEL,
