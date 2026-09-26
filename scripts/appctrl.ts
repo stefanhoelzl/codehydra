@@ -101,64 +101,152 @@ function formatLogEntry(entry: LogEntry): string {
   return line;
 }
 
-/**
- * Every descendant pid of `root`, deepest last. Captured *before* the parent dies —
- * once it exits, the children are reparented and the tree is unrecoverable.
- *
- * Windows is excluded: `taskkill /T` walks the tree itself.
- */
-function descendantPids(root: number): number[] {
-  if (process.platform === "win32") return [];
+/** One row of the OS process table. */
+interface ProcessEntry {
+  readonly pid: number;
+  readonly ppid: number;
+  /** Start time as the OS reports it: tells a recycled pid apart from the process it once was. */
+  readonly started: string;
+  readonly name: string;
+}
 
+const PROCESS_TABLE_QUERY =
+  'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.CreationDate.Ticks)`t$($_.Name)" }';
+
+/**
+ * The OS process table, or `[]` when it cannot be read.
+ *
+ * Windows goes through CIM: `tasklist` has no parent pid, and `wmic` is gone
+ * from current Windows. It is the slow one (a PowerShell start, around a second).
+ */
+function processTable(): ProcessEntry[] {
   let listing: string;
   try {
-    listing = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf-8" });
+    listing =
+      process.platform === "win32"
+        ? execFileSync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              // Encoded, so no quoting rule of Windows' command line can touch it.
+              "-EncodedCommand",
+              Buffer.from(PROCESS_TABLE_QUERY, "utf16le").toString("base64"),
+            ],
+            { encoding: "utf-8", timeout: 30_000, windowsHide: true }
+          )
+        : execFileSync("ps", ["-eo", "pid=,ppid=,lstart=,comm="], {
+            encoding: "utf-8",
+            env: { ...process.env, LC_ALL: "C" },
+          });
   } catch {
     return [];
   }
 
-  const childrenOf = new Map<number, number[]>();
-  for (const line of listing.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+  // Windows: tab-separated. Unix: `lstart` is always five fields ("Sat Sep 26 15:51:55 2026").
+  const row =
+    process.platform === "win32"
+      ? /^(\d+)\t(\d+)\t(\d*)\t(.*)$/
+      : /^\s*(\d+)\s+(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
+  const entries: ProcessEntry[] = [];
+  for (const line of listing.split(/\r?\n/)) {
+    const match = row.exec(line);
     if (!match) continue;
-    const pid = Number(match[1]);
-    const ppid = Number(match[2]);
-    const siblings = childrenOf.get(ppid) ?? [];
-    siblings.push(pid);
-    childrenOf.set(ppid, siblings);
+    entries.push({
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      started: match[3]!,
+      name: match[4]!.trim(),
+    });
+  }
+  return entries;
+}
+
+/**
+ * `root` and every process below it. Captured *before* the parent dies — once
+ * it exits, the children are reparented (Unix) or keep a parent pid that no
+ * longer exists (Windows), and the tree is unrecoverable. That is also why
+ * `taskkill /T` after the fact is no substitute: it walks from a root that is gone.
+ */
+function processTree(root: number): ProcessEntry[] {
+  const table = processTable();
+  const childrenOf = new Map<number, ProcessEntry[]>();
+  for (const entry of table) {
+    // Windows' System Idle Process is its own parent.
+    if (entry.pid === entry.ppid) continue;
+    const siblings = childrenOf.get(entry.ppid) ?? [];
+    siblings.push(entry);
+    childrenOf.set(entry.ppid, siblings);
   }
 
-  const found: number[] = [];
+  const found = table.filter((entry) => entry.pid === root);
   const stack = [root];
   while (stack.length > 0) {
     for (const child of childrenOf.get(stack.pop()!) ?? []) {
       found.push(child);
-      stack.push(child);
+      stack.push(child.pid);
     }
   }
   return found;
 }
 
-/**
- * Kill the app's leftovers. Quitting CodeHydra does not reap its VSCodium reh-web
- * server, and that orphan holds the Electron process's inherited stdio pipes open —
- * which is enough to keep a Playwright worker (or the appctrl daemon) from ever exiting.
- */
-function killTree(rootPid: number, descendants: number[]): void {
-  if (process.platform === "win32") {
-    try {
-      execFileSync("taskkill", ["/PID", String(rootPid), "/T", "/F"], { stdio: "ignore" });
-    } catch {
-      // already gone
-    }
-    return;
+/** Whether a process with this pid exists (`kill(pid, 0)` works on Windows too). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, it is just not ours to signal.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
   }
-  for (const pid of [...descendants, rootPid]) {
+}
+
+/** Those of `captured` still running as the same process, not a recycled pid. */
+function stillRunning(captured: readonly ProcessEntry[]): ProcessEntry[] {
+  // The table read is slow on Windows; skip it when nothing is even alive.
+  if (!captured.some((entry) => pidAlive(entry.pid))) return [];
+  const now = new Map(processTable().map((entry) => [entry.pid, entry]));
+  return captured.filter((entry) => now.get(entry.pid)?.started === entry.started);
+}
+
+/**
+ * Kill whatever of the app's tree outlived it, and wait until it is gone.
+ *
+ * The app reaps its own children on a clean quit, so normally there is nothing
+ * to do. This is the backstop for a quit that did not finish (a crash, a
+ * shutdown past the timeout), and it matters most on Windows: a leftover
+ * process sitting in a worktree keeps the next reset of the data root from
+ * deleting it. So a kill is not done when it is sent — termination is
+ * asynchronous there, and the handles go only once the process has.
+ */
+async function killLeftovers(captured: readonly ProcessEntry[]): Promise<void> {
+  const leftovers = stillRunning(captured);
+  if (leftovers.length === 0) return;
+
+  const names = leftovers.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
+  process.stderr.write(`appctrl: killing processes the app left running: ${names}\n`);
+  for (const entry of leftovers) {
     try {
-      process.kill(pid, "SIGKILL");
+      if (process.platform === "win32") {
+        // /T as well: it also takes anything a leftover started after the snapshot.
+        execFileSync("taskkill", ["/PID", String(entry.pid), "/T", "/F"], { stdio: "ignore" });
+      } else {
+        process.kill(entry.pid, "SIGKILL");
+      }
     } catch {
       // already gone
     }
+  }
+
+  const deadline = Date.now() + 10_000;
+  let alive = leftovers;
+  while (alive.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    alive = alive.filter((entry) => pidAlive(entry.pid));
+  }
+  if (alive.length > 0) {
+    const pids = alive.map((entry) => entry.pid).join(", ");
+    process.stderr.write(`appctrl: processes still running after kill: ${pids}\n`);
   }
 }
 
@@ -397,7 +485,7 @@ export function createDriver() {
    * stdio pipes, the pipes never close and the host process cannot exit — which is
    * how a Playwright worker ends up hanging in teardown.
    *
-   * SIGKILL remains the backstop if the app declines to leave.
+   * `killLeftovers` is the backstop for whatever the app does not take down.
    */
   async function stop(): Promise<void> {
     if (electronApp) {
@@ -419,7 +507,7 @@ export function createDriver() {
       const appPid = proc.pid;
 
       // Snapshot the tree while the parent still owns it.
-      const descendants = descendantPids(appPid);
+      const tree = processTree(appPid);
 
       const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
 
@@ -438,7 +526,7 @@ export function createDriver() {
       );
       await Promise.race([exited, timedOut]);
 
-      killTree(appPid, descendants);
+      await killLeftovers(tree);
 
       // close() talks CDP to a process we just killed; it can hang rather than reject.
       await Promise.race([
