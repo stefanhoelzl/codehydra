@@ -10,7 +10,13 @@ import {
   file,
 } from "../../boundaries/platform/filesystem.state-mock";
 import { Path } from "../../utils/path/path";
-import { KEEP_FAILED_RUNS, formatRunLog, writeRunLog, type RunRecord } from "./run-log";
+import {
+  KEEP_FAILED_RUNS,
+  formatRunLog,
+  pruneRunLogs,
+  writeRunLog,
+  type RunRecord,
+} from "./run-log";
 
 const DIR = new Path("/logs/plugins/local/github/prs");
 
@@ -73,6 +79,21 @@ describe("writeRunLog", () => {
     expect(names).not.toContain(written[0]!.basename);
     expect(names).toContain(written.at(-1)!.basename);
     expect(names).not.toContain(firstOk.basename);
+  });
+
+  it("prunes logs named in lower case, as Windows paths are", async () => {
+    const fs = createFileSystemMock({
+      entries: {
+        "/logs/plugins/local/github/prs": directory(),
+        "/logs/plugins/local/github/prs/2026-09-26t10-00-00-000z-aaaaaa.ok.log": file("old"),
+        "/logs/plugins/local/github/prs/2026-09-26t10-00-01-000z-bbbbbb.ok.log": file("new"),
+      },
+    });
+
+    await pruneRunLogs(fs, DIR);
+
+    const names = (await fs.readdir(DIR)).map((entry) => entry.name);
+    expect(names).toEqual(["2026-09-26t10-00-01-000z-bbbbbb.ok.log"]);
   });
 
   it("leaves files that are not run logs alone", async () => {
