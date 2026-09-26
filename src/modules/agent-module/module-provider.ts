@@ -30,12 +30,12 @@ import type {
 } from "./types";
 import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
-import type {
-  DownloadDeps,
-  DownloadProgressCallback,
-  DownloadRequest,
-} from "../../utils/binary-download";
-import { downloadBinary, isBinaryInstalled } from "../../utils/binary-download";
+import type { DownloadProgressCallback } from "../../utils/binary-download";
+import {
+  binaryNotReadyError,
+  type AgentBinaryResolver,
+  type ResolvedAgentBinary,
+} from "./binary-resolver";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { Logger } from "../../boundaries/platform/logging";
@@ -83,12 +83,14 @@ export interface AgentModuleSpec<P extends AgentProvider> {
 
   // --- Binary ---
 
+  /** Decides which executable the agent runs, and downloads it when needed. */
+  readonly binary: AgentBinaryResolver;
+
   /**
-   * Resolve the binary install location and (lazily) the download request.
-   * Returns null when there is nothing to download (e.g. Claude with no
-   * version override uses the bundled binary).
+   * Environment for the agent terminal that points it at `binary` (e.g.
+   * `_CH_CLAUDE_BIN`), merged over the provider's own variables.
    */
-  resolveBinary(): { destDir: string; request: () => DownloadRequest } | null;
+  binaryEnv(binary: ResolvedAgentBinary): Record<string, string>;
 
   // --- Server manager ---
 
@@ -123,8 +125,12 @@ export interface AgentModuleSpec<P extends AgentProvider> {
 
   // --- Workspace start ---
 
-  /** Start the agent server for a workspace. */
-  startServer(workspacePath: string, options: WorkspaceStartOptions | undefined): Promise<void>;
+  /** Start the agent server for a workspace, running `binary`. */
+  startServer(
+    workspacePath: string,
+    options: WorkspaceStartOptions | undefined,
+    binary: ResolvedAgentBinary
+  ): Promise<void>;
 
   /** Called after the provider is ready (e.g. Claude's prompt file plumbing). */
   afterProviderReady?(
@@ -164,7 +170,6 @@ export interface AgentModuleSpec<P extends AgentProvider> {
  */
 export interface AgentModuleCoreDeps {
   readonly logger: Logger;
-  readonly downloadDeps: DownloadDeps;
   /** Binary name used for binaryType and download error messages. */
   readonly binaryName: string;
 }
@@ -183,7 +188,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   spec: AgentModuleSpec<P>,
   deps: AgentModuleCoreDeps
 ): AgentModuleProvider {
-  const { logger, downloadDeps, binaryName } = deps;
+  const { logger, binaryName } = deps;
 
   // ===========================================================================
   // Internal closure state
@@ -383,26 +388,31 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
       try {
-        const resolved = spec.resolveBinary();
-        if (resolved === null) {
-          return { success: true, needsDownload: false };
-        }
-        const installed = await isBinaryInstalled(resolved.destDir, downloadDeps);
-        return { success: true, needsDownload: !installed };
-      } catch {
+        const { needsDownload } = await spec.binary.prepare();
+        return { success: true, needsDownload };
+      } catch (error) {
+        logger.warn("Binary preflight failed", {
+          binary: binaryName,
+          error: getErrorMessage(error),
+        });
         return { success: false, needsDownload: false };
       }
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      const resolved = spec.resolveBinary();
-      if (resolved === null) return;
       try {
-        await downloadBinary(resolved.request(), downloadDeps, onProgress);
+        await spec.binary.download(onProgress);
       } catch (error) {
-        throw new AgentBinaryError(`Failed to download ${binaryName}: ${getErrorMessage(error)}`);
+        // Callers add the "Failed to download <binary>" context.
+        throw new AgentBinaryError(getErrorMessage(error));
       }
     },
+
+    async seedBinary(onProgress?: DownloadProgressCallback): Promise<string> {
+      return spec.binary.seed(onProgress);
+    },
+
+    bundleVersionsInUse: () => spec.binary.bundleVersionsInUse(),
 
     // --- Lifecycle ---
     initialize(mcpConfig: McpConfig | null): void {
@@ -440,7 +450,13 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       workspacePath: string,
       options?: WorkspaceStartOptions
     ): Promise<WorkspaceStartResult> {
-      await spec.startServer(workspacePath, options);
+      // Snapshot once: the server and the terminal must run the same binary
+      // even if a background download lands meanwhile.
+      const binary = spec.binary.current();
+      if (binary === null) {
+        throw binaryNotReadyError(binaryName);
+      }
+      await spec.startServer(workspacePath, options, binary);
 
       // Wait for the handleServerStarted callback to complete
       const promise = serverStartedPromises.get(workspacePath);
@@ -450,8 +466,10 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
       await spec.afterProviderReady?.(workspacePath, options);
 
+      const providerEnv =
+        providers.get(workspacePath as WorkspacePath)?.getEnvironmentVariables() ?? {};
       return {
-        envVars: providers.get(workspacePath as WorkspacePath)?.getEnvironmentVariables() ?? {},
+        envVars: { ...providerEnv, ...spec.binaryEnv(binary) },
       };
     },
 

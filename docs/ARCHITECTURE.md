@@ -300,16 +300,16 @@ The UI shows a scrollable list of blocking processes (with files and CWD) and of
 
 Rules are declared by the composition root (`src/main.ts`) and run in order, so a rule that retires a path can precede one that sweeps its parent — `claude/configs` is retired before the `claude` bundle rule, so the retired directory is never mistaken for a version to keep.
 
-| Rule kind    | Behaviour                                                               |
-| ------------ | ----------------------------------------------------------------------- |
-| `retire`     | Delete a path we no longer use, whole (file or tree)                    |
-| `keepRecent` | Keep the newest N entries **by name**                                   |
-| `pruneEmpty` | Delete childless directories directly under a path                      |
-| `bundle`     | Keep only the live version of a downloaded bundle; packaged builds only |
+| Rule kind    | Behaviour                                                                  |
+| ------------ | -------------------------------------------------------------------------- |
+| `retire`     | Delete a path we no longer use, whole (file or tree)                       |
+| `keepRecent` | Keep the newest N entries **by name**                                      |
+| `pruneEmpty` | Delete childless directories directly under a path                         |
+| `bundle`     | Keep only the versions of a downloaded bundle in use; packaged builds only |
 
 `keepRecent` sorts by name, not timestamp: session logs are named for the launch that wrote them (`2026-08-28T07-35-51-<id>.log`), so lexicographic order is already chronological and no `stat` is needed. Names that are not session logs rank **oldest**, so a stray file in the log directory is the first thing swept.
 
-`bundle` reads its live version when it runs, not when it is declared, so it reflects resolved configuration. It is skipped in development builds: dev shares its data root with binaries `pnpm install` and the test helpers download, pinned to versions the running app does not resolve. A null live version (Claude ships its binary rather than downloading one) means no version directory is expected, so every one is a leftover.
+`bundle` reads the versions to keep (`keep()`) when it runs, not when it is declared, so it reflects what this launch resolved — for an agent, the version in use plus one still downloading in the background. It is skipped in development builds: dev shares its data root with binaries the test helpers download, which may be versions the running app does not resolve. An empty list (an agent running its system install) means no version directory is needed, so every one is a leftover; null (an agent this launch has not resolved yet — the non-configured one until the creation form asks about it) leaves the directory alone.
 
 Every rule is best-effort and isolated: a failure is logged at warn and the remaining rules still run. An **absent** target is silent (the normal case); an **unreadable** one is reported, so cleanup never quietly behaves as though there were nothing to clean. One info line summarises what was removed.
 
@@ -1246,67 +1246,36 @@ All URLs opened from VSCodium → external system browser:
 
 ## Binary Distribution
 
-CodeHydra downloads VSCodium and opencode binaries from GitHub releases instead of bundling them or relying on devDependencies.
+CodeHydra downloads its binaries instead of bundling them: VSCodium (reh-web) always, and an agent only when it is not installed on the system. All downloads go through `src/utils/binary-download` (`downloadBinary`: an archive to extract, or — no `archiveExtension` — a single executable saved as `destDir/executablePath` under a temp name and renamed; an optional `sha256` is checked before anything is written; `destDir` is removed on failure) over `HttpClient`, `FileSystemBoundary` and `ArchiveExtractor`.
 
-### Download Flow
+### Agent binaries
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Binary Download Flow                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  pnpm install                         App Setup (Production)                │
-│       │                                      │                              │
-│       v                                      v                              │
-│  ┌─────────────────┐                 ┌─────────────────┐                    │
-│  │ postinstall     │                 │ VscodeSetup     │                    │
-│  │ script (tsx)    │                 │ Service         │                    │
-│  └────────┬────────┘                 └────────┬────────┘                    │
-│           │                                   │                             │
-│           └───────────────┬───────────────────┘                             │
-│                           │                                                 │
-│                           v                                                 │
-│              ┌────────────────────────┐                                     │
-│              │ BinaryDownloadService  │  (shared download logic)            │
-│              │  - isInstalled()       │                                     │
-│              │  - download()          │                                     │
-│              │  - getBinaryPath()     │                                     │
-│              │  - createWrapperScripts()                                    │
-│              └───────────┬────────────┘                                     │
-│                          │                                                  │
-│           ┌──────────────┼──────────────┐                                   │
-│           │              │              │                                   │
-│           v              v              v                                   │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                            │
-│  │ HttpClient  │ │ FileSystem  │ │ Archive     │                            │
-│  │ (fetch)     │ │ Layer       │ │ Extractor   │                            │
-│  └─────────────┘ └─────────────┘ └─────────────┘                            │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+`binary-resolver.ts` (`createAgentBinaryResolver`) decides which executable an agent runs, the same way for Claude and OpenCode:
 
-### Version Management
+1. `version.<agent>` set → that version under `<bundles>/<agent>/<version>/`, downloaded if missing. A channel word (`latest`/`stable` for Claude, `latest` for OpenCode) is resolved to a version first. Beats a system install.
+2. Otherwise the first `<agent>` on the app's PATH whose `--version` exits 0 (Windows also probes the npm `.cmd` shim, spawned through a shell).
+3. Otherwise the agent's default channel (Claude `stable`, OpenCode `latest`).
 
-Binary versions are defined per component:
+Nothing is recorded: the version directories are the record ("installed" = the directory holds the executable). A channel is re-resolved at every start (`prepare()`, memoized per launch after it succeeds). A failed lookup falls back to the newest downloaded version; a newer version than the one downloaded starts a background download, and `current()` switches once it lands, so workspaces launched afterwards run it. `bundleVersionsInUse()` feeds the cleanup `bundle` rule (in use + in flight; null until resolved).
 
-- `VSCODIUM_VERSION` - `src/modules/ide-server-module/vscodium.ts` (e.g., "1.126.04524")
-- `OPENCODE_VERSION` - `src/modules/agent-module/opencode/setup-info.ts` (e.g., "1.18.32")
-- `CLAUDE_VERSION` - `src/modules/agent-module/claude/setup-info.ts` (`null` prefers the system
-  binary, falling back to latest)
+Each workspace snapshots `current()` at `startWorkspace` and passes it on: Claude's terminal gets `_CH_CLAUDE_BIN` (plus `DISABLE_AUTOUPDATER=1` for a download), OpenCode's server is spawned with it (kept per workspace for restarts; `autoupdate: false` for a download) and its terminal gets `_CH_OPENCODE_BIN`. The wrappers run that path and never search PATH themselves.
 
-**Development**: `pnpm install` runs the postinstall script which downloads binaries to `./app-data/`.
+Download coordinates live in each agent's `setup-info.ts`:
 
-**Production**: The VscodeSetupService downloads binaries to the user's app-data directory during first-run setup. If `CURRENT_SETUP_VERSION` is incremented (which happens when versions change), existing installations re-run setup on next launch.
+| Agent    | Channel lookup                                                          | Download                                                                                         |
+| -------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Claude   | `downloads.claude.ai/claude-code-releases/<channel>` (a version string) | `<version>/manifest.json` → `<version>/<platform>-<arch>/claude[.exe]`, raw file, sha256-checked |
+| OpenCode | where `github.com/anomalyco/opencode/releases/latest` redirects         | `releases/download/v<version>/opencode-<os>-<arch>.{tar.gz,zip}`, extracted, no checksum         |
 
-### Platform-Specific Assets
+Claude's manifest also lists musl builds; they are unused, since Electron itself needs glibc. Windows builds are x64 only (`assertWindowsX64`).
 
-| Platform      | VSCodium Source            | opencode Source       |
-| ------------- | -------------------------- | --------------------- |
-| macOS (x64)   | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
-| macOS (arm64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
-| Linux (x64)   | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
-| Linux (arm64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
-| Windows (x64) | VSCodium/vscodium (tar.gz) | sst/opencode (tar.gz) |
+### VSCodium
+
+`VSCODIUM_VERSION` (`src/modules/ide-server-module/vscodium.ts`, overridable by `version.vscodium`) pins the IDE server; the setup screen downloads it on first start.
+
+### Development, CI and `--download-binaries`
+
+Nothing is downloaded at `pnpm install`: the first `pnpm dev` downloads like a production first start, and the boundary project fetches the latest OpenCode once per run in its globalSetup (`src/test/global-setup-boundary.ts`, via `ensureBinaryForTests` in `src/utils/testing/ensure-binaries.ts`), so parallel test files never extract into the same bundle directory. `codehydra --download-binaries` (a boolean config key, handled in `main.ts` before `app:start`, `src/modules/download-binaries.ts`) downloads VSCodium and both agents — the configured version, else the default channel, whatever is installed — then exits; the e2e `download-binaries` project seeds its root with it.
 
 **Windows Note**: VSCodium publishes an official reh-web build for every platform CodeHydra targets, including Windows x64, so Windows is a first-class path with no special per-platform build step.
 

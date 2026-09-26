@@ -8,15 +8,12 @@
  */
 
 import type { AgentModuleProvider } from "../agent-module-provider";
-import type { ArchiveExtension, DownloadDeps } from "../../../utils/binary-download";
-import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
-import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
+import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 import type { ProcessRunner } from "../../../boundaries/platform/process";
-import { getClaudeUrlForVersion, getClaudeSubPath, getClaudeExecutablePath } from "./setup-info";
+import { runAgentBinary, type AgentBinaryResolver } from "../binary-resolver";
 import { createAgentModuleProvider } from "../module-provider";
 import { getErrorMessage } from "../../../shared/error-utils";
 
@@ -46,16 +43,9 @@ function parsePermissionModes(helpText: string): string[] {
  */
 export interface ClaudeModuleProviderDeps {
   readonly serverManager: ClaudeCodeServerManager;
-  readonly downloadDeps: DownloadDeps;
-  readonly binaryConfig: {
-    readonly name: string;
-    readonly executablePath: string;
-    readonly archiveExtension: ArchiveExtension;
-  };
-  readonly versionConfig: PersistedAccessor<string | null>;
-  readonly pathProvider: Pick<PathProvider, "bundlePath">;
+  /** Which `claude` to run (system install or a download). */
+  readonly binary: AgentBinaryResolver;
   readonly platform: SupportedPlatform;
-  readonly arch: SupportedArch;
   readonly logger: Logger;
   /** Process runner used to detect permission modes via `claude --help`. */
   readonly processRunner: Pick<ProcessRunner, "run">;
@@ -69,27 +59,19 @@ export interface ClaudeModuleProviderDeps {
  * Create an AgentModuleProvider for Claude Code.
  */
 export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): AgentModuleProvider {
-  const {
-    serverManager,
-    downloadDeps,
-    binaryConfig,
-    versionConfig,
-    pathProvider,
-    platform,
-    arch,
-    logger,
-    processRunner,
-  } = deps;
+  const { serverManager, binary, platform, logger, processRunner } = deps;
 
   // Owned by the module: parse `claude --help` once (cached) for the permission
-  // modes the creation form offers. Pinned version.claude relies on the binary
-  // being on PATH; otherwise detection degrades to the default mode only. A
-  // failed run is not cached, so a later call can retry.
+  // modes the creation form offers, from the same binary workspaces run. Before
+  // that binary is known, or when the run fails, detection degrades to the
+  // default mode only and is not cached, so a later call can retry.
   let permissionModesCache: readonly string[] | undefined;
   const detectPermissionModes = async (): Promise<readonly string[]> => {
     if (permissionModesCache !== undefined) return permissionModesCache;
+    const resolved = binary.current();
+    if (resolved === null) return [];
     try {
-      const proc = processRunner.run(getClaudeExecutablePath(platform), ["--help"]);
+      const proc = runAgentBinary(processRunner, resolved.path, ["--help"], platform);
       const { stdout } = await proc.wait();
       permissionModesCache = parsePermissionModes(stdout);
       return permissionModesCache;
@@ -116,23 +98,14 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
 
       serverManager,
 
-      // --- Binary: version null = bundled binary, nothing to download ---
-      resolveBinary() {
-        const version = versionConfig.get();
-        if (version === null) return null;
-        const destDir = pathProvider.bundlePath(`claude/${version}`).toNative();
-        return {
-          destDir,
-          request: () => ({
-            name: binaryConfig.name,
-            url: getClaudeUrlForVersion(version, platform, arch),
-            destDir,
-            archiveExtension: binaryConfig.archiveExtension,
-            executablePath: binaryConfig.executablePath,
-            subPath: getClaudeSubPath(platform, arch),
-          }),
-        };
-      },
+      // --- Binary ---
+      binary,
+      binaryEnv: (resolved) => ({
+        _CH_CLAUDE_BIN: resolved.path,
+        // CodeHydra updates the binaries it downloads; a system install is the
+        // user's to manage.
+        ...(resolved.source === "download" && { DISABLE_AUTOUPDATER: "1" }),
+      }),
 
       // --- Provider lifecycle ---
       createProvider: (workspacePath) =>
@@ -169,6 +142,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       // --- Launch options ---
       getLaunchOptions: async () => ({ permissionModes: await detectPermissionModes() }),
     },
-    { logger, downloadDeps, binaryName: binaryConfig.name }
+    { logger, binaryName: "claude" }
   );
 }

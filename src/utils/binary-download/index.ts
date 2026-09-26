@@ -4,11 +4,13 @@
 
 // Types
 export type {
+  ArchiveDownloadRequest,
   ArchiveExtension,
   DownloadPhase,
   DownloadProgress,
   DownloadProgressCallback,
   DownloadRequest,
+  FileDownloadRequest,
 } from "./types.js";
 
 // Download functions

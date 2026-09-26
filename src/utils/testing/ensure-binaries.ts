@@ -6,7 +6,7 @@
  * use these utilities to ensure binaries are downloaded before running.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DefaultPathProvider } from "../../boundaries/platform/path-provider";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
@@ -17,10 +17,13 @@ import {
   VSCODIUM_VERSION,
 } from "../../modules/ide-server-module/vscodium";
 import {
-  OPENCODE_VERSION,
-  getOpencodeUrl,
+  createOpencodeBinaryDescriptor,
   getOpencodeExecutablePath,
 } from "../../modules/agent-module/opencode/setup-info";
+import {
+  compareVersions,
+  createAgentBinaryResolver,
+} from "../../modules/agent-module/binary-resolver";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { ExecaProcessRunner } from "../../boundaries/platform/process";
 import { createMockBuildInfo } from "../../boundaries/platform/build-info.test-utils";
@@ -62,45 +65,72 @@ export function getTestPathProvider(): DefaultPathProvider {
 }
 
 /**
- * Build a DownloadRequest for a binary type.
+ * Build the DownloadRequest for the pinned VSCodium bundle.
  */
-function buildDownloadRequest(
-  binary: TestBinaryType,
+function buildVscodiumRequest(
   pathProvider: DefaultPathProvider,
   platformInfo: PlatformInfo
 ): { request: DownloadRequest; binaryPath: string } {
   const platform = platformInfo.platform as SupportedPlatform;
   const arch = platformInfo.arch as SupportedArch;
-
-  if (binary === "vscodium") {
-    const ide = createVscodiumIdeServer();
-    const destDir = pathProvider.bundlePath(ide.bundleSubdir()).toNative();
-    const executablePath = ide.executablePath(platform);
-    const subPath = ide.archiveSubPath(platform, arch);
-    return {
-      request: {
-        name: ide.id,
-        url: ide.downloadUrl(platform, arch),
-        destDir,
-        archiveExtension: ".tar.gz",
-        executablePath,
-        ...(subPath !== undefined ? { subPath } : {}),
-      },
-      binaryPath: join(destDir, executablePath),
-    };
-  }
-
-  const destDir = pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative();
-  const executablePath = getOpencodeExecutablePath(platform);
+  const ide = createVscodiumIdeServer();
+  const destDir = pathProvider.bundlePath(ide.bundleSubdir()).toNative();
+  const executablePath = ide.executablePath(platform);
+  const subPath = ide.archiveSubPath(platform, arch);
   return {
     request: {
-      name: "opencode",
-      url: getOpencodeUrl(platform, arch),
+      name: ide.id,
+      url: ide.downloadUrl(platform, arch),
       destDir,
-      archiveExtension: platform === "darwin" || platform === "win32" ? ".zip" : ".tar.gz",
+      archiveExtension: ".tar.gz",
       executablePath,
+      ...(subPath !== undefined ? { subPath } : {}),
     },
     binaryPath: join(destDir, executablePath),
+  };
+}
+
+/**
+ * The newest downloaded OpenCode, or null. Tests run the latest release like
+ * the app does, so there is no pinned version to look for.
+ */
+function findDownloadedOpencode(
+  pathProvider: DefaultPathProvider,
+  platformInfo: PlatformInfo
+): string | null {
+  const root = pathProvider.bundlePath("opencode").toNative();
+  const executable = getOpencodeExecutablePath(platformInfo.platform as SupportedPlatform);
+  let versions: string[];
+  try {
+    versions = readdirSync(root);
+  } catch {
+    return null;
+  }
+  for (const version of versions.sort((a, b) => compareVersions(b, a))) {
+    const binaryPath = join(root, version, executable);
+    if (existsSync(binaryPath)) return binaryPath;
+  }
+  return null;
+}
+
+function createDownloadDeps(): DownloadDeps {
+  return {
+    httpClient: new DefaultNetworkLayer(SILENT_LOGGER),
+    fileSystemLayer: new DefaultFileSystemBoundary(SILENT_LOGGER),
+    archiveExtractor: new DefaultArchiveExtractor(),
+    logger: SILENT_LOGGER,
+  };
+}
+
+function reportProgress(
+  binary: TestBinaryType
+): (progress: { bytesDownloaded: number; totalBytes: number | null }) => void {
+  return (progress) => {
+    // `\r` progress only on a terminal; a CI log would get one line per update.
+    if (process.stdout.isTTY && progress.totalBytes) {
+      const percent = Math.round((progress.bytesDownloaded / progress.totalBytes) * 100);
+      process.stdout.write(`\r  Downloading ${binary}: ${percent}%`);
+    }
   };
 }
 
@@ -133,32 +163,36 @@ export async function ensureBinaryForTests(
 ): Promise<void> {
   const pathProvider = options?.pathProvider ?? getTestPathProvider();
   const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
-  const { request, binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
 
-  // Check if already installed
+  if (binary === "opencode") {
+    // The latest release, whatever is installed on the system — the same
+    // download `codehydra --download-binaries` makes. Skipped when present.
+    const resolver = createAgentBinaryResolver({
+      descriptor: createOpencodeBinaryDescriptor(
+        platformInfo.platform as SupportedPlatform,
+        platformInfo.arch as SupportedArch
+      ),
+      version: { get: () => null },
+      pathProvider,
+      fileSystem: new DefaultFileSystemBoundary(SILENT_LOGGER),
+      processRunner: new ExecaProcessRunner(SILENT_LOGGER),
+      downloadDeps: createDownloadDeps(),
+      env: {},
+      platform: platformInfo.platform as SupportedPlatform,
+      logger: SILENT_LOGGER,
+    });
+    const version = await resolver.seed(reportProgress(binary));
+    console.log(`opencode v${version} ready for tests`);
+    return;
+  }
+
+  const { request, binaryPath } = buildVscodiumRequest(pathProvider, platformInfo);
   if (existsSync(binaryPath)) {
     return;
   }
 
-  // Download the binary
-  const version = binary === "vscodium" ? VSCODIUM_VERSION : OPENCODE_VERSION;
-  console.log(`Downloading ${binary} v${version} for tests...`);
-
-  const deps: DownloadDeps = {
-    httpClient: new DefaultNetworkLayer(SILENT_LOGGER),
-    fileSystemLayer: new DefaultFileSystemBoundary(SILENT_LOGGER),
-    archiveExtractor: new DefaultArchiveExtractor(),
-    logger: SILENT_LOGGER,
-  };
-
-  await downloadBinary(request, deps, (progress) => {
-    // `\r` progress only on a terminal; a CI log would get one line per update.
-    if (process.stdout.isTTY && progress.totalBytes) {
-      const percent = Math.round((progress.bytesDownloaded / progress.totalBytes) * 100);
-      process.stdout.write(`\r  Downloading ${binary}: ${percent}%`);
-    }
-  });
-
+  console.log(`Downloading ${binary} v${VSCODIUM_VERSION} for tests...`);
+  await downloadBinary(request, createDownloadDeps(), reportProgress(binary));
   process.stdout.write("\n");
   console.log(`Downloaded ${binary} to ${binaryPath}`);
 }
@@ -213,12 +247,15 @@ export function getBinaryPathForTests(
 ): string {
   const pathProvider = options?.pathProvider ?? getTestPathProvider();
   const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
-  const { binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
+  const binaryPath =
+    binary === "opencode"
+      ? findDownloadedOpencode(pathProvider, platformInfo)
+      : buildVscodiumRequest(pathProvider, platformInfo).binaryPath;
 
-  if (!existsSync(binaryPath)) {
+  if (binaryPath === null || !existsSync(binaryPath)) {
     throw new Error(
-      `Binary ${binary} not found at ${binaryPath}. ` +
-        `Run 'pnpm install' to download binaries or call ensureBinaryForTests() first.`
+      `Binary ${binary} not found under ${pathProvider.bundlePath(binary).toNative()}. ` +
+        `Call ensureBinaryForTests() first.`
     );
   }
 

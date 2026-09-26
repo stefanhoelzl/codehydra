@@ -380,9 +380,9 @@ export interface AppHandle {
  * a packaged Electron app plus a VSCodium server plus an opencode server is not
  * something to run several of at once.
  *
- * `cold: true` hands back a driver but does not reset or launch: the cold-start
- * spec does both itself, inside its test, because it has to assert on the empty
- * root first and then watch the wizard come up. Teardown is shared either way —
+ * `cold: true` hands back a driver but does not reset or launch: the
+ * download-binaries spec does both itself, inside its test, because it has to
+ * seed the empty root before the app starts on it. Teardown is shared either way —
  * that is the point of routing every spec through here.
  */
 export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): AppHandle {
@@ -456,7 +456,7 @@ export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void
   throw new Error(`CodeHydra did not publish connection details within ${timeoutMs}ms`);
 }
 
-/** Cold start: an empty root, so the wizard and the downloads both run for real. */
+/** Cold start: an empty root, nothing downloaded or configured yet. */
 export function resetToColdStart(): void {
   resetRoot();
 }

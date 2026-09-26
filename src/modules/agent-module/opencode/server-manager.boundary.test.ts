@@ -8,12 +8,13 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
-import { OPENCODE_VERSION } from "./setup-info";
+import type { ResolvedAgentBinary } from "../binary-resolver";
 import { ExecaProcessRunner } from "../../../boundaries/platform/process";
 import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import {
   ensureBinaryForTests,
+  getBinaryPathForTests,
   getTestPathProvider,
   warmBinaryForTests,
   BINARY_WARM_TIMEOUT_MS,
@@ -26,7 +27,6 @@ import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
@@ -34,6 +34,8 @@ describe("OpenCodeServerManager Boundary Tests", () => {
   let pathProvider: PathProvider;
   let networkLayer: DefaultNetworkLayer;
   let processRunner: ExecaProcessRunner;
+  /** The downloaded opencode these tests run. */
+  let TEST_BINARY: ResolvedAgentBinary;
 
   beforeAll(async () => {
     // Ensure opencode binary is available (downloads if missing)
@@ -42,6 +44,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
     // First exec of a fresh binary can stall on macOS (Gatekeeper assessment);
     // pay that cost here instead of inside the first test's timeout
     await warmBinaryForTests("opencode");
+    TEST_BINARY = { path: getBinaryPathForTests("opencode"), source: "download", version: null };
 
     // Create test directory
     testDir = join(tmpdir(), `opencode-server-test-${Date.now()}`);
@@ -81,14 +84,13 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
 
-      const port = await manager.startServer(workspacePath);
+      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
 
       expect(port).toBeGreaterThan(0);
       expect(port).toBeLessThan(65536);
@@ -104,13 +106,12 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath);
+      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
 
       // Verify health check endpoint works
       const response = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 5000 });
@@ -127,13 +128,12 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath);
+      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
 
       // Verify server is running
       const runningResponse = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, {
@@ -167,7 +167,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -179,7 +178,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       expect(existsSync(portsJsonPath)).toBe(false);
 
       // Start the server
-      await manager.startServer(workspacePath);
+      await manager.startServer(workspacePath, { binary: TEST_BINARY });
 
       // Verify no ports.json file was created
       // Port is stored in memory only, not written to disk
@@ -202,7 +201,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockAccessor("version.opencode", OPENCODE_VERSION),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -216,7 +214,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         JSON.stringify({ instructions: ["USER_RULES.md"] })
       );
 
-      const port = await manager.startServer(workspacePath);
+      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
 
       const response = await networkLayer.fetch(`http://127.0.0.1:${port}/config`, {
         timeout: 5000,

@@ -8,7 +8,7 @@
  * nothing waits on the result, so awaiting it would only delay the UI. It is
  * safe precisely because every path a rule touches is one nothing else writes:
  * retired directories no code references, log files older than the current
- * session, and bundle versions other than the live one. The one sweep that is
+ * session, and bundle versions other than the ones in use. The one sweep that is
  * order-critical — clearing the temp root before a workspace writes its agent
  * config into it — deliberately stays in temp-dir-module, where it is awaited
  * in the earlier "init" hook.
@@ -74,23 +74,25 @@ export interface PruneEmptyRule {
 }
 
 /**
- * Keep only the live version of a downloaded bundle, delete every other child.
+ * Keep only the versions of a downloaded bundle this launch uses, delete every
+ * other child.
  *
- * `live` is read when the rule runs, not when it is declared, so it reflects
- * the resolved configuration. An empty live version (an agent that ships its
- * binary rather than downloading one) means no version directory is expected,
- * so everything goes.
+ * `keep` is read when the rule runs, not when it is declared, so it reflects
+ * what this launch resolved. An empty list (an agent running its system
+ * install) means no version directory is needed, so everything goes; null
+ * (not resolved this launch, e.g. an agent nothing asked about yet) leaves the
+ * directory alone rather than sweep on a guess.
  */
 export interface BundleRule {
   readonly kind: "bundle";
   /** Path relative to the data root. */
   readonly path: string;
-  /** The version this launch resolved, or null when nothing is downloaded. */
-  readonly live: () => string | null;
+  /** The version directories in use, or null when unknown this launch. */
+  readonly keep: () => readonly string[] | null;
   /**
    * Skip in development builds. Dev shares its data root with the binaries
-   * that `pnpm install` and the test helpers download, and those are pinned to
-   * versions the running app does not resolve.
+   * the test helpers download, which may be versions the running app does not
+   * resolve.
    */
   readonly packagedOnly: true;
 }
@@ -223,13 +225,16 @@ export function createCleanupModule(deps: CleanupModuleDeps): IntentModule {
       return 0;
     }
 
+    const keep = rule.keep();
+    if (keep === null) {
+      return 0;
+    }
     const dir = pathProvider.dataPath(rule.path);
-    const live = rule.live();
     const entries = await listOrEmpty(dir);
 
     let removed = 0;
     for (const entry of entries) {
-      if (entry.name === live) {
+      if (keep.includes(entry.name)) {
         continue;
       }
       await remove(new Path(dir, entry.name));

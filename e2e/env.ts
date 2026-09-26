@@ -32,7 +32,7 @@ export function mode(): Mode {
 
 /**
  * Deterministic so every Playwright worker and project resolves the same root:
- * `cold-start` seeds it, the warm projects reuse it. Overridable, but the guard
+ * `download-binaries` seeds it, the warm projects reuse it. Overridable, but the guard
  * below still applies to whatever is set.
  */
 export const ROOT_DIR =

@@ -36,16 +36,23 @@ export interface DownloadProgress {
  */
 export type DownloadProgressCallback = (progress: DownloadProgress) => void;
 
-/**
- * Request to download and extract a binary.
- */
-export interface DownloadRequest {
+/** Fields every download request carries. */
+interface DownloadRequestBase {
   /** Name for logging and temp file naming */
   readonly name: string;
   /** Download URL */
   readonly url: string;
-  /** Extraction destination directory */
+  /** Destination directory */
   readonly destDir: string;
+  /**
+   * Expected SHA-256 of the downloaded bytes (hex). Checked before anything is
+   * written, so a mismatch leaves nothing on disk.
+   */
+  readonly sha256?: string;
+}
+
+/** Download an archive and extract it into `destDir`. */
+export interface ArchiveDownloadRequest extends DownloadRequestBase {
   /** Archive extension for temp file naming (e.g., ".tar.gz", ".zip") */
   readonly archiveExtension: ArchiveExtension;
   /** Relative path to chmod +x on Unix (optional) */
@@ -53,3 +60,16 @@ export interface DownloadRequest {
   /** Subpath within the extracted archive to promote to destDir root. */
   readonly subPath?: string;
 }
+
+/** Download a single executable and save it as `destDir/executablePath`. */
+export interface FileDownloadRequest extends DownloadRequestBase {
+  readonly archiveExtension?: undefined;
+  /** File name inside `destDir`; made executable on Unix. */
+  readonly executablePath: string;
+}
+
+/**
+ * Request to download a binary: an archive to extract, or (no
+ * `archiveExtension`) a single executable file.
+ */
+export type DownloadRequest = ArchiveDownloadRequest | FileDownloadRequest;

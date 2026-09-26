@@ -13,7 +13,6 @@ import { DefaultPathProvider } from "./boundaries/platform/path-provider";
 import { createMockBuildInfo } from "./boundaries/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "./boundaries/platform/platform-info.test-utils";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./modules/ide-server-module/vscodium";
-import { OPENCODE_VERSION } from "./modules/agent-module/opencode/setup-info";
 import { Path } from "./utils/path/path";
 import type { PathProvider } from "./boundaries/platform/path-provider";
 import type { SupportedPlatform } from "./boundaries/platform/platform-info";
@@ -56,7 +55,6 @@ describe("Main process wiring", () => {
       readonly userDataDir: string;
       readonly binDir: string;
       readonly ideServerDir: string;
-      readonly opencodeDir: string;
     }
 
     function createIdeServerConfig(
@@ -75,7 +73,6 @@ describe("Main process wiring", () => {
         userDataDir: pathProvider.dataPath("vscode/user-data").toNative(),
         binDir: pathProvider.dataPath("bin").toNative(),
         ideServerDir: pathProvider.bundlePath(`vscodium/${VSCODIUM_VERSION}`).toNative(),
-        opencodeDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
       };
     }
 

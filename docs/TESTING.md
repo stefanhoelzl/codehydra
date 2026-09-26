@@ -245,9 +245,10 @@ Note "packaged" does not imply "production": `isDevelopment` comes from `_CH_BUI
 at build time, not from `app.isPackaged`, so CI's PR artifacts are dev-flavored. Without the
 override such a build writes its data into whatever `cwd` it inherited.
 
-**Projects.** `cold-start` runs against an empty root: it drives the first-run wizard,
-picks OpenCode, waits out the real VSCodium + opencode downloads, and leaves the root
-warm. The `opencode` and `claude` projects then run the remaining specs against that warm
+**Projects.** `download-binaries` runs against an empty root: it runs the app with
+`--download-binaries` (real VSCodium, Claude and OpenCode downloads), seeds `config.json`
+with the OpenCode choice, then starts the app once so the VSIX installs run, and leaves the
+root warm. (The first-run wizard's ordering is covered by `app-start.integration.test.ts`.) The `opencode` and `claude` projects then run the remaining specs against that warm
 root, flipping agent with `--agent=` (CLI beats config.json, and `wasConfigured()` is now
 true so the wizard stays away). `workers: 1`, `retries: 0`.
 

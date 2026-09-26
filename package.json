@@ -39,7 +39,7 @@
     "validate": "pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build && pnpm site:check && pnpm site:build",
     "validate:fix": "pnpm format && pnpm lint:fix && pnpm check && pnpm test && pnpm build && pnpm site:check && pnpm site:build",
     "validate:quick": "pnpm format && pnpm lint:fix && pnpm check",
-    "postinstall": "node node_modules/electron/install.js && tsx scripts/download-binaries.ts",
+    "postinstall": "node node_modules/electron/install.js",
     "dist": "pnpm build && pnpm dist:linux && pnpm dist:win && pnpm dist:mac",
     "dist:win": "electron-builder --win nsis dir",
     "dist:linux": "pnpm dist:linux:appimage",

@@ -11,8 +11,6 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
@@ -39,26 +37,17 @@ function main(userArgs: readonly string[]): never {
     process.exit(EXIT_ENV_ERROR);
   }
 
-  // 2. Read and validate _CH_OPENCODE_DIR
-  const opencodeDir = process.env._CH_OPENCODE_DIR;
-  if (!opencodeDir) {
-    console.error("Error: _CH_OPENCODE_DIR not set.");
+  // 2. The opencode binary CodeHydra resolved for this workspace (system
+  //    install or download) — the same one its server runs.
+  const binaryPath = process.env._CH_OPENCODE_BIN;
+  if (!binaryPath) {
+    console.error("Error: _CH_OPENCODE_BIN not set.");
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
   }
-
-  // 3. Construct binary path
-  const isWindows = process.platform === "win32";
-  let binaryPath: string;
-
-  if (isWindows) {
-    // On Windows, prefer .exe but fallback to .cmd
-    const exePath = join(opencodeDir, "opencode.exe");
-    const cmdPath = join(opencodeDir, "opencode.cmd");
-    binaryPath = existsSync(exePath) ? exePath : cmdPath;
-  } else {
-    binaryPath = join(opencodeDir, "opencode");
-  }
+  // A Windows .cmd shim requires shell:true, and the shell then needs the
+  // path quoted.
+  const useShell = process.platform === "win32" && binaryPath.toLowerCase().endsWith(".cmd");
 
   // 4. Build base URL
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -74,10 +63,9 @@ function main(userArgs: readonly string[]): never {
   args.push(...userArgs);
 
   // 7. Spawn opencode binary
-  // Note: .cmd files on Windows require shell:true to execute
-  const result = spawnSync(binaryPath, args, {
+  const result = spawnSync(useShell ? `"${binaryPath}"` : binaryPath, args, {
     stdio: "inherit",
-    shell: binaryPath.endsWith(".cmd"),
+    shell: useShell,
   });
 
   // 8. Handle result

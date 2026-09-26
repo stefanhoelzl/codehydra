@@ -231,12 +231,6 @@ export interface IdeServerModuleDeps {
   readonly archiveExtractor?: ArchiveExtractor;
   readonly configService: Config;
   /**
-   * Resolve the native path to the bundled OpenCode binary directory, injected
-   * into the IDE server environment as `_CH_OPENCODE_DIR`. Owned by the
-   * OpenCode layer so the IDE server doesn't reach into agent-owned config.
-   */
-  readonly resolveOpencodeBundleDir: () => string;
-  /**
    * Presenter for the port-conflict dialog.
    *
    * Optional: without it a busy port fails the way it always did. The IDE
@@ -270,6 +264,8 @@ export interface IdeServerModuleHandle {
   nodePath(): string;
   /** The IDE bundle version this launch resolved (config override or built-in). */
   version(): string;
+  /** Download the IDE server bundle unless it is already present (`--download-binaries`). */
+  ensureDownloaded(onProgress?: DownloadProgressCallback): Promise<void>;
 }
 
 export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModuleHandle {
@@ -802,14 +798,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       }
 
       // Concrete wrapper invocations resolved from the active descriptor, so
-      // the wrapper scripts stay distribution-agnostic. Plus the opencode dir
-      // for the agent wrappers.
+      // the wrapper scripts stay distribution-agnostic.
       const { binaryPath, prefixArgs, ideServerDir } = resolveIdeServerPaths();
       const remoteCli = ide.remoteCli(ideServerDir, deps.platform);
       cleanEnv._CH_IDE_REMOTE_CLI = remoteCli.exe;
       cleanEnv._CH_IDE_REMOTE_CLI_ARGS = formatRemoteCliArgs(remoteCli.args, deps.platform);
       cleanEnv._CH_IDE_NODE = ide.nodeBinary(ideServerDir, deps.platform);
-      cleanEnv._CH_OPENCODE_DIR = deps.resolveOpencodeBundleDir();
 
       serverProcess = processRunner.run(binaryPath, [...prefixArgs, ...args], {
         cwd: config.runtimeDir,
@@ -1352,5 +1346,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     // Read at call time, like nodePath: the version only settles once config
     // has loaded.
     version: () => vscodiumVersionConfig.get(),
+    async ensureDownloaded(onProgress) {
+      const result = await preflight();
+      if (!result.success) {
+        throw new IdeServerError(result.error.message);
+      }
+      if (result.needsDownload) {
+        await downloadIdeServer(onProgress);
+      }
+    },
   };
 }

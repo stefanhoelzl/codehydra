@@ -257,7 +257,7 @@ describe("CleanupModule Integration", () => {
   });
 
   describe("bundle", () => {
-    it("keeps only the live version", async () => {
+    it("keeps only the versions in use", async () => {
       const { run, fileSystem } = createTestSetup({
         entries: {
           [data("vscodium")]: directory(),
@@ -266,7 +266,7 @@ describe("CleanupModule Integration", () => {
           [data("vscodium/1.126.04524/node")]: file("binary"),
         },
         rules: [
-          { kind: "bundle", path: "vscodium", live: () => "1.126.04524", packagedOnly: true },
+          { kind: "bundle", path: "vscodium", keep: () => ["1.126.04524"], packagedOnly: true },
         ],
       });
 
@@ -278,15 +278,13 @@ describe("CleanupModule Integration", () => {
       expect(exists(fileSystem, data("vscodium/1.126.04524/node"))).toBe(true);
     });
 
-    it("removes every version when nothing is downloaded for this agent", async () => {
-      // Claude ships its binary rather than downloading one (CLAUDE_VERSION is
-      // null), so any version directory is a leftover from a config override.
+    it("removes every version when the agent runs its system install", async () => {
       const { run, fileSystem } = createTestSetup({
         entries: {
           [data("claude")]: directory(),
           [data("claude/1.2.3")]: directory(),
         },
-        rules: [{ kind: "bundle", path: "claude", live: () => null, packagedOnly: true }],
+        rules: [{ kind: "bundle", path: "claude", keep: () => [], packagedOnly: true }],
       });
 
       await run();
@@ -294,15 +292,66 @@ describe("CleanupModule Integration", () => {
       await vi.waitFor(() => expect(exists(fileSystem, data("claude/1.2.3"))).toBe(false));
     });
 
+    it("keeps a version still downloading alongside the one in use", async () => {
+      const { run, fileSystem } = createTestSetup({
+        entries: {
+          [data("claude")]: directory(),
+          [data("claude/2.1.200")]: directory(),
+          [data("claude/2.1.274")]: directory(),
+          [data("claude/2.1.283")]: directory(),
+        },
+        rules: [
+          {
+            kind: "bundle",
+            path: "claude",
+            keep: () => ["2.1.274", "2.1.283"],
+            packagedOnly: true,
+          },
+        ],
+      });
+
+      await run();
+
+      await vi.waitFor(() => expect(exists(fileSystem, data("claude/2.1.200"))).toBe(false));
+      expect(exists(fileSystem, data("claude/2.1.274"))).toBe(true);
+      expect(exists(fileSystem, data("claude/2.1.283"))).toBe(true);
+    });
+
+    it("leaves an agent alone whose binary this launch has not resolved", async () => {
+      const logger = { ...SILENT_LOGGER, info: vi.fn() };
+      const { run, fileSystem } = createTestSetup({
+        entries: {
+          [data("opencode")]: directory(),
+          [data("opencode/1.18.32")]: directory(),
+          [data("logs")]: directory(),
+          [data("logs/2026-01-12T21-33-04-aaaa.log")]: file("old"),
+          [data("logs/2026-08-28T07-35-51-bbbb.log")]: file("current"),
+        },
+        rules: [
+          { kind: "bundle", path: "opencode", keep: () => null, packagedOnly: true },
+          { kind: "keepRecent", path: "logs", keep: 1 },
+        ],
+        logger,
+      });
+
+      await run();
+
+      // The later rule finishing means the bundle rule has run.
+      await vi.waitFor(() => {
+        expect(exists(fileSystem, data("logs/2026-01-12T21-33-04-aaaa.log"))).toBe(false);
+      });
+      expect(exists(fileSystem, data("opencode/1.18.32"))).toBe(true);
+    });
+
     it("does nothing in a development build", async () => {
-      // Dev shares its data root with binaries pnpm install and the test
-      // helpers download, pinned to versions the running app does not resolve.
+      // Dev shares its data root with binaries the test helpers download,
+      // which may be versions the running app does not resolve.
       const { run, fileSystem } = createTestSetup({
         entries: {
           [data("opencode")]: directory(),
           [data("opencode/0.9.0")]: directory(),
         },
-        rules: [{ kind: "bundle", path: "opencode", live: () => "1.0.223", packagedOnly: true }],
+        rules: [{ kind: "bundle", path: "opencode", keep: () => ["1.0.223"], packagedOnly: true }],
         isPackagedBuild: false,
       });
 
@@ -312,7 +361,7 @@ describe("CleanupModule Integration", () => {
       expect(exists(fileSystem, data("opencode/0.9.0"))).toBe(true);
     });
 
-    it("reads the live version when it runs, not when it is declared", async () => {
+    it("reads the versions in use when it runs, not when it is declared", async () => {
       let resolved = "0.9.0";
       const { run, fileSystem } = createTestSetup({
         entries: {
@@ -320,10 +369,10 @@ describe("CleanupModule Integration", () => {
           [data("opencode/0.9.0")]: directory(),
           [data("opencode/1.0.223")]: directory(),
         },
-        rules: [{ kind: "bundle", path: "opencode", live: () => resolved, packagedOnly: true }],
+        rules: [{ kind: "bundle", path: "opencode", keep: () => [resolved], packagedOnly: true }],
       });
 
-      // Config settles after the module is constructed.
+      // The binary resolves after the module is constructed.
       resolved = "1.0.223";
       await run();
 
@@ -377,9 +426,9 @@ describe("CleanupModule Integration", () => {
           {
             kind: "bundle",
             path: "claude",
-            live: () => {
+            keep: () => {
               seen.push("bundle");
-              return null;
+              return [];
             },
             packagedOnly: true,
           },

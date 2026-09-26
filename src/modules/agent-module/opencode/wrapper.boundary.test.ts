@@ -70,6 +70,11 @@ process.exit(isNaN(exitCode) ? 0 : exitCode);
   });
 }
 
+/** The fake opencode in `dir`, as CodeHydra hands it over in `_CH_OPENCODE_BIN`. */
+function opencodeIn(dir: string): string {
+  return join(dir, process.platform === "win32" ? "opencode.cmd" : "opencode");
+}
+
 describe("ch opencode boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let opencodeDir: string;
@@ -93,7 +98,7 @@ describe("ch opencode boundary tests", () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
         {
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           // _CH_OPENCODE_PORT not set
         },
         tempDir.path,
@@ -110,7 +115,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "not-a-number",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -125,7 +130,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "0",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -140,7 +145,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "-100",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -155,7 +160,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "70000",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -165,19 +170,19 @@ describe("ch opencode boundary tests", () => {
       expect(result.stderr).toContain("Error: Invalid _CH_OPENCODE_PORT");
     });
 
-    it("errors when _CH_OPENCODE_DIR is not set", async () => {
+    it("errors when _CH_OPENCODE_BIN is not set", async () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          // _CH_OPENCODE_DIR not set
+          // _CH_OPENCODE_BIN not set
         },
         tempDir.path,
         ["opencode"]
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Error: _CH_OPENCODE_DIR not set");
+      expect(result.stderr).toContain("Error: _CH_OPENCODE_BIN not set");
       expect(result.stderr).toContain("Make sure you're in a CodeHydra workspace terminal");
     });
   });
@@ -191,7 +196,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -210,7 +215,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
         },
         tempDir.path,
         ["opencode"]
@@ -228,7 +233,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           _CH_OPENCODE_SESSION_ID: "ses-abc123",
         },
         tempDir.path,
@@ -252,7 +257,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           OPENCODE_EXIT_CODE: "42",
         },
         tempDir.path,
@@ -272,7 +277,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           _CH_OPENCODE_SESSION_ID: "ses-abc123",
         },
         tempDir.path,
@@ -291,7 +296,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           // _CH_OPENCODE_SESSION_ID not set
         },
         tempDir.path,
@@ -309,7 +314,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           _CH_OPENCODE_SESSION_ID: "",
         },
         tempDir.path,
@@ -333,7 +338,7 @@ describe("ch opencode boundary tests", () => {
         COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "59999", // Unlikely to be in use
-          _CH_OPENCODE_DIR: opencodeDir,
+          _CH_OPENCODE_BIN: opencodeIn(opencodeDir),
           _CH_OPENCODE_SESSION_ID: "ses-123",
         },
         tempDir.path,

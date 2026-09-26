@@ -11,13 +11,9 @@
 import type { AgentModuleProvider } from "../agent-module-provider";
 import type { WorkspacePath } from "../../../shared/ipc";
 import { Path } from "../../../utils/path/path";
-import type { ArchiveExtension, DownloadDeps } from "../../../utils/binary-download";
-import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
-import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
-import { getOpencodeBundleDir, getOpencodeUrlForVersion } from "./setup-info";
+import type { AgentBinaryResolver } from "../binary-resolver";
 import { OpenCodeProvider } from "./provider";
 import { countsToStatus } from "../status-utils";
 import { createAgentModuleProvider } from "../module-provider";
@@ -31,16 +27,8 @@ import { createAgentModuleProvider } from "../module-provider";
  */
 export interface OpenCodeModuleProviderDeps {
   readonly serverManager: OpenCodeServerManager;
-  readonly downloadDeps: DownloadDeps;
-  readonly binaryConfig: {
-    readonly name: string;
-    readonly executablePath: string;
-    readonly archiveExtension: ArchiveExtension;
-  };
-  readonly versionConfig: PersistedAccessor<string>;
-  readonly pathProvider: Pick<PathProvider, "bundlePath">;
-  readonly platform: SupportedPlatform;
-  readonly arch: SupportedArch;
+  /** Which `opencode` to run (system install or a download). */
+  readonly binary: AgentBinaryResolver;
   readonly logger: Logger;
 }
 
@@ -55,16 +43,7 @@ export interface OpenCodeModuleProviderDeps {
 export function createOpenCodeModuleProvider(
   deps: OpenCodeModuleProviderDeps
 ): AgentModuleProvider {
-  const {
-    serverManager,
-    downloadDeps,
-    binaryConfig,
-    versionConfig,
-    pathProvider,
-    platform,
-    arch,
-    logger,
-  } = deps;
+  const { serverManager, binary, logger } = deps;
 
   /**
    * Track workspaces that have had TUI attached.
@@ -88,20 +67,10 @@ export function createOpenCodeModuleProvider(
       serverManager,
 
       // --- Binary ---
-      resolveBinary() {
-        const version = versionConfig.get();
-        const destDir = getOpencodeBundleDir(pathProvider, version).toNative();
-        return {
-          destDir,
-          request: () => ({
-            name: binaryConfig.name,
-            url: getOpencodeUrlForVersion(version, platform, arch),
-            destDir,
-            archiveExtension: binaryConfig.archiveExtension,
-            executablePath: binaryConfig.executablePath,
-          }),
-        };
-      },
+      binary,
+      // The TUI (`ch opencode` → `opencode attach`) runs the same binary as the
+      // server it attaches to.
+      binaryEnv: (resolved) => ({ _CH_OPENCODE_BIN: resolved.path }),
 
       // --- Provider lifecycle ---
       createProvider: (workspacePath) => new OpenCodeProvider(workspacePath, logger),
@@ -149,7 +118,7 @@ export function createOpenCodeModuleProvider(
       },
 
       // --- Workspace start ---
-      startServer: async (workspacePath, options) => {
+      startServer: async (workspacePath, options, resolved) => {
         // OpenCode applies the named agent/model per message, so a prompt is
         // required to act on them; without a prompt there's nothing to send.
         const ip = options?.initialPrompt;
@@ -164,6 +133,7 @@ export function createOpenCodeModuleProvider(
           // The bash tool runs inside this server, so this is where the
           // workspace environment has to be for the agent's commands to see it.
           ...(options?.env !== undefined && { env: options.env }),
+          binary: resolved,
         });
       },
 
@@ -196,6 +166,6 @@ export function createOpenCodeModuleProvider(
         tuiAttachedWorkspaces.clear();
       },
     },
-    { logger, downloadDeps, binaryName: binaryConfig.name }
+    { logger, binaryName: "opencode" }
   );
 }

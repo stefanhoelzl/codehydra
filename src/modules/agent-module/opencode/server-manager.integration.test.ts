@@ -22,9 +22,16 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
+import type { ResolvedAgentBinary } from "../binary-resolver";
 import { sep } from "node:path";
 import { testPath } from "../../../shared/test-fixtures";
+
+/** The `opencode` every server in these tests runs. */
+const TEST_BINARY: ResolvedAgentBinary = {
+  path: "/bundles/opencode/1.0.223/opencode",
+  source: "download",
+  version: "1.0.223",
+};
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -75,7 +82,6 @@ describe("OpenCodeServerManager integration", () => {
       mockPortManager,
       mockHttpClient,
       mockPathProvider,
-      createMockAccessor("version.opencode", "1.0.223"),
       SILENT_LOGGER
     );
   });
@@ -90,7 +96,9 @@ describe("OpenCodeServerManager integration", () => {
       serverManager.onServerStarted(startedCallback);
 
       // Start server
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
 
       // Callback should have been fired (with undefined pending prompt)
       expect(startedCallback).toHaveBeenCalledWith(
@@ -105,7 +113,9 @@ describe("OpenCodeServerManager integration", () => {
       serverManager.onServerStopped(stoppedCallback);
 
       // Start and stop server
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
       await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
 
       // Callback should have been fired with isRestart=false
@@ -122,8 +132,12 @@ describe("OpenCodeServerManager integration", () => {
       });
 
       // Start and stop two servers
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
+      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
+        binary: TEST_BINARY,
+      });
       await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
       await serverManager.stopServer(testPath("/workspace/feature-b").toNative());
 
@@ -138,7 +152,9 @@ describe("OpenCodeServerManager integration", () => {
   describe("workspace lifecycle", () => {
     it("server starts on add, stops on remove", async () => {
       // Start
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
       expect(port).toBe(14001);
 
       // Stop
@@ -149,9 +165,15 @@ describe("OpenCodeServerManager integration", () => {
 
   describe("multiple workspaces", () => {
     it("each gets own server and port", async () => {
-      const port1 = await serverManager.startServer(testPath("/workspace/feature-a").toNative());
-      const port2 = await serverManager.startServer(testPath("/workspace/feature-b").toNative());
-      const port3 = await serverManager.startServer(testPath("/workspace/feature-c").toNative());
+      const port1 = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
+      const port2 = await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
+        binary: TEST_BINARY,
+      });
+      const port3 = await serverManager.startServer(testPath("/workspace/feature-c").toNative(), {
+        binary: TEST_BINARY,
+      });
 
       expect(port1).toBe(14001);
       expect(port2).toBe(14002);
@@ -167,19 +189,28 @@ describe("OpenCodeServerManager integration", () => {
     }
 
     it("starts the server with the workspace environment, so its tools see it", async () => {
-      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+      await serverManager.startServer(WS, {
+        binary: TEST_BINARY,
+        env: { DATABASE_URL: "postgres://x" },
+      });
 
       expect(lastSpawnEnv().DATABASE_URL).toBe("postgres://x");
     });
 
     it("keeps CodeHydra's own variables over a clashing key", async () => {
-      await serverManager.startServer(WS, { env: { _CH_WORKSPACE_PATH: "/elsewhere" } });
+      await serverManager.startServer(WS, {
+        binary: TEST_BINARY,
+        env: { _CH_WORKSPACE_PATH: "/elsewhere" },
+      });
 
       expect(lastSpawnEnv()._CH_WORKSPACE_PATH).not.toBe("/elsewhere");
     });
 
     it("spawns a restart with the same environment", async () => {
-      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+      await serverManager.startServer(WS, {
+        binary: TEST_BINARY,
+        env: { DATABASE_URL: "postgres://x" },
+      });
       await serverManager.restartServer(WS);
 
       expect(mockProcessRunner.$.spawnedCount).toBe(2);
@@ -187,11 +218,59 @@ describe("OpenCodeServerManager integration", () => {
     });
 
     it("forgets the environment once the server is stopped", async () => {
-      await serverManager.startServer(WS, { env: { DATABASE_URL: "postgres://x" } });
+      await serverManager.startServer(WS, {
+        binary: TEST_BINARY,
+        env: { DATABASE_URL: "postgres://x" },
+      });
       await serverManager.stopServer(WS);
-      await serverManager.startServer(WS);
+      await serverManager.startServer(WS, { binary: TEST_BINARY });
 
       expect(lastSpawnEnv().DATABASE_URL).toBeUndefined();
+    });
+  });
+
+  describe("binary", () => {
+    const WS = testPath("/workspace/feature-a").toNative();
+    const SYSTEM_BINARY: ResolvedAgentBinary = {
+      path: "/usr/local/bin/opencode",
+      source: "system",
+      version: null,
+    };
+
+    function lastSpawn(): { command: string; config: Record<string, unknown> } {
+      const spawned = mockProcessRunner.$.spawned(mockProcessRunner.$.spawnedCount - 1).$;
+      const content = spawned.env?.OPENCODE_CONFIG_CONTENT ?? "{}";
+      return { command: spawned.command, config: JSON.parse(content) as Record<string, unknown> };
+    }
+
+    it("runs the binary it was given", async () => {
+      await serverManager.startServer(WS, { binary: SYSTEM_BINARY });
+
+      expect(lastSpawn().command).toBe("/usr/local/bin/opencode");
+    });
+
+    it("turns off OpenCode's self-update for a binary CodeHydra downloaded", async () => {
+      await serverManager.startServer(WS, { binary: TEST_BINARY });
+
+      expect(lastSpawn().config.autoupdate).toBe(false);
+    });
+
+    it("leaves a system install's self-update to the user", async () => {
+      await serverManager.startServer(WS, { binary: SYSTEM_BINARY });
+
+      expect(lastSpawn().config).not.toHaveProperty("autoupdate");
+    });
+
+    it("restarts with the binary the server started with", async () => {
+      await serverManager.startServer(WS, { binary: SYSTEM_BINARY });
+      await serverManager.restartServer(WS);
+
+      expect(mockProcessRunner.$.spawnedCount).toBe(2);
+      expect(lastSpawn().command).toBe("/usr/local/bin/opencode");
+    });
+
+    it("refuses to start without a binary", async () => {
+      await expect(serverManager.startServer(WS)).rejects.toThrow("No opencode binary");
     });
   });
 
@@ -199,7 +278,8 @@ describe("OpenCodeServerManager integration", () => {
     it("restartServer returns same port", async () => {
       // Start server
       const originalPort = await serverManager.startServer(
-        testPath("/workspace/feature-a").toNative()
+        testPath("/workspace/feature-a").toNative(),
+        { binary: TEST_BINARY }
       );
       expect(originalPort).toBe(14001);
 
@@ -236,7 +316,9 @@ describe("OpenCodeServerManager integration", () => {
       });
 
       // Start server (fires started)
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
       expect(startedCallback).toHaveBeenCalledTimes(1);
       callOrder = []; // Reset for restart test
 
@@ -250,7 +332,9 @@ describe("OpenCodeServerManager integration", () => {
 
     it("restartServer during starting state waits then restarts", async () => {
       // Start a server that will resolve
-      const startPromise = serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      const startPromise = serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
 
       // Immediately try to restart (while starting)
       const restartPromise = serverManager.restartServer(
@@ -270,7 +354,9 @@ describe("OpenCodeServerManager integration", () => {
 
     it("restartServer during restarting state returns in-progress promise", async () => {
       // Start server
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
 
       // Start two restarts concurrently
       const restartPromise1 = serverManager.restartServer(
@@ -295,14 +381,15 @@ describe("OpenCodeServerManager integration", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: 100, healthCheckIntervalMs: 10 }
       );
 
       try {
         // Start server
-        await shortTimeoutManager.startServer(testPath("/workspace/feature-a").toNative());
+        await shortTimeoutManager.startServer(testPath("/workspace/feature-a").toNative(), {
+          binary: TEST_BINARY,
+        });
 
         // Make health check fail (simulating port conflict)
         mockHttpClient.fetch.mockRejectedValue(new Error("Connection refused"));
@@ -324,7 +411,9 @@ describe("OpenCodeServerManager integration", () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
       serverManager.triggerWrapperStart(testPath("/workspace/feature-a").toNative());
 
       expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
@@ -334,7 +423,9 @@ describe("OpenCodeServerManager integration", () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+        binary: TEST_BINARY,
+      });
       serverManager.triggerWrapperStart(`${testPath("/workspace/feature-a").toNative()}${sep}`);
 
       expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
@@ -345,7 +436,7 @@ describe("OpenCodeServerManager integration", () => {
     it("are stable", async () => {
       // Rapid add/remove cycles
       for (let i = 0; i < 5; i++) {
-        await serverManager.startServer(`/workspace/feature-${i}`);
+        await serverManager.startServer(`/workspace/feature-${i}`, { binary: TEST_BINARY });
         await serverManager.stopServer(`/workspace/feature-${i}`);
       }
 
@@ -358,9 +449,15 @@ describe("OpenCodeServerManager integration", () => {
     it("handles concurrent starts/stops", async () => {
       // Start multiple concurrently
       const [port1, port2, port3] = await Promise.all([
-        serverManager.startServer(testPath("/workspace/feature-a").toNative()),
-        serverManager.startServer(testPath("/workspace/feature-b").toNative()),
-        serverManager.startServer(testPath("/workspace/feature-c").toNative()),
+        serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
+          binary: TEST_BINARY,
+        }),
+        serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
+          binary: TEST_BINARY,
+        }),
+        serverManager.startServer(testPath("/workspace/feature-c").toNative(), {
+          binary: TEST_BINARY,
+        }),
       ]);
 
       expect(port1).toBeDefined();

@@ -8,12 +8,17 @@
  * dominant Windows flake). globalSetup is awaited by the vitest main process
  * with no hook timeout, so a slow download can delay the run but never fail
  * it. Tests read the directory via inject("fakeClaudeBinDir").
+ *
+ * It also downloads the latest OpenCode once, for the opencode boundary tests:
+ * left to their own beforeAll, two test files running in parallel would
+ * extract into the same bundle directory at once.
  */
 
 import { join } from "node:path";
 import type { TestProject } from "vitest/node";
 import { createTempDir } from "../utils/testing/test-utils";
 import { createFakeClaudeBinary } from "../modules/agent-module/claude/fake-claude-binary";
+import { ensureBinaryForTests } from "../utils/testing/ensure-binaries";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -25,5 +30,6 @@ export default async function setup(project: TestProject): Promise<() => Promise
   const tempDir = await createTempDir();
   const fakeBinDir = await createFakeClaudeBinary(join(tempDir.path, "bin"));
   project.provide("fakeClaudeBinDir", fakeBinDir);
+  await ensureBinaryForTests("opencode");
   return () => tempDir.cleanup();
 }

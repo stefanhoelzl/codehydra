@@ -10,7 +10,9 @@ import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../utils/path/path";
 import { testPath } from "../../shared/test-fixtures";
 import { VSCODIUM_VERSION } from "../../modules/ide-server-module/vscodium";
-import { OPENCODE_VERSION } from "../../modules/agent-module/opencode/setup-info";
+
+/** Any agent version: bundle paths do not depend on which. */
+const OPENCODE_VERSION = "1.2.3";
 
 describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {

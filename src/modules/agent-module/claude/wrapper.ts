@@ -20,7 +20,7 @@
  * - _CH_CLAUDE_NO_SESSION_MARKER_PATH: Path to no-session marker (optional, new workspaces only)
  */
 
-import { spawnSync, execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -162,7 +162,6 @@ function buildInitialPromptArgs(config: InitialPromptConfig): string[] {
 // Exit codes
 const EXIT_ENV_ERROR = 1;
 const EXIT_SPAWN_FAILED = 2;
-const EXIT_NOT_FOUND = 3;
 
 /**
  * Result of spawning Claude CLI.
@@ -256,7 +255,7 @@ function hasUserResumeFlag(args: string[]): boolean {
  * first attempts to resume with --continue. If that fails (exit code non-zero),
  * retries without --continue.
  *
- * @param claudeBinary - The claude binary name (resolved via PATH)
+ * @param claudeBinary - The claude command (see claudeCommand)
  * @param baseArgs - Arguments to pass to Claude
  * @param options - Spawn options
  * @param deps - Injectable dependencies for testing
@@ -346,36 +345,21 @@ function getUserArgs(): string[] {
 }
 
 /**
- * Find the system-installed claude binary.
+ * How to spawn the claude binary CodeHydra resolved (`_CH_CLAUDE_BIN`, an
+ * absolute path: the system install or a download).
  *
- * On Windows we probe explicit extensions because npm-installed claude only
- * drops a `claude.cmd` shim (no `.exe`), and `.cmd` files require `shell: true`
- * for spawnSync (Node refuses direct execution since CVE-2024-27980).
- *
- * Returns the command name and whether spawn must go through a shell, or null
- * when no working binary is found on PATH.
+ * A Windows `.cmd` shim (what npm installs) requires `shell: true` for
+ * spawnSync (Node refuses direct execution since CVE-2024-27980); the shell
+ * then needs the path quoted.
  */
-function findSystemClaude(): { command: string; useShell: boolean } | null {
-  const candidates =
-    process.platform === "win32"
-      ? [
-          { command: "claude.exe", useShell: false },
-          { command: "claude.cmd", useShell: true },
-        ]
-      : [{ command: "claude", useShell: false }];
-
-  for (const candidate of candidates) {
-    try {
-      execSync(`${candidate.command} --version`, {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      return candidate;
-    } catch {
-      // Try next candidate
-    }
+export function claudeCommand(
+  binaryPath: string,
+  platform: NodeJS.Platform = process.platform
+): { command: string; useShell: boolean } {
+  if (platform === "win32" && binaryPath.toLowerCase().endsWith(".cmd")) {
+    return { command: `"${binaryPath}"`, useShell: true };
   }
-  return null;
+  return { command: binaryPath, useShell: false };
 }
 
 /**
@@ -389,23 +373,17 @@ async function main(): Promise<never> {
   // prompt is part of every session, so its absence is a broken setup, not a
   // launch that happens to carry no prompt.
   const systemPromptPath = process.env._CH_CLAUDE_SYSTEM_PROMPT;
+  // The binary CodeHydra resolved for this workspace (system install or download).
+  const binaryPath = process.env._CH_CLAUDE_BIN;
 
-  if (!settingsPath || !mcpConfigPath || !systemPromptPath) {
+  if (!settingsPath || !mcpConfigPath || !systemPromptPath || !binaryPath) {
     console.error("Error: CodeHydra Claude configuration not set.");
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
   }
 
-  // 2. Find the system claude binary
-  const claudeBinary = findSystemClaude();
-  if (!claudeBinary) {
-    console.error("Error: Claude CLI not found.");
-    console.error("");
-    console.error("Please install Claude CLI:");
-    console.error("  npm install -g @anthropic-ai/claude");
-    console.error("  or see: https://docs.anthropic.com/claude/installation");
-    process.exit(EXIT_NOT_FOUND);
-  }
+  // 2. The claude binary CodeHydra resolved
+  const claudeBinary = claudeCommand(binaryPath);
 
   // 3. Check for initial prompt (read and delete file before Claude starts)
   const initialPromptConfig = getInitialPromptConfig();
@@ -481,7 +459,6 @@ export async function runClaudeWrapper(): Promise<never> {
 
 // Export for testing
 export {
-  findSystemClaude,
   getInitialPromptConfig,
   buildInitialPromptArgs,
   buildPermissionArgs,

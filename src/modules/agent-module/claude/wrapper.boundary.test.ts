@@ -5,7 +5,7 @@
  * Tests the script with real Node.js execution and a fake claude binary.
  * These tests verify:
  * - Environment variable validation (SETTINGS, MCP_CONFIG)
- * - Claude binary discovery (findSystemClaude)
+ * - Running the binary CodeHydra resolved (_CH_CLAUDE_BIN)
  * - Argument construction (permissions, --ide, initial prompt)
  * - Session resume (--continue retry logic)
  * - Exit code propagation
@@ -70,6 +70,11 @@ function parseAllFakeClaudeOutputs(stdout: string): FakeClaudeOutput[] {
     .map((l) => JSON.parse(l) as FakeClaudeOutput);
 }
 
+/** The fake claude in `dir`, as CodeHydra hands it over in `_CH_CLAUDE_BIN`. */
+function claudeIn(dir: string): string {
+  return join(dir, isWindows ? "claude.exe" : "claude");
+}
+
 /**
  * Build a PATH that includes the fake binary dir and node's directory.
  */
@@ -108,6 +113,7 @@ describe("ch claude boundary tests", () => {
         {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -125,6 +131,7 @@ describe("ch claude boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -142,6 +149,7 @@ describe("ch claude boundary tests", () => {
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -154,23 +162,59 @@ describe("ch claude boundary tests", () => {
     });
   });
 
-  describe("binary not found", () => {
-    it("exits with code 3 when claude is not on PATH", async () => {
+  describe("binary", () => {
+    it("errors when _CH_CLAUDE_BIN is not set", async () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          // PATH only includes node dir — no fake claude binary
+          PATH: buildPath(fakeBinDir),
+        },
+        tempDir.path,
+        ["claude"]
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("CodeHydra Claude configuration not set");
+    });
+
+    it("runs _CH_CLAUDE_BIN, not the claude on PATH", async () => {
+      // PATH has no claude at all: only the resolved path can be what ran.
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: dirname(process.execPath),
         },
         tempDir.path,
         ["claude"]
       );
 
-      expect(result.status).toBe(3);
-      expect(result.stderr).toContain("Claude CLI not found");
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseFakeClaudeOutput(result.stdout)).not.toBeNull();
+    });
+
+    it("exits with code 2 when _CH_CLAUDE_BIN does not exist", async () => {
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: join(tempDir.path, "missing", "claude"),
+          PATH: dirname(process.execPath),
+        },
+        tempDir.path,
+        ["claude"]
+      );
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Failed to start Claude");
     });
   });
 
@@ -182,6 +226,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -212,6 +257,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
           CLAUDECODE: "1",
         },
@@ -235,6 +281,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
           CLAUDE_CODE_CHILD_SESSION: "1",
         },
@@ -262,6 +309,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
           // Both --continue attempt and retry exit 42
           CLAUDE_EXIT_CODE: "42",
@@ -289,6 +337,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -317,6 +366,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -344,6 +394,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -376,6 +427,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -402,6 +454,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -431,6 +484,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_INITIAL_PROMPT_FILE: promptFile,
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -458,6 +512,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -482,6 +537,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
           CLAUDE_EXIT_CODES: "1,0",
           CLAUDE_COUNTER_FILE: counterFile,
@@ -513,6 +569,7 @@ describe("ch claude boundary tests", () => {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
           _CH_CLAUDE_NO_SESSION_MARKER_PATH: markerPath,
+          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
           PATH: buildPath(fakeBinDir),
         },
         tempDir.path,
@@ -596,13 +653,14 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
     await tempDir.cleanup();
   });
 
-  it("discovers and spawns claude.cmd when no claude.exe exists", async () => {
+  it("spawns a claude.cmd shim through a shell", async () => {
     const result = await executeScript(
       COMPILED_SCRIPT_PATH,
       {
         _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
         _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
         _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+        _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
         PATH: buildPath(cmdBinDir),
       },
       tempDir.path,
@@ -635,6 +693,7 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
         _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
         _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
         _CH_INITIAL_PROMPT_FILE: promptFile,
+        _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
         PATH: buildPath(cmdBinDir),
       },
       tempDir.path,

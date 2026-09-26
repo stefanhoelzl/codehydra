@@ -4,11 +4,12 @@
  * Takes I/O dependencies as parameters — does no direct I/O itself.
  */
 
+import { createHash } from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BinaryDownloadError, getErrorMessage } from "../../shared/errors/service-errors.js";
 import { FileSystemError } from "../../shared/errors/service-errors.js";
-import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
+import type { ArchiveDownloadRequest, DownloadRequest, DownloadProgressCallback } from "./types.js";
 import type { ArchiveExtractor } from "../../boundaries/platform/archive-extractor.js";
 import type { HttpClient } from "../../boundaries/platform/network.js";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem.js";
@@ -22,7 +23,7 @@ export interface DownloadDeps {
   readonly httpClient: Pick<HttpClient, "fetch">;
   readonly fileSystemLayer: Pick<
     FileSystemBoundary,
-    "readdir" | "writeFileBuffer" | "unlink" | "rename" | "rm" | "makeExecutable"
+    "readdir" | "writeFileBuffer" | "unlink" | "rename" | "rm" | "makeExecutable" | "mkdir"
   >;
   readonly archiveExtractor: ArchiveExtractor;
   readonly logger?: Logger | undefined;
@@ -54,7 +55,11 @@ export async function isBinaryInstalled(
 }
 
 /**
- * Download and extract a binary.
+ * Download a binary: extract an archive, or save a single executable file.
+ *
+ * On failure `destDir` is removed, so a half-written install never looks
+ * installed to the next check. Callers only download into a directory that is
+ * not installed yet.
  *
  * @param request - Download request with URL, destination, etc.
  * @param deps - I/O dependencies
@@ -66,15 +71,48 @@ export async function downloadBinary(
   deps: DownloadDeps,
   onProgress?: DownloadProgressCallback
 ): Promise<void> {
-  const { name, url, destDir, executablePath, archiveExtension } = request;
+  const { name, url, destDir } = request;
 
   deps.logger?.info("Downloading", { name, url });
 
+  try {
+    const buffer = await downloadToBuffer(url, deps, onProgress);
+    if (request.sha256 !== undefined) {
+      verifySha256(buffer, request.sha256, url);
+    }
+
+    if (request.archiveExtension === undefined) {
+      await saveExecutable(buffer, destDir, request.executablePath, deps);
+    } else {
+      await extractArchive(buffer, request, deps, onProgress);
+    }
+
+    deps.logger?.info("Download complete", { name });
+  } catch (error) {
+    deps.logger?.warn("Download failed", { name, error: getErrorMessage(error) });
+    try {
+      await deps.fileSystemLayer.rm(destDir, { recursive: true, force: true });
+    } catch {
+      // Best effort: the original error is what the caller needs
+    }
+    throw error;
+  }
+}
+
+/**
+ * Write the archive to a temp file and extract it into `destDir`.
+ */
+async function extractArchive(
+  buffer: Buffer,
+  request: ArchiveDownloadRequest,
+  deps: DownloadDeps,
+  onProgress?: DownloadProgressCallback
+): Promise<void> {
+  const { name, destDir, executablePath, archiveExtension } = request;
   const tempFile = path.join(os.tmpdir(), `${name}-${Date.now()}${archiveExtension}`);
 
   try {
-    // Download to temp file
-    await downloadToFile(url, tempFile, deps, onProgress);
+    await writeBuffer(tempFile, buffer, deps);
 
     // Signal extraction phase before starting so the UI flips to "Extracting..."
     // immediately, even before the first progress callback arrives.
@@ -95,11 +133,6 @@ export async function downloadBinary(
     if (executablePath && process.platform !== "win32") {
       await setExecutablePermissions(path.join(destDir, executablePath), deps);
     }
-
-    deps.logger?.info("Download complete", { name });
-  } catch (error) {
-    deps.logger?.warn("Download failed", { name, error: getErrorMessage(error) });
-    throw error;
   } finally {
     // Clean up temp file
     try {
@@ -111,15 +144,56 @@ export async function downloadBinary(
 }
 
 /**
- * Download a file from URL to local path with progress reporting.
- * Buffers the download in memory and writes using FileSystemBoundary.
+ * Save a single executable as `destDir/executablePath`. Written under a temp
+ * name in the same directory and renamed, so the final name only ever holds a
+ * complete file.
  */
-async function downloadToFile(
+async function saveExecutable(
+  buffer: Buffer,
+  destDir: string,
+  executablePath: string,
+  deps: DownloadDeps
+): Promise<void> {
+  const finalPath = path.join(destDir, executablePath);
+  const partialPath = `${finalPath}.partial`;
+
+  try {
+    await deps.fileSystemLayer.mkdir(destDir);
+  } catch (error) {
+    throw new BinaryDownloadError(
+      `Failed to create ${destDir}: ${getErrorMessage(error)}`,
+      "EXTRACTION_FAILED"
+    );
+  }
+  await writeBuffer(partialPath, buffer, deps);
+  if (process.platform !== "win32") {
+    await setExecutablePermissions(partialPath, deps);
+  }
+  await deps.fileSystemLayer.rename(partialPath, finalPath);
+}
+
+/**
+ * Fail unless `buffer` hashes to `expected` (hex, case-insensitive).
+ */
+function verifySha256(buffer: Buffer, expected: string, url: string): void {
+  const actual = createHash("sha256").update(buffer).digest("hex");
+  if (actual !== expected.toLowerCase()) {
+    // NETWORK_ERROR: the bytes that arrived are not the bytes that were published.
+    throw new BinaryDownloadError(
+      `Checksum mismatch downloading from ${url}: expected sha256 ${expected}, got ${actual}`,
+      "NETWORK_ERROR"
+    );
+  }
+}
+
+/**
+ * Download a URL into memory with progress reporting.
+ */
+async function downloadToBuffer(
   url: string,
-  destPath: string,
   deps: DownloadDeps,
   onProgress?: DownloadProgressCallback
-): Promise<void> {
+): Promise<Buffer> {
   let response: Response;
   try {
     // Use longer timeout for large binary downloads
@@ -169,10 +243,13 @@ async function downloadToFile(
     );
   }
 
-  // Concatenate chunks into a single buffer
-  const buffer = Buffer.concat(chunks);
+  return Buffer.concat(chunks);
+}
 
-  // Write to file using FileSystemBoundary
+/**
+ * Write downloaded bytes through FileSystemBoundary.
+ */
+async function writeBuffer(destPath: string, buffer: Buffer, deps: DownloadDeps): Promise<void> {
   try {
     await deps.fileSystemLayer.writeFileBuffer(destPath, buffer);
   } catch (error) {
