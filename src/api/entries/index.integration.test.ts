@@ -30,6 +30,9 @@ function registry(dispatcher: Dispatcher = createMockDispatcher()) {
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config: createMockConfig(),
       readUserGuide: async () => "",
+      plugins: () => {
+        throw new Error("this test reaches no plugins");
+      },
     },
     SILENT_LOGGER
   );
@@ -247,6 +250,11 @@ describe("registry contents", () => {
         "log",
         "notification.close",
         "notification.show",
+        "plugin.disable",
+        "plugin.enable",
+        "plugin.errors",
+        "plugin.list",
+        "plugin.schema",
         "project.close",
         "project.list",
         "project.open",

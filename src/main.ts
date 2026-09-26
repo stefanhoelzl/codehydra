@@ -642,6 +642,7 @@ const operationRegistry = createRegistry(
     locks: lockModule.locks,
     config: configService,
     readUserGuide: () => helpModule.readUserGuide(),
+    plugins: () => pluginModule.api,
   },
   apiLogger
 );

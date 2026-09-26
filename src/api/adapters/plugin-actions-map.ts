@@ -75,6 +75,12 @@ export const PLUGIN_ACTIONS_MAP: Readonly<Record<OperationName, PluginActionMapp
   "lock.release": null,
   "lock.list": null,
   "lock.hold": null,
+  // A plugin enabling or disabling plugins is a trust decision it may not make.
+  "plugin.list": null,
+  "plugin.enable": null,
+  "plugin.disable": null,
+  "plugin.errors": null,
+  "plugin.schema": null,
   "config.get": null,
   "config.list": null,
   "config.set": null,

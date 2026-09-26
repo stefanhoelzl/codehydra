@@ -97,6 +97,8 @@ import type { WorkspacePath } from "../../intents/contract";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
+import type { PluginListing, Plugins } from "../../api/entries/deps";
+import { ApiError } from "../../api/errors";
 import { invokePluginAction } from "../../api/adapters/plugin-actions";
 import { notify } from "../presentation/notification-card";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
@@ -117,11 +119,10 @@ import {
   workspacePluginsDir,
   type DiscoveryProblem,
   type LoadedPlugin,
-  type PluginOrigin,
 } from "./discovery";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
-import { createPluginErrorBook, type PluginErrorBook, type PluginErrorEntry } from "./errors";
-import { createPluginTrust, type EnabledState, type PluginTrust } from "./trust";
+import { createPluginErrorBook, type PluginErrorBook } from "./errors";
+import { createPluginTrust, type PluginTrust } from "./trust";
 import { createShellResolver, ShellUnavailableError } from "./shells";
 import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
 import type { HookOutputSink } from "./output-sink";
@@ -157,39 +158,14 @@ export interface PluginModuleDeps {
 }
 
 // =============================================================================
-// Public surface (for the `ch plugin` entries)
+// Public surface
 // =============================================================================
-
-/** One plugin, as `ch plugin list` shows it. */
-export interface PluginListing {
-  readonly id: string;
-  readonly name: string;
-  readonly origin: PluginOrigin;
-  readonly state: EnabledState;
-  readonly platforms: readonly string[];
-  readonly path: string;
-  /** The project a workspace plugin belongs to. */
-  readonly project?: string;
-}
-
-/** Where a caller stands, for the workspace half of the plugin list. */
-export interface PluginScope {
-  readonly workspacePath: string | null;
-  readonly projectPath: string | null;
-}
-
-export interface PluginsApi {
-  list(scope: PluginScope): Promise<readonly PluginListing[]>;
-  /** Set a plugin's state. Throws when no such plugin exists. */
-  setState(scope: PluginScope, id: string, state: EnabledState): Promise<PluginListing>;
-  errors(): readonly PluginErrorEntry[];
-  schema(): Record<string, unknown>;
-}
 
 export interface PluginModule extends IntentModule {
   /** Carry stored answers over to projects whose path changed. */
   readonly moveProjects: ProjectMoveListener;
-  readonly api: PluginsApi;
+  /** What the `plugin.*` registry entries reach (`ch plugin`). */
+  readonly api: Plugins;
 }
 
 // =============================================================================
@@ -1145,7 +1121,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     };
   }
 
-  const api: PluginsApi = {
+  const api: Plugins = {
     async list(scope) {
       const listings = (await loadLocal()).map((plugin) => listing(plugin));
       if (scope.workspacePath !== null && scope.projectPath !== null) {
@@ -1159,11 +1135,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     async setState(scope, id, state) {
       const found = (await api.list(scope)).find((plugin) => plugin.id === id);
       if (found === undefined) {
-        throw new Error(
-          id.startsWith("workspace:") && scope.workspacePath === null
-            ? `${id}: workspace plugins are named from inside a workspace (or with --workspace)`
-            : `No plugin ${id}`
-        );
+        if (id.startsWith("workspace:") && scope.workspacePath === null) {
+          throw new ApiError(
+            "no-workspace",
+            `${id}: a repository's plugins are named from inside one of its workspaces (or with --workspace)`
+          );
+        }
+        throw new ApiError("not-found", `No plugin ${id}. \`ch plugin list\` shows them.`);
       }
       await trust.set(found.origin, found.name, state, found.project);
       return { ...found, state };

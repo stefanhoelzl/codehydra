@@ -85,6 +85,53 @@ export interface Locks {
   list(): readonly LockSnapshot[];
 }
 
+/** A plugin's enabled state: `ask` = not answered yet (a repository's plugin). */
+export type PluginState = "enabled" | "disabled" | "ask";
+
+/** One plugin, as `ch plugin list` shows it. */
+export interface PluginListing {
+  /** `local:<name>` or `workspace:<name>`. */
+  readonly id: string;
+  readonly name: string;
+  readonly origin: "local" | "workspace";
+  readonly state: PluginState;
+  /** Platforms any of its documents applies on (`linux`, `windows`, `macos`). */
+  readonly platforms: readonly string[];
+  /** The plugin's directory, or its manifest file. */
+  readonly path: string;
+  /** The project a workspace plugin belongs to. */
+  readonly project?: string;
+}
+
+/** Something wrong with a plugin: a problem, or its last failed run. */
+export interface PluginError {
+  readonly plugin: string;
+  readonly project?: string;
+  /** The hook entry or automation (`automations.<name>`); absent for a problem. */
+  readonly entry?: string;
+  readonly message: string;
+  /** The failed run's log file. */
+  readonly logPath?: string;
+  /** ISO time it was recorded. */
+  readonly at: string;
+}
+
+/** Where a caller stands, for the workspace half of the plugin list. */
+export interface PluginScope {
+  readonly workspacePath: string | null;
+  readonly projectPath: string | null;
+}
+
+/** The plugins, owned by the plugin module. */
+export interface Plugins {
+  list(scope: PluginScope): Promise<readonly PluginListing[]>;
+  /** Set a plugin's state. Throws `not-found` when no such plugin exists. */
+  setState(scope: PluginScope, id: string, state: PluginState): Promise<PluginListing>;
+  errors(): readonly PluginError[];
+  /** The manifest's JSON Schema. */
+  schema(): Record<string, unknown>;
+}
+
 export interface EntryDeps {
   readonly dispatcher: Dispatcher;
   /**
@@ -126,4 +173,9 @@ export interface EntryDeps {
   readonly locks: Locks;
   /** The user guide's markdown (docs/USER_GUIDE.md as shipped), owned by the help module. */
   readonly readUserGuide: () => Promise<string>;
+  /**
+   * The plugins, owned by the plugin module. A getter: that module runs
+   * automations through this registry, so it is built after it.
+   */
+  readonly plugins: () => Plugins;
 }

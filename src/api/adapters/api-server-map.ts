@@ -80,6 +80,13 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   "lock.release": null,
   "lock.list": null,
   "lock.hold": null,
+  // Plugins are the user's and the repository's, managed from a shell or an
+  // agent; no extension needs them.
+  "plugin.list": null,
+  "plugin.enable": null,
+  "plugin.disable": null,
+  "plugin.errors": null,
+  "plugin.schema": null,
   "config.get": { channel: "api:config:get" },
   "config.list": { channel: "api:config:list" },
   "config.set": { channel: "api:config:set" },

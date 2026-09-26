@@ -591,6 +591,9 @@ describe("locks tied to a CLI connection", () => {
         locks,
         config: createMockConfig(),
         readUserGuide: async () => "",
+        plugins: () => {
+          throw new Error("this test reaches no plugins");
+        },
       })
     );
     return { registry, locks };
