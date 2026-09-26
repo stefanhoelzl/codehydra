@@ -1,45 +1,46 @@
 /**
  * Shared mock factories for the claude/opencode module-provider integration
- * tests: download deps, binary/version config, and a canned server manager
- * with start/stop trigger capture.
+ * tests: a fake binary resolver, and a canned server manager with start/stop
+ * trigger capture.
  */
 
 import { vi } from "vitest";
-import type { DownloadDeps, ArchiveExtension } from "../../utils/binary-download";
-import { createFileSystemMock } from "../../boundaries/platform/filesystem.state-mock";
-import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
-import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
-import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
-import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
+import type { AgentBinaryResolver, ResolvedAgentBinary } from "./binary-resolver";
 
-/** Create mock download dependencies. */
-export function createDownloadDeps(): DownloadDeps {
-  return {
-    httpClient: createMockHttpClient(),
-    fileSystemLayer: createFileSystemMock(),
-    archiveExtractor: createArchiveExtractorMock(),
-  };
-}
-
-/** Create a binary config whose executable matches the agent name. */
-export function createBinaryConfig<TName extends string>(name: TName) {
-  return {
-    name,
-    executablePath: name,
-    archiveExtension: ".tar.gz" as ArchiveExtension,
-  };
+/** A fake resolver: `prepare()` reports `needsDownload`, `download()` lands `binary`. */
+export interface FakeBinaryResolver extends AgentBinaryResolver {
+  readonly downloads: number;
 }
 
 /**
- * Create a version-override accessor for the given config key.
- * Pass the type argument explicitly when the provider's deps demand a
- * specific nullability (e.g. `createVersionConfig<string>(...)`).
+ * Create a fake binary resolver. By default the binary is already resolved
+ * (nothing to download); pass `needsDownload: true` to model a first start.
  */
-export function createVersionConfig<T extends string | null = string | null>(
-  key: string,
-  version: T
-): PersistedAccessor<T> {
-  return createMockAccessor<T>(key, version);
+export function createFakeBinaryResolver(
+  options: { binary?: ResolvedAgentBinary; needsDownload?: boolean } = {}
+): FakeBinaryResolver {
+  const binary: ResolvedAgentBinary = options.binary ?? {
+    path: "/bundles/agent/1.0.0/agent",
+    source: "download",
+    version: "1.0.0",
+  };
+  let pending = options.needsDownload ?? false;
+  let downloads = 0;
+  return {
+    get downloads() {
+      return downloads;
+    },
+    prepare: async () => ({ needsDownload: pending }),
+    download: async () => {
+      if (!pending) return;
+      downloads++;
+      pending = false;
+    },
+    current: () => (pending ? null : binary),
+    seed: async () => binary.version ?? "system",
+    bundleVersionsInUse: () => (binary.version ? [binary.version] : []),
+    idle: async () => undefined,
+  };
 }
 
 /** Fire the handlers registered via on-server-started/stopped. */

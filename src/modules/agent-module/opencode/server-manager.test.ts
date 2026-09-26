@@ -22,7 +22,14 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
+import type { ResolvedAgentBinary } from "../binary-resolver";
+
+/** The `opencode` every server in these tests runs. */
+const TEST_BINARY: ResolvedAgentBinary = {
+  path: "/bundles/opencode/1.0.223/opencode",
+  source: "download",
+  version: "1.0.223",
+};
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -75,7 +82,6 @@ describe("OpenCodeServerManager", () => {
       mockPortManager,
       mockHttpClient,
       mockPathProvider,
-      createMockAccessor("version.opencode", "1.0.223"),
       SILENT_LOGGER
     );
   });
@@ -86,7 +92,7 @@ describe("OpenCodeServerManager", () => {
 
   describe("startServer", () => {
     it("allocates port and spawns process", async () => {
-      const port = await manager.startServer("/workspace/feature-a");
+      const port = await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       expect(port).toBe(14001);
       expect(mockProcessRunner).toHaveSpawned([
@@ -102,7 +108,7 @@ describe("OpenCodeServerManager", () => {
       const callback = vi.fn();
       manager.onServerStarted(callback);
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       expect(callback).toHaveBeenCalledWith("/workspace/feature-a", 14001, undefined);
     });
@@ -115,13 +121,12 @@ describe("OpenCodeServerManager", () => {
         failingPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
-      await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow(
-        "No ports available"
-      );
+      await expect(
+        manager.startServer("/workspace/feature-a", { binary: TEST_BINARY })
+      ).rejects.toThrow("No ports available");
     });
 
     it("throws when opencode binary not found (ENOENT)", async () => {
@@ -136,11 +141,12 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
-      await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow();
+      await expect(
+        manager.startServer("/workspace/feature-a", { binary: TEST_BINARY })
+      ).rejects.toThrow();
     });
 
     it("cleans up on spawn failure", async () => {
@@ -155,19 +161,20 @@ describe("OpenCodeServerManager", () => {
         createPortManagerMock([14001, 14002]),
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
       try {
-        await manager.startServer("/workspace/feature-a");
+        await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
       } catch {
         // Expected to throw
       }
 
       // Entry was cleaned up — a retry attempts a fresh spawn instead of
       // returning the stale failed entry
-      await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow();
+      await expect(
+        manager.startServer("/workspace/feature-a", { binary: TEST_BINARY })
+      ).rejects.toThrow();
       expect(mockProcessRunner.$.spawnedCount).toBe(2);
     });
 
@@ -179,20 +186,21 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: 100 } // Short timeout for testing
       );
 
-      await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow();
+      await expect(
+        manager.startServer("/workspace/feature-a", { binary: TEST_BINARY })
+      ).rejects.toThrow();
 
       // Process should have been killed
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
     });
 
     it("does not start duplicate server for same workspace", async () => {
-      await manager.startServer("/workspace/feature-a");
-      const port2 = await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
+      const port2 = await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       // Should return same port, not spawn another
       expect(port2).toBe(14001);
@@ -204,7 +212,7 @@ describe("OpenCodeServerManager", () => {
 
   describe("stopServer", () => {
     it("kills process gracefully (SIGTERM then SIGKILL)", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       await manager.stopServer("/workspace/feature-a");
 
@@ -212,7 +220,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("removes server entry on stop", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       await manager.stopServer("/workspace/feature-a");
 
@@ -225,7 +233,7 @@ describe("OpenCodeServerManager", () => {
       const callback = vi.fn();
       manager.onServerStopped(callback);
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
       await manager.stopServer("/workspace/feature-a");
 
       expect(callback).toHaveBeenCalledWith("/workspace/feature-a", false);
@@ -241,7 +249,7 @@ describe("OpenCodeServerManager", () => {
       mockHttpClient.fetch.mockImplementation(async () => slowHealthCheck);
 
       // Start in background
-      const startPromise = manager.startServer("/workspace/feature-a");
+      const startPromise = manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       // Immediately try to stop
       const stopPromise = manager.stopServer("/workspace/feature-a");
@@ -258,7 +266,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("handles already-dead processes gracefully", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       // Should not throw
       await expect(manager.stopServer("/workspace/feature-a")).resolves.not.toThrow();
@@ -273,7 +281,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("returns success when kill succeeds", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
         success: boolean;
@@ -295,11 +303,10 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
         success: boolean;
@@ -332,11 +339,10 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         loggerWithSpy
       );
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
       await manager.stopServer("/workspace/feature-a");
 
       expect(loggerWithSpy.warn).toHaveBeenCalledWith(
@@ -346,7 +352,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("uses 1000ms timeouts", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
       await manager.stopServer("/workspace/feature-a");
 
       // Verify kill was called with 1000ms timeouts
@@ -372,13 +378,12 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
       const [port1, port2] = await Promise.all([
-        manager.startServer("/workspace/feature-a"),
-        manager.startServer("/workspace/feature-b"),
+        manager.startServer("/workspace/feature-a", { binary: TEST_BINARY }),
+        manager.startServer("/workspace/feature-b", { binary: TEST_BINARY }),
       ]);
 
       expect(port1).not.toBe(port2);
@@ -402,12 +407,11 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
-      await manager.startServer("/workspace/feature-a");
-      await manager.startServer("/workspace/feature-b");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
+      await manager.startServer("/workspace/feature-b", { binary: TEST_BINARY });
 
       await manager.dispose();
 
@@ -424,7 +428,7 @@ describe("OpenCodeServerManager", () => {
         events.push("callback");
       });
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
       events.push("returned");
 
       expect(events).toEqual(["callback", "returned"]);
@@ -433,7 +437,7 @@ describe("OpenCodeServerManager", () => {
     it("fires callback after process terminated", async () => {
       const events: string[] = [];
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       manager.onServerStopped(() => {
         events.push("callback");
@@ -457,7 +461,7 @@ describe("OpenCodeServerManager", () => {
         token: "test-token",
       });
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const spawned = mockProcessRunner.$.spawned(0);
       const configContent = spawned.$.env?.OPENCODE_CONFIG_CONTENT;
@@ -485,7 +489,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("omits the mcp block when MCP config not set", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const spawned = mockProcessRunner.$.spawned(0);
       const configContent = spawned.$.env?.OPENCODE_CONFIG_CONTENT;
@@ -498,7 +502,7 @@ describe("OpenCodeServerManager", () => {
 
   describe("system prompt", () => {
     it("loads the CodeHydra system prompt via instructions", async () => {
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const spawned = mockProcessRunner.$.spawned(0);
       const parsed = JSON.parse(spawned.$.env!.OPENCODE_CONFIG_CONTENT!) as {
@@ -519,7 +523,7 @@ describe("OpenCodeServerManager", () => {
         token: "test-token",
       });
 
-      await manager.startServer("/workspace/feature-a");
+      await manager.startServer("/workspace/feature-a", { binary: TEST_BINARY });
 
       const spawned = mockProcessRunner.$.spawned(0);
       const parsed = JSON.parse(spawned.$.env!.OPENCODE_CONFIG_CONTENT!) as {

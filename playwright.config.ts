@@ -2,10 +2,10 @@ import { defineConfig } from "@playwright/test";
 import { ROOT_DIR } from "./e2e/env";
 
 // Children inherit this; env.ts already resolved it deterministically so every
-// worker and project agrees on which root cold-start seeded.
+// worker and project agrees on which root download-binaries seeded.
 process.env._CH_ROOT_DIR = ROOT_DIR;
 
-const WARM_SPECS = "**/!(cold-start).e2e.ts";
+const WARM_SPECS = "**/!(download-binaries).e2e.ts";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -32,12 +32,13 @@ export default defineConfig({
   },
 
   projects: [
-    // Runs against an empty root, drives the wizard, and leaves the root warm.
-    { name: "cold-start", testMatch: "**/cold-start.e2e.ts" },
+    // Runs against an empty root: `--download-binaries`, then a first start.
+    // Leaves the root warm.
+    { name: "download-binaries", testMatch: "**/download-binaries.e2e.ts" },
 
     // Same three specs, once per agent. `--agent=` flips the agent on the warm
     // root without rewriting config.json.
-    { name: "opencode", testMatch: WARM_SPECS, dependencies: ["cold-start"] },
-    { name: "claude", testMatch: WARM_SPECS, dependencies: ["cold-start"] },
+    { name: "opencode", testMatch: WARM_SPECS, dependencies: ["download-binaries"] },
+    { name: "claude", testMatch: WARM_SPECS, dependencies: ["download-binaries"] },
   ],
 });

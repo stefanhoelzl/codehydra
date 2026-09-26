@@ -117,6 +117,8 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
 
     preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
     downloadBinary: vi.fn().mockResolvedValue(undefined),
+    seedBinary: vi.fn().mockResolvedValue("1.0.0"),
+    bundleVersionsInUse: vi.fn().mockReturnValue([]),
     initialize: vi.fn(),
     dispose: vi.fn().mockResolvedValue(undefined),
     startWorkspace: vi.fn().mockResolvedValue({

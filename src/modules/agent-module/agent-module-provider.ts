@@ -89,6 +89,18 @@ export interface AgentModuleProvider {
   /** Download the agent binary */
   downloadBinary(onProgress?: DownloadProgressCallback): Promise<void>;
 
+  /**
+   * Download the configured version (or the default channel) regardless of a
+   * system install, for `--download-binaries`. Returns the version.
+   */
+  seedBinary(onProgress?: DownloadProgressCallback): Promise<string>;
+
+  /**
+   * Bundle version directories to keep (in use or downloading); null until this
+   * launch has resolved its binary.
+   */
+  bundleVersionsInUse(): readonly string[] | null;
+
   // --- Lifecycle ---
 
   /** Initialize the agent with optional MCP configuration */

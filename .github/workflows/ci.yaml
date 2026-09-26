@@ -48,7 +48,7 @@ jobs:
 
       # wrapper.boundary.test.ts executes dist/bin/*.cjs and throws without it,
       # and server-manager.boundary.test.ts runs the hook handler built there.
-      # Binaries are downloaded by the root postinstall during `pnpm install`.
+      # The boundary globalSetup downloads the latest opencode once (ensure-binaries.ts).
       - run: pnpm build:wrappers
 
       # server-manager.boundary.test.ts launches Claude for real, against a local
@@ -116,7 +116,7 @@ jobs:
   # Drive the exact artifacts `build` uploaded, on the OS each ships to.
   #
   # `_CH_ROOT_DIR` puts the app's data root *and* its binary bundles under the runner
-  # temp dir, so cold-start can wipe it: e2e/env.ts refuses to rm -rf anything outside
+  # temp dir, so download-binaries can wipe it: e2e/env.ts refuses to rm -rf anything outside
   # os.tmpdir() or RUNNER_TEMP. It also overrides the value the setup action exports.
   e2e:
     name: E2E (${{ matrix.name }})
@@ -146,11 +146,11 @@ jobs:
         shell: bash
         run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e" >> "$GITHUB_ENV"
 
-      # agent-turn.e2e.ts launches Claude for real. CodeHydra never downloads it
-      # (version.claude defaults to null, so resolveBinary() returns null) and the
-      # wrapper resolves `claude` on PATH alone — the same system install the
-      # postinstall script tells a developer to make. No login is needed: the spec
-      # points it at a local mock.
+      # agent-turn.e2e.ts launches Claude for real. With version.claude unset,
+      # CodeHydra runs a system install when there is one (binary-resolver.ts), so
+      # the warm specs exercise the claude on PATH rather than the copy
+      # download-binaries fetched. No login is needed: the spec points it at a
+      # local mock.
       #
       # Deliberately unpinned. The fixtures gate on the request Claude sends, so a
       # release that changes it should turn CI red here rather than go unnoticed.
@@ -227,7 +227,7 @@ jobs:
           if-no-files-found: warn
 
   # The installer is what most Windows users download; the portable dir above is not.
-  # Install it silently, then run the cold-start spec against the *installed* app.
+  # Install it silently, then run the download-binaries spec against the *installed* app.
   e2e-windows-installer:
     name: E2E (Windows NSIS installer)
     needs: build
@@ -267,10 +267,10 @@ jobs:
           Write-Host "installed at $($exe.FullName)"
           "CH_E2E_EXE=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # cold-start is the only project with no dependencies, and it proves the most:
-      # the installed app launches, the wizard runs, the binaries download, the UI loads.
-      - name: Run cold-start against the installed app
-        run: pnpm exec playwright test --project=cold-start
+      # download-binaries is the only project with no dependencies, and it proves the
+      # most: the installed app downloads its binaries, then launches and the UI loads.
+      - name: Run download-binaries against the installed app
+        run: pnpm exec playwright test --project=download-binaries
 
       - name: Upload failure artifacts
         if: failure()

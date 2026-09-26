@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 import { downloadBinary, isBinaryInstalled } from "./download";
 import { DefaultArchiveExtractor } from "../../boundaries/platform/archive-extractor";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
@@ -184,6 +185,88 @@ describe("downloadBinary (integration)", () => {
         await cleanupTestArchive(archivePath);
       }
     });
+  });
+
+  describe("single executable (no archive)", () => {
+    const BINARY = Buffer.from("#!/bin/sh\necho claude\n");
+    const SHA256 = createHash("sha256").update(BINARY).digest("hex");
+
+    function httpServing(body: Buffer): ReturnType<typeof createMockHttpClient> {
+      return createMockHttpClient({
+        defaultResponse: {
+          body,
+          status: 200,
+          headers: { "content-length": String(body.length) },
+        },
+      });
+    }
+
+    it("saves the file as destDir/executablePath, executable, with no temp file left", async () => {
+      const destDir = path.join(tempDir, "claude", "2.1.274");
+
+      await downloadBinary(
+        {
+          name: "claude",
+          url: "https://example.com/2.1.274/linux-x64/claude",
+          destDir,
+          executablePath: "claude",
+          sha256: SHA256,
+        },
+        createDeps(httpServing(BINARY))
+      );
+
+      expect(await fs.readFile(path.join(destDir, "claude"))).toEqual(BINARY);
+      expect(await fs.readdir(destDir)).toEqual(["claude"]);
+      if (process.platform !== "win32") {
+        const { mode } = await fs.stat(path.join(destDir, "claude"));
+        expect(mode & 0o111).not.toBe(0);
+      }
+    });
+
+    it("rejects a checksum mismatch and writes nothing", async () => {
+      const destDir = path.join(tempDir, "claude", "2.1.274");
+
+      await expect(
+        downloadBinary(
+          {
+            name: "claude",
+            url: "https://example.com/2.1.274/linux-x64/claude",
+            destDir,
+            executablePath: "claude",
+            sha256: "0".repeat(64),
+          },
+          createDeps(httpServing(BINARY))
+        )
+      ).rejects.toThrow(/Checksum mismatch/);
+
+      await expect(fs.access(destDir)).rejects.toThrow();
+    });
+  });
+
+  describe("failure cleanup", () => {
+    it("removes destDir when extraction fails, so it never looks installed", async () => {
+      const destDir = path.join(tempDir, "opencode", "1.18.32");
+      const deps = createDeps(httpServing(Buffer.from("not a tarball")));
+
+      await expect(
+        downloadBinary(
+          {
+            name: "opencode",
+            url: "https://example.com/opencode-linux-x64.tar.gz",
+            destDir,
+            archiveExtension: ".tar.gz",
+            executablePath: "opencode",
+          },
+          deps
+        )
+      ).rejects.toThrow();
+
+      expect(await isBinaryInstalled(destDir, deps)).toBe(false);
+    });
+
+    function httpServing(body: Buffer): ReturnType<typeof createMockHttpClient> {
+      return createMockHttpClient({ defaultResponse: { body, status: 200 } });
+    }
   });
 
   describe("progress callback", () => {

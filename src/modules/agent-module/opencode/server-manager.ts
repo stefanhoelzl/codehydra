@@ -27,9 +27,8 @@ import type {
   RestartServerResult,
   McpConfig,
 } from "../types";
-import { getOpencodeBundleDir, getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
-import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
+import { runAgentBinary, type ResolvedAgentBinary } from "../binary-resolver";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -95,6 +94,11 @@ export interface StartServerOptions {
    * its bash tool runs. Kept (in memory) for restarts of this server.
    */
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * The `opencode` to run. Kept (in memory) for restarts, so a restart keeps
+   * the binary the workspace's terminal attaches with.
+   */
+  readonly binary?: ResolvedAgentBinary;
 }
 
 /**
@@ -108,7 +112,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly portManager: PortManager;
   private readonly httpClient: HttpClient;
   private readonly pathProvider: PathProvider;
-  private readonly versionConfig: PersistedAccessor<string>;
   private readonly logger: Logger;
   private readonly config: Required<OpenCodeServerManagerConfig>;
 
@@ -128,6 +131,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    */
   private readonly workspaceEnvs = new Map<string, Readonly<Record<string, string>>>();
 
+  /** The binary each workspace's server runs, kept for restarts like its env. */
+  private readonly workspaceBinaries = new Map<string, ResolvedAgentBinary>();
+
   private mcpConfig: McpConfig | null = null;
 
   /** Handler called when workspace becomes active (agent terminal opened) */
@@ -138,7 +144,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     portManager: PortManager,
     httpClient: HttpClient,
     pathProvider: PathProvider,
-    versionConfig: PersistedAccessor<string>,
     logger: Logger,
     config?: OpenCodeServerManagerConfig
   ) {
@@ -146,7 +151,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.portManager = portManager;
     this.httpClient = httpClient;
     this.pathProvider = pathProvider;
-    this.versionConfig = versionConfig;
     this.logger = logger;
     this.config = {
       healthCheckTimeoutMs: config?.healthCheckTimeoutMs ?? 30000,
@@ -176,6 +180,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     if (options?.env !== undefined) {
       this.workspaceEnvs.set(workspacePath, options.env);
+    }
+    if (options?.binary !== undefined) {
+      this.workspaceBinaries.set(workspacePath, options.binary);
     }
 
     // Check if already running/starting
@@ -239,6 +246,11 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * @throws Error if server fails to spawn or health check times out
    */
   private async spawnServerOnPort(workspacePath: string, port: number): Promise<SpawnedProcess> {
+    const binary = this.workspaceBinaries.get(workspacePath);
+    if (binary === undefined) {
+      throw new Error(`No opencode binary given for ${workspacePath}`);
+    }
+
     // OPENCODE_CONFIG_CONTENT is merged into the resolved config last, so these
     // values win over the user's opencode.json. `instructions` is the exception
     // that merges rather than wins: OpenCode unions it across every config
@@ -250,6 +262,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const config: Record<string, unknown> = {
       // Appended to the system prompt as "Instructions from: <path>".
       instructions: [this.getSystemPromptPath().toString()],
+      // CodeHydra updates the binaries it downloads; a system install is the
+      // user's to manage.
+      ...(binary.source === "download" && { autoupdate: false }),
     };
     if (this.mcpConfig) {
       // A local (stdio) server rather than a remote URL: `ch mcp` is launched as
@@ -302,15 +317,13 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;
-    const version = this.versionConfig.get();
-    const opencodeCmd = new Path(
-      getOpencodeBundleDir(this.pathProvider, version),
-      getOpencodeExecutablePath(platform)
-    ).toNative();
-    const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {
-      cwd: workspacePath,
-      env,
-    });
+    const proc = runAgentBinary(
+      this.processRunner,
+      binary.path,
+      ["serve", "--port", String(port)],
+      platform,
+      { cwd: workspacePath, env }
+    );
 
     // Check if spawn failed
     if (proc.pid === undefined) {
@@ -397,6 +410,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     }
     if (!isRestart) {
       this.workspaceEnvs.delete(workspacePath);
+      this.workspaceBinaries.delete(workspacePath);
     }
 
     // Fire callback with isRestart flag

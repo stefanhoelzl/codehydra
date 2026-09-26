@@ -135,15 +135,15 @@ function generateHelpText(
 // =============================================================================
 
 /** Keys that are registered config but not user settings. */
-const NON_SETTING_KEYS = new Set(["help"]);
+const NON_SETTING_KEYS = new Set(["help", "download-binaries"]);
 
 /**
  * Whether a key is a user setting: something the settings dialog shows and
  * `ch config` reads and writes. One predicate for both, so the two surfaces
  * never disagree about which keys exist.
  *
- * `help` is a CLI action, and deprecated keys are migration sources that
- * cannot be set.
+ * `help` and `download-binaries` are CLI actions, and deprecated keys are
+ * migration sources that cannot be set.
  */
 export function isUserSetting(key: string, def: PersistedKeyDefinition<unknown>): boolean {
   return !def.deprecated && def.settingsControl !== undefined && !NON_SETTING_KEYS.has(key);

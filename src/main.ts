@@ -49,14 +49,12 @@ import { WindowManager } from "./boundaries/shell/window-manager";
 import { UiViewManager, GLOBAL_SESSION_PARTITION } from "./boundaries/shell/ui-view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
+import { downloadBinaries } from "./modules/download-binaries";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive-extractor";
 import type { DownloadDeps } from "./utils/binary-download";
-import {
-  getOpencodeBundleDir,
-  getOpencodeExecutablePath,
-  OPENCODE_VERSION,
-} from "./modules/agent-module/opencode/setup-info";
-import { getClaudeExecutablePath, CLAUDE_VERSION } from "./modules/agent-module/claude/setup-info";
+import { createOpencodeBinaryDescriptor } from "./modules/agent-module/opencode/setup-info";
+import { createClaudeBinaryDescriptor } from "./modules/agent-module/claude/setup-info";
+import { createAgentBinaryResolver } from "./modules/agent-module/binary-resolver";
 import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
 import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
@@ -262,15 +260,23 @@ const helpConfig = configService.register("help", {
 // Agent version keys. Registered here (composition root) rather than inside the
 // agent module so the accessors exist before the server managers and providers
 // that read them are constructed (those are built below, before the modules).
+// null = the system install, else the latest download. Set = that version (or
+// channel), downloaded even when the agent is installed on the system.
 const claudeVersionConfig = configService.register("version.claude", {
-  default: CLAUDE_VERSION,
-  description: "Claude agent version",
+  default: null,
+  description:
+    "Claude agent version: null = system install, else latest stable; x.y.z | latest | stable",
   ...storeString({ nullable: true }),
 });
 const opencodeVersionConfig = configService.register("version.opencode", {
-  default: OPENCODE_VERSION,
-  description: "OpenCode agent version",
-  ...storeString(),
+  default: null,
+  description: "OpenCode agent version: null = system install, else latest; x.y.z | latest",
+  ...storeString({ nullable: true }),
+});
+const downloadBinariesConfig = configService.register("download-binaries", {
+  default: false,
+  description: "Download the IDE server and both agents' binaries, then exit",
+  ...storeBoolean(),
 });
 // Expanded-sidebar width (px). Written by the renderer's drag-to-resize gesture
 // and also user-editable here. The [250, 100000] bounds enforce the grow-only
@@ -318,18 +324,31 @@ const downloadDeps: DownloadDeps = {
   logger: loggingService.createLogger("binary-download"),
 };
 
-// Per-agent binary configs (non-version fields only; version comes from configService)
-const claudeBinaryConfig = {
-  name: "claude" as const,
-  executablePath: getClaudeExecutablePath(platform),
-  archiveExtension: ".tar.gz" as const,
-};
-const opencodeBinaryConfig = {
-  name: "opencode" as const,
-  executablePath: getOpencodeExecutablePath(platform),
-  archiveExtension: (platform === "darwin" ? ".zip" : platform === "win32" ? ".zip" : ".tar.gz") as
-    | ".tar.gz"
-    | ".zip",
+// Which executable each agent runs: system install or a download (binary-resolver.ts)
+const binaryResolverLogger = loggingService.createLogger("binary-download");
+const agentBinaryResolvers = {
+  claude: createAgentBinaryResolver({
+    descriptor: createClaudeBinaryDescriptor(platform, arch),
+    version: claudeVersionConfig,
+    pathProvider,
+    fileSystem: fileSystemLayer,
+    processRunner,
+    downloadDeps,
+    env: process.env,
+    platform,
+    logger: binaryResolverLogger,
+  }),
+  opencode: createAgentBinaryResolver({
+    descriptor: createOpencodeBinaryDescriptor(platform, arch),
+    version: opencodeVersionConfig,
+    pathProvider,
+    fileSystem: fileSystemLayer,
+    processRunner,
+    downloadDeps,
+    env: process.env,
+    platform,
+    logger: binaryResolverLogger,
+  }),
 };
 
 const dispatcher = new Dispatcher({
@@ -376,7 +395,6 @@ const agentServerManagers = {
     serverManagerDeps.portManager,
     serverManagerDeps.httpClient,
     serverManagerDeps.pathProvider,
-    opencodeVersionConfig,
     serverManagerDeps.logger
   ),
 };
@@ -534,8 +552,6 @@ const ideServerModule = createIdeServerModule({
   archiveExtractor,
   configService,
   ui: presentationModule,
-  resolveOpencodeBundleDir: (): string =>
-    getOpencodeBundleDir(pathProvider, opencodeVersionConfig.get()).toNative(),
 });
 
 // The CLI's scripts, token and published connection details. Constructed before
@@ -612,12 +628,8 @@ const extensionModule = createExtensionModule({
 
 const claudeProvider = createClaudeModuleProvider({
   serverManager: agentServerManagers.claude,
-  downloadDeps,
-  binaryConfig: claudeBinaryConfig,
-  versionConfig: claudeVersionConfig,
-  pathProvider,
+  binary: agentBinaryResolvers.claude,
   platform,
-  arch,
   logger: providerLogger,
   processRunner,
 });
@@ -630,12 +642,7 @@ const claudeAgentModule = createAgentModule(claudeProvider, {
 
 const opencodeProvider = createOpenCodeModuleProvider({
   serverManager: agentServerManagers.opencode,
-  downloadDeps,
-  binaryConfig: opencodeBinaryConfig,
-  versionConfig: opencodeVersionConfig,
-  pathProvider,
-  platform,
-  arch,
+  binary: agentBinaryResolvers.opencode,
   logger: providerLogger,
 });
 const opencodeAgentModule = createAgentModule(opencodeProvider, {
@@ -875,14 +882,24 @@ const cleanupModule = createCleanupModule({
     // Hibernation screenshots are deleted on wake and on workspace delete; the
     // per-project directory is what outlives the project.
     { kind: "pruneEmpty", path: "screenshots" },
-    { kind: "bundle", path: "claude", live: () => claudeVersionConfig.get(), packagedOnly: true },
+    {
+      kind: "bundle",
+      path: "claude",
+      keep: () => claudeProvider.bundleVersionsInUse(),
+      packagedOnly: true,
+    },
     {
       kind: "bundle",
       path: "opencode",
-      live: () => opencodeVersionConfig.get(),
+      keep: () => opencodeProvider.bundleVersionsInUse(),
       packagedOnly: true,
     },
-    { kind: "bundle", path: "vscodium", live: () => ideServerModule.version(), packagedOnly: true },
+    {
+      kind: "bundle",
+      path: "vscodium",
+      keep: () => [ideServerModule.version()],
+      packagedOnly: true,
+    },
   ],
 });
 
@@ -1120,32 +1137,49 @@ if (helpConfig.get()) {
   app.quit();
 }
 
+// Handle --download-binaries: fetch what a first start could need, then exit
+// without starting the app.
+if (downloadBinariesConfig.get()) {
+  void downloadBinaries({
+    steps: [
+      { name: "vscodium", run: (onProgress) => ideServerModule.ensureDownloaded(onProgress) },
+      { name: "claude", run: (onProgress) => claudeProvider.seedBinary(onProgress) },
+      { name: "opencode", run: (onProgress) => opencodeProvider.seedBinary(onProgress) },
+    ],
+    write: (line) => process.stdout.write(`${line}\n`),
+  }).then((exitCode) => app.exit(exitCode));
+} else {
+  startApp();
+}
+
 // 10. Dispatch app:start
 
-// Dispatch app:start — orchestrates the entire startup flow via hook points
-void dispatcher
-  .dispatch<AppStartIntent>({
-    type: INTENT_APP_START,
-    payload: {},
-  })
-  .catch((error: unknown) => {
-    appLogger.error(
-      "Startup failed",
-      { error: getErrorMessage(error) },
-      error instanceof Error ? error : undefined
-    );
+function startApp(): void {
+  // Dispatch app:start — orchestrates the entire startup flow via hook points
+  void dispatcher
+    .dispatch<AppStartIntent>({
+      type: INTENT_APP_START,
+      payload: {},
+    })
+    .catch((error: unknown) => {
+      appLogger.error(
+        "Startup failed",
+        { error: getErrorMessage(error) },
+        error instanceof Error ? error : undefined
+      );
 
-    // The app:start "error" hook has already captured + flushed a diagnostic
-    // report when telemetry is on (see error-report-module). Only tell the user a
-    // report was sent when it actually was — with telemetry off nothing left the
-    // machine, so we keep the bare message.
-    const message = telemetryEnabledConfig.get()
-      ? `${getErrorMessage(error)}\n\nA diagnostic report has been sent to the developers.`
-      : getErrorMessage(error);
-    dialogLayer.showErrorBox("Startup Failed", message);
+      // The app:start "error" hook has already captured + flushed a diagnostic
+      // report when telemetry is on (see error-report-module). Only tell the user a
+      // report was sent when it actually was — with telemetry off nothing left the
+      // machine, so we keep the bare message.
+      const message = telemetryEnabledConfig.get()
+        ? `${getErrorMessage(error)}\n\nA diagnostic report has been sent to the developers.`
+        : getErrorMessage(error);
+      dialogLayer.showErrorBox("Startup Failed", message);
 
-    app.quit();
-  });
+      app.quit();
+    });
+}
 
 // 11. App lifecycle handlers: `window-all-closed` and `before-quit` lead into
 // app:shutdown from electron-lifecycle-module, which also owns the final quit.

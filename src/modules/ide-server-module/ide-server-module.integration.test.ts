@@ -367,7 +367,6 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
-    resolveOpencodeBundleDir: () => testPath("/bundles/opencode/1.0.223").toNative(),
     ...overrides,
   };
 }
@@ -1532,7 +1531,6 @@ describe("IdeServerModule", () => {
       expect(env._CH_IDE_REMOTE_CLI).toContain("bin/remote-cli/codium");
       expect(env._CH_IDE_NODE).toContain("vscodium");
       expect(env._CH_IDE_NODE).toMatch(/\/node$/);
-      expect(env._CH_OPENCODE_DIR).toContain("opencode");
     });
   });
 

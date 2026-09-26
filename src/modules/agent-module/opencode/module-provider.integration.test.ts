@@ -13,14 +13,12 @@ import type { AgentModuleProvider } from "../agent-module-provider";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import type { DownloadDeps } from "../../../utils/binary-download";
 import {
-  createBinaryConfig,
-  createDownloadDeps,
+  createFakeBinaryResolver,
   createMockServerManager as createServerManagerBase,
-  createVersionConfig,
+  type FakeBinaryResolver,
 } from "../module-provider.test-utils";
-import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
+import type { ResolvedAgentBinary } from "../binary-resolver";
 import { wsPath, testPath } from "../../../shared/test-fixtures";
 
 // =============================================================================
@@ -156,30 +154,25 @@ async function initializeAndStart(
 
 describe("OpenCode module provider", () => {
   let serverManager: ReturnType<typeof createMockServerManager>;
-  let downloadDeps: DownloadDeps;
-  let binaryConfig: ReturnType<typeof createBinaryConfig>;
-  let versionConfig: ReturnType<typeof createVersionConfig<string>>;
-  let pathProvider: ReturnType<typeof createMockPathProvider>;
+  let binary: FakeBinaryResolver;
   let provider: AgentModuleProvider;
+
+  const BINARY: ResolvedAgentBinary = {
+    path: "/bundles/opencode/1.0.223/opencode",
+    source: "download",
+    version: "1.0.223",
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     resetMockState();
 
     serverManager = createMockServerManager();
-    downloadDeps = createDownloadDeps();
-    binaryConfig = createBinaryConfig("opencode");
-    versionConfig = createVersionConfig("version.opencode", "1.0.223");
-    pathProvider = createMockPathProvider();
+    binary = createFakeBinaryResolver({ binary: BINARY, needsDownload: true });
 
     const deps: OpenCodeModuleProviderDeps = {
       serverManager: serverManager as unknown as OpenCodeServerManager,
-      downloadDeps,
-      binaryConfig,
-      versionConfig,
-      pathProvider,
-      platform: "linux",
-      arch: "x64",
+      binary,
       logger: SILENT_LOGGER,
     };
     provider = createOpenCodeModuleProvider(deps);
@@ -233,6 +226,13 @@ describe("OpenCode module provider", () => {
     it("returns needsDownload true when binary is not installed", async () => {
       const result = await provider.preflight();
       expect(result).toEqual({ success: true, needsDownload: true });
+    });
+
+    it("reports nothing to download once the binary has been downloaded", async () => {
+      await provider.downloadBinary();
+
+      expect(binary.downloads).toBe(1);
+      expect(await provider.preflight()).toEqual({ success: true, needsDownload: false });
     });
   });
 
@@ -535,6 +535,21 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("startWorkspace", () => {
+    beforeEach(async () => {
+      await provider.downloadBinary();
+    });
+
+    it("refuses to start before the binary is known", async () => {
+      provider = createOpenCodeModuleProvider({
+        serverManager: serverManager as unknown as OpenCodeServerManager,
+        binary: createFakeBinaryResolver({ needsDownload: true }),
+        logger: SILENT_LOGGER,
+      });
+
+      await expect(provider.startWorkspace(WS_PATH)).rejects.toThrow("No opencode binary");
+      expect(serverManager.startServer).not.toHaveBeenCalled();
+    });
+
     it("passes initialPrompt to startServer options", async () => {
       provider.initialize(null);
 
@@ -549,6 +564,7 @@ describe("OpenCode module provider", () => {
 
       expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
         initialPrompt,
+        binary: BINARY,
       });
     });
 
@@ -562,7 +578,7 @@ describe("OpenCode module provider", () => {
 
       await provider.startWorkspace(WS_PATH);
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {});
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, { binary: BINARY });
     });
 
     it("passes the workspace environment to the server", async () => {
@@ -577,6 +593,7 @@ describe("OpenCode module provider", () => {
 
       expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
         env: { DATABASE_URL: "postgres://x" },
+        binary: BINARY,
       });
     });
 
@@ -590,10 +607,13 @@ describe("OpenCode module provider", () => {
 
       const result = await provider.startWorkspace(WS_PATH);
 
-      expect(result.envVars).toEqual({ _CH_OPENCODE_PORT: "8080" });
+      expect(result.envVars).toEqual({
+        _CH_OPENCODE_PORT: "8080",
+        _CH_OPENCODE_BIN: "/bundles/opencode/1.0.223/opencode",
+      });
     });
 
-    it("returns empty envVars when no provider available", async () => {
+    it("returns only the binary path when no provider available", async () => {
       provider.initialize(null);
 
       // startServer does not trigger callback
@@ -601,7 +621,7 @@ describe("OpenCode module provider", () => {
 
       const result = await provider.startWorkspace(WS_PATH);
 
-      expect(result.envVars).toEqual({});
+      expect(result.envVars).toEqual({ _CH_OPENCODE_BIN: "/bundles/opencode/1.0.223/opencode" });
     });
   });
 
@@ -861,8 +881,4 @@ describe("OpenCode module provider", () => {
       expect(statusB.status).toBe("none"); // B has default getEffectiveCounts: {idle:0, busy:0}
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // downloadBinary
-  // ---------------------------------------------------------------------------
 });

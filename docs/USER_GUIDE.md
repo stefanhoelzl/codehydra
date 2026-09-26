@@ -47,8 +47,9 @@ Or download it from
 [GitHub Releases](https://github.com/stefanhoelzl/codehydra/releases).
 
 On first launch (no `config.json` yet), CodeHydra asks which coding agent to
-use — **Claude Code** or **OpenCode** — then downloads what it needs (the
-embedded editor and the agent), which only happens once. Then open a project
+use — **Claude Code** or **OpenCode** — then downloads what it needs: the
+embedded editor, and the agent unless it is already installed (see
+[Which agent binary runs](#which-agent-binary-runs)). Then open a project
 and create your first workspace. Want to run multiple agents? Just create more
 workspaces — each one gets its own worktree and agent session.
 
@@ -874,10 +875,45 @@ Each workspace runs one coding agent — Claude Code or OpenCode, chosen by the
 `agent` setting or per workspace when you create it — in a terminal tab of its
 editor.
 
+### Which agent binary runs
+
+Both agents follow the same rules, decided once at startup:
+
+1. **`version.claude` / `version.opencode` set** — CodeHydra downloads that
+   version (once) and runs it, even when the agent is installed on your
+   system. The value is an exact version (`2.1.274`) or a channel that is
+   looked up again at every start: `latest` or `stable` for Claude Code,
+   `latest` for OpenCode. Any string is accepted; one that names no release
+   shows up as a failed download on the setup screen.
+2. **Installed on your system** — with the key unset (the default), the first
+   `claude` / `opencode` on CodeHydra's `PATH` whose `--version` runs is used.
+   CodeHydra sees the `PATH` it was started with, which for an app launched
+   from the desktop may lack directories your shell adds; then it downloads its
+   own copy instead. Installing or removing the agent takes effect at the next
+   start.
+3. **Otherwise** — CodeHydra downloads the latest release (Claude Code's
+   `stable` channel, OpenCode's latest GitHub release) and checks again for a
+   newer one at every start.
+
+Downloads land in the data directory (`claude/<version>/`,
+`opencode/<version>/`); Claude Code's is checked against the release's
+SHA-256. When nothing usable is there yet, the setup screen downloads before
+the app opens (with Retry / Quit if it fails). When a newer release appears
+while an older download works, CodeHydra starts with the older one and
+downloads the newer one in the background: workspaces opened after it lands
+use it, running ones keep theirs until restarted. Offline, the newest download
+already there is used. Older versions are deleted at the next start. A binary
+CodeHydra downloaded has its own self-update turned off (CodeHydra updates
+it); a system install is left alone.
+
+`codehydra --download-binaries` downloads the editor and both agents (the
+configured version, else the latest) whatever is installed, then exits without
+opening a window — for preparing an offline machine or a CI cache.
+
 ### Claude Code
 
-The agent terminal runs `ch claude`, which starts the `claude` on your `PATH`
-(or the version set by `version.claude`) with CodeHydra's additions: its status
+The agent terminal runs `ch claude`, which starts the `claude` chosen above
+with CodeHydra's additions: its status
 hooks, the CodeHydra MCP server, the system prompt below,
 `--allow-dangerously-skip-permissions` (so bypass mode is available through
 Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
@@ -886,8 +922,8 @@ Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
 
 ### OpenCode
 
-CodeHydra runs one `opencode serve` per workspace and the agent terminal
-attaches to it. The status shows **None** until the terminal has attached.
+CodeHydra runs one `opencode serve` per workspace, with the `opencode` chosen
+above, and the agent terminal attaches to it with the same binary. The status shows **None** until the terminal has attached.
 
 ### Starting, closing and restarting
 

@@ -144,23 +144,23 @@ The unified per-agent surface consumed by the generic module (`agent-module-prov
 - per-workspace provider registry and status cache (with change deduplication)
 - the open-modal overlay (see [Open Modal Override](#open-modal-override))
 - `onServerStarted`/`onServerStopped` wiring, including the restart path (disconnect → reconnect)
-- binary preflight/download scaffolding
+- binary preflight/download, delegated to the spec's `AgentBinaryResolver` (`binary-resolver.ts`: pin → system install → latest download; see ARCHITECTURE.md › Binary Distribution), and the per-workspace binary snapshot passed to `startServer` and merged into the terminal env via `binaryEnv`
 - disposal
 
 Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concrete provider class):
 
-| Spec member              | Claude                                        | OpenCode                                       |
-| ------------------------ | --------------------------------------------- | ---------------------------------------------- |
-| `resolveBinary()`        | `null` when no version override (bundled)     | always resolves from `version.opencode`        |
-| `createProvider`         | `new ClaudeCodeProvider({serverManager,...})` | `new OpenCodeProvider(path, logger)`           |
-| `connectProvider`        | `connect(port)`                               | `connect(port)` + `fetchStatus()`              |
-| `initialStatus`          | always `"none"` (status arrives via hooks)    | derived from `getEffectiveCounts()`            |
-| `onProviderRegistered`   | —                                             | sends the pending initial prompt               |
-| `startServer`            | `startServer(path)`                           | `startServer(path, {initialPrompt})`           |
-| `afterProviderReady`     | writes prompt file + no-session marker        | —                                              |
-| `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager    | `triggerWrapperStart` / TUI detach             |
-| `wireExtraCallbacks`     | —                                             | `setMarkActiveHandler` (TUI-attached tracking) |
-| `clearWorkspaceTracking` | — (no per-workspace tracking)                 | clears the TUI-attached entry                  |
+| Spec member              | Claude                                                              | OpenCode                                       |
+| ------------------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
+| `binary` / `binaryEnv`   | resolver; `_CH_CLAUDE_BIN` (+ `DISABLE_AUTOUPDATER` for a download) | resolver; `_CH_OPENCODE_BIN`                   |
+| `createProvider`         | `new ClaudeCodeProvider({serverManager,...})`                       | `new OpenCodeProvider(path, logger)`           |
+| `connectProvider`        | `connect(port)`                                                     | `connect(port)` + `fetchStatus()`              |
+| `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`            |
+| `onProviderRegistered`   | —                                                                   | sends the pending initial prompt               |
+| `startServer`            | `startServer(path)`                                                 | `startServer(path, {initialPrompt, binary})`   |
+| `afterProviderReady`     | writes prompt file + no-session marker                              | —                                              |
+| `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach             |
+| `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking) |
+| `clearWorkspaceTracking` | — (no per-workspace tracking)                                       | clears the TUI-attached entry                  |
 
 ### AgentServerManager
 
@@ -504,14 +504,15 @@ export function createMyAgentModuleProvider(deps: MyAgentModuleProviderDeps): Ag
       serverName: "My Agent",
       scripts: ["ch-my-agent"],
       serverManager: deps.serverManager,
-      resolveBinary() { ... },
+      binary: deps.binary, // createAgentBinaryResolver({ descriptor, ... }) in main.ts
+      binaryEnv: (resolved) => ({ _CH_MY_AGENT_BIN: resolved.path }),
       createProvider: (path) => new MyAgentProvider(path, deps.logger),
       connectProvider: (provider, port) => provider.connect(port),
       initialStatus: () => "none",
       startServer: (path) => deps.serverManager.startServer(path).then(() => undefined),
       applyTerminalLifecycle: (path, event, ctx) => { ... },
     },
-    { logger: deps.logger, downloadDeps: deps.downloadDeps, binaryName: deps.binaryConfig.name }
+    { logger: deps.logger, binaryName: "my-agent" }
   );
 }
 ```

@@ -1,30 +1,25 @@
 /**
- * OpenCode agent setup information.
- * Provides version, binary paths, and download URLs for OpenCode.
+ * OpenCode agent setup information: executable names and download coordinates.
+ *
+ * Releases are GitHub releases of {@link OPENCODE_REPO_URL}. The latest version
+ * is read from where `releases/latest` redirects (`…/releases/tag/v<version>`),
+ * which needs no API token and has no rate limit.
  */
 
 import type { SupportedArch, SupportedPlatform } from "../types";
-import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { Path } from "../../../utils/path/path";
+import type { ArchiveDownloadRequest } from "../../../utils/binary-download";
 import { assertWindowsX64 } from "../../../utils/binary-download";
+import { BinaryDownloadError } from "../../../shared/errors/service-errors";
+import type { AgentBinaryDescriptor } from "../binary-resolver";
 
-/**
- * Current version of OpenCode to download.
- */
-export const OPENCODE_VERSION = "1.18.32";
+/** The OpenCode repository (moved from sst/opencode, whose URLs only redirect). */
+export const OPENCODE_REPO_URL = "https://github.com/anomalyco/opencode";
 
-/**
- * Resolve the bundle directory holding the extracted OpenCode binary for a
- * given version. Single source of truth for the `opencode/<version>` path
- * shape used by the agent server, binary download/preflight, and the
- * IDE server environment (`_CH_OPENCODE_DIR`).
- */
-export function getOpencodeBundleDir(
-  pathProvider: Pick<PathProvider, "bundlePath">,
-  version: string
-): Path {
-  return pathProvider.bundlePath(`opencode/${version}`);
-}
+/** Channels `version.opencode` may name instead of a version. */
+export const OPENCODE_CHANNELS = ["latest"] as const;
+
+/** Channel downloaded when nothing is configured or installed. */
+export const OPENCODE_DEFAULT_CHANNEL = "latest";
 
 /**
  * Architecture name mappings for OpenCode releases.
@@ -49,25 +44,27 @@ export function getOpencodeUrlForVersion(
   arch: SupportedArch
 ): string {
   assertWindowsX64(platform, arch, "OpenCode");
+  const base = `${OPENCODE_REPO_URL}/releases/download/v${version}`;
   if (platform === "win32") {
-    return `https://github.com/sst/opencode/releases/download/v${version}/opencode-windows-x64.zip`;
+    return `${base}/opencode-windows-x64.zip`;
   }
   const archName = OPENCODE_ARCH[arch];
   const os = platform === "darwin" ? "darwin" : "linux";
   const ext = platform === "darwin" ? "zip" : "tar.gz";
-  return `https://github.com/sst/opencode/releases/download/v${version}/opencode-${os}-${archName}.${ext}`;
+  return `${base}/opencode-${os}-${archName}.${ext}`;
 }
 
+/** URL that redirects to the latest release's tag page. */
+export const OPENCODE_LATEST_URL = `${OPENCODE_REPO_URL}/releases/latest`;
+
 /**
- * Get the download URL for OpenCode using the default version.
+ * Read the version out of the URL `releases/latest` redirected to.
  *
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Download URL for the OpenCode release
- * @throws Error if platform/arch combination is not supported
+ * @returns The version without its `v` prefix, or null when the URL is not a tag page
  */
-export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  return getOpencodeUrlForVersion(OPENCODE_VERSION, platform, arch);
+export function parseOpencodeReleaseTagUrl(url: string): string | null {
+  const match = /\/releases\/tag\/v?([^/?#]+)\/?(?:[?#].*)?$/.exec(url);
+  return match?.[1] ?? null;
 }
 
 /**
@@ -78,4 +75,51 @@ export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch)
  */
 export function getOpencodeExecutablePath(platform: SupportedPlatform): string {
   return platform === "win32" ? "opencode.exe" : "opencode";
+}
+
+/** Download coordinates for OpenCode on one platform. */
+export function createOpencodeBinaryDescriptor(
+  platform: SupportedPlatform,
+  arch: SupportedArch
+): AgentBinaryDescriptor {
+  const executablePath = getOpencodeExecutablePath(platform);
+  return {
+    name: "opencode",
+    channels: OPENCODE_CHANNELS,
+    defaultChannel: OPENCODE_DEFAULT_CHANNEL,
+    executablePath,
+    systemCandidates: platform === "win32" ? ["opencode.exe", "opencode.cmd"] : ["opencode"],
+
+    async resolveChannel(channel, httpClient) {
+      if (channel !== "latest") {
+        throw new BinaryDownloadError(`Unknown OpenCode channel: ${channel}`, "INVALID_VERSION");
+      }
+      // fetch follows redirects; the response's URL is where it ended up.
+      const response = await httpClient.fetch(OPENCODE_LATEST_URL);
+      if (!response.ok) {
+        throw new BinaryDownloadError(
+          `HTTP ${response.status} looking up the latest OpenCode release`,
+          "NETWORK_ERROR"
+        );
+      }
+      const version = parseOpencodeReleaseTagUrl(response.url);
+      if (version === null) {
+        throw new BinaryDownloadError(
+          `Could not read the latest OpenCode version from ${response.url || OPENCODE_LATEST_URL}`,
+          "INVALID_VERSION"
+        );
+      }
+      return version;
+    },
+
+    async downloadRequest(version, destDir): Promise<ArchiveDownloadRequest> {
+      return {
+        name: "opencode",
+        url: getOpencodeUrlForVersion(version, platform, arch),
+        destDir,
+        archiveExtension: platform === "linux" ? ".tar.gz" : ".zip",
+        executablePath,
+      };
+    },
+  };
 }

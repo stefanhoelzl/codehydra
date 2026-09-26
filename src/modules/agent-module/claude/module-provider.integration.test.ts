@@ -17,15 +17,16 @@ import type { ClaudeCodeServerManager } from "./server-manager";
 import type { AgentProvider, AgentStatus } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import type { DownloadDeps } from "../../../utils/binary-download";
 import {
-  createBinaryConfig,
-  createDownloadDeps,
+  createFakeBinaryResolver,
   createMockServerManager as createServerManagerBase,
-  createVersionConfig,
+  type FakeBinaryResolver,
 } from "../module-provider.test-utils";
-import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
-import { createMockProcessRunner } from "../../../boundaries/platform/process.state-mock";
+import type { ResolvedAgentBinary } from "../binary-resolver";
+import {
+  createMockProcessRunner,
+  type MockProcessRunner,
+} from "../../../boundaries/platform/process.state-mock";
 import { testPath } from "../../../shared/test-fixtures";
 
 // =============================================================================
@@ -78,34 +79,37 @@ const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
 
 describe("createClaudeModuleProvider", () => {
   let mockServerManager: ClaudeCodeServerManager;
-  let downloadDeps: DownloadDeps;
-  let binaryConfig: ReturnType<typeof createBinaryConfig>;
-  let versionConfig: ReturnType<typeof createVersionConfig>;
-  let pathProvider: ReturnType<typeof createMockPathProvider>;
+  let binary: FakeBinaryResolver;
+  let processRunner: MockProcessRunner;
+
+  const SYSTEM_CLAUDE: ResolvedAgentBinary = {
+    path: "/usr/local/bin/claude",
+    source: "system",
+    version: null,
+  };
+  const DOWNLOADED_CLAUDE: ResolvedAgentBinary = {
+    path: "/bundles/claude/2.1.274/claude",
+    source: "download",
+    version: "2.1.274",
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     capturedStatusCallback = null;
     mockServerManager = createMockServerManager();
-    downloadDeps = createDownloadDeps();
-    binaryConfig = createBinaryConfig("claude");
-    versionConfig = createVersionConfig<string | null>("version.claude", null);
-    pathProvider = createMockPathProvider();
+    binary = createFakeBinaryResolver({ binary: SYSTEM_CLAUDE });
   });
 
   function createProvider(
     helpStdout = '--permission-mode <mode>  mode (choices: "plan", "acceptEdits")'
   ) {
+    processRunner = createMockProcessRunner({ defaultResult: { stdout: helpStdout } });
     return createClaudeModuleProvider({
       serverManager: mockServerManager,
-      downloadDeps,
-      binaryConfig,
-      versionConfig,
-      pathProvider,
+      binary,
       platform: "linux",
-      arch: "x64",
       logger: SILENT_LOGGER,
-      processRunner: createMockProcessRunner({ defaultResult: { stdout: helpStdout } }),
+      processRunner,
     });
   }
 
@@ -162,29 +166,60 @@ describe("createClaudeModuleProvider", () => {
 
       expect(await provider.getLaunchOptions?.()).toEqual({ permissionModes: [] });
     });
+
+    it("asks the binary workspaces run, not whatever is on PATH", async () => {
+      binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE });
+      const provider = createProvider();
+
+      await provider.getLaunchOptions?.();
+
+      expect(processRunner).toHaveSpawned([
+        { command: "/bundles/claude/2.1.274/claude", args: ["--help"] },
+      ]);
+    });
+
+    it("offers only the default mode until the binary is known, then detects", async () => {
+      binary = createFakeBinaryResolver({ needsDownload: true });
+      const provider = createProvider();
+
+      expect(await provider.getLaunchOptions?.()).toEqual({ permissionModes: [] });
+      await provider.downloadBinary();
+      expect(await provider.getLaunchOptions?.()).toEqual({
+        permissionModes: ["plan", "acceptEdits"],
+      });
+    });
   });
 
   describe("binary management", () => {
-    it("binaryType returns the name from binaryConfig", () => {
+    it("binaryType is claude", () => {
       const provider = createProvider();
 
       expect(provider.binaryType).toBe("claude");
     });
 
-    it("preflight returns success with no download needed when version is null", async () => {
+    it("preflight reports no download when the binary is resolved", async () => {
       const provider = createProvider();
       const result = await provider.preflight();
 
       expect(result).toEqual({ success: true, needsDownload: false });
     });
 
-    it("downloadBinary is a no-op when version is null", async () => {
+    it("preflight reports a download when nothing is installed, and downloadBinary fetches it", async () => {
+      binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE, needsDownload: true });
       const provider = createProvider();
-      const onProgress = vi.fn();
-      await provider.downloadBinary(onProgress);
 
-      // No HTTP requests should have been made since version is null
-      expect(onProgress).not.toHaveBeenCalled();
+      expect(await provider.preflight()).toEqual({ success: true, needsDownload: true });
+      await provider.downloadBinary();
+
+      expect(binary.downloads).toBe(1);
+      expect(await provider.preflight()).toEqual({ success: true, needsDownload: false });
+    });
+
+    it("reports the version directories in use for cleanup", () => {
+      binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE });
+      const provider = createProvider();
+
+      expect(provider.bundleVersionsInUse()).toEqual(["2.1.274"]);
     });
   });
 
@@ -674,7 +709,30 @@ describe("createClaudeModuleProvider", () => {
       const result = await provider.startWorkspace(WS_PATH);
 
       expect(mockServerManager.startServer).toHaveBeenCalledWith(WS_PATH);
-      expect(result.envVars).toEqual({ CLAUDE_PORT: "8080" });
+      expect(result.envVars).toEqual({
+        CLAUDE_PORT: "8080",
+        _CH_CLAUDE_BIN: "/usr/local/bin/claude",
+      });
+    });
+
+    it("points the terminal at a downloaded binary and turns off its self-update", async () => {
+      binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE });
+      const provider = createProvider();
+
+      const result = await provider.startWorkspace(WS_PATH);
+
+      expect(result.envVars).toMatchObject({
+        _CH_CLAUDE_BIN: "/bundles/claude/2.1.274/claude",
+        DISABLE_AUTOUPDATER: "1",
+      });
+    });
+
+    it("leaves a system install's self-update alone", async () => {
+      const provider = createProvider();
+
+      const result = await provider.startWorkspace(WS_PATH);
+
+      expect(result.envVars).not.toHaveProperty("DISABLE_AUTOUPDATER");
     });
 
     it("calls setInitialPrompt when initialPrompt option is provided", async () => {
@@ -742,7 +800,7 @@ describe("createClaudeModuleProvider", () => {
       expect(mockServerManager.setNoSessionMarker).not.toHaveBeenCalled();
     });
 
-    it("returns empty envVars when provider does not exist", async () => {
+    it("returns only the binary path when provider does not exist", async () => {
       const provider = createProvider();
       provider.initialize({
         nodePath: testPath("/ide/node").toNative(),
@@ -754,7 +812,7 @@ describe("createClaudeModuleProvider", () => {
       // startServer does not trigger onServerStarted callback
       const result = await provider.startWorkspace(WS_PATH);
 
-      expect(result.envVars).toEqual({});
+      expect(result.envVars).toEqual({ _CH_CLAUDE_BIN: "/usr/local/bin/claude" });
     });
   });
 

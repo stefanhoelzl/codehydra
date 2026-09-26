@@ -43,6 +43,11 @@ export interface ConfiguredResponse {
   readonly headers?: Record<string, string>;
   readonly error?: Error; // Throw this instead of returning response
   readonly delayMs?: number; // Simulated delay (use with vi.useFakeTimers())
+  /**
+   * The response's `url`: where the request ended up after redirects. Default:
+   * the requested URL, as fetch reports when nothing redirected.
+   */
+  readonly url?: string;
 }
 
 /** Mock state - pure data, logic in matchers. */
@@ -250,7 +255,10 @@ export function createMockHttpClient(options?: MockHttpClientOptions): MockHttpC
         }
       }
 
-      return new Response(body, responseInit);
+      const response = new Response(body, responseInit);
+      // A constructed Response has an empty `url`; fetch always reports one.
+      Object.defineProperty(response, "url", { value: config.url ?? url });
+      return response;
     },
 
     setResponse(url: string, config: ConfiguredResponse): void {
