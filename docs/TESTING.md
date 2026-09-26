@@ -112,7 +112,7 @@ describe("SimpleGitClient", () => {
 **Key characteristics**:
 
 - Tests behavior, not implementation ("when user does X, outcome is Y")
-- Real module interaction (modules, GitWorktreeProvider, HooksModule all run together)
+- Real module interaction (modules, GitWorktreeProvider, PluginModule all run together)
 - Only mock boundaries (same interfaces tested by boundary tests)
 - **MUST be fast** - target <50ms per test, <2s per module
 
@@ -127,7 +127,7 @@ Traditional unit tests mock everything except the single module under test. This
 Integration tests solve this by:
 
 1. **Testing behavior** - "When user does X, outcome is Y"
-2. **Real module interaction** - Modules, GitWorktreeProvider, HooksModule all run together
+2. **Real module interaction** - Modules, GitWorktreeProvider, PluginModule all run together
 3. **Only mock boundaries** - The external system interfaces, not internal modules
 
 ---
@@ -283,7 +283,7 @@ true so the wizard stays away). `workers: 1`, `retries: 0`.
   sees the key. Measured, not assumed: with `--log.level=debug`, synthetic Alt/X/H events
   produce zero `Alt keyUp detected` entries and no `ui:set-shortcut-active` intent while
   the listener is registered. Anything reachable _only_ via Alt+X (hibernate, devtools,
-  settings) has to be set up another way — `auto-workspace.e2e.ts` writes the `hibernated`
+  settings) has to be set up another way — `plugins.e2e.ts` writes the `hibernated`
   branch config and relaunches, which is the same state startup discovery reads.
 - `extraArgs` accepts a thunk, resolved at launch. A spec whose flags name temp paths needs
   it: `useApp()` is called at module scope, before its own `beforeAll` has created them.
@@ -421,7 +421,7 @@ Code change involves external system interface?
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
 | Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
 | New operation                                 | Operation tests + module tests     | CreateWorkspaceOperation, AppStartOperation |
-| New hook module                               | Module tests (integration tests)   | HooksModule, IdeServerModule                |
+| New hook module                               | Module tests (integration tests)   | PluginModule, IdeServerModule               |
 
 ---
 
@@ -451,7 +451,7 @@ Modules declare hooks, event handlers, and interceptors. They depend only on inj
 
 ```typescript
 it("contributes the hook's environment to the workspace", async () => {
-  const module = createHooksModule({ ...deps, processRunner });
+  const module = createPluginModule({ ...deps, processRunner });
 
   const handler = module.hooks["open-workspace"].setup.handler;
   const ctx = {
@@ -474,7 +474,7 @@ Modules throw when they encounter errors. Operations decide what failures mean.
 ```typescript
 it("logs the failure but does not throw", async () => {
   const logger = createBehavioralLogger();
-  const module = createHooksModule({ ...deps, logger, processRunner: failingRunner });
+  const module = createPluginModule({ ...deps, logger, processRunner: failingRunner });
 
   const handler = module.hooks["open-workspace"].setup.handler;
   await handler(ctx); // Does not throw -- a setup hook is best-effort
@@ -1377,7 +1377,7 @@ Integration tests go through specific entry points, not arbitrary internal modul
 
 Testing through `dispatcher.dispatch()` means:
 
-- Multiple modules work together (`workspace:create` → GitWorktreeProvider → IGitClient → HooksModule)
+- Multiple modules work together (`workspace:create` → GitWorktreeProvider → IGitClient → PluginModule)
 - State flows correctly between modules
 - Domain events are emitted properly
 - Error handling works across layers

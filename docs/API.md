@@ -907,8 +907,8 @@ the message (sent, not read).
 
 - **Sender.** Set from the connection, never from the input:
   `CodeHydra · workspace <name>` for the caller's workspace (a shell's cwd, even when
-  `--workspace` names another), `CodeHydra · ch` for a shell outside every workspace, and `CodeHydra · auto-workspace <source>` for events-mode
-  automatic workspaces.
+  `--workspace` names another), `CodeHydra · ch` for a shell outside every workspace, and
+  `CodeHydra · automation <plugin>/<automation>` for events-mode automations.
 - **No agent.** A hibernated workspace fails fast. Without `wake`, a closed agent terminal
   fails too (category `not-found`, exit 6). The operation reports this as
   `{ sent: false, reason }` rather than throwing, so it is not logged as a fault. A
@@ -970,10 +970,36 @@ $ ch config reset sidebar.width             # remove from config.json
 | **Keys**      | Exactly the settings dialog's: every registered key except `help` and deprecated ones. Any other key is not found (exit 6); a value the key rejects is a usage error (exit 2).                                                                                         |
 | **Values**    | Always a string, run through the key's own parser — the one `--key=value` and `CH_*` use.                                                                                                                                                                              |
 | **Rows**      | `set`, `reset` and `list` return `{ key, value, default, source, applies, validValues, description }` (the last two `null` when a key has none). `source` is `default`, `user` (config.json), `env` or `cli`; `applies: restart` means the change waits for a restart. |
-| **Secrets**   | A `redact` key reads as `<redacted>` everywhere. An `omit` key (`auto-workspace.sources`) reads as `<omitted>` in `list`, in the clear from `get`.                                                                                                                     |
+| **Secrets**   | A `redact` key reads as `<redacted>` everywhere. An `omit` key reads as `<omitted>` in `list`, in the clear from `get`.                                                                                                                                                |
 | **Overrides** | A set over an env var or CLI flag applies now, but the override wins again on the next start — `source` stays `env`/`cli` to say so.                                                                                                                                   |
 
 The app must be running: `ch config` never edits config.json on its own.
+
+### Plugins
+
+`ch plugin list|enable|disable|errors|schema` manages plugins (MCP: `plugin_list`,
+`plugin_enable`, `plugin_disable`, `plugin_errors`, `plugin_schema`). Not on the API
+server: no extension needs it. What a plugin is, and how its scripts run, is in the
+user guide (`ch guide plugins`).
+
+```console
+$ ch plugin list                    # name, origin, state, platforms, path (rows)
+$ ch plugin disable local:github    # local:<name> is yours, workspace:<name> the repository's
+$ ch plugin enable workspace:setup  # = trusting it; needs a workspace (cwd or --workspace)
+$ ch plugin errors                  # plugin, entry, message, log, at (rows)
+$ ch plugin schema                  # the manifest's JSON Schema
+```
+
+|             |                                                                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Scope**   | The caller's workspace decides which repository's plugins are listed; outside every workspace only the user's own are.                                                                           |
+| **State**   | `enabled`, `disabled` or `ask` (a repository's plugin not answered yet). `enable`/`disable` answer the trust question for good and return the plugin's row.                                      |
+| **Errors**  | A problem (the plugin cannot run: `entry` empty) or the last failed run of a hook or automation (`automations.<name>`), until it next succeeds or the app restarts. `log` is the run's log file. |
+| **Failure** | An unknown plugin is not found (exit 6); `workspace:<name>` with no workspace is exit 4.                                                                                                         |
+
+Automations run registry operations too: the ones `src/api/adapters/plugin-actions-map.ts`
+allows, through `plugin-actions.ts`, with a `workspace` input resolved the way
+`--workspace` is.
 
 ### Guide
 
@@ -984,7 +1010,7 @@ learn how CodeHydra works; their system prompt points here.
 
 ```console
 $ ch guide                     # the whole guide
-$ ch guide repository-hooks    # one section
+$ ch guide plugins             # one section
 ```
 
 Unlike other commands, the result is printed as-is when stdout is not a TTY:
