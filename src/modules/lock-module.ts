@@ -23,6 +23,12 @@
  * whose caller disconnects leaves the queue — otherwise the lock would later be
  * granted to a workspace nobody is waiting in.
  *
+ * A workspace may hold several locks and wait for more, so two can end up
+ * waiting for each other. A take that would close such a loop is refused at
+ * once as a conflict naming it, instead of queueing forever — the table never
+ * contains a deadlock. Taking the locks together (`ch lock run a,b`, which takes
+ * them in name order) avoids the refusal.
+ *
  * In-memory is enough because a restart tears down every workspace's terminals:
  * every holder is gone by then, and a persisted lock would be one nobody can
  * release. The sidebar tags this writes DO persist (they are git-config
@@ -244,6 +250,85 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     return `'${lock.key.name}' is held by '${name}' (${formatAge(lock.holder.acquiredAt)})${reason}`;
   }
 
+  /**
+   * Why queueing `workspace` for `lock` would deadlock, or null when it would not.
+   *
+   * Waiting is an edge in a wait-for graph between workspaces: a waiter waits for
+   * the lock's holder, and for every waiter ahead of it in that lock's queue —
+   * FIFO hands the lock to them first, so a loop through one of them closes on
+   * a handoff even though no take ever saw it. The table never contains a loop,
+   * so only one through the new edges can form: search from them back to
+   * `workspace`, and name the path found.
+   */
+  function deadlockVia(workspace: string, lock: Lock): string | null {
+    interface Edge {
+      readonly from: string;
+      readonly to: string;
+      readonly toPath: WorkspacePath;
+      readonly lock: Lock;
+      /** `to` holds the lock, rather than being queued ahead for it. */
+      readonly held: boolean;
+    }
+
+    const edgesInto = (from: string, target: Lock, ahead: readonly Waiter[]): Edge[] => [
+      {
+        from,
+        to: target.holder.workspace,
+        toPath: target.holder.workspacePath,
+        lock: target,
+        held: true,
+      },
+      ...ahead.map((w) => ({
+        from,
+        to: w.workspace,
+        toPath: w.workspacePath,
+        lock: target,
+        held: false,
+      })),
+    ];
+
+    const outgoing = new Map<string, Edge[]>();
+    for (const current of locks.values()) {
+      current.queue.forEach((waiter, index) => {
+        const edges = outgoing.get(waiter.workspace) ?? [];
+        edges.push(...edgesInto(waiter.workspace, current, current.queue.slice(0, index)));
+        outgoing.set(waiter.workspace, edges);
+      });
+    }
+
+    // Breadth-first from the new edges; `via` remembers how each node was reached.
+    const via = new Map<string, Edge>();
+    const frontier = edgesInto(workspace, lock, lock.queue).filter((e) => e.to !== workspace);
+    for (let i = 0; i < frontier.length; i++) {
+      const edge = frontier[i]!;
+      if (via.has(edge.to)) continue;
+      via.set(edge.to, edge);
+      if (edge.to === workspace) break;
+      frontier.push(...(outgoing.get(edge.to) ?? []).filter((e) => !via.has(e.to)));
+    }
+    if (!via.has(workspace)) return null;
+
+    const path: Edge[] = [];
+    for (let edge = via.get(workspace); edge !== undefined; edge = via.get(edge.from)) {
+      path.unshift(edge);
+      if (edge.from === workspace) break;
+    }
+    const [first, ...rest] = path;
+    const lead = (edge: Edge): string => {
+      const name = workspaceName(edge.toPath);
+      return edge.held
+        ? `'${edge.lock.key.name}' is held by '${name}'`
+        : `'${edge.lock.key.name}' goes to '${name}' first`;
+    };
+    const then = (edge: Edge): string => {
+      const name = workspaceName(edge.toPath);
+      return edge.held
+        ? `, which waits for '${edge.lock.key.name}', held by '${name}'`
+        : `, which waits for '${edge.lock.key.name}' behind '${name}'`;
+    };
+    return lead(first!) + rest.map(then).join("");
+  }
+
   function newHolder(
     workspacePath: WorkspacePath,
     reason: string | undefined,
@@ -388,6 +473,16 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       }
       if (options.signal.aborted) {
         return Promise.reject(new ApiError("failed", "The caller disconnected."));
+      }
+      const cycle = deadlockVia(workspace, lock);
+      if (cycle !== null) {
+        logger.info("Lock take refused: deadlock", { lock: key.name, workspace: workspacePath });
+        return Promise.reject(
+          new ApiError(
+            "conflict",
+            `Taking '${key.name}' for '${workspaceName(workspacePath)}' would deadlock: ${cycle}.`
+          )
+        );
       }
 
       return new Promise<LockTakeResult>((resolve, reject) => {

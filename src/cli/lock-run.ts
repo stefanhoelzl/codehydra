@@ -1,8 +1,8 @@
 /**
- * `ch lock run <name> [<reason>] [--scope …] [--no-wait] [-- <cmd…>]`.
+ * `ch lock run <name>[,<name>…] [<reason>] [--scope …] [--no-wait] [-- <cmd…>]`.
  *
- * Take a lock, run a command, release it — or, with no command, hold the lock
- * until this process is killed. It is a built-in rather than a registry
+ * Take one or more locks, run a command, release them — or, with no command,
+ * hold them until this process is killed. It is a built-in rather than a registry
  * operation because only a shell can spawn the command.
  *
  * The lock is taken through `lock.hold`, which ties it to this process's
@@ -10,6 +10,11 @@
  * `kill` — ends the hold, because the app releases a held lock when the
  * connection that took it closes. The explicit release after the command is
  * only there to hand the lock over at once rather than on disconnect.
+ *
+ * Several names are taken one `lock.hold` at a time, in name order: two runs
+ * taking the same locks then never take them in opposite order, so they cannot
+ * deadlock each other. If any take fails, the ones this run already made are
+ * released and the command does not run.
  *
  * It releases only what it acquired. When this workspace already held the lock
  * (a `ch lock take` earlier), the take is reentrant and reports `acquired: false`;
@@ -29,6 +34,11 @@ interface HoldResult {
   readonly scope: "global" | "project";
   readonly acquired: boolean;
 }
+
+const USAGE = "usage: ch lock run <name>[,<name>…] [<reason>] [--scope …] [--no-wait] [-- <cmd…>]";
+
+/** The same rule `lock.take` applies to a name. */
+const LOCK_NAME = /^[A-Za-z0-9_-]+$/;
 
 /** The fields `ch lock run` accepts before `--`, as `parseArgs` needs to see them. */
 const SCHEMA = {
@@ -68,57 +78,82 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
   try {
     json = useJson(readFormat(own), options.isTty);
     const { input } = parseArgs(own, SCHEMA, ["name", "reason"]);
-    if (typeof input.name !== "string") {
+    if (typeof input.name !== "string") throw new UsageError(USAGE);
+    const names = [...new Set(input.name.split(","))].sort();
+    const invalid = names.find((name) => !LOCK_NAME.test(name));
+    if (invalid !== undefined) {
       throw new UsageError(
-        "usage: ch lock run <name> [<reason>] [--scope …] [--no-wait] [-- <cmd…>]"
+        `ch lock run: invalid lock name "${invalid}" — letters, digits, hyphens and underscores`
       );
     }
     if (split !== -1 && command.length === 0) {
       throw new UsageError("ch lock run: nothing after --; omit it to hold until killed");
     }
 
-    client = await options.connect();
+    const connected = await options.connect();
+    client = connected;
 
     // Ask before calling: an app without the channel never answers, and calls
     // have no timeout, so an older CodeHydra would leave this waiting forever.
     // `run` gets the same guarantee by resolving every command against describe.
-    const described = await client.call<readonly OperationDescriptor[]>(DESCRIBE_CHANNEL, {
+    const described = await connected.call<readonly OperationDescriptor[]>(DESCRIBE_CHANNEL, {
       target: "cli",
     });
     if (!described.some((descriptor) => descriptor.name === "lock.hold")) {
       throw new CallError("This CodeHydra does not support `ch lock run` — update it.");
     }
 
-    const held = await client.call<HoldResult>(`${OPERATION_CHANNEL_PREFIX}lock.hold`, input);
+    // Only what this run took; a name the workspace already held stays held.
+    const acquired: HoldResult[] = [];
+    const releaseAcquired = async (): Promise<void> => {
+      for (const held of acquired) {
+        try {
+          // As whoever took it: `--workspace` holds on another's behalf.
+          await connected.call(`${OPERATION_CHANNEL_PREFIX}lock.release`, {
+            name: held.name,
+            scope: held.scope,
+            ...(input.workspace !== undefined && { workspace: input.workspace }),
+            ...(input.project !== undefined && { project: input.project }),
+          });
+        } catch {
+          // Already gone — hibernated, say — or the app went away. Either way the
+          // closing connection leaves nothing held.
+        }
+      }
+    };
+
+    for (const name of names) {
+      try {
+        const held = await connected.call<HoldResult>(`${OPERATION_CHANNEL_PREFIX}lock.hold`, {
+          ...input,
+          name,
+        });
+        if (held.acquired) acquired.push(held);
+      } catch (error: unknown) {
+        await releaseAcquired();
+        throw error;
+      }
+    }
+
+    const quoted = (held: readonly { name: string }[]) => held.map((h) => `'${h.name}'`).join(", ");
 
     if (command.length === 0) {
-      if (!held.acquired) {
+      if (acquired.length === 0) {
         // Holding forever would promise a release-on-kill that cannot happen:
-        // the lock belongs to the workspace's earlier take, not to this process.
-        options.stdout(`'${held.name}' is already held by this workspace — nothing to hold`);
+        // the locks belong to the workspace's earlier takes, not to this process.
+        const verb = names.length === 1 ? "is" : "are";
+        options.stdout(
+          `${quoted(names.map((name) => ({ name })))} ${verb} already held by this workspace — nothing to hold`
+        );
         return EXIT.OK;
       }
-      options.stdout(`held '${held.name}' — release by killing this process`);
+      options.stdout(`held ${quoted(acquired)} — release by killing this process`);
       await options.holdForever();
       return EXIT.OK;
     }
 
     const status = await options.runCommand(command[0]!, command.slice(1));
-
-    if (held.acquired) {
-      try {
-        // As whoever took it: `--workspace` holds on another's behalf.
-        await client.call(`${OPERATION_CHANNEL_PREFIX}lock.release`, {
-          name: held.name,
-          scope: held.scope,
-          ...(input.workspace !== undefined && { workspace: input.workspace }),
-          ...(input.project !== undefined && { project: input.project }),
-        });
-      } catch {
-        // Already gone — hibernated, say — or the app went away. Either way the
-        // closing connection below leaves nothing held.
-      }
-    }
+    await releaseAcquired();
     return status;
   } catch (error: unknown) {
     const code = exitCodeFor(error);

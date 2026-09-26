@@ -823,6 +823,7 @@ name    project  holder  held  reason                           waiting
 device           ios     4m    install and run the smoke test   android
 $ ch lock release device
 $ ch lock run device -- ./install.sh                      # take, run, release
+$ ch lock run device,port -- ./e2e.sh                     # several, in name order
 $ ch bg ch lock run device "long session"                 # hold until killed
 ```
 
@@ -833,6 +834,10 @@ $ ch bg ch lock run device "long session"                 # hold until killed
 - **Waiting is FIFO and the grant is atomic**, so there is no gap to lose a race in.
   `take` waits unbounded and prints nothing while it does; run it as a background call.
   `--no-wait` fails at once with exit `5` instead. Over MCP (`lock_take`) it never waits.
+- **Deadlocks are refused.** A take that would leave workspaces waiting for each other in a
+  loop — each holding what the next waits for — fails at once with exit `5`, naming the
+  loop. A waiter waits for the holder and for everyone queued ahead of it. Release what
+  you hold and take the locks together with `ch lock run a,b`, or retry later.
 - **Re-taking a lock you hold** succeeds and changes nothing. **Releasing one you do not
   hold** is exit `6` — usually a sign the hold ended earlier than you thought.
 - **Names** are free-form (`[A-Za-z0-9-_]+`) and exist while held. `--scope global`
@@ -845,7 +850,9 @@ $ ch bg ch lock run device "long session"                 # hold until killed
 - **`ch lock run`** ties the lock to its own process: it is released when the command
   exits or `ch` is killed, and only if `run` acquired it — inside an existing hold it
   leaves that hold alone. With no command it holds until killed; start that under
-  `ch bg`, or the workspace stays busy for as long as it holds.
+  `ch bg`, or the workspace stays busy for as long as it holds. `ch lock run a,b` takes
+  several one at a time in name order (so two runs never deadlock each other); if one
+  cannot be taken, the ones it took are released and the command does not run.
 - **Advisory.** CodeHydra coordinates; whether a command may run without the lock is for
   your project to enforce, e.g. a hook that checks `ch lock ls --format json`.
 - **Sidebar.** A holder shows a `🔒 <names>` tag and a waiter `⏳ <names>`, with the
@@ -1004,11 +1011,11 @@ nothing on PATH.
 
 ### Other subcommands
 
-| Command                          | Purpose                                                                                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ch bg <cmd…>`                   | Run a command without keeping the workspace busy. Never contacts the app. Exits with the command's code, or 128 + the signal number if a signal killed it.                    |
-| `ch lock run <name> [-- <cmd…>]` | Take a lock and run a command, or hold until killed. See [Locks](#locks).                                                                                                     |
-| `ch claude` / `ch opencode`      | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. Extra arguments are passed on to `claude` / `opencode attach`. |
+| Command                                    | Purpose                                                                                                                                                                       |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ch bg <cmd…>`                             | Run a command without keeping the workspace busy. Never contacts the app. Exits with the command's code, or 128 + the signal number if a signal killed it.                    |
+| `ch lock run <name>[,<name>…] [-- <cmd…>]` | Take locks and run a command, or hold until killed. See [Locks](#locks).                                                                                                      |
+| `ch claude` / `ch opencode`                | The agent launchers. The sidekick types these into the agent terminal; there are no separate launcher scripts. Extra arguments are passed on to `claude` / `opencode attach`. |
 
 ---
 

@@ -26,7 +26,7 @@ function group(
 const BUILTIN = [
   ["mcp", "Run as an MCP server over stdio (used by agent configs)"],
   ["bg <cmd…>", "Run a command without keeping the workspace busy"],
-  ["lock run <name> [-- <cmd…>]", "Take a lock; run a command, or hold until killed"],
+  ["lock run <name>[,<name>…] [-- <cmd…>]", "Take locks; run a command, or hold until killed"],
   ["claude [args…]", "Launch the Claude agent"],
   ["opencode [args…]", "Launch the OpenCode agent"],
 ] as const;

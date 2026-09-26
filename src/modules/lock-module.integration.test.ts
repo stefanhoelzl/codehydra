@@ -237,6 +237,104 @@ describe("lock module", () => {
     });
   });
 
+  describe("deadlock", () => {
+    const PORT: LockKey = { name: "port", project: null };
+    const DB: LockKey = { name: "db", project: null };
+
+    it("lets a workspace hold several locks", async () => {
+      const s = setup();
+
+      await s.module.locks.take(A, DEVICE, opts());
+      await s.module.locks.take(A, PORT, opts());
+
+      expect(s.module.locks.list().map((l) => [l.name, l.holder])).toEqual([
+        ["device", A],
+        ["port", A],
+      ]);
+    });
+
+    it("refuses the take that would make two workspaces wait for each other", async () => {
+      const s = setup();
+      await s.module.locks.take(A, DEVICE, opts());
+      await s.module.locks.take(B, PORT, opts());
+      const waiting = s.module.locks.take(A, PORT, opts());
+
+      await expect(s.module.locks.take(B, DEVICE, opts())).rejects.toMatchObject({
+        category: "conflict",
+        message:
+          "Taking 'device' for 'bravo' would deadlock: 'device' is held by 'alpha', " +
+          "which waits for 'port', held by 'bravo'.",
+      });
+
+      // The refused take never queued; the first wait is still served.
+      expect(s.module.locks.list().find((l) => l.name === "device")?.waiting).toEqual([]);
+      s.module.locks.release(B, PORT);
+      await expect(waiting).resolves.toMatchObject({ acquired: true });
+    });
+
+    it("refuses a loop through three workspaces", async () => {
+      const s = setup();
+      await s.module.locks.take(A, DEVICE, opts());
+      await s.module.locks.take(B, PORT, opts());
+      await s.module.locks.take(C, DB, opts());
+      void s.module.locks.take(A, PORT, opts());
+      void s.module.locks.take(B, DB, opts());
+
+      await expect(s.module.locks.take(C, DEVICE, opts())).rejects.toMatchObject({
+        message:
+          "Taking 'device' for 'charlie' would deadlock: 'device' is held by 'alpha', " +
+          "which waits for 'port', held by 'bravo', which waits for 'db', held by 'charlie'.",
+      });
+    });
+
+    it("counts a waiter queued ahead, which gets the lock first", async () => {
+      const s = setup();
+      const D = wsPath("/workspaces/delta");
+      await s.module.locks.take(C, DEVICE, opts());
+      await s.module.locks.take(A, PORT, opts());
+      // Bravo is first in line for the device and also waits for alpha's port.
+      void s.module.locks.take(B, DEVICE, opts());
+      void s.module.locks.take(B, PORT, opts());
+      // Neither charlie nor alpha waits for anyone: an unrelated take queues fine.
+      void s.module.locks.take(D, DEVICE, opts());
+
+      // Alpha would queue behind bravo, who waits for alpha: a handoff from
+      // charlie would complete the loop.
+      await expect(s.module.locks.take(A, DEVICE, opts())).rejects.toMatchObject({
+        message:
+          "Taking 'device' for 'alpha' would deadlock: 'device' goes to 'bravo' first, " +
+          "which waits for 'port', held by 'alpha'.",
+      });
+    });
+
+    it("does not count a waiter that left the queue", async () => {
+      const s = setup();
+      await s.module.locks.take(A, DEVICE, opts());
+      await s.module.locks.take(B, PORT, opts());
+      const connection = new AbortController();
+      const left = s.module.locks.take(A, PORT, opts({ signal: connection.signal }));
+      connection.abort();
+      await expect(left).rejects.toMatchObject({ category: "failed" });
+
+      const b = s.module.locks.take(B, DEVICE, opts());
+      s.module.locks.release(A, DEVICE);
+
+      await expect(b).resolves.toMatchObject({ acquired: true });
+    });
+
+    it("treats a re-take of a lock already held as no wait at all", async () => {
+      const s = setup();
+      await s.module.locks.take(A, DEVICE, opts());
+      await s.module.locks.take(B, PORT, opts());
+      void s.module.locks.take(B, DEVICE, opts());
+
+      await expect(s.module.locks.take(A, DEVICE, opts())).resolves.toEqual({
+        acquired: false,
+        waitedMs: 0,
+      });
+    });
+  });
+
   describe("caller disconnects", () => {
     it("removes a queued waiter whose caller went away", async () => {
       const s = setup();
@@ -300,7 +398,7 @@ describe("lock module", () => {
     it("releases on hibernation, hands over, and drops the workspace's queued takes", async () => {
       const s = setup();
       await s.module.locks.take(A, DEVICE, opts());
-      await s.module.locks.take(B, { name: "gpu", project: null }, opts());
+      await s.module.locks.take(C, { name: "gpu", project: null }, opts());
       const next = s.module.locks.take(B, DEVICE, opts());
       const dropped = s.module.locks.take(A, { name: "gpu", project: null }, opts());
 
@@ -312,7 +410,7 @@ describe("lock module", () => {
       });
       expect(s.module.locks.list().map((l) => [l.name, l.holder, l.waiting])).toEqual([
         ["device", B, []],
-        ["gpu", B, []],
+        ["gpu", C, []],
       ]);
     });
 

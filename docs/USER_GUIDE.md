@@ -1133,6 +1133,7 @@ ch lock take device --no-wait       # exit 5 at once if someone holds it
 ch lock ls
 ch lock release device              # or no name: everything this workspace holds
 ch lock run device -- npm run e2e   # hold only while the command runs
+ch lock run device,port -- npm run e2e   # several locks for one command
 ```
 
 - The **workspace** holds the lock, not the process: it stays held after
@@ -1144,6 +1145,14 @@ ch lock run device -- npm run e2e   # hold only while the command runs
 - Locks live in memory and are gone after a restart.
 - `ch lock run` ties the lock to its own process; without a command it holds
   until killed (run that under `ch bg`, or the workspace stays busy).
+- A workspace can hold several locks. `ch lock run a,b` takes them one at a
+  time in name order, and if one cannot be taken it releases the others and
+  does not run the command.
+- A take that would leave two workspaces waiting for each other (each
+  holds a lock the other is waiting for, possibly through others in between)
+  fails at once with exit 5, naming the loop, rather than waiting forever.
+  Release what you hold and take the locks together with `ch lock run a,b`,
+  or try again later.
 - Releasing a lock the workspace does not hold exits 6.
 - A waiter never takes a held lock. To break one whose holder is stuck or
   gone, release it as the holder, from any shell:

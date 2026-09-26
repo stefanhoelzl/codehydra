@@ -434,7 +434,7 @@ describe("run", () => {
       // Built-in modes are not registry operations and must still be listed.
       expect(result.stdout).toContain("mcp");
       expect(result.stdout).toContain("bg <cmd…>");
-      expect(result.stdout).toContain("lock run <name> [-- <cmd…>]");
+      expect(result.stdout).toContain("lock run <name>[,<name>…] [-- <cmd…>]");
     });
 
     it("leaves hidden commands out of the listing", async () => {
