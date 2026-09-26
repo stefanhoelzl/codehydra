@@ -90,6 +90,9 @@ const HOME = testPath("/home");
 const LOCAL_PLUGINS = new Path(HOME, "plugins");
 const WORKSPACE_PLUGINS = new Path(WORKSPACE_PATH, ".codehydra", "plugins");
 
+/** The script the migration writes for a legacy source named `gh`. */
+const MIGRATED_SCRIPT = '{\nfetch\n} | ch plugin render "$CH_PLUGIN_DIR/templates/gh.yaml"';
+
 /** What the agent module contributes to the agent terminal's environment. */
 const AGENT_ENV = { _CH_WORKSPACE_PATH: WORKSPACE_PATH };
 
@@ -365,6 +368,20 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   });
   const logged: unknown[] = [];
   const registry = new OperationRegistry([
+    // The fields an automation's create item takes here; the real ones are
+    // workspace.create's (items.integration.test.ts).
+    defineEntry({
+      name: "workspace.create",
+      kind: "command",
+      description: "test create",
+      input: z.object({
+        project: z.string().optional(),
+        name: z.string(),
+        stealFocus: z.boolean().optional().default(false),
+      }),
+      requiresWorkspace: false,
+      handler: async () => undefined,
+    }),
     defineEntry({
       name: "log",
       kind: "command",
@@ -901,8 +918,7 @@ describe("kill switch", () => {
     const setup = createTestSetup({
       enabled: false,
       local: {
-        "notes.yaml":
-          "automations:\n  a:\n    action: log\n    script: list\n    template: { message: x }\n",
+        "notes.yaml": "automations:\n  a: list\n",
       },
       outcomes: { list: { stdout: "[]" } },
     });
@@ -948,8 +964,38 @@ describe("ch plugin", () => {
     );
   });
 
+  it("renders items through a template file, leaving empty fields out", async () => {
+    const setup = createTestSetup({
+      local: { "tpl.yaml": 'action: workspace.create\nname: "pr-{{ n }}"\nprompt: "{{ body }}"\n' },
+    });
+
+    const rendered = await setup.module.api.render(
+      new Path(LOCAL_PLUGINS, "tpl.yaml").toNative(),
+      JSON.stringify([{ n: 1, body: "Review" }, { n: 2 }])
+    );
+
+    expect(rendered).toEqual([
+      { action: "workspace.create", name: "pr-1", prompt: "Review" },
+      { action: "workspace.create", name: "pr-2" },
+    ]);
+  });
+
+  it("refuses to render anything but a JSON array, so a failed command is not an empty list", async () => {
+    const setup = createTestSetup({ local: { "tpl.yaml": "name: x\n" } });
+    const template = new Path(LOCAL_PLUGINS, "tpl.yaml").toNative();
+
+    await expect(setup.module.api.render(template, "")).rejects.toThrow(/not JSON/);
+    await expect(setup.module.api.render(template, '{"a":1}')).rejects.toThrow(/JSON array/);
+  });
+
+  it("describes the items an automation prints as JSON Schema", () => {
+    const schema = createTestSetup().module.api.schema("items");
+
+    expect(schema).toMatchObject({ type: "array" });
+  });
+
   it("describes the manifest as JSON Schema", () => {
-    const schema = createTestSetup().module.api.schema();
+    const schema = createTestSetup().module.api.schema("manifest");
 
     expect(schema).toMatchObject({ type: "object", additionalProperties: false });
     expect(Object.keys(schema["properties"] as object)).toEqual(
@@ -962,15 +1008,16 @@ describe("automations", () => {
   it("runs an automation's action once per item its script prints", async () => {
     const setup = createTestSetup({
       local: {
-        "notes/plugin.yaml": [
-          "automations:",
-          "  hello:",
-          "    action: log",
-          "    script: list-notes",
-          '    template: { message: "note {{ n }}" }',
-        ].join("\n"),
+        "notes/plugin.yaml": ["automations:", "  hello: list-notes"].join("\n"),
       },
-      outcomes: { "list-notes": { stdout: JSON.stringify([{ n: 1 }, { n: 2 }]) } },
+      outcomes: {
+        "list-notes": {
+          stdout: JSON.stringify([
+            { action: "log", message: "note 1" },
+            { action: "log", message: "note 2" },
+          ]),
+        },
+      },
     });
 
     await setup.startApp();
@@ -985,13 +1032,7 @@ describe("automations", () => {
   it("reports a script that does not print an array, pointing at its log", async () => {
     const setup = createTestSetup({
       local: {
-        "notes.yaml": [
-          "automations:",
-          "  hello:",
-          "    action: log",
-          "    script: list-notes",
-          '    template: { message: "x" }',
-        ].join("\n"),
+        "notes.yaml": ["automations:", "  hello: list-notes"].join("\n"),
       },
       outcomes: { "list-notes": { stdout: '{"not":"an array"}' } },
     });
@@ -1011,8 +1052,7 @@ describe("automations", () => {
   it("ignores a repository plugin's automations", async () => {
     const setup = createTestSetup({
       workspace: {
-        "repo.yaml":
-          "automations:\n  a:\n    action: log\n    script: x\n    template: { message: y }\n",
+        "repo.yaml": "automations:\n  a: x\n",
       },
     });
 
@@ -1026,7 +1066,14 @@ describe("automations", () => {
       legacySources:
         'name: gh\ncmd: fetch\ntemplate:\n  name: "ws-{{ id }}"\n  key: "{{ id }}"\n  git: "https://x/y.git"',
       tracking: { "gh/1": { workspaceName: "ws-1", createdAt: "2026-01-01T00:00:00.000Z" } },
-      outcomes: { fetch: { stdout: JSON.stringify([{ id: "1" }]) } },
+      outcomes: {
+        // What `ch plugin render` would print for the item the cmd emitted.
+        [MIGRATED_SCRIPT]: {
+          stdout: JSON.stringify([
+            { action: "workspace.create", name: "ws-1", key: "1", project: "https://x/y.git" },
+          ]),
+        },
+      },
     });
 
     await setup.startApp();
@@ -1034,12 +1081,17 @@ describe("automations", () => {
     const manifest = await setup.fileSystem.readFile(
       new Path(LOCAL_PLUGINS, "auto-workspaces", "plugin.yaml")
     );
-    expect(manifest).toContain("gh:");
+    expect(manifest).toContain("ch plugin render");
+    expect(
+      await setup.fileSystem.readFile(
+        new Path(LOCAL_PLUGINS, "auto-workspaces", "templates", "gh.yaml")
+      )
+    ).toContain("action: workspace.create");
     expect(Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object)).toEqual([
       "auto-workspaces/gh/1",
     ]);
     // The migrated automation ran, and found its item already handled.
-    expect(setup.ran).toEqual(["fetch"]);
+    expect(setup.ran).toEqual([MIGRATED_SCRIPT]);
     // The setting is cleared, so the move happens once.
     expect(setup.config.getEffective()).not.toHaveProperty("auto-workspace.sources");
     expect(setup.notifications.map((n) => n.title)).toContain(

@@ -254,6 +254,7 @@ describe("registry contents", () => {
         "plugin.enable",
         "plugin.errors",
         "plugin.list",
+        "plugin.render",
         "plugin.schema",
         "project.close",
         "project.list",

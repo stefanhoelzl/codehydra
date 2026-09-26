@@ -41,6 +41,8 @@ export interface OperationDescriptor {
   readonly text?: boolean;
   /** Field that reads standard input when given as `-`, when describing the CLI view. */
   readonly stdin?: string;
+  /** With `stdin`: an omitted field reads standard input too (a filter). */
+  readonly stdinByDefault?: boolean;
 }
 
 /**
@@ -78,6 +80,8 @@ export function describe(
       ...("hidden" in mapping && mapping.hidden === true && { hidden: true }),
       ...(mapping.text === true && { text: true }),
       ...("stdin" in mapping && mapping.stdin !== undefined && { stdin: mapping.stdin }),
+      ...("stdinByDefault" in mapping &&
+        mapping.stdinByDefault === true && { stdinByDefault: true }),
     });
   }
 

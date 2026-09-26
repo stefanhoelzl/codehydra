@@ -128,8 +128,14 @@ export interface Plugins {
   /** Set a plugin's state. Throws `not-found` when no such plugin exists. */
   setState(scope: PluginScope, id: string, state: PluginState): Promise<PluginListing>;
   errors(): readonly PluginError[];
-  /** The manifest's JSON Schema. */
-  schema(): Record<string, unknown>;
+  /** The JSON Schema of a plugin manifest, or of the items an automation prints. */
+  schema(which: "manifest" | "items"): Record<string, unknown>;
+  /**
+   * Render items through a Liquid template file: each item becomes the
+   * template with its string values rendered against that item. `itemsJson`
+   * must be a JSON array.
+   */
+  render(templatePath: string, itemsJson: string): Promise<unknown[]>;
 }
 
 export interface EntryDeps {

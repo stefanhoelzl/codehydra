@@ -32,6 +32,8 @@ export interface CliMapping extends InputShaping {
    * that is long or awkward to quote can be piped in (`… | ch ws agent message -`).
    */
   readonly stdin?: string;
+  /** With `stdin`: an omitted field reads standard input too, as a filter does. */
+  readonly stdinByDefault?: boolean;
 }
 
 export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
@@ -96,6 +98,13 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "plugin.disable": { path: ["plugin", "disable"], positionals: ["id"] },
   "plugin.errors": { path: ["plugin", "errors"] },
   "plugin.schema": { path: ["plugin", "schema"] },
+  // A filter: with no items given, they are read from standard input.
+  "plugin.render": {
+    path: ["plugin", "render"],
+    positionals: ["template", "items"],
+    stdin: "items",
+    stdinByDefault: true,
+  },
   "config.get": { path: ["config", "get"], positionals: ["key"] },
   "config.list": { path: ["config", "list"] },
   "config.set": { path: ["config", "set"], positionals: ["key", "value"] },

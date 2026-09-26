@@ -1,45 +1,43 @@
 /**
- * Automations — a plugin script run every poll cycle, whose items each run an
- * action.
+ * Automations — a plugin script run every poll cycle, whose printed items each
+ * run an action.
  *
- * An automation is a local plugin's `automations.<name>` (manifest.ts): a
- * script that prints a JSON array, the `action` each item runs, and a
- * `template` rendered once per item into that action's input. Its identity is
- * `<plugin>/<name>`. The plugin module supplies the sources and runs the
- * scripts; this file decides what the items mean.
+ * An automation is a local plugin's `automations.<name>: <script>`; its identity
+ * is `<plugin>/<name>`. The script prints a JSON array of items, each naming its
+ * `action` and carrying that action's input (items.ts). The plugin module
+ * supplies the automations, runs the scripts and validates the items; this file
+ * decides what they mean.
  *
- * `action: workspace.create` (the default) is the auto-workspace behavior — the
- * template is a workspace definition (template-render.ts), and `mode` says
- * what the items mean:
+ * A `workspace.create` item says one of two things, by its `event` flag:
  *
- * `mode: workspaces` (the default) — the script prints the desired workspace
- * list, and the poll reconciles against it:
+ * `event: false` (the default) — this workspace should exist. The script prints
+ * the whole desired list every poll, and the poll reconciles against it:
  *   - a key already tracked in state is skipped
  *   - a new key whose name is already taken adopts that workspace (entry only)
  *   - any other new key creates a workspace (entry written only on success)
- *   - a tracked key absent from this cycle is forgotten only if its workspace is
- *     gone too, so a script that returns a short list for one cycle cannot
- *     orphan a live workspace
+ *   - a tracked key absent from this poll's list is forgotten only if its
+ *     workspace is gone too, so a script that returns a short list for one
+ *     cycle cannot orphan a live workspace
  * There is no auto-deletion; a manually deleted workspace's entry simply
- * persists (so it is not recreated while its item is still active) and is
- * forgotten once the item disappears.
+ * persists (so it is not recreated while its item is still listed) and is
+ * forgotten once the item disappears. "The list" is this automation's
+ * non-event create items of this poll.
  *
- * `mode: events` — the script prints things that happened, and each one fires
- * exactly once. Nothing is tracked in state: the script owns dedup (it acks,
- * pops a queue, or keeps its own cursor), so an event printed twice fires
- * twice. Per event the project is resolved, then the rendered `template.name`
- * is matched against that project's workspaces:
- *   - no match          → create, exactly like the workspaces mode
+ * `event: true` — something happened, and each printed item fires. Nothing is
+ * tracked: the script owns dedup (it acks, pops a queue, or keeps its own
+ * cursor). Per event the project is resolved, then `name` is matched against
+ * that project's workspaces:
+ *   - no match          → create, exactly like a non-event item
  *   - match, closing    → skip (a teardown pipeline owns it)
- *   - match             → re-apply the rendered metadata, then wake it if it is
- *                         hibernated, or switch to it if `focus: true`, then
- *                         send the rendered `prompt` (if any) to its agent as a
- *                         message — reopening a closed agent terminal first
- * A failed event is logged and gone: unlike a workspaces-mode item there is no
- * retry, since the script has already consumed it.
+ *   - match             → re-apply the metadata, then wake it if it is
+ *                         hibernated, or switch to it if `stealFocus`, then send
+ *                         the `prompt` (if any) to its agent as a message —
+ *                         reopening a closed agent terminal first
+ * A failed event is logged and gone: there is no retry, since the script has
+ * already consumed it.
  *
- * Any other action runs as events: each item's rendered template is the input
- * of that operation, invoked through the registry like `ch` would.
+ * Any other action runs once per item, invoked through the registry like `ch`.
+ * A refused item is reported and the next one still runs.
  *
  * `automations.poll-interval` (seconds, default 60) is the *gap between runs*:
  * the next wait is armed only once a cycle has settled, so a slow poll never
@@ -79,12 +77,17 @@ import {
 } from "../../boundaries/platform/store-definition";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
-import type { AgentSpec } from "../../shared/api/types";
+import {
+  TAGS_METADATA_KEY_PREFIX,
+  TITLE_METADATA_KEY,
+  type AgentSpec,
+} from "../../shared/api/types";
 import type { OperationName } from "../../api/names";
+import { buildAgentSpec } from "../../api/entries/workspace";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
-import { renderDefinition, renderInput, type WorkspaceDefinition } from "./template-render";
-import type { AutomationMode, TemplateObject } from "./manifest";
+import { looksLikeGitUrl, matchOpenProject } from "../../utils/project-reference";
+import { CREATE_ACTION, type AutomationItem, type CreateItem } from "./items";
 import { projectPathSchema, type ProjectPath, type WorkspacePath } from "../../intents/contract";
 
 // =============================================================================
@@ -157,9 +160,22 @@ export interface AutomationSource {
   readonly plugin: string;
   /** The automation's name within its plugin. */
   readonly name: string;
-  readonly action: OperationName;
-  readonly mode: AutomationMode;
-  readonly template: TemplateObject;
+}
+
+/** A create item, turned into what creating or matching a workspace needs. */
+interface WorkspaceDefinition {
+  readonly name: string;
+  /** Dedup identity of a non-event item. */
+  readonly key: string;
+  /** An open project's name, a path or a git URL. */
+  readonly project: string;
+  readonly base?: string;
+  readonly tracking?: string;
+  readonly focus: boolean;
+  readonly prompt?: string;
+  readonly agent?: AgentSpec;
+  /** Flattened `codehydra.*` metadata keys to values. */
+  readonly metadata: Readonly<Record<string, string>>;
 }
 
 export interface AutomationsDeps {
@@ -177,11 +193,13 @@ export interface AutomationsDeps {
   readonly sources: () => Promise<readonly AutomationSource[]>;
   /** Run a source's script: its items, or null when it failed (already reported). */
   readonly runScript: (source: AutomationSource) => Promise<unknown[] | null>;
+  /** Validate one printed item. Throws a message naming the action and field. */
+  readonly parseItem: (raw: unknown) => AutomationItem;
   /** Run a non-create action with a rendered input. Throws on failure. */
   readonly invokeAction: (action: OperationName, input: Record<string, unknown>) => Promise<void>;
   /**
-   * An item of a source failed in a way the user must hear about (a template
-   * mistake, an action that was refused). Repeats of the same text collapse.
+   * An item of a source failed in a way the user must hear about (an invalid
+   * item, an action that was refused). Repeats of the same text collapse.
    */
   readonly reportError: (source: AutomationSource, message: string) => void;
 }
@@ -196,6 +214,46 @@ function stateKey(sourceId: string, itemKey: string): string {
 
 function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
   return { workspaceName, createdAt: new Date().toISOString(), projectPath };
+}
+
+/** `metadata` as the workspace's flat keys: a tag becomes `tags.<name>` holding its JSON. */
+function flattenMetadata(metadata: CreateItem["metadata"]): Record<string, string> {
+  const flat: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata ?? {})) {
+    if (key === "title") {
+      if (typeof value === "string") flat[TITLE_METADATA_KEY] = value;
+    } else if (key === "tags") {
+      for (const [name, tag] of Object.entries(value as Record<string, unknown>)) {
+        flat[`${TAGS_METADATA_KEY_PREFIX}${name}`] = JSON.stringify(tag);
+      }
+    } else if (typeof value === "string") {
+      flat[key] = value;
+    }
+  }
+  return flat;
+}
+
+/**
+ * Turn a create item into a workspace definition. Throws a message for a
+ * combination the item's schema cannot express (no project, an agent option
+ * without an agent) — the same checks `ch ws create` makes.
+ */
+function definitionOf(item: CreateItem): WorkspaceDefinition {
+  if (item.project === undefined) {
+    throw new Error("an automation has no project of its own: name one in project");
+  }
+  const agent = buildAgentSpec(item);
+  return {
+    name: item.name,
+    key: item.key ?? item.name,
+    project: item.project,
+    focus: item.stealFocus,
+    metadata: flattenMetadata(item.metadata),
+    ...(item.base !== undefined && { base: item.base }),
+    ...(item.tracking !== undefined && { tracking: item.tracking }),
+    ...(item.prompt !== undefined && { prompt: item.prompt }),
+    ...(agent !== undefined && { agent }),
+  };
 }
 
 // =============================================================================
@@ -264,18 +322,18 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   // ------ Workspace lifecycle ------
 
   /**
-   * Open (cloning if needed) the project a rendered definition points at, and
-   * return its path. Null when the template names neither `project` nor `git`,
-   * when `project` is not an absolute path, when project:open yields nothing,
-   * or when it fails.
+   * Find, open or clone the project a create item names — an open project's
+   * name, a path or a git URL, as `ch ws create` takes it — and return its
+   * path. Null when it is none of those, when project:open yields nothing, or
+   * when it fails.
    *
    * Failure is swallowed rather than thrown because this is the first step of
    * handling one item, and one item must never take the cycle down with it: a
    * bad `project` path or an unreachable clone URL would otherwise abandon every
-   * later item AND every later source. Null leaves a workspaces-mode item
+   * later item AND every later source. Null leaves a non-event item
    * unrecorded (retried next tick) and drops an event (there is no retry).
    *
-   * A template mistake would otherwise retry silently forever, so it is also
+   * An item mistake would otherwise retry silently forever, so it is also
    * reported. A failed clone is not: the clone's own card already turns into
    * "Clone failed".
    */
@@ -284,28 +342,42 @@ export function createAutomations(deps: AutomationsDeps): Automations {
     definition: WorkspaceDefinition,
     key: string
   ): Promise<ProjectPath | null> {
+    const reference = definition.project;
+    try {
+      const projects = await deps.dispatcher.dispatch<ListProjectsIntent>({
+        type: INTENT_LIST_PROJECTS,
+        payload: {},
+      });
+      const matched = matchOpenProject(projects ?? [], reference);
+      if (matched !== undefined) {
+        if ("error" in matched) throw new Error(matched.error);
+        return projectPathSchema.parse(matched.path);
+      }
+    } catch (error) {
+      deps.logger.warn("Could not look the automation's project up", {
+        key,
+        error: getErrorMessage(error),
+      });
+      deps.reportError(source, `project ${reference}: ${getErrorMessage(error)}`);
+      return null;
+    }
+
     let projectPayload: OpenProjectIntent["payload"];
-    if (definition.project) {
+    if (looksLikeGitUrl(reference)) {
+      projectPayload = { git: reference };
+    } else {
       try {
-        // A user-authored template value: normalize, then mint the brand by parsing.
-        projectPayload = {
-          path: projectPathSchema.parse(new Path(definition.project).toString()),
-        };
+        // A user-authored value: normalize, then mint the brand by parsing.
+        projectPayload = { path: projectPathSchema.parse(new Path(reference).toString()) };
       } catch {
         // The value itself stays out of the log: a URL put here may carry a token.
-        deps.logger.warn("Skipping automation item (project is not an absolute path)", { key });
+        deps.logger.warn("Skipping automation item (project is not a path, name or URL)", { key });
         deps.reportError(
           source,
-          `project must be an absolute path — use git: for a URL (got "${definition.project}")`
+          `project must be an open project's name, an absolute path or a git URL (got "${reference}")`
         );
         return null;
       }
-    } else if (definition.git) {
-      projectPayload = { git: definition.git };
-    } else {
-      deps.logger.warn("Skipping automation item (no project/git in template)", { key });
-      deps.reportError(source, "the template needs a project: path or a git: URL");
-      return null;
     }
 
     try {
@@ -323,6 +395,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         key,
         error: getErrorMessage(error),
       });
+      // A failed clone already turns its own card into "Clone failed".
       if (projectPayload.path !== undefined) {
         deps.reportError(source, `cannot open its project: ${getErrorMessage(error)}`);
       }
@@ -331,11 +404,11 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   }
 
   /**
-   * Write the source identity plus the template's rendered metadata onto a
+   * Write the automation's identity plus the item's metadata onto a
    * workspace. Best-effort per key: metadata is cosmetic, so one bad key never
    * fails the create (or the event) around it.
    *
-   * `source` is rewritten on every hit, not only at create — an events-mode
+   * `source` is rewritten on every hit, not only at create — an event
    * automation that acts on a workspace is its current owner as far as the
    * sidebar is concerned, including one the user made by hand under a matching
    * name.
@@ -348,7 +421,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   ): Promise<void> {
     const allMetadata: Record<string, string> = {
       [METADATA_SOURCE_KEY]: source.id,
-      ...(definition.metadata ?? {}),
+      ...definition.metadata,
     };
     for (const [metaKey, value] of Object.entries(allMetadata)) {
       try {
@@ -368,7 +441,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
 
   /**
    * Create a workspace for a rendered definition. Returns the state entry on
-   * success, or null on any failure — a workspaces-mode caller then does NOT
+   * success, or null on any failure — a non-event caller then does NOT
    * record the item, so it is retried next tick.
    */
   async function createWorkspace(
@@ -383,10 +456,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         payload: { projectPath, refresh: true, wait: true },
       });
 
-      const agent: AgentSpec = definition.agent ?? {
-        type: "default",
-        ...(definition.prompt !== "" && { prompt: definition.prompt }),
-      };
+      const agent: AgentSpec = definition.agent ?? { type: "default" };
 
       const wsResult = await deps.dispatcher.dispatch<OpenWorkspaceIntent>({
         type: INTENT_OPEN_WORKSPACE,
@@ -394,7 +464,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
           workspaceName: definition.name,
           ...(definition.base !== undefined && { base: definition.base }),
           ...(definition.tracking !== undefined && { tracking: definition.tracking }),
-          stealFocus: definition.focus ?? false,
+          stealFocus: definition.focus,
           projectPath,
           agent,
           source: "auto-workspace",
@@ -531,11 +601,11 @@ export function createAutomations(deps: AutomationsDeps): Automations {
           type: INTENT_WAKE_WORKSPACE,
           payload: {
             workspacePath,
-            stealFocus: definition.focus ?? false,
+            stealFocus: definition.focus,
             source: "auto-workspace",
           },
         });
-      } else if (definition.focus === true) {
+      } else if (definition.focus) {
         await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
           payload: { workspacePath, focus: true },
@@ -545,7 +615,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       // The agent is already running (or just woke), so the prompt goes in as
       // a message rather than a launch prompt. `wake` also reopens an agent
       // terminal the user closed, and waits for a woken agent to start.
-      if (definition.prompt !== "") {
+      if (definition.prompt !== undefined) {
         const message = await deps.dispatcher.dispatch<SendAgentMessageIntent>({
           type: INTENT_SEND_AGENT_MESSAGE,
           payload: {
@@ -583,45 +653,56 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   // ------ Poll cycle ------
 
   /**
-   * Render one emitted object, logging any template warnings under `key`.
-   * Null when Liquid rendering itself failed — that item is skipped.
+   * Run one automation's script and act on every item it printed, in order.
+   * Returns whether tracking state changed.
+   *
+   * Non-event create items are collected into this poll's list and reconciled
+   * once the list is complete; everything else acts as it is read. An invalid
+   * item — or one its action refuses — is reported, and the next one still runs.
    */
-  function render(
-    source: AutomationSource,
-    data: unknown,
-    keyOf: (definition: WorkspaceDefinition) => string
-  ): WorkspaceDefinition | null {
-    try {
-      const { definition, warnings } = renderDefinition(source.template, data);
-      for (const warning of warnings) {
-        deps.logger.warn("Template warning", {
-          source: source.id,
-          key: keyOf(definition),
-          warning,
-        });
-      }
-      return definition;
-    } catch (error) {
-      deps.logger.warn("Failed to render item, skipping it", {
-        source: source.id,
-        error: getErrorMessage(error),
-      });
-      return null;
-    }
-  }
-
-  /** Reconcile a `mode: workspaces` source against the list its script printed. */
-  async function pollWorkspacesSource(source: AutomationSource): Promise<boolean> {
-    const items = await deps.runScript(source);
-    if (items === null) return false;
+  async function pollSource(source: AutomationSource): Promise<boolean> {
+    const raws = await deps.runScript(source);
+    if (raws === null) return false;
 
     const prefix = `${source.id}/`;
     const activeStateKeys = new Set<string>();
     const newItems: { key: string; definition: WorkspaceDefinition }[] = [];
+    const report = (index: number, message: string): void => {
+      deps.logger.warn("Automation item refused", { source: source.id, index, error: message });
+      deps.reportError(source, `item ${index}: ${message}`);
+    };
 
-    for (const data of items) {
-      const definition = render(source, data, (d) => stateKey(source.id, d.key));
-      if (!definition) continue;
+    for (const [index, raw] of raws.entries()) {
+      let item: AutomationItem;
+      try {
+        item = deps.parseItem(raw);
+      } catch (error) {
+        report(index, getErrorMessage(error));
+        continue;
+      }
+
+      if (item.action !== CREATE_ACTION) {
+        try {
+          await deps.invokeAction(item.action, item.input);
+        } catch (error) {
+          report(index, `${item.action}: ${getErrorMessage(error)}`);
+        }
+        continue;
+      }
+
+      const create = item.input as unknown as CreateItem;
+      let definition: WorkspaceDefinition;
+      try {
+        definition = definitionOf(create);
+      } catch (error) {
+        report(index, `${CREATE_ACTION}: ${getErrorMessage(error)}`);
+        continue;
+      }
+
+      if (create.event) {
+        await applyEvent(source, definition);
+        continue;
+      }
       const fullKey = stateKey(source.id, definition.key);
       activeStateKeys.add(fullKey);
       if (!(fullKey in entries)) newItems.push({ key: fullKey, definition });
@@ -629,8 +710,8 @@ export function createAutomations(deps: AutomationsDeps): Automations {
 
     let changed = false;
 
-    // Forget entries for this source whose item is no longer active — but only
-    // once the workspace is gone too, so one short cmd result cannot orphan a
+    // Forget entries for this automation whose item is no longer listed — but
+    // only once the workspace is gone too, so one short list cannot orphan a
     // live workspace into a permanent create-and-collide loop.
     for (const key of Object.keys(entries)) {
       if (!key.startsWith(prefix) || activeStateKeys.has(key)) continue;
@@ -684,79 +765,24 @@ export function createAutomations(deps: AutomationsDeps): Automations {
     return changed;
   }
 
-  /** Fire every event a `mode: events` workspace.create source printed, in order. */
-  async function pollEventsSource(source: AutomationSource): Promise<void> {
-    const items = await deps.runScript(source);
-    if (items === null) return;
-
-    for (const data of items) {
-      const definition = render(source, data, (d) => stateKey(source.id, d.name));
-      if (!definition) continue;
-      await applyEvent(source, definition);
-    }
-  }
-
-  /**
-   * Run any other action once per printed item. Each failure is reported —
-   * a refused input is a template mistake the user must see — and the next
-   * item still runs. Writes no state.
-   */
-  async function pollActionSource(source: AutomationSource): Promise<void> {
-    const items = await deps.runScript(source);
-    if (items === null) return;
-
-    for (const data of items) {
-      let input: Record<string, unknown>;
-      try {
-        input = renderInput(source.template, data);
-      } catch (error) {
-        deps.logger.warn("Failed to render item, skipping it", {
-          source: source.id,
-          error: getErrorMessage(error),
-        });
-        continue;
-      }
-      try {
-        await deps.invokeAction(source.action, input);
-      } catch (error) {
-        deps.logger.warn("Automation action failed", {
-          source: source.id,
-          action: source.action,
-          error: getErrorMessage(error),
-        });
-        deps.reportError(source, `${source.action}: ${getErrorMessage(error)}`);
-      }
-    }
-  }
-
   async function reconcile(): Promise<void> {
     if (!deps.enabled()) return;
     const sources = await deps.sources();
 
     let changed = false;
 
-    // Orphan cleanup: drop entries whose automation no longer exists — or is no
-    // longer a reconciling one, since an events automation is defined as
-    // writing no state and its old entries would resurrect wrongly on a flip back.
-    const reconciling = sources.filter(
-      (s) => s.action === "workspace.create" && s.mode === "workspaces"
-    );
+    // Orphan cleanup: drop entries whose automation no longer exists (removed,
+    // or its plugin disabled or broken).
     for (const key of Object.keys(entries)) {
-      if (!reconciling.some((s) => key.startsWith(`${s.id}/`))) {
+      if (!sources.some((source) => key.startsWith(`${source.id}/`))) {
         delete entries[key];
         changed = true;
-        deps.logger.info("Forgot automation entry (automation removed or now events)", { key });
+        deps.logger.info("Forgot automation entry (automation removed)", { key });
       }
     }
 
     for (const source of sources) {
-      if (source.action !== "workspace.create") {
-        await pollActionSource(source);
-      } else if (source.mode === "events") {
-        await pollEventsSource(source);
-      } else if (await pollWorkspacesSource(source)) {
-        changed = true;
-      }
+      if (await pollSource(source)) changed = true;
     }
 
     if (changed) await persist();

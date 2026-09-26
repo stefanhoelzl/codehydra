@@ -12,11 +12,7 @@
  *     before-workspace-opened: |
  *       echo '{"env":{"FOO":"1"}}'
  *   automations:
- *     prs:
- *       action: workspace.create                   # default
- *       mode: workspaces                           # default for workspace.create
- *       script: gh api …
- *       template: { name: "{{ title }}", … }
+ *     prs: ./prs.sh        # prints the items to act on, see items.ts
  *
  * Every document that matches the platform applies, in file order, so the
  * usual split is one document per platform where scripts differ.
@@ -29,9 +25,6 @@
 
 import { z } from "zod/v4";
 import { parseAllDocuments } from "yaml";
-import { isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
-import { PLUGIN_ACTION_NAMES } from "../../api/adapters/plugin-actions-map";
-import type { OperationName } from "../../api/names";
 import { ALL_ENTRIES } from "./hook-map";
 import { SHELL_NAMES, type ShellName } from "./shells";
 
@@ -58,41 +51,6 @@ export function pluginPlatformOf(platform: NodeJS.Platform): PluginPlatform | un
 }
 
 // =============================================================================
-// Templates
-// =============================================================================
-
-export type TemplateScalar = string | number | boolean | null;
-export type TemplateValue = TemplateScalar | TemplateValue[] | TemplateObject;
-export interface TemplateObject {
-  readonly [key: string]: TemplateValue;
-}
-
-function collectStringLeaves(value: unknown, out: string[]): void {
-  if (typeof value === "string") {
-    out.push(value);
-  } else if (Array.isArray(value)) {
-    for (const item of value) collectStringLeaves(item, out);
-  } else if (value !== null && typeof value === "object") {
-    for (const item of Object.values(value)) collectStringLeaves(item, out);
-  }
-}
-
-const templateSchema = z
-  .record(z.string(), z.unknown())
-  .describe(
-    "Rendered once per item the script prints: every string value is a Liquid template " +
-      "evaluated against that item."
-  )
-  .superRefine((template, ctx) => {
-    const leaves: string[] = [];
-    collectStringLeaves(template, leaves);
-    const invalid = leaves.find((leaf) => !isValidLiquidTemplate(leaf));
-    if (invalid !== undefined) {
-      ctx.addIssue({ code: "custom", message: `invalid Liquid: ${invalid}` });
-    }
-  });
-
-// =============================================================================
 // Contributions
 // =============================================================================
 
@@ -112,59 +70,20 @@ const hooksSchema = z
   .strict()
   .describe("Scripts run at moments in a workspace's life, keyed by entry name.");
 
-/** What an automation's items mean. */
-export const AUTOMATION_MODES = ["workspaces", "events"] as const;
-export type AutomationMode = (typeof AUTOMATION_MODES)[number];
-
-/** Automation names become log directories and state keys, so they stay plain. */
+/** Automation names become log directories and tracking keys, so they stay plain. */
 const AUTOMATION_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-
-const automationSchema = z
-  .object({
-    action: z
-      .enum(PLUGIN_ACTION_NAMES as [OperationName, ...OperationName[]])
-      .optional()
-      .describe("The operation each item runs (default: workspace.create)."),
-    mode: z
-      .enum(AUTOMATION_MODES)
-      .optional()
-      .describe(
-        "workspaces: the items are the workspaces that should exist (workspace.create only; " +
-          "the default for it). events: each item fires once."
-      ),
-    script: scriptSchema.describe("Prints a JSON array of items on stdout, once per poll."),
-    template: templateSchema,
-  })
-  .strict()
-  .superRefine((automation, ctx) => {
-    const action = automation.action ?? "workspace.create";
-    if (automation.mode === "workspaces" && action !== "workspace.create") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["mode"],
-        message: `mode: workspaces only applies to workspace.create (${action} runs as events)`,
-      });
-    }
-    if (action === "workspace.create") {
-      const name = automation.template["name"];
-      if (typeof name !== "string" || name.trim() === "") {
-        ctx.addIssue({
-          code: "custom",
-          path: ["template", "name"],
-          message: "workspace.create needs template.name",
-        });
-      }
-    }
-  });
 
 const automationsSchema = z
   .record(
     z.string().regex(AUTOMATION_NAME, {
       error: "automation names use letters, digits, - and _ (and start with a letter or digit)",
     }),
-    automationSchema
+    scriptSchema.describe(
+      "Run every poll cycle. Prints a JSON array of items, each naming its action " +
+        "(`ch plugin schema --items`)."
+    )
   )
-  .describe("Scripts run every poll cycle, whose items each run an action.");
+  .describe("Scripts run every poll cycle, whose printed items each run an action.");
 
 const platformListSchema = z.union([
   z.enum(PLUGIN_PLATFORMS),
@@ -195,10 +114,7 @@ export type HookEntryName = (typeof ALL_ENTRIES)[number]["name"];
 
 export interface AutomationSpec {
   readonly name: string;
-  readonly action: OperationName;
-  readonly mode: AutomationMode;
   readonly script: string;
-  readonly template: TemplateObject;
 }
 
 export interface PluginDocument {
@@ -271,16 +187,10 @@ export function parseManifest(text: string): PluginDocument[] {
           (entry): entry is [string, string] => typeof entry[1] === "string"
         )
       ),
-      automations: Object.entries(value.automations ?? {}).map(([name, automation]) => {
-        const action = automation.action ?? "workspace.create";
-        return {
-          name,
-          action,
-          mode: automation.mode ?? (action === "workspace.create" ? "workspaces" : "events"),
-          script: automation.script,
-          template: automation.template as TemplateObject,
-        };
-      }),
+      automations: Object.entries(value.automations ?? {}).map(([name, script]) => ({
+        name,
+        script,
+      })),
     });
   }
   return documents;

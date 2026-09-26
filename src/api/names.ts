@@ -52,6 +52,7 @@ export const OPERATION_NAMES = [
   "plugin.disable",
   "plugin.errors",
   "plugin.schema",
+  "plugin.render",
   "config.get",
   "config.list",
   "config.set",
