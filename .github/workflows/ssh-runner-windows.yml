@@ -46,8 +46,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup
       - name: Install the Claude CLI
-        shell: bash
-        run: npm install -g @anthropic-ai/claude-code
+        uses: ./.github/actions/install-claude
 
       - name: Start sshd and the cloudflared tunnel
         shell: pwsh

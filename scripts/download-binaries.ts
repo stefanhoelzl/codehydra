@@ -103,28 +103,6 @@ function isSystemBinaryAvailable(binaryName: string): boolean {
   }
 }
 
-/**
- * Fetch the latest Claude version from the GCS bucket.
- */
-async function fetchLatestClaudeVersion(): Promise<string> {
-  const url =
-    "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/latest";
-  const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch latest Claude version: ${response.status}`);
-  }
-
-  const version = (await response.text()).trim();
-
-  // Validate version format
-  if (!/^\d+\.\d+\.\d+/.test(version)) {
-    throw new Error(`Invalid Claude version format: ${version}`);
-  }
-
-  return version;
-}
-
 async function downloadBinary(
   deps: DownloadDeps,
   request: DownloadRequest,
@@ -208,15 +186,10 @@ async function main(): Promise<void> {
     };
     await downloadBinary(deps, claudeRequest, CLAUDE_VERSION);
   } else {
-    // CLAUDE_VERSION is null: fetch latest version and download
-    try {
-      const latestVersion = await fetchLatestClaudeVersion();
-      console.log(`  claude v${latestVersion} available (will download on first run if needed)`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`  claude version check skipped: ${message}`);
-      console.log("  Install Claude via: npm install -g @anthropic-ai/claude-code");
-    }
+    // CLAUDE_VERSION is null: the app uses the system install only and never
+    // downloads Claude, so there is nothing to fetch here.
+    console.log("  claude not found on PATH");
+    console.log("  Install Claude via: npm install -g @anthropic-ai/claude-code");
   }
 
   console.log("\nBinary setup complete!");
