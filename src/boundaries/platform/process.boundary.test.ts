@@ -3,6 +3,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { mkdtemp, writeFile, chmod, rm, realpath } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createServer, type Server } from "node:net";
 import { ExecaProcessRunner, type SpawnedProcess, type ProcessRunner } from "./process";
 import { SILENT_LOGGER } from "./logging";
 import { createBehavioralLogger } from "./logging.test-utils";
@@ -315,6 +316,44 @@ describe("ExecaProcessRunner", () => {
     // copy would have to kill the parent before it could read the child PID off
     // stdout, which is exactly the kind of ordering-dependent test that earns
     // its flakiness.
+  });
+
+  describe("findListeningProcesses", () => {
+    // The real platform tool against a real socket: the parsers are tested on
+    // canned output, but only this shows the query itself still works (a
+    // mangled one just prints nothing, which reads as "nobody").
+    async function listen(): Promise<{ server: Server; port: number }> {
+      const server = createServer();
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("no port");
+      return { server, port: address.port };
+    }
+
+    it(
+      "names the process listening on a port",
+      async () => {
+        const { server, port } = await listen();
+        try {
+          const holders = await runner.findListeningProcesses(port);
+          expect(holders.map((holder) => holder.pid)).toContain(process.pid);
+        } finally {
+          await new Promise((resolve) => server.close(resolve));
+        }
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "finds nobody on a port nothing listens on",
+      async () => {
+        const { server, port } = await listen();
+        await new Promise((resolve) => server.close(resolve));
+
+        expect(await runner.findListeningProcesses(port)).toEqual([]);
+      },
+      TEST_TIMEOUT
+    );
   });
 
   describe("kill() behavior", () => {
