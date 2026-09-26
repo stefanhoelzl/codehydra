@@ -62,6 +62,12 @@ function categoryFrom(value: unknown): ApiErrorCategory {
 
 export interface ClientOptions {
   readonly connection: Connection;
+  /**
+   * Which client this is. The app shapes every operation by it — `ch mcp` is
+   * offered MCP's tools, so it must say it is the MCP shim, or the app applies
+   * the CLI's shaping to arguments the CLI never sends. Default `cli`.
+   */
+  readonly kind?: "cli" | "mcp";
   /** Directory the command was run from; the app resolves it to a workspace. */
   readonly cwd: string;
   /** Explicit workspace, overriding whatever cwd would resolve to. */
@@ -100,14 +106,21 @@ export interface Client {
  * caller's side — CodeHydra is not listening — so they report identically.
  */
 export async function connect(options: ClientOptions): Promise<Client> {
-  const { connection, cwd, workspace, project, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+  const {
+    connection,
+    kind = "cli",
+    cwd,
+    workspace,
+    project,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options;
 
   const socket: Socket = io(`http://127.0.0.1:${connection.port}`, {
     // Skip the long-polling handshake: this process may live for milliseconds,
     // and the upgrade dance would be most of its lifetime.
     transports: ["websocket"],
     auth: {
-      client: "cli",
+      client: kind,
       token: connection.token,
       cwd,
       ...(workspace !== undefined && { workspacePath: workspace }),
