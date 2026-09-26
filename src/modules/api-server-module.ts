@@ -919,7 +919,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       const api = event.startsWith(OPERATION_CHANNEL_PREFIX)
         ? event.slice(OPERATION_CHANNEL_PREFIX.length)
         : event.replace(/^api:/, "");
-      const caller = callerName();
+      // Naming the caller is for the log only: it must never keep a packet from
+      // its handler, so a failure here leaves the work untagged, not stalled.
+      let caller: string | undefined;
+      try {
+        caller = callerName();
+      } catch {
+        caller = undefined;
+      }
       // socket.io runs the handler on a nextTick scheduled inside `next`, so it
       // inherits the origin set here.
       dispatcher.withOrigin({ origin: kind, ...(caller !== undefined && { caller }), api }, () =>
