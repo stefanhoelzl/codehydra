@@ -59,8 +59,7 @@ jobs:
       # Deliberately unpinned, like the e2e job: a release that changes which
       # hooks Claude emits should turn CI red here rather than go unnoticed.
       - name: Install the Claude CLI
-        shell: bash
-        run: npm install -g @anthropic-ai/claude-code
+        uses: ./.github/actions/install-claude
 
       - run: pnpm check
       - run: pnpm test
@@ -87,8 +86,7 @@ jobs:
       # Same requirement as the `validate` job: the Claude boundary tests throw
       # without a real `claude` on PATH.
       - name: Install the Claude CLI
-        shell: bash
-        run: npm install -g @anthropic-ai/claude-code
+        uses: ./.github/actions/install-claude
 
       - run: pnpm test:canary
 
@@ -137,8 +135,7 @@ jobs:
       # Deliberately unpinned. The fixtures gate on the request Claude sends, so a
       # release that changes it should turn CI red here rather than go unnoticed.
       - name: Install the Claude CLI
-        shell: bash
-        run: npm install -g @anthropic-ai/claude-code
+        uses: ./.github/actions/install-claude
 
       - name: Download packaged artifact
         uses: actions/download-artifact@v8

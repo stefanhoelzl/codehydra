@@ -1,0 +1,27 @@
+name: Install the Claude CLI
+description: Install the latest Claude CLI globally and prove the native binary runs
+
+# Deliberately unpinned: a Claude release that changes which hooks it emits, or
+# the request it sends, should turn CI red rather than go unnoticed.
+#
+# The npm package's `claude` is a placeholder stub until its postinstall copies
+# the platform-native binary over it. Newer npm (the macOS runner's) gates
+# install scripts behind `allow-scripts` and warns that this one is not
+# covered, so it is allowed explicitly. Older npm (the Linux and Windows
+# runners') does not know the key and warns about the flag instead, so it is
+# passed only where npm lists it. `claude --version` then fails the step if the
+# stub is what landed on PATH, instead of every Claude test failing later.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        args=()
+        # Not `grep -q`: it exits at the first match, and under the runner's
+        # pipefail a SIGPIPE'd npm would read as "key unknown".
+        if npm config ls -l 2>/dev/null | grep '^allow-scripts ' >/dev/null; then
+          args+=(--allow-scripts=@anthropic-ai/claude-code)
+        fi
+        npm install -g "${args[@]}" @anthropic-ai/claude-code
+        claude --version
