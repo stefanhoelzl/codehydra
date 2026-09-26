@@ -24,7 +24,11 @@ export default defineConfig({
     // set by one test file survives into the next, because the fake is a single
     // instance shared across every file in the worker.
     mockReset: true,
-    reporters: ["dot"],
+    // On CI, also a JSON report (uploaded as an artifact): per-file and per-test
+    // durations, which the dot reporter never prints.
+    reporters: process.env.CI
+      ? ["dot", ["json", { outputFile: "test-results/vitest.json" }]]
+      : ["dot"],
 
     coverage: {
       provider: "v8",
