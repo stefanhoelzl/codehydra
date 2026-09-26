@@ -58,6 +58,11 @@ export interface KeepRecentRule {
   readonly path: string;
   /** How many entries survive. */
   readonly keep: number;
+  /**
+   * Names never counted or removed: a child with its own retention. Without
+   * it, a directory in the log folder ranks oldest and is the first thing swept.
+   */
+  readonly exclude?: readonly string[];
 }
 
 /**
@@ -189,7 +194,10 @@ export function createCleanupModule(deps: CleanupModuleDeps): IntentModule {
 
   async function runKeepRecent(rule: KeepRecentRule): Promise<number> {
     const dir = pathProvider.dataPath(rule.path);
-    const entries = [...(await listOrEmpty(dir))].sort(newestFirst);
+    const excluded = new Set(rule.exclude ?? []);
+    const entries = [...(await listOrEmpty(dir))]
+      .filter((entry) => !excluded.has(entry.name))
+      .sort(newestFirst);
     const doomed = entries.slice(rule.keep);
 
     let removed = 0;
