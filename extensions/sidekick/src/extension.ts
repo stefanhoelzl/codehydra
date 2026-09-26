@@ -597,11 +597,27 @@ function getNamedOutputChannel(name: string): vscode.OutputChannel {
   return channel;
 }
 
+/** Log channels (`LogOutputChannel`) by name; kept for the session like the plain ones. */
+const namedLogChannels = new Map<string, vscode.LogOutputChannel>();
+
+function getNamedLogChannel(name: string): vscode.LogOutputChannel {
+  let channel = namedLogChannels.get(name);
+  if (!channel) {
+    channel = vscode.window.createOutputChannel(name, { log: true });
+    namedLogChannels.set(name, channel);
+  }
+  return channel;
+}
+
 function disposeNamedOutputChannels(): void {
   for (const channel of namedOutputChannels.values()) {
     channel.dispose();
   }
   namedOutputChannels.clear();
+  for (const channel of namedLogChannels.values()) {
+    channel.dispose();
+  }
+  namedLogChannels.clear();
 }
 
 function getDebugOutputChannel(): vscode.OutputChannel {
@@ -898,9 +914,20 @@ function connectToApiServer(port: number, workspacePath: string): void {
   );
 
   socket.on("ui:appendOutput", (request: AppendOutputRequest) => {
-    // No ack: this is a script's own output on its way to a human, and dropping
-    // a line must never be able to fail anything upstream.
+    // No ack: this is output on its way to a human, and dropping a line must
+    // never be able to fail anything upstream. Nothing here may log: CodeHydra's
+    // own log lines arrive through this event, and a line about them would
+    // come straight back.
     try {
+      if (request.log) {
+        // A log channel stamps time and level itself, and drops what is below
+        // the level the user set on it.
+        const channel = getNamedLogChannel(request.channel);
+        for (const line of request.lines) {
+          channel[line.level ?? "info"](line.text);
+        }
+        return;
+      }
       const channel = getNamedOutputChannel(request.channel);
       for (const line of request.lines) {
         channel.appendLine(`[${line.source}] ${line.text}`);

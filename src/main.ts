@@ -166,6 +166,7 @@ import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
 import { createPluginModule } from "./modules/plugin-module/module";
 import { createHookOutputSink } from "./modules/plugin-module/output-sink";
+import { createWorkspaceLogModule } from "./modules/workspace-log-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
@@ -719,6 +720,12 @@ const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
   agentConfig,
   logger: loggingService.createLogger("agent-resolver"),
 });
+// A workspace's own log lines, in its IDE's "CodeHydra Log" output channel.
+const workspaceLogModule = createWorkspaceLogModule({
+  logging: loggingService,
+  transport: apiServerModule,
+  logger: loggingService.createLogger("workspace-log"),
+});
 const pluginModule = createPluginModule({
   fileSystem: fileSystemLayer,
   processRunner,
@@ -1119,6 +1126,7 @@ dispatcher.registerModule(workspaceAgentResolverModule);
 // "prepare"), which precede the agents' "setup" — so the tree is set up and its
 // environment known before an agent server starts, whatever the order here.
 dispatcher.registerModule(pluginModule);
+dispatcher.registerModule(workspaceLogModule.module);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);

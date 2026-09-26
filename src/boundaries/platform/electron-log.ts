@@ -21,35 +21,18 @@ import type {
   Logging,
   LogContext,
   LogLevel,
+  LogLine,
   LogScope,
   LogScopeHint,
   LogScopeStore,
 } from "./logging-types";
 import { LogLevel as LogLevelValues } from "./logging-types";
-import { AsyncLogScopeStore, formatLogScope, ScopedLogger } from "./log-scope";
+import { AsyncLogScopeStore, formatContext, formatLogScope, ScopedLogger } from "./log-scope";
 
 /**
  * Type for electron-log scope (log functions).
  */
 type ElectronLogScope = ReturnType<typeof log.scope>;
-
-/**
- * Format context object as key=value pairs for log message.
- *
- * @param context - Context object to format
- * @returns Formatted string like "key1=value1 key2=value2"
- */
-function formatContext(context: LogContext | undefined): string {
-  if (!context) return "";
-  return Object.entries(context)
-    .map(([key, value]) => {
-      // Handle null explicitly
-      if (value === null) return `${key}=null`;
-      // Booleans, numbers, and strings formatted directly
-      return `${key}=${String(value)}`;
-    })
-    .join(" ");
-}
 
 /**
  * Parse and validate a log level string.
@@ -365,7 +348,12 @@ class QueuedLogger implements Logger {
   private queue: QueueEntry[] | undefined = [];
   private inner: Logger | undefined;
 
-  constructor(private readonly store: LogScopeStore) {}
+  constructor(
+    private readonly store: LogScopeStore,
+    private readonly name: LoggerName,
+    /** Tell the service's line listeners; before any filtering, see `Logging.onLine`. */
+    private readonly emit: (line: LogLine) => void
+  ) {}
 
   activate(inner: Logger): void {
     const pending = this.queue;
@@ -393,6 +381,8 @@ class QueuedLogger implements Logger {
     context: LogContext | undefined,
     error?: Error
   ): void {
+    const scope = this.store.current();
+    this.emit({ level, logger: this.name, scope, message, context, error });
     if (this.inner) {
       if (level === "error") {
         this.inner.error(message, context, error);
@@ -400,7 +390,7 @@ class QueuedLogger implements Logger {
         this.inner[level](message, context);
       }
     } else {
-      this.queue!.push({ level, message, context, error, scope: this.store.current() });
+      this.queue!.push({ level, message, context, error, scope });
     }
   }
 
@@ -457,6 +447,16 @@ export class ElectronLog implements Logging {
   private allowedLoggers: Set<LoggerName> | undefined;
   private readonly logPath: string;
   readonly scope: LogScopeStore = new AsyncLogScopeStore();
+  private readonly lineListeners = new Set<(line: LogLine) => void>();
+  private readonly emitLine = (line: LogLine): void => {
+    for (const listener of this.lineListeners) {
+      try {
+        listener(line);
+      } catch {
+        // A listener must not throw; if one does, the line still reaches the file.
+      }
+    }
+  };
 
   constructor(pathProvider: PathProvider) {
     // Transports start silent — configure() enables them
@@ -519,7 +519,7 @@ export class ElectronLog implements Logging {
       return existing;
     }
 
-    const queued = new QueuedLogger(this.scope);
+    const queued = new QueuedLogger(this.scope, name, this.emitLine);
 
     // If already configured, activate immediately
     if (this.configured) {
@@ -535,6 +535,13 @@ export class ElectronLog implements Logging {
 
     this.loggers.set(name, queued);
     return queued;
+  }
+
+  onLine(listener: (line: LogLine) => void): () => void {
+    this.lineListeners.add(listener);
+    return () => {
+      this.lineListeners.delete(listener);
+    };
   }
 
   private createInner(scope: ElectronLogScope): Logger {

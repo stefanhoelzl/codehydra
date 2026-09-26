@@ -328,3 +328,54 @@ describe("sidekick modal notifications", () => {
     );
   });
 });
+
+describe("sidekick output channels", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_PLUGIN_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_PLUGIN_PORT;
+  });
+
+  function lastChannel(): Record<string, ReturnType<typeof vi.fn>> {
+    const results = vscodeWindow.createOutputChannel.mock.results;
+    return results[results.length - 1]!.value as Record<string, ReturnType<typeof vi.fn>>;
+  }
+
+  it("writes a log request into a log channel at each line's level", () => {
+    activate(makeContext());
+    const socket = getSocket();
+
+    socket._handlers["ui:appendOutput"]!({
+      channel: "CodeHydra Log",
+      log: true,
+      lines: [
+        { source: "git", level: "debug", text: "(git) ListBranches" },
+        { source: "agent", level: "warn", text: "(agent) slow" },
+      ],
+    });
+
+    expect(vscodeWindow.createOutputChannel).toHaveBeenCalledWith("CodeHydra Log", { log: true });
+    const channel = lastChannel();
+    expect(channel.debug).toHaveBeenCalledWith("(git) ListBranches");
+    expect(channel.warn).toHaveBeenCalledWith("(agent) slow");
+    expect(channel.appendLine).not.toHaveBeenCalled();
+  });
+
+  it("writes a plain request as [source] text", () => {
+    activate(makeContext());
+    const socket = getSocket();
+
+    socket._handlers["ui:appendOutput"]!({
+      channel: "CodeHydra Hooks",
+      lines: [{ source: "after-worktree-created", text: "installing" }],
+    });
+
+    expect(vscodeWindow.createOutputChannel).toHaveBeenCalledWith("CodeHydra Hooks");
+    expect(lastChannel().appendLine).toHaveBeenCalledWith("[after-worktree-created] installing");
+  });
+});

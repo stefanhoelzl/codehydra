@@ -143,16 +143,32 @@ export interface ApiConfig {
  * Server to Client events (CodeHydra -> Extension).
  * Used by Socket.IO for type-safe event handling.
  */
+/** The level of a line in a log output channel, as VS Code's `LogOutputChannel` names them. */
+export type OutputLineLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+/** One line for an output channel. */
+export interface OutputLine {
+  /** What produced it: a hook entry, or a logger name. */
+  readonly source: string;
+  readonly text: string;
+  /** Its level; only meaningful in a log channel (`log: true`). */
+  readonly level?: OutputLineLevel;
+}
+
 /**
  * Lines destined for an output channel in a workspace's IDE.
  *
  * `channel` names the channel to create on first use; the lines are appended in
- * order. Each carries the entry that produced it so a channel shared by several
- * hooks still reads as separate conversations.
+ * order. A plain channel shows each line as `[source] text`, so a channel
+ * shared by several hooks still reads as separate conversations. With `log`,
+ * the channel is a log channel (VS Code's `LogOutputChannel`: its own
+ * timestamps, levels and "Set Log Level"), and each line is written at its
+ * `level` as its `text` alone.
  */
 export interface AppendOutputRequest {
   readonly channel: string;
-  readonly lines: readonly { readonly source: string; readonly text: string }[];
+  readonly log?: boolean;
+  readonly lines: readonly OutputLine[];
 }
 
 export interface ServerToClientEvents {
@@ -202,9 +218,11 @@ export interface ServerToClientEvents {
   /**
    * Append lines to a CodeHydra-owned output channel in this workspace.
    *
-   * Fire-and-forget by design (no ack): it carries a script's stderr, which is
-   * for a person to read, and losing a line to a disconnect must never be worth
-   * failing anything over.
+   * Fire-and-forget by design (no ack): it carries a script's stderr or
+   * CodeHydra's own log lines for this workspace — for a person to read, and
+   * losing a line to a disconnect must never be worth failing anything over.
+   * The receiver must never log about what it receives: log lines arrive here,
+   * and a line about them would come straight back.
    */
   "ui:appendOutput": (request: AppendOutputRequest) => void;
 

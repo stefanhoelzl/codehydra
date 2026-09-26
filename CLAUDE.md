@@ -443,3 +443,4 @@ CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 | `[lock]`            | LockModule (`ch lock`)                               |
 | `[help]`            | HelpModule (`ch guide`, help dialog)                 |
 | `[workspaces-root]` | WorkspacesRootModule (`paths.workspaces`, migration) |
+| `[workspace-log]`   | WorkspaceLogModule (a workspace's log in its IDE)    |

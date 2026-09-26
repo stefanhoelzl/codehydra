@@ -61,6 +61,24 @@ export class AsyncLogScopeStore implements LogScopeStore {
 }
 
 /**
+ * Format context object as key=value pairs for log message.
+ *
+ * @param context - Context object to format
+ * @returns Formatted string like "key1=value1 key2=value2"
+ */
+export function formatContext(context: LogContext | undefined): string {
+  if (!context) return "";
+  return Object.entries(context)
+    .map(([key, value]) => {
+      // Handle null explicitly
+      if (value === null) return `${key}=null`;
+      // Booleans, numbers, and strings formatted directly
+      return `${key}=${String(value)}`;
+    })
+    .join(" ");
+}
+
+/**
  * Render a scope as the compact block text lines carry after the logger name:
  * `[<trace> <project>/<ws> <intent>@<module>/<hook> <origin>]`.
  *
