@@ -36,7 +36,9 @@ export function parseTemplate(text: string): TemplateObject {
   try {
     parsed = parse(text);
   } catch (error) {
-    throw new Error(`the template is not valid YAML: ${(error as Error).message}`, { cause: error });
+    throw new Error(`the template is not valid YAML: ${(error as Error).message}`, {
+      cause: error,
+    });
   }
   if (!isPlainObject(parsed)) throw new Error("the template must be a YAML mapping");
   const leaves: string[] = [];

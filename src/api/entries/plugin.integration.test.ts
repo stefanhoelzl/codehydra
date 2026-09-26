@@ -10,6 +10,7 @@ import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
+import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import { projPath, wsPath } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
@@ -35,9 +36,25 @@ class ResolveWorkspaceOp implements Operation<typeof resolveSchemas> {
   }
 }
 
+const listProjectsSchemas = {
+  type: INTENT_LIST_PROJECTS,
+  payload: z.unknown(),
+  result: z.unknown(),
+} satisfies OperationSchemas;
+
+/** Nothing is listed: a workspace named by path is taken at its word. */
+class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
+  readonly id = "list-projects";
+  readonly schemas = listProjectsSchemas;
+  async execute(): Promise<unknown[]> {
+    return [];
+  }
+}
+
 function setup() {
   const dispatcher = createMockDispatcher();
   dispatcher.registerOperation(new ResolveWorkspaceOp());
+  dispatcher.registerOperation(new ListNoProjectsOp());
   const scopes: PluginScope[] = [];
   const states: Array<[string, PluginState]> = [];
   const listing = (id: string, state: PluginState, platforms: string[]): PluginListing => ({
@@ -94,13 +111,11 @@ function setup() {
 
 const inWorkspace: OperationContext = {
   workspacePath: FEAT,
-  callerWorkspacePath: FEAT,
   cwd: null,
   signal: new AbortController().signal,
 };
 const outside: OperationContext = {
   workspacePath: null,
-  callerWorkspacePath: null,
   cwd: null,
   signal: new AbortController().signal,
 };
@@ -136,6 +151,15 @@ describe("plugin.list", () => {
     const rows = (await call("plugin.list", outside)) as unknown[];
 
     expect(rows).toHaveLength(1);
+  });
+
+  it("reads the repository of the workspace the input names, from outside every workspace", async () => {
+    const { call, scopes } = setup();
+
+    const rows = (await call("plugin.list", outside, { workspace: FEAT.toString() })) as unknown[];
+
+    expect(rows).toHaveLength(2);
+    expect(scopes).toEqual([{ workspacePath: FEAT, projectPath: APP }]);
   });
 });
 
