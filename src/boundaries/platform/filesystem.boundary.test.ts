@@ -771,6 +771,27 @@ describe("DefaultFileSystemBoundary", () => {
     });
   });
 
+  describe("realpath", () => {
+    it("resolves a directory reached through a symlink", async () => {
+      const real = join(tempDir.path, "real");
+      await nodeMkdir(join(real, "inner"), { recursive: true });
+      // A junction on Windows (no privilege needed), a plain symlink elsewhere.
+      await symlink(real, join(tempDir.path, "link"), "junction");
+
+      const resolved = await fs.realpath(join(tempDir.path, "link", "inner"));
+
+      expect(resolved.equals(await fs.realpath(join(real, "inner")))).toBe(true);
+      expect(resolved.basename).toBe("inner");
+      expect(resolved.dirname.basename).toBe("real");
+    });
+
+    it("throws ENOENT for a path that does not exist", async () => {
+      await expect(fs.realpath(join(tempDir.path, "missing"))).rejects.toMatchObject({
+        fsCode: "ENOENT",
+      });
+    });
+  });
+
   describe("mkdtemp", () => {
     it("creates unique temporary directory with prefix", async () => {
       const result = await fs.mkdtemp("initial-prompt-");

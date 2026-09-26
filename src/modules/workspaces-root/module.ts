@@ -24,6 +24,7 @@ import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import { storeFolder, storeString } from "../../boundaries/platform/store-definition";
 import type { DialogConfig, DialogSection, ProgressItem } from "../../shared/dialog-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
@@ -60,7 +61,7 @@ export interface WorkspacesRootModuleDeps {
   readonly config: Config;
   readonly stateService: StateService;
   readonly pathProvider: Pick<PathProvider, "dataPath" | "bundlePath">;
-  readonly fs: MigrationDeps["fs"];
+  readonly fs: MigrationDeps["fs"] & Pick<FileSystemBoundary, "realpath">;
   readonly gitClient: MigrationDeps["gitClient"];
   readonly adopt: MigrationDeps["adopt"];
   readonly ui: Pick<UiPresenter, "dialog">;
@@ -305,16 +306,35 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     });
   }
 
+  /**
+   * The folder as git will report paths under it: symlinks and junctions
+   * resolved. A worktree created under an unresolved root would not lie inside it
+   * once git names it, and discovery would skip it as unmanaged. Creates the
+   * folder, since only an existing one resolves.
+   */
+  async function resolveFolder(folder: Path): Promise<Path | { problem: string }> {
+    try {
+      await fs.mkdir(folder);
+      return await fs.realpath(folder);
+    } catch (error) {
+      return { problem: `It cannot be created: ${getErrorMessage(error)}` };
+    }
+  }
+
   async function settle(): Promise<void> {
-    const configured = configuredRoot.get();
+    const configured = rootFrom(configuredRoot.get());
     const from = root.current();
-    const to = rootFrom(configured);
-    if (to.equals(from)) return;
+    if (configured.equals(from)) return;
+
+    const resolved = await resolveFolder(configured);
+    // A setting that names the current root through a symlink is no change.
+    if (resolved instanceof Path && resolved.equals(from)) return;
+    const to = resolved instanceof Path ? resolved : configured;
 
     logger.info("Workspaces root changed", { from: from.toString(), to: to.toString() });
     const handle = ui.dialog({ sections: header(from, to) }, { kind: "modal" });
     try {
-      const problem = await problemWith(to);
+      const problem = resolved instanceof Path ? await problemWith(to) : resolved.problem;
       if (problem !== null) {
         handle.update(problemConfig(from, to, problem));
         const action = await nextAction(handle);

@@ -270,6 +270,19 @@ export interface FileSystemBoundary {
    * // tempDir might be /tmp/initial-prompt-abc123
    */
   mkdtemp(prefix: string): Promise<Path>;
+
+  /**
+   * Resolve a path to its canonical form, following every symlink (and, on
+   * Windows, junction) along it — the path git and the OS report for it.
+   *
+   * @param path - Absolute path to an existing file or directory (Path object or string)
+   * @returns The resolved path
+   * @throws FileSystemError with code ENOENT if the path does not exist
+   *
+   * @example
+   * await fs.realpath('/var/folders/x'); // macOS: /private/var/folders/x
+   */
+  realpath(path: PathLike): Promise<Path>;
 }
 
 // ============================================================================
@@ -555,6 +568,15 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
       await fs.rename(nativeOldPath, nativeNewPath);
     } catch (error) {
       throw mapError(error, nativeOldPath);
+    }
+  }
+
+  async realpath(target: PathLike): Promise<Path> {
+    const nativePath = toNativePath(target);
+    try {
+      return new Path(await fs.realpath(nativePath));
+    } catch (error) {
+      throw mapError(error, nativePath);
     }
   }
 
