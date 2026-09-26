@@ -86,6 +86,8 @@ export interface OpencodeTestConfig {
     readonly provider: Record<string, unknown>;
     readonly model: string;
     readonly permission: OpencodePermissionConfig;
+    /** opencode's per-step git snapshot of the worktree (its diffs and revert). */
+    readonly snapshot: boolean;
   };
 }
 
@@ -432,6 +434,12 @@ export async function withOpencode(
         },
         model: "mock/test",
         permission: options.permission ?? { bash: "allow", edit: "allow", webfetch: "allow" },
+        // Off. Before every step of a prompt opencode copies the worktree into a
+        // hidden git repo, spawning git to do it, and on a loaded Windows runner
+        // that was most of the ~6.5s between a prompt and the model's request —
+        // which a test that prompts twice pays twice, up to 20s of a 30s budget.
+        // Nothing here tests diffs or revert, and CodeHydra uses neither.
+        snapshot: false,
       },
     });
 
