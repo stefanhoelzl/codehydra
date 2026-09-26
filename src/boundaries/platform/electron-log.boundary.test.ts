@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockPathProvider } from "./path-provider.test-utils";
 import type { PathProvider } from "./path-provider";
-import type { LoggingConfigureOptions } from "./logging-types";
+import type { LoggingConfigureOptions, LogLine } from "./logging-types";
 import { ElectronLog } from "./electron-log";
 
 // Test timeout for file operations
@@ -368,6 +368,31 @@ describe("ElectronLog boundary tests", () => {
       const logContent = await readLogFile();
       expect(logContent).toContain("[proj/feat] Status dirty=false");
       expect(logContent).toContain("[proj/feat] Read path=src");
+    });
+
+    it("tells line listeners of every line, whatever the level and logger filter", () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logLevel: "warn", allowedLoggers: new Set(["app"]) });
+      const lines: LogLine[] = [];
+      const unsubscribe = service.onLine((line) => lines.push(line));
+
+      service.scope.run(
+        () => ({ trace: "7f3a01", ws: "feat" }),
+        () => service.createLogger("git").debug("below the file's level", { n: 1 })
+      );
+      unsubscribe();
+      service.createLogger("git").warn("after unsubscribing");
+
+      expect(lines).toEqual([
+        {
+          level: "debug",
+          logger: "git",
+          scope: { trace: "7f3a01", ws: "feat" },
+          message: "below the file's level",
+          context: { n: 1 },
+          error: undefined,
+        },
+      ]);
     });
 
     it("keeps the scope a buffered line was written in, not the one it is flushed in", async () => {

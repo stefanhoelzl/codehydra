@@ -66,7 +66,8 @@ export type LoggerName =
   | "notification" // OsNotificationModule + OsNotificationBoundary - OS toasts
   | "cleanup" // CleanupModule - stale data-root sweeps
   | "lock" // LockModule - `ch lock` single-holder resources
-  | "workspaces-root"; // WorkspacesRootModule - where worktrees/clones live, root migration
+  | "workspaces-root" // WorkspacesRootModule - where worktrees/clones live, root migration
+  | "workspace-log"; // WorkspaceLogModule - a workspace's log lines in its IDE
 
 /**
  * Context data for log entries.
@@ -265,6 +266,20 @@ export interface Logger {
 }
 
 /**
+ * One line as a logger wrote it, before any level or logger-name filtering:
+ * what {@link Logging.onLine} listeners receive.
+ */
+export interface LogLine {
+  readonly level: LogLevel;
+  readonly logger: LoggerName;
+  /** The line's full scope (ambient plus any `scoped` hint), as written. */
+  readonly scope: LogScope | undefined;
+  readonly message: string;
+  readonly context: LogContext | undefined;
+  readonly error: Error | undefined;
+}
+
+/**
  * Logging service interface for the main process.
  * Creates named loggers and manages renderer logging via IPC.
  *
@@ -310,6 +325,16 @@ export interface Logging {
    * The ambient scope every logger of this service merges into its lines.
    */
   readonly scope: LogScopeStore;
+
+  /**
+   * Be told of every line any logger of this service writes, at every level,
+   * whatever the configured level and logger filter — they narrow the file and
+   * console, not this. Called synchronously on the writing call; a listener
+   * must be cheap, must not throw, and must never log (it would feed itself).
+   *
+   * @returns Unsubscribe
+   */
+  onLine(listener: (line: LogLine) => void): () => void;
 
   /**
    * Get the current session's log file path.

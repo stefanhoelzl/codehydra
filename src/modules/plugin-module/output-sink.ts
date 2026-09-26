@@ -24,6 +24,7 @@
  */
 
 import type { Logger } from "../../boundaries/platform/logging-types";
+import { createWorkspaceOutput, type OutputTransport } from "../workspace-output";
 
 /** Where a hook's output should be shown, beyond its run log. */
 export interface HookOutputSink {
@@ -52,14 +53,6 @@ export const HOOK_OUTPUT_CHANNEL = "CodeHydra Plugins";
  */
 const MAX_BUFFERED_LINES = 500;
 
-interface OutputTransport {
-  appendOutput(
-    workspacePath: string,
-    request: { channel: string; lines: readonly { source: string; text: string }[] }
-  ): boolean;
-  onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
-}
-
 export interface HookOutputSinkDeps {
   readonly transport: OutputTransport;
   readonly logger: Logger;
@@ -72,52 +65,17 @@ export interface HookOutputSinkDeps {
  * printed is ever only in a buffer that might be dropped.
  */
 export function createHookOutputSink(deps: HookOutputSinkDeps): HookOutputSink {
-  const buffered = new Map<string, { source: string; text: string }[]>();
-  // Workspaces whose editor is gone for good. A path stays here after its
-  // workspace is deleted, so a straggling fire-and-forget hook cannot start a
-  // buffer nobody will ever flush; one short string per deleted workspace.
-  const closed = new Set<string>();
-
-  deps.transport.onWorkspaceConnected((workspacePath) => {
-    const pending = buffered.get(workspacePath);
-    if (!pending || pending.length === 0) return;
-    buffered.delete(workspacePath);
-    if (
-      !deps.transport.appendOutput(workspacePath, { channel: HOOK_OUTPUT_CHANNEL, lines: pending })
-    ) {
-      // Connected a moment ago and gone already. The log still has every line.
-      deps.logger.scoped({ path: workspacePath }).debug("Could not flush buffered hook output");
-    }
+  const output = createWorkspaceOutput({
+    transport: deps.transport,
+    channel: HOOK_OUTPUT_CHANNEL,
+    maxBuffered: MAX_BUFFERED_LINES,
+    logger: deps.logger,
   });
-
   return {
     write(workspacePath: string, source: string, line: string): void {
-      const payload = { source, text: line };
-      if (
-        deps.transport.appendOutput(workspacePath, {
-          channel: HOOK_OUTPUT_CHANNEL,
-          lines: [payload],
-        })
-      ) {
-        return;
-      }
-      if (closed.has(workspacePath)) return;
-
-      const pending = buffered.get(workspacePath) ?? [];
-      pending.push(payload);
-      if (pending.length > MAX_BUFFERED_LINES) {
-        pending.splice(0, pending.length - MAX_BUFFERED_LINES);
-      }
-      buffered.set(workspacePath, pending);
+      output.write(workspacePath, [{ source, text: line }]);
     },
-
-    opening(workspacePath: string): void {
-      closed.delete(workspacePath);
-    },
-
-    closed(workspacePath: string): void {
-      closed.add(workspacePath);
-      buffered.delete(workspacePath);
-    },
+    opening: (workspacePath) => output.opening(workspacePath),
+    closed: (workspacePath) => output.closed(workspacePath),
   };
 }

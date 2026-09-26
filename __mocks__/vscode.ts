@@ -97,7 +97,16 @@ export const window = {
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
   createStatusBarItem: vi.fn(() => mockStatusBarItem),
-  createOutputChannel: vi.fn(() => ({ appendLine: vi.fn(), dispose: vi.fn() })),
+  // Plain and log channels alike: a log channel (`{ log: true }`) also has level methods.
+  createOutputChannel: vi.fn(() => ({
+    appendLine: vi.fn(),
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    dispose: vi.fn(),
+  })),
   activeTextEditor: undefined as unknown,
 };
 

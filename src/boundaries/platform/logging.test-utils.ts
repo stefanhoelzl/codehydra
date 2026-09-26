@@ -131,6 +131,7 @@ export function createMockLogging(): MockLogging {
     configure: vi.fn(),
     initialize: vi.fn(),
     scope: new AsyncLogScopeStore(),
+    onLine: vi.fn(() => () => {}),
     getLogFilePath: vi.fn().mockReturnValue("/mock/logs/test-session.log"),
 
     getCreatedLoggerNames(): LoggerName[] {

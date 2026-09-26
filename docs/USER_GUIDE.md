@@ -12,6 +12,7 @@ Run multiple AI agents in parallel, each in its own isolated workspace.
 6. [Plugins](#plugins)
 7. [Agents](#agents)
 8. [CLI and MCP](#cli-and-mcp)
+9. [Troubleshooting](#troubleshooting)
 
 ## Why CodeHydra?
 
@@ -1325,3 +1326,34 @@ language:
 - "Open a workspace for the login bug and tell its agent to fix it"
 - "Hibernate the workspaces I'm not using"
 - "Save all open files"
+
+## Troubleshooting
+
+### A workspace's log
+
+Each workspace's editor has a **CodeHydra Log** output channel (View → Output,
+then pick it from the list): what CodeHydra did for that workspace — creating
+its worktree, starting its agent, running its plugins' hooks, hibernating and waking
+it — as it happens. Lines logged while the editor was away (while the workspace
+was being created, or while it was hibernated) are shown once it connects, up
+to the last 1000.
+
+It shows Info and above by default. To see more, run **Developer: Set Log
+Level…** and set the **CodeHydra Log**
+channel to Debug. The level applies from then on; lines already dropped do not
+come back.
+
+Each line reads `(logger) [<trace> <intent>@<module>/<hook> <origin>] message`:
+which part of CodeHydra wrote it, and on behalf of which operation — the trace
+id is the same in the log file, so a line can be found there with its
+surroundings.
+
+### The log file
+
+The full record, for every workspace and for CodeHydra itself, is in the
+`logs/` folder of the data directory (see
+[Where settings come from](#where-settings-come-from)); how much of it is
+written is the `log.level` setting (`warn` by default; `debug` for detail).
+A workspace's lines carry `<project>/<workspace>` there, so
+`grep 'myproject/feature-x' <logfile>` finds them. Bug reports attach this
+file.
