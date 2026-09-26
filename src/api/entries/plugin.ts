@@ -4,7 +4,7 @@
  * The plugins themselves live in the plugin module and are reached through
  * `deps.plugins`; these entries turn a caller into the scope a list is read in
  * and shape the answer. A repository's plugins belong to the caller's workspace
- * — the one `ch` resolved from its working directory, or `--workspace` — so a
+ * — the one `ch` resolved from its working directory, or the one `--workspace` names — so a
  * caller outside every workspace sees the user's own plugins only.
  */
 
@@ -15,6 +15,7 @@ import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps, PluginListing, PluginScope, PluginState } from "./deps";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
+import { createTargetResolver, targetFields, type TargetInput } from "./target";
 
 const idSchema = z
   .string()
@@ -37,15 +38,18 @@ function row(plugin: PluginListing): Record<string, string> {
 
 export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
+  const resolveTarget = createTargetResolver(dispatcher);
 
-  /** The caller's workspace and its project, when it stands in one. */
-  const scopeOf = async (ctx: OperationContext): Promise<PluginScope> => {
-    if (ctx.workspacePath === null) return { workspacePath: null, projectPath: null };
+  /** The workspace the input names, else the caller's — and its project; none outside one. */
+  const scopeOf = async (ctx: OperationContext, input: TargetInput): Promise<PluginScope> => {
+    const named = input.workspace !== undefined || input.project !== undefined;
+    if (!named && ctx.workspacePath === null) return { workspacePath: null, projectPath: null };
+    const workspacePath = await resolveTarget(ctx, input);
     const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: ctx.workspacePath },
+      payload: { workspacePath },
     });
-    return { workspacePath: ctx.workspacePath, projectPath: resolved.projectPath };
+    return { workspacePath, projectPath: resolved.projectPath };
   };
 
   const list = defineEntry({
@@ -57,13 +61,14 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "workspace:<name> for this repository's in .codehydra/plugins), whether it is enabled, " +
       "disabled or not asked about yet (ask), the platforms it has scripts for, and where it " +
       "is. What a plugin contributes is in its manifest; `ch plugin errors` says what is wrong.",
-    input: z.object({}),
+    input: z.object({ ...targetFields }),
     requiresWorkspace: false,
-    handler: async (ctx) => (await deps.plugins().list(await scopeOf(ctx))).map(row),
+    handler: async (ctx, input) => (await deps.plugins().list(await scopeOf(ctx, input))).map(row),
   });
 
-  const setState = (state: PluginState) => async (ctx: OperationContext, id: string) =>
-    row(await deps.plugins().setState(await scopeOf(ctx), id, state));
+  const setState =
+    (state: PluginState) => async (ctx: OperationContext, input: TargetInput & { id: string }) =>
+      row(await deps.plugins().setState(await scopeOf(ctx, input), input.id, state));
 
   const enable = defineEntry({
     name: "plugin.enable",
@@ -72,9 +77,9 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     instructions:
       "For one of this repository's plugins, this is the trust question answered " +
       "'Remember' with it checked: its scripts run from now on, in every workspace of the project.",
-    input: z.object({ id: idSchema }),
+    input: z.object({ id: idSchema, ...targetFields }),
     requiresWorkspace: false,
-    handler: async (ctx, input) => setState("enabled")(ctx, input.id),
+    handler: async (ctx, input) => setState("enabled")(ctx, input),
   });
 
   const disable = defineEntry({
@@ -84,9 +89,9 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     instructions:
       "Its scripts stop running — hooks and automations — until it is enabled again. For one " +
       "of this repository's plugins it covers every workspace of the project.",
-    input: z.object({ id: idSchema }),
+    input: z.object({ id: idSchema, ...targetFields }),
     requiresWorkspace: false,
-    handler: async (ctx, input) => setState("disabled")(ctx, input.id),
+    handler: async (ctx, input) => setState("disabled")(ctx, input),
   });
 
   const errors = defineEntry({
