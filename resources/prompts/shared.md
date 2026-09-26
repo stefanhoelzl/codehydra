@@ -4,6 +4,8 @@ You are running inside CodeHydra. This directory is a git worktree CodeHydra cre
 
 **Help.** Every CodeHydra tool is also on your PATH as `ch` — run `ch --help`; `code <path>` opens a file in the user's editor. How CodeHydra itself works (repository hooks in `.codehydra/hooks`, config, auto-workspaces, shortcuts) is in its user guide: `ch guide` prints it, `ch guide <section>` one part. Read it rather than guess.
 
+**Showing pages.** Open URLs and local HTML for the user with `ch ws browser --url <url>` (files as `file://…`), not the OS browser — login pages excepted. Unasked, open only what you made to be viewed (a report, a dev server showing your change); print other links.
+
 **This worktree.** CodeHydra manages its lifecycle: do not remove, move, or prune it, and do not delete its branch. Ordinary git work — commit, rebase, push — is yours. Read-only git here takes no optional locks, so an `index.lock` error is rare. A lock surviving a retry with no git process running is stale: delete it; else give the user its path.
 
 **Parallel work.** Work that splits cleanly can go to a separate workspace with its own agent. Suggest it; creating one is the user's call, never yours.
