@@ -85,8 +85,10 @@ New worktrees are created only in the managed location, `<root>/projects/<name>-
 | ----------- | ------------------------------------------ |
 | Linux       | `~/.local/share/codehydra/`                |
 | macOS       | `~/Library/Application Support/codehydra/` |
-| Windows     | `%APPDATA%\codehydra\`                     |
+| Windows     | `%LOCALAPPDATA%\Codehydra\`                |
 | Development | `./app-data/`                              |
+
+Windows releases used `%APPDATA%\Codehydra\` (the roaming profile) before. `relocateDataRoot` (`src/boundaries/platform/data-root-relocation.ts`) moves an existing install at bootstrap, synchronously and before the logger or `Config.load()` open anything: every entry but the source code (`remotes/`, `projects/*/workspaces/`) is renamed across (copied when the profile is on another volume), `electron/` first so a still-running older instance fails the move before anything changed, and the moved state.json gets `paths.workspaces-current` = the old folder. Any failure puts everything back and runs from the old folder (`DefaultPathProvider`'s `platformRoot`) until the next start. The workspaces-root `migrations` hook then sees the root in use is the legacy data root with `paths.workspaces` unset, and runs Migrate without the dialog.
 
 Discovery finds worktrees in ANY location; creation only in managed location.
 
@@ -978,7 +980,7 @@ compile error until it is deliberately projected. Both lines fire at `silly`.
 | Development | `./app-data/logs/2025-12-16T10-30-00-abc123.log`               |
 | Linux       | `~/.local/share/codehydra/logs/2025-12-16T10-30-00-abc123.log` |
 | macOS       | `~/Library/Application Support/Codehydra/logs/...`             |
-| Windows     | `%APPDATA%\Codehydra\logs\...`                                 |
+| Windows     | `%LOCALAPPDATA%\Codehydra\logs\...`                            |
 
 ### Usage in Services
 

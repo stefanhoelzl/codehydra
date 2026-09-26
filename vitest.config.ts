@@ -3,6 +3,75 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
 import { resolve } from "path";
 
+// Tests run in whatever shell launched them — a CodeHydra workspace terminal
+// (GIT_OPTIONAL_LOCKS, `_CH_*` plumbing, `CH_*` config overrides), a Claude
+// session (`CLAUDE_CODE_*`), pnpm (`npm_*`). An allowlist, not a denylist: a
+// test sees what the OS and the tools it spawns need, plus what it sets up
+// itself, and a new kind of leak cannot slip in unnoticed. Runs before any
+// worker is forked. Names compare case-insensitively (Windows env is).
+const ALLOWED_ENV = new Set(
+  [
+    // Processes and tools (git, node, the real claude/opencode binaries)
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "TZ",
+    "LANG",
+    "LANGUAGE",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "XDG_RUNTIME_DIR",
+    // Windows system
+    "PATHEXT",
+    "COMSPEC",
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "OS",
+    "USERPROFILE",
+    "USERNAME",
+    "USERDOMAIN",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "PSMODULEPATH",
+    // Without it, a runner image's PowerShell rebuilds its module cache on
+    // every start (~24s), and the blocking-process scan times out.
+    "PSMODULEANALYSISCACHEPATH",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    // Network: proxies and corporate CAs
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    // Test runner and CI (timeouts widen under CI)
+    "CI",
+    "NODE_ENV",
+    "TEST",
+    "FORCE_COLOR",
+    "NO_COLOR",
+  ].map((name) => name.toUpperCase())
+);
+for (const key of Object.keys(process.env)) {
+  const name = key.toUpperCase();
+  if (ALLOWED_ENV.has(name) || name.startsWith("LC_") || name.startsWith("VITEST")) continue;
+  delete process.env[key];
+}
+
 export default defineConfig({
   plugins: [svelte(), svelteTesting()],
   // Externalize socket.io ecosystem for proper ESM/CJS interop in Node tests

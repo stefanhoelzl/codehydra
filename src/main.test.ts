@@ -150,6 +150,8 @@ describe("Main process wiring", () => {
 
   describe.skipIf(process.platform !== "win32")("Full wiring chain (Windows)", () => {
     it("BuildInfo -> PlatformInfo -> PathProvider -> services", () => {
+      // The data root follows %LOCALAPPDATA%; unset, it falls back under the home dir.
+      vi.stubEnv("LOCALAPPDATA", "");
       const buildInfo = createMockBuildInfo({ isDevelopment: false, isPackaged: true });
       const platformInfo = createMockPlatformInfo({
         platform: "win32",
@@ -159,13 +161,13 @@ describe("Main process wiring", () => {
 
       // Windows paths are normalized to lowercase by Path class
       expect(pathProvider.dataPath("projects").toString()).toBe(
-        "c:/users/test/appdata/roaming/codehydra/projects"
+        "c:/users/test/appdata/local/codehydra/projects"
       );
       expect(pathProvider.dataPath("vscode").toString()).toBe(
-        "c:/users/test/appdata/roaming/codehydra/vscode"
+        "c:/users/test/appdata/local/codehydra/vscode"
       );
       expect(pathProvider.dataPath("electron").toString()).toBe(
-        "c:/users/test/appdata/roaming/codehydra/electron"
+        "c:/users/test/appdata/local/codehydra/electron"
       );
     });
   });

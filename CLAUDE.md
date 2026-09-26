@@ -94,10 +94,11 @@ path1.equals(path2); // equals() for comparison
 
 Some components use external libraries directly without abstraction layers. These are approved exceptions where abstraction provides no benefit.
 
-| Component       | Direct Dependency  | Reason                                                                                            |
-| --------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
-| `AutoUpdater`   | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
-| `Config.load()` | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemBoundary is async-only        |
+| Component            | Direct Dependency  | Reason                                                                                                                                       |
+| -------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AutoUpdater`        | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit                                            |
+| `Config.load()`      | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemBoundary is async-only                                                   |
+| `relocateDataRoot()` | `node:fs`          | Moves the Windows data root (`%APPDATA%` → `%LOCALAPPDATA%`) before the logger and `Config.load()` open it; FileSystemBoundary is async-only |
 
 ---
 
@@ -409,7 +410,7 @@ The `state` module (`src/modules/state-module.ts`) loads `state.json` in the `ap
 - **Dev**: `./app-data/logs/`
 - **Linux**: `~/.local/share/codehydra/logs/`
 - **macOS**: `~/Library/Application Support/Codehydra/logs/`
-- **Windows**: `%APPDATA%\Codehydra\logs\`
+- **Windows**: `%LOCALAPPDATA%\Codehydra\logs\` (moved from `%APPDATA%` by `relocateDataRoot` at first start)
 
 ```bash
 # Debug mode (env var form of log.level=debug, log.output=console)

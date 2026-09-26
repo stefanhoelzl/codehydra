@@ -47,7 +47,8 @@ export interface PathProvider {
  * - Development (isDevelopment=true): `./app-data/` (relative to process.cwd())
  * - Production Linux: `~/.local/share/codehydra/`
  * - Production macOS: `~/Library/Application Support/Codehydra/`
- * - Production Windows: `<home>/AppData/Roaming/Codehydra/`
+ * - Production Windows: `%LOCALAPPDATA%/Codehydra/` (before: `%APPDATA%/Codehydra/`, see
+ *   data-root-relocation.ts)
  *
  * `_CH_ROOT_DIR` overrides both roots at once, in either build flavor.
  */
@@ -67,7 +68,15 @@ export class DefaultPathProvider implements PathProvider {
   /** Platform for platform-specific path construction */
   private readonly platform: "darwin" | "linux" | "win32";
 
-  constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
+  /**
+   * @param options.platformRoot The production root to use instead of the platform's
+   *   (the legacy Windows folder, while its data could not be moved yet).
+   */
+  constructor(
+    buildInfo: BuildInfo,
+    platformInfo: PlatformInfo,
+    private readonly options: { readonly platformRoot?: string } = {}
+  ) {
     this.platform = platformInfo.platform as "darwin" | "linux" | "win32";
 
     // Compute roots
@@ -119,6 +128,9 @@ export class DefaultPathProvider implements PathProvider {
     if (override) {
       return override;
     }
+    if (this.options.platformRoot) {
+      return this.options.platformRoot;
+    }
 
     const { platform, homeDir } = platformInfo;
 
@@ -126,7 +138,7 @@ export class DefaultPathProvider implements PathProvider {
       case "darwin":
         return join(homeDir, "Library", "Application Support", "Codehydra");
       case "win32":
-        return join(homeDir, "AppData", "Roaming", "Codehydra");
+        return windowsDataRoot(homeDir);
       case "linux":
       default:
         return join(homeDir, ".local", "share", "codehydra");
@@ -147,4 +159,18 @@ export class DefaultPathProvider implements PathProvider {
     }
     return this.computeBundlesRootDir(platformInfo);
   }
+}
+
+/**
+ * `%LOCALAPPDATA%\Codehydra`: binaries, worktrees and logs belong to this machine, and a
+ * roaming profile would sync them at every sign-in. Read from the environment so a
+ * redirected folder is honored.
+ */
+export function windowsDataRoot(homeDir: string): string {
+  return join(process.env.LOCALAPPDATA || join(homeDir, "AppData", "Local"), "Codehydra");
+}
+
+/** `%APPDATA%\Codehydra`: where Windows releases kept their data before (the roaming profile). */
+export function legacyWindowsDataRoot(homeDir: string): string {
+  return join(process.env.APPDATA || join(homeDir, "AppData", "Roaming"), "Codehydra");
 }
