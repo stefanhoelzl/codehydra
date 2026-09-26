@@ -10,7 +10,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseLsofPids, parsePsOutput, parseWindowsListeners } from "./process";
+import {
+  parseLsofPids,
+  parseNetstatListeners,
+  parsePsOutput,
+  parseWindowsListeners,
+} from "./process";
 
 describe("parseLsofPids", () => {
   it("takes the pid lines and ignores every other field", () => {
@@ -66,6 +71,57 @@ describe("parsePsOutput", () => {
     expect(parsePsOutput("PID COMMAND ARGS\n4321 node server.js")).toEqual([
       { pid: 4321, name: "node", commandLine: "server.js" },
     ]);
+  });
+});
+
+describe("parseNetstatListeners", () => {
+  const header = [
+    "",
+    "Active Connections",
+    "",
+    "  Proto  Local Address          Foreign Address        State           PID",
+  ];
+
+  it("takes the pids listening on the port, IPv4 and IPv6", () => {
+    const stdout = [
+      ...header,
+      "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012",
+      "  TCP    127.0.0.1:25448        0.0.0.0:0              LISTENING       4321",
+      "  TCP    [::1]:25448            [::]:0                 LISTENING       4322",
+    ].join("\r\n");
+    expect(parseNetstatListeners(stdout, 25448)).toEqual([4321, 4322]);
+  });
+
+  it("reads a translated state column", () => {
+    // netstat localizes the state; a German Windows prints ABHÖREN.
+    const stdout = "  TCP    127.0.0.1:25448        0.0.0.0:0              ABHÖREN         4321";
+    expect(parseNetstatListeners(stdout, 25448)).toEqual([4321]);
+  });
+
+  it("skips connections, other ports and UDP", () => {
+    const stdout = [
+      ...header,
+      // A client connected to the port, and the server side of that connection.
+      "  TCP    127.0.0.1:50000        127.0.0.1:25448        ESTABLISHED     7777",
+      "  TCP    127.0.0.1:25448        127.0.0.1:50000        ESTABLISHED     4321",
+      // A port that merely ends in the same digits.
+      "  TCP    127.0.0.1:125448       0.0.0.0:0              LISTENING       8888",
+      "  UDP    127.0.0.1:25448        *:*                                    9999",
+    ].join("\r\n");
+    expect(parseNetstatListeners(stdout, 25448)).toEqual([]);
+  });
+
+  it("reports a pid once, and never pid 0", () => {
+    const stdout = [
+      "  TCP    127.0.0.1:25448        0.0.0.0:0              LISTENING       4321",
+      "  TCP    0.0.0.0:25448          0.0.0.0:0              LISTENING       4321",
+      "  TCP    [::]:25448             [::]:0                 LISTENING       0",
+    ].join("\r\n");
+    expect(parseNetstatListeners(stdout, 25448)).toEqual([4321]);
+  });
+
+  it("returns nothing for empty output", () => {
+    expect(parseNetstatListeners("", 25448)).toEqual([]);
   });
 });
 

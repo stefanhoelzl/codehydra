@@ -163,15 +163,24 @@ export interface ListeningProcess {
 /**
  * How long an OS-level process scan may take before it is abandoned.
  *
- * Windows gets far longer than POSIX because the tools differ in kind, not
- * degree: `lsof` is a single fast binary, while the Windows query pays Windows
- * PowerShell 5.1 startup and then a first `Get-CimInstance` that initializes
- * WMI. On a loaded CI runner that overran a 5s budget outright, and the scan
- * timing out is indistinguishable from a free port at the call site — so the
- * budget being too tight silently disables the whole feature. The neighbouring
- * detectors allow 8s and 45s for their own PowerShell scans.
+ * A ceiling, not a delay: a scan that answers fast is unaffected by it, and one
+ * that times out is indistinguishable from a free port at the call site — so a
+ * budget that is too tight silently disables the whole feature. Windows keeps
+ * the larger one from when its scan went through PowerShell and WMI (which
+ * overran 5s outright on a loaded CI runner); `netstat` is far faster, but a
+ * loaded runner is still slower than `lsof` on a desktop.
  */
 export const PROCESS_SCAN_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
+
+/**
+ * Budget for looking up the name and command line of a Windows port holder.
+ *
+ * Shorter than the scan's own, because by then the pid is already known and the
+ * lookup is only decoration: WMI can stall for longer than any budget worth
+ * waiting on (CI saw it pass 30s while other PowerShell ran in a second), and
+ * the pid alone is enough to offer.
+ */
+export const LISTENER_DETAILS_TIMEOUT_MS = 10_000;
 
 /**
  * Interface for running external processes.
@@ -219,7 +228,7 @@ export interface ProcessRunner {
    * Processes holding a LISTEN socket on `port`.
    *
    * Process inspection keyed by a port, which is why it lives here rather than
-   * on `PortManager`: the work is shelling out to `lsof` / `Get-NetTCPConnection`,
+   * on `PortManager`: the work is shelling out to `lsof` / `netstat`,
    * exactly like every other process scan in this codebase, and `PortManager`
    * would have to reach across into the process boundary to do it.
    *
@@ -725,7 +734,33 @@ export function parsePsOutput(stdout: string): ListeningProcess[] {
   return processes;
 }
 
-/** Parse the JSON emitted by the Windows listener query. */
+/**
+ * Parse `netstat -ano` output into the pids listening on `port`.
+ *
+ * A listening row is one whose foreign address is the unspecified one
+ * (`0.0.0.0:0` / `[::]:0`) — matched on that rather than on the state column,
+ * because netstat translates the state (`LISTENING` is `ABHÖREN` on a German
+ * Windows). The pid is the last column. UDP rows have no state and are skipped
+ * by the protocol, which netstat never translates.
+ */
+export function parseNetstatListeners(stdout: string, port: number): number[] {
+  const pids: number[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 5 || fields[0] !== "TCP") continue;
+    const local = fields[1]!;
+    const foreign = fields[2]!;
+    if (!local.endsWith(`:${port}`)) continue;
+    if (foreign !== "0.0.0.0:0" && foreign !== "[::]:0") continue;
+    const pid = Number(fields[fields.length - 1]);
+    // pid 0 is the System Idle Process, which is what a socket in TIME_WAIT
+    // reports; it holds nothing anyone could terminate.
+    if (Number.isInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
+  }
+  return pids;
+}
+
+/** Parse the JSON emitted by the Windows listener details query. */
 export function parseWindowsListeners(stdout: string): ListeningProcess[] {
   const trimmed = stdout.trim();
   if (trimmed === "") return [];
@@ -755,11 +790,10 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
 }
 
 /**
- * PowerShell that maps a listening port to the processes behind it.
+ * PowerShell that looks up the name and command line of the given processes.
  *
- * `Get-NetTCPConnection` reports only an OwningProcess id, so it is joined to
- * Win32_Process for the name and command line. SilentlyContinue because "no
- * listener" is an error there, not an empty result.
+ * Win32_Process is the only place Windows reports another process's command
+ * line. SilentlyContinue so that a pid which exited meanwhile is just absent.
  *
  * Sent via `-EncodedCommand`, so quoting is a non-issue — but it still has to
  * be **Windows PowerShell 5.1**: `powershell.exe` is 5.1, not pwsh, so
@@ -767,13 +801,11 @@ export function parseWindowsListeners(stdout: string): ListeningProcess[] {
  * command. Without it a single result serializes as a bare object, which
  * `parseWindowsListeners` accepts.
  */
-function windowsListenerQuery(port: number): string {
+function windowsListenerDetailsQuery(pids: readonly number[]): string {
+  const filter = pids.map((pid) => `ProcessId=${pid}`).join(" OR ");
   return (
     `$ErrorActionPreference='SilentlyContinue'; ` +
-    `$p = Get-NetTCPConnection -LocalPort ${port} -State Listen | ` +
-    `Select-Object -ExpandProperty OwningProcess -Unique; ` +
-    `if (-not $p) { exit 0 }; ` +
-    `$p | ForEach-Object { Get-CimInstance Win32_Process -Filter ('ProcessId=' + $_) } | ` +
+    `Get-CimInstance Win32_Process -Filter '${filter}' | ` +
     `Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress`
   );
 }
@@ -889,9 +921,13 @@ export class ExecaProcessRunner implements ProcessRunner {
   }
 
   /** Run a scan command, returning its stdout or "" if it failed or hung. */
-  private async scan(command: string, args: readonly string[]): Promise<string> {
+  private async scan(
+    command: string,
+    args: readonly string[],
+    timeout = PROCESS_SCAN_TIMEOUT_MS
+  ): Promise<string> {
     const proc = this.run(command, args);
-    const result = await proc.wait(PROCESS_SCAN_TIMEOUT_MS);
+    const result = await proc.wait(timeout);
     if (result.running) {
       await proc.kill(1000, 1000);
       this.logger.warn("Port listener scan timed out", { command });
@@ -929,22 +965,30 @@ export class ExecaProcessRunner implements ProcessRunner {
   }
 
   private async findListenersWindows(port: number): Promise<ListeningProcess[]> {
+    // netstat, not Get-NetTCPConnection: that cmdlet goes through WMI, which on
+    // a loaded machine can stall past any budget — and a timed-out scan leaves
+    // the caller unable to name the holder of a port it knows is busy. netstat
+    // reads the TCP table directly and answers in well under a second.
+    const pids = parseNetstatListeners(await this.scan("netstat", ["-ano"]), port);
+    if (pids.length === 0) return [];
+
     // -EncodedCommand, not -Command: the script travels as base64 of UTF-16LE,
     // so nothing in it is subject to Windows command-line parsing. An inline
     // -Command has to survive Node's argv escaping *and* PowerShell's own
     // tokenizing, which is a standing source of silent breakage — a mangled
-    // script just produces no output, and an empty scan is indistinguishable
-    // from a free port at the call site.
-    const encoded = Buffer.from(windowsListenerQuery(port), "utf16le").toString("base64");
-    return parseWindowsListeners(
-      await this.scan("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        encoded,
-      ])
+    // script just produces no output.
+    const encoded = Buffer.from(windowsListenerDetailsQuery(pids), "utf16le").toString("base64");
+    const details = parseWindowsListeners(
+      await this.scan(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+        LISTENER_DETAILS_TIMEOUT_MS
+      )
     );
+    if (details.length > 0) return details;
+
+    // WMI failed or stalled but we still know who holds the port — better to
+    // offer the pid than to pretend the scan found nothing.
+    return pids.map((pid) => ({ pid, name: "unknown", commandLine: "unknown" }));
   }
 }
