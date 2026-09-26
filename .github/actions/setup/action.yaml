@@ -45,7 +45,14 @@ runs:
         restore-keys: |
           ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
-    - run: echo "_CH_ROOT_DIR=${{ runner.temp }}/codehydra-root" >> $GITHUB_ENV
+    # Postinstall would download VSCodium (~105MB, ~10s) into this root, and no
+    # job runs it from there: the e2e jobs repoint _CH_ROOT_DIR and the packaged
+    # app downloads its own. OpenCode stays: it is small, and the opencode
+    # boundary tests need it (downloading it lazily from two parallel test
+    # files would race on the same bundle directory).
+    - run: |
+        echo "_CH_ROOT_DIR=${{ runner.temp }}/codehydra-root" >> $GITHUB_ENV
+        echo "_CH_SKIP_VSCODIUM_DOWNLOAD=1" >> $GITHUB_ENV
       shell: bash
 
     - run: pnpm install --frozen-lockfile

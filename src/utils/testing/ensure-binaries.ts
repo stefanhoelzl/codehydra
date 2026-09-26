@@ -152,7 +152,8 @@ export async function ensureBinaryForTests(
   };
 
   await downloadBinary(request, deps, (progress) => {
-    if (progress.totalBytes) {
+    // `\r` progress only on a terminal; a CI log would get one line per update.
+    if (process.stdout.isTTY && progress.totalBytes) {
       const percent = Math.round((progress.bytesDownloaded / progress.totalBytes) * 100);
       process.stdout.write(`\r  Downloading ${binary}: ${percent}%`);
     }
