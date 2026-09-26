@@ -59,7 +59,7 @@ describe("composed agent system prompts", () => {
 
     it("points at the user guide", () => {
       expect(get()).toContain("ch guide");
-      expect(get()).toContain(".codehydra/hooks");
+      expect(get()).toContain(".codehydra/plugins");
     });
 
     it("has a stale git lock deleted only once no git process is running", () => {
