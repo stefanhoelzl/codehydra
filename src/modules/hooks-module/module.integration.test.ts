@@ -52,6 +52,11 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletionProgressEvent,
 } from "../../intents/delete-workspace";
+import {
+  AppShutdownOperation,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../../intents/app-shutdown";
 import type { IntentModule } from "../../intents/lib/module";
 import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import type { DomainEvent } from "../../intents/lib/types";
@@ -178,6 +183,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   dispatcher.registerOperation(new OpenWorkspaceOperation());
   dispatcher.registerOperation(new DeleteWorkspaceOperation());
   dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new AppShutdownOperation());
 
   const hookFiles = options?.hooks ?? {};
 
@@ -449,6 +455,10 @@ async function deleteWorkspace(setup: TestSetup): Promise<void> {
       force: false,
     },
   });
+}
+
+async function shutDown(setup: TestSetup): Promise<void> {
+  await setup.dispatcher.dispatch<AppShutdownIntent>({ type: INTENT_APP_SHUTDOWN, payload: {} });
 }
 
 /** Wait until a hook is offered for cancel, i.e. its process is running. */
@@ -986,6 +996,70 @@ describe("cancel", () => {
       error: "before-worktree-deleted was canceled",
     });
     expect(last.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe("pending");
+  });
+});
+
+describe("shutdown", () => {
+  it("kills a blocking hook still running, quietly, before it returns", async () => {
+    const setup = createTestSetup({
+      hooks: { [SETUP_HOOK]: { hangs: true } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    const opening = openWorkspace(setup);
+    await untilHookRunning(setup);
+
+    await shutDown(setup);
+
+    // Killed by the time the stop hook returned, not merely asked to die.
+    expect(setup.killedCount()).toBe(1);
+    await opening;
+    expect(setup.runningHooks).toEqual([]);
+    expect(setup.notifications).toEqual([]);
+    expect(setup.logger.getMessagesByLevel("error")).toEqual([]);
+  });
+
+  it("kills a running deletion gate, which fails the deletion closed", async () => {
+    const setup = createTestSetup({
+      hooks: { [DELETE_HOOK]: { hangs: true } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    const deleting = deleteWorkspace(setup);
+    await untilHookRunning(setup);
+
+    await shutDown(setup);
+
+    expect(setup.killedCount()).toBe(1);
+    await deleting;
+    const last = setup.progress.at(-1)!.payload;
+    expect(last.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe("pending");
+  });
+
+  it("kills an on-workspace-opened hook still running", async () => {
+    const setup = createTestSetup({
+      hooks: { [EVENT_HOOK]: { hangs: true } },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await openWorkspace(setup);
+    await settle();
+    expect(setup.spawned).toHaveLength(1);
+
+    await shutDown(setup);
+
+    expect(setup.killedCount()).toBe(1);
+  });
+
+  it("starts no hook once the app is shutting down", async () => {
+    const setup = createTestSetup({
+      hooks: { [SETUP_HOOK]: {}, [EVENT_HOOK]: {} },
+      trusted: { [PROJECT_ROOT]: true },
+    });
+    await shutDown(setup);
+
+    await openWorkspace(setup);
+    await settle();
+
+    expect(setup.spawned).toEqual([]);
+    expect(setup.notifications).toEqual([]);
   });
 });
 

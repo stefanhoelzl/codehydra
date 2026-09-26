@@ -800,6 +800,11 @@ on without what the hook would have returned, and a deletion stops with Retry
 and Dismiss. Cancel is not offered while the trust question is open — answer
 Skip there instead.
 
+Quitting CodeHydra cancels every hook still running, `on-` entries included,
+the same way, and starts no new ones — a hook never outlives the app. A
+deletion whose gate was canceled by the quit stays undone; the workspace is
+still there on the next start.
+
 ### Trust
 
 Hooks are code from a repository, so the first time one would run for a
