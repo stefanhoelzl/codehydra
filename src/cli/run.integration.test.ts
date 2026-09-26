@@ -78,6 +78,19 @@ const DESCRIPTORS: readonly OperationDescriptor[] = [
     stdin: "text",
   },
   {
+    name: "plugin.render",
+    kind: "command",
+    description: "Render items through a Liquid template file",
+    inputSchema: {
+      type: "object",
+      properties: { template: { type: "string" }, items: { type: "string" } },
+    },
+    path: ["plugin", "render"],
+    positionals: ["template", "items"],
+    stdin: "items",
+    stdinByDefault: true,
+  },
+  {
     name: "lock.hold",
     kind: "command",
     description: "Take a lock for as long as this connection lives",
@@ -194,6 +207,18 @@ describe("run", () => {
       });
 
       expect(calls[0]!.request).toEqual({ text: "line one\nline two", wake: true });
+    });
+
+    it("reads an omitted field from standard input for a filter", async () => {
+      const calls: Recorded[] = [];
+      await run({
+        argv: ["plugin", "render", "t.yaml"],
+        isTty: false,
+        connect: async () => fakeClient(() => [], calls),
+        readStdin: async () => '[{"n":1}]\n',
+      });
+
+      expect(calls[0]!.request).toEqual({ template: "t.yaml", items: '[{"n":1}]' });
     });
 
     it("passes an ordinary value through untouched", async () => {

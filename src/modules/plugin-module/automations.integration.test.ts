@@ -62,7 +62,8 @@ import {
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
 import { createAutomations } from "./automations";
-import { parseSources } from "./legacy-sources";
+import { convertLegacyTemplate, parseSources } from "./legacy-sources";
+import { renderInput } from "./template-render";
 import { notify } from "../presentation/notification-card";
 import type { IntentModule } from "../../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
@@ -399,19 +400,33 @@ function createSetup(options?: {
     stateService: state,
     enabled: () => enabled,
     sources: async () =>
-      parseSources(sourcesYaml).sources.map((source) => {
-        const action =
-          (source.template["action"] as OperationName | undefined) ?? "workspace.create";
-        return {
-          id: source.name,
-          plugin: "local:test",
-          name: source.name,
-          action,
-          mode: source.mode,
-          template: source.template,
-        };
-      }),
-    runScript: async () => (cmd.exitCode === 0 ? cmd.items : null),
+      parseSources(sourcesYaml).sources.map((source) => ({
+        id: source.name,
+        plugin: "local:test",
+        name: source.name,
+      })),
+    // Each source's script prints its items as a migrated source does: the raw
+    // data rendered through its template, rewritten to the create-item shape. A
+    // template that names another action is rendered as it is.
+    runScript: async (source) => {
+      if (cmd.exitCode !== 0) return null;
+      const legacy = parseSources(sourcesYaml).sources.find((s) => s.name === source.name)!;
+      const template =
+        legacy.template["action"] === undefined
+          ? convertLegacyTemplate(legacy.template, legacy.mode, () => {})
+          : legacy.template;
+      return cmd.items.map((data) => renderInput(template, data));
+    },
+    // The engine's side of the item contract; the schemas themselves are items.ts's.
+    parseItem: (raw) => {
+      const { action, ...input } = raw as Record<string, unknown>;
+      if (typeof action !== "string") throw new Error("an item needs an action");
+      if (action !== "workspace.create") return { action: action as OperationName, input };
+      return {
+        action,
+        input: { stealFocus: false, event: false, ...input },
+      };
+    },
     invokeAction: async (action, input) => {
       if (failingActions.has(action)) throw new Error(`${action} refused`);
       invoked.push({ action, input });
@@ -742,9 +757,9 @@ ${sourceYaml("good")}`,
     expect(notificationManager.notifications).toHaveLength(0);
   });
 
-  it("reports a project that is not an absolute path as one collapsing error card, retried every poll", async () => {
+  it("reports a project that is no name, path or URL as one collapsing error card, retried every poll", async () => {
     vi.useFakeTimers();
-    const url = "https://github.com/org/repo.git";
+    const url = "relative-dir";
     const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, notificationManager } =
       createSetup({
         sources: `name: github
@@ -767,7 +782,7 @@ template:
     expect(card.opened.type).toBe("error");
     expect(card.opened.dismissible).toBe(true);
     expect(card.opened.message).toContain(
-      "github: project must be an absolute path — use git: for a URL"
+      "github: project must be an open project's name, an absolute path or a git URL"
     );
     expect(card.opened.message).toContain(url);
 
@@ -1183,10 +1198,11 @@ template:
     await notificationManager.settle();
 
     expect(invoked).toEqual([]);
-    expect(notificationManager.notifications[0]!.opened.message).toBe(
-      "stale: workspace.hibernate: workspace.hibernate refused"
-    );
-    expect(notificationManager.notifications[0]!.count).toBe(2);
+    // One card per item: each names its index, so the second is not a repeat.
+    expect(notificationManager.notifications.map((n) => n.opened.message)).toEqual([
+      "stale: item 0: workspace.hibernate: workspace.hibernate refused",
+      "stale: item 1: workspace.hibernate: workspace.hibernate refused",
+    ]);
   });
 });
 
@@ -1224,5 +1240,48 @@ describe("switched off", () => {
 
     expect(entriesOf(state)).toHaveProperty("gh/1");
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
+  });
+});
+
+describe("items", () => {
+  it("reports an invalid item by index, and still runs the rest", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, invoked, notificationManager } = createSetup({
+      sources: `name: mixed
+cmd: fetch
+template:
+  name: "the legacy parser needs one"
+  action: "{{ action }}"
+  workspace: "{{ ws }}"`,
+    });
+    cmd.items = [{ ws: "a" }, { action: "workspace.hibernate", ws: "b" }];
+
+    await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
+
+    // The first item rendered no action, so it has none.
+    expect(notificationManager.notifications[0]!.opened.message).toBe(
+      "mixed: item 0: an item needs an action"
+    );
+    expect(invoked.map((call) => call.input["workspace"])).toEqual(["b"]);
+  });
+
+  it("refuses a create item without a project", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, openWorkspaceOp, notificationManager } = createSetup({
+      sources: `name: noproject
+cmd: fetch
+template:
+  name: "ws-{{ id }}"`,
+    });
+    cmd.items = [{ id: "1" }];
+
+    await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
+
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    expect(notificationManager.notifications[0]!.opened.message).toMatch(
+      /noproject: item 0: workspace.create: an automation has no project of its own/
+    );
   });
 });

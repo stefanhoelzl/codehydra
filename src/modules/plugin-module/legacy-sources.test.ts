@@ -110,17 +110,24 @@ describe("parseSources", () => {
 });
 
 describe("convertLegacySources", () => {
-  it("turns each source into an automation of a manifest that parses", () => {
+  it("pipes each source's cmd, grouped, through ch plugin render and its template", () => {
     const converted = convertLegacySources(
-      `name: gh prs\nmode: events\ncmd: gh pr list\ntemplate:\n  name: "pr-{{ number }}"\n---\nname: jira\ncmd: ./jira\ntemplate:\n  name: "{{ key }}"`,
+      `name: gh prs\nmode: events\ncmd: |\n  gh pr list \\\n    --json number\ntemplate:\n  name: "pr-{{ number }}"\n---\nname: jira\ncmd: ./jira\ntemplate:\n  name: "{{ key }}"`,
       "linux"
     );
 
     const [doc] = parseManifest(converted.manifest);
     expect(doc).toMatchObject({ shell: "bash", platforms: ["linux", "windows", "macos"] });
-    expect(doc?.automations.map((a) => [a.name, a.mode, a.script])).toEqual([
-      ["gh-prs", "events", "gh pr list"],
-      ["jira", "workspaces", "./jira"],
+    expect(doc?.automations).toEqual([
+      {
+        name: "gh-prs",
+        script:
+          '{\ngh pr list \\\n  --json number\n} | ch plugin render "$CH_PLUGIN_DIR/templates/gh-prs.yaml"',
+      },
+      {
+        name: "jira",
+        script: '{\n./jira\n} | ch plugin render "$CH_PLUGIN_DIR/templates/jira.yaml"',
+      },
     ]);
     expect([...converted.renames]).toEqual([
       ["gh prs", "gh-prs"],
@@ -128,10 +135,54 @@ describe("convertLegacySources", () => {
     ]);
   });
 
+  it("rewrites each template to the create-item shape, the mode as event", () => {
+    const converted = convertLegacySources(
+      [
+        "name: gh",
+        "mode: events",
+        "cmd: x",
+        "template:",
+        '  name: "pr-{{ number }}"',
+        '  key: "{{ url }}"',
+        "  git: org/repo",
+        "  focus: true",
+        '  prompt: "Review {{ url }}"',
+        "  agent: { type: claude, name: reviewer, permission-mode: plan, model: { provider: anthropic, id: opus } }",
+        '  metadata: { title: "PR {{ number }}", tags: { review: { color: "#4b6de8" } }, ci: { run: "{{ run }}" } }',
+        "  shiny: yes",
+      ].join("\n"),
+      "linux"
+    );
+
+    expect(parse(converted.templates["gh.yaml"]!)).toEqual({
+      action: "workspace.create",
+      event: true,
+      name: "pr-{{ number }}",
+      key: "{{ url }}",
+      project: "org/repo",
+      stealFocus: true,
+      prompt: "Review {{ url }}",
+      agent: "claude",
+      agentName: "reviewer",
+      permissionMode: "plan",
+      model: "anthropic/opus",
+      metadata: {
+        title: "PR {{ number }}",
+        tags: { review: { color: "#4b6de8" } },
+        "ci.run": "{{ run }}",
+      },
+    });
+    expect(converted.dropped).toEqual([{ source: "gh", field: "shiny" }]);
+  });
+
   it("keeps a Windows command line in cmd, on Windows only", () => {
     const converted = convertLegacySources(`name: a\ncmd: dir\ntemplate:\n  name: x`, "win32");
 
-    expect(parse(converted.manifest)).toMatchObject({ shell: "cmd", platform: "windows" });
+    const manifest = parse(converted.manifest) as { automations: Record<string, string> };
+    expect(manifest).toMatchObject({ shell: "cmd", platform: "windows" });
+    expect(manifest.automations["a"]).toBe(
+      '(\r\ndir\r\n) | ch plugin render "%CH_PLUGIN_DIR%\\templates\\a.yaml"'
+    );
   });
 
   it("gives colliding names distinct automations", () => {

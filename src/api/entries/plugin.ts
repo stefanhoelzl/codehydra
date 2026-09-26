@@ -1,5 +1,5 @@
 /**
- * Plugin registry entries — `ch plugin list|enable|disable|errors|schema`.
+ * Plugin registry entries — `ch plugin list|enable|disable|errors|schema|render`.
  *
  * The plugins themselves live in the plugin module and are reached through
  * `deps.plugins`; these entries turn a caller into the scope a list is read in
@@ -8,6 +8,7 @@
  * caller outside every workspace sees the user's own plugins only.
  */
 
+import { isAbsolute, join } from "node:path";
 import { z } from "zod/v4";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
@@ -115,14 +116,50 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const schema = defineEntry({
     name: "plugin.schema",
     kind: "command",
-    description: "Print the plugin manifest's JSON Schema",
+    description: "Print the JSON Schema of a plugin manifest, or of an automation's items",
     instructions:
-      "The schema of one document of a plugin manifest (plugin.yaml), with a description for " +
-      "every key — the reference for writing a plugin. Point an editor's YAML schema at it.",
-    input: z.object({}),
+      "Without items: the schema of one document of a plugin manifest (plugin.yaml), with a " +
+      "description for every key — point an editor's YAML schema at it. With items: the " +
+      "schema of what an automation's script prints — a JSON array whose items each name " +
+      "their action and carry that action's input.",
+    input: z.object({
+      items: z
+        .boolean()
+        .optional()
+        .describe("The items an automation's script prints, instead of the manifest"),
+    }),
     requiresWorkspace: false,
-    handler: async () => deps.plugins().schema(),
+    handler: async (_ctx, input) =>
+      deps.plugins().schema(input.items === true ? "items" : "manifest"),
   });
 
-  return [list, enable, disable, errors, schema];
+  const render = defineEntry({
+    name: "plugin.render",
+    kind: "command",
+    description: "Render items through a Liquid template file",
+    instructions:
+      "For automation scripts that describe their items as a template: pipe the raw items " +
+      "(a JSON array) in, get the rendered items (a JSON array) out — " +
+      '`gh pr list --json number,title | ch plugin render "$CH_PLUGIN_DIR/prs.yaml"`. The ' +
+      "template is a YAML mapping; every string in it is a Liquid template evaluated against " +
+      "one item, every other value is kept as written. Input that is not a JSON array fails, " +
+      "so a command that failed and printed nothing is not taken for an empty list.",
+    input: z.object({
+      template: z
+        .string()
+        .min(1)
+        .describe("The template file (YAML); relative to the current directory"),
+      items: z.string().describe("The items to render, a JSON array; '-' reads standard input"),
+    }),
+    requiresWorkspace: false,
+    handler: async (ctx, input) => {
+      const template =
+        isAbsolute(input.template) || ctx.cwd === null
+          ? input.template
+          : join(ctx.cwd, input.template);
+      return deps.plugins().render(template, input.items);
+    },
+  });
+
+  return [list, enable, disable, errors, schema, render];
 }

@@ -26,7 +26,7 @@
 
 import { parseAllDocuments, stringify } from "yaml";
 import { isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
-import type { TemplateObject, TemplateValue } from "./manifest";
+import type { TemplateObject, TemplateValue } from "./template-render";
 
 /**
  * What a source's cmd emits, which decides how the module treats each object.
@@ -170,11 +170,18 @@ export const LEGACY_SOURCES_PLUGIN = "auto-workspaces";
 export interface ConvertedSources {
   /** The plugin's manifest text. */
   readonly manifest: string;
+  /** Template files the manifest's scripts render through: file name → text. */
+  readonly templates: Readonly<Record<string, string>>;
   /** Old source name → automation name, for moving tracking state along. */
   readonly renames: ReadonlyMap<string, string>;
   /** Sources that could not be read and were left out. */
   readonly errors: readonly SourceParseError[];
+  /** Template fields that could not be carried over, by source. */
+  readonly dropped: readonly { readonly source: string; readonly field: string }[];
 }
+
+/** Where a migrated source's template is written, inside the plugin's folder. */
+export const LEGACY_TEMPLATES_DIR = "templates";
 
 /** An automation name for an old source name: letters, digits, `-` and `_`. */
 function automationName(name: string, taken: ReadonlySet<string>): string {
@@ -189,31 +196,139 @@ function automationName(name: string, taken: ReadonlySet<string>): string {
 }
 
 /**
- * Turn the old setting into a plugin manifest, one automation per source.
+ * An old workspace template, in the shape of a `workspace.create` item.
+ *
+ * The field names are `ch ws create`'s now: `git` and `project` become
+ * `project`, `focus` becomes `stealFocus`, the nested `agent` becomes flat
+ * fields (a `model: { provider, id }` becomes `"<provider>/<id>"`), and a
+ * nested metadata namespace becomes dotted keys, as the old renderer
+ * flattened it. The old `mode` becomes `event`. A field with no counterpart —
+ * or a Liquid `focus`, which renders to a string where a boolean is needed —
+ * is reported rather than carried over.
+ */
+export function convertLegacyTemplate(
+  template: TemplateObject,
+  mode: SourceMode,
+  drop: (field: string) => void
+): Record<string, TemplateValue> {
+  const item: Record<string, TemplateValue> = {
+    action: "workspace.create",
+    event: mode === "events",
+  };
+  for (const [key, value] of Object.entries(template)) {
+    switch (key) {
+      case "name":
+      case "key":
+      case "base":
+      case "tracking":
+      case "prompt":
+        item[key] = value;
+        break;
+      case "project":
+        item["project"] = value;
+        break;
+      case "git":
+        if (template["project"] === undefined) item["project"] = value;
+        break;
+      case "focus":
+        if (typeof value === "boolean") item["stealFocus"] = value;
+        else if (value === "true" || value === "false") item["stealFocus"] = value === "true";
+        else drop("focus");
+        break;
+      case "agent":
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const agent = value as TemplateObject;
+          if (agent["type"] !== undefined) item["agent"] = agent["type"];
+          if (agent["name"] !== undefined) item["agentName"] = agent["name"];
+          if (agent["permission-mode"] !== undefined) {
+            item["permissionMode"] = agent["permission-mode"];
+          }
+          const model = agent["model"];
+          if (model !== null && typeof model === "object" && !Array.isArray(model)) {
+            const { provider, id } = model as TemplateObject;
+            if (typeof provider === "string" && typeof id === "string") {
+              item["model"] = `${provider}/${id}`;
+            }
+          }
+        } else {
+          drop("agent");
+        }
+        break;
+      case "metadata":
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          item["metadata"] = flattenLegacyMetadata(value as TemplateObject);
+        } else {
+          drop("metadata");
+        }
+        break;
+      default:
+        drop(key);
+    }
+  }
+  return item;
+}
+
+/** Keep `title` and `tags` as they are; turn any other nested namespace into dotted keys. */
+function flattenLegacyMetadata(metadata: TemplateObject): Record<string, TemplateValue> {
+  const out: Record<string, TemplateValue> = {};
+  const walk = (prefix: string, value: TemplateValue): void => {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      for (const [key, child] of Object.entries(value)) walk(`${prefix}.${key}`, child);
+    } else {
+      out[prefix] = typeof value === "string" ? value : String(value);
+    }
+  };
+  for (const [key, value] of Object.entries(metadata)) {
+    if (key === "title" || key === "tags") out[key] = value;
+    else walk(key, value);
+  }
+  return out;
+}
+
+/**
+ * Turn the old setting into a plugin: one automation per source, each running
+ * the source's `cmd` piped through `ch plugin render` and the source's
+ * template, rewritten to the create-item shape.
  *
  * A source's `cmd` ran through the platform shell — `sh` on Linux and macOS,
  * `cmd.exe` on Windows — so the automation keeps that: `bash` for a POSIX
  * line (which also runs on Windows, through Git Bash), `cmd` pinned to Windows
- * for a Windows one.
+ * for a Windows one. The cmd is grouped, so one with several lines or its own
+ * pipes reaches the render as a whole.
  */
 export function convertLegacySources(raw: string, platform: NodeJS.Platform): ConvertedSources {
   const { sources, errors } = parseSources(raw);
+  const windows = platform === "win32";
   const renames = new Map<string, string>();
-  const automations: Record<string, unknown> = {};
+  const automations: Record<string, string> = {};
+  const templates: Record<string, string> = {};
+  const dropped: { source: string; field: string }[] = [];
   for (const source of sources) {
     const name = automationName(source.name, new Set(renames.values()));
     renames.set(source.name, name);
-    automations[name] = {
-      mode: source.mode,
-      script: source.cmd,
-      template: source.template,
-    };
+    const file = `${name}.yaml`;
+    templates[file] = stringify(
+      convertLegacyTemplate(source.template, source.mode, (field) =>
+        dropped.push({ source: source.name, field })
+      ),
+      { lineWidth: 0 }
+    );
+    const cmd = source.cmd.replace(/\s+$/, "");
+    automations[name] = windows
+      ? `(\r\n${cmd}\r\n) | ch plugin render "%CH_PLUGIN_DIR%\\${LEGACY_TEMPLATES_DIR}\\${file}"`
+      : `{\n${cmd}\n} | ch plugin render "$CH_PLUGIN_DIR/${LEGACY_TEMPLATES_DIR}/${file}"`;
   }
 
   const document = {
     description: "Moved from the auto-workspace.sources setting",
-    ...(platform === "win32" ? { shell: "cmd", platform: "windows" } : { shell: "bash" }),
+    ...(windows ? { shell: "cmd", platform: "windows" } : { shell: "bash" }),
     automations,
   };
-  return { manifest: stringify(document, { lineWidth: 0 }), renames, errors };
+  return {
+    manifest: stringify(document, { lineWidth: 0 }),
+    templates,
+    renames,
+    errors,
+    dropped,
+  };
 }

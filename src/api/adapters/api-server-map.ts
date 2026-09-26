@@ -87,6 +87,7 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   "plugin.disable": null,
   "plugin.errors": null,
   "plugin.schema": null,
+  "plugin.render": null,
   "config.get": { channel: "api:config:get" },
   "config.list": { channel: "api:config:list" },
   "config.set": { channel: "api:config:set" },

@@ -96,6 +96,7 @@ let fixtureDir: string;
 let wsArmed: string;
 let evArmed: string;
 let notifyArmed: string;
+let renderArmed: string;
 
 // =============================================================================
 // Manifests
@@ -197,39 +198,42 @@ if (!existsSync(file)) {
 function automationsManifest(): string {
   const emit = (armed: string, consume: boolean): string =>
     `"${forBash(process.execPath)}" "$CH_PLUGIN_DIR/emit.cjs" "${forBash(armed)}"${consume ? " --consume" : ""}`;
-  const project = JSON.stringify(repo.path);
   return `automations:
-  tracked:
-    script: ${JSON.stringify(emit(wsArmed, false))}
-    template:
-      name: "{{ name }}"
-      key: "{{ id }}"
-      project: ${project}
-      metadata:
-        title: "Tracked {{ id }}"
-  events:
-    mode: events
-    script: ${JSON.stringify(emit(evArmed, true))}
-    template:
-      name: "{{ name }}"
-      project: ${project}
-      focus: true
-      metadata:
-        title: "Event {{ reason }}"
-        tags:
-          nudge: { color: "#c47f2a" }
-  notify:
-    action: notification.show
-    script: ${JSON.stringify(emit(notifyArmed, true))}
-    template:
-      title: "{{ title }}"
-      type: warning
-  failing:
-    action: log
-    script: "echo 'token=e2e-secret went wrong' >&2; exit 3"
-    template:
-      message: never
+  tracked: ${JSON.stringify(emit(wsArmed, false))}
+  events: ${JSON.stringify(emit(evArmed, true))}
+  notify: ${JSON.stringify(emit(notifyArmed, true))}
+  rendered: ${JSON.stringify(`${emit(renderArmed, true)} | ch plugin render "$CH_PLUGIN_DIR/render.yaml"`)}
+  failing: "echo 'token=e2e-secret went wrong' >&2; exit 3"
 `;
+}
+
+/** The template the `rendered` automation pipes its raw items through. */
+const RENDER_TEMPLATE = `action: notification.show
+title: "Rendered {{ n }}"
+type: info
+`;
+
+/** A tracked workspace item: what the `tracked` automation's script prints. */
+function trackedItem(id: string, name: string): unknown {
+  return {
+    action: "workspace.create",
+    project: repo.path,
+    name,
+    key: id,
+    metadata: { title: `Tracked ${id}` },
+  };
+}
+
+/** An event item: what the `events` automation's script prints, once. */
+function eventItem(name: string, reason: string): unknown {
+  return {
+    action: "workspace.create",
+    event: true,
+    project: repo.path,
+    name,
+    stealFocus: true,
+    metadata: { title: `Event ${reason}`, tags: { nudge: { color: "#c47f2a" } } },
+  };
 }
 
 // =============================================================================
@@ -332,6 +336,7 @@ test.beforeAll(async () => {
   wsArmed = join(fixtureDir, "workspaces.json");
   evArmed = join(fixtureDir, "events.json");
   notifyArmed = join(fixtureDir, "notify.json");
+  renderArmed = join(fixtureDir, "render.json");
   await commitRepoPlugins(
     { "setup.yaml": setupManifest(), "extra.yaml": EXTRA_MANIFEST },
     "Add CodeHydra plugins"
@@ -347,6 +352,7 @@ test.beforeAll(() => {
   writePlugin(local, "automations", {
     "plugin.yaml": automationsManifest(),
     "emit.cjs": EMITTER,
+    "render.yaml": RENDER_TEMPLATE,
   });
   writeFileSync(join(local, "broken.yaml"), "hooks:\n  after-open: echo nope\n");
 });
@@ -533,7 +539,7 @@ test("a workspaces automation creates a worktree and records it", async () => {
   test.setTimeout(CREATE_TIMEOUT + 60_000);
   const ui = app().uiPage();
 
-  writeArmed(wsArmed, [{ id: "1", name: "tracked-1" }]);
+  writeArmed(wsArmed, [trackedItem("1", "tracked-1")]);
 
   await expect(workspaceRow(ui, "tracked-1")).toBeVisible({ timeout: CREATE_TIMEOUT });
   await expect
@@ -566,7 +572,7 @@ test("an events automation creates on the first event, and a repeat refreshes it
   test.setTimeout(CREATE_TIMEOUT + 60_000);
   const ui = app().uiPage();
 
-  writeArmed(evArmed, [{ name: "ev-42", reason: "review_requested" }]);
+  writeArmed(evArmed, [eventItem("ev-42", "review_requested")]);
   await expect(workspaceRow(ui, "ev-42")).toBeVisible({ timeout: CREATE_TIMEOUT });
   await waitForWorkspaceFrame(app(), "ev-42"); // focus: true — it takes the view
 
@@ -574,7 +580,7 @@ test("an events automation creates on the first event, and a repeat refreshes it
   await expect(sidebarText(ui, "Event review_requested")).toBeVisible({ timeout: 60_000 });
   await expect(sidebarText(ui, "nudge")).toBeVisible();
 
-  writeArmed(evArmed, [{ name: "ev-42", reason: "commented" }]);
+  writeArmed(evArmed, [eventItem("ev-42", "commented")]);
   await expect(sidebarText(ui, "Event commented")).toBeVisible({ timeout: 60_000 });
   await expect(workspaceRow(ui, "ev-42")).toHaveCount(1);
   await collapseSidebar(ui);
@@ -595,7 +601,7 @@ test("an event wakes the hibernated workspace it matches", async () => {
   const ui = app().uiPage();
   await expect(hibernatedRow(ui, "ev-42")).toBeVisible({ timeout: CREATE_TIMEOUT });
 
-  writeArmed(evArmed, [{ name: "ev-42", reason: "nudged" }]);
+  writeArmed(evArmed, [eventItem("ev-42", "nudged")]);
 
   await expect.poll(() => hibernatedFlag("ev-42"), { timeout: CREATE_TIMEOUT }).toBe("");
   await waitForWorkspaceFrame(app(), "ev-42");
@@ -608,12 +614,39 @@ test("an automation runs another action for each item", async () => {
   const ui = app().uiPage();
   await expandSidebar(ui);
 
-  writeArmed(notifyArmed, [{ title: "From an automation" }]);
+  writeArmed(notifyArmed, [
+    { action: "notification.show", title: "From an automation", type: "warning" },
+  ]);
 
   await expect(ui.getByRole("status", { name: /^From an automation/ })).toBeVisible({
     timeout: 60_000,
   });
   await collapseSidebar(ui);
+});
+
+test("an automation pipes its raw items through ch plugin render", async () => {
+  const ui = app().uiPage();
+  await expandSidebar(ui);
+
+  writeArmed(renderArmed, [{ n: 7 }]);
+
+  await expect(ui.getByRole("status", { name: /^Rendered 7/ })).toBeVisible({ timeout: 60_000 });
+  await collapseSidebar(ui);
+});
+
+test("an item the action does not accept is refused and reported", async () => {
+  await waitForConnectionDetails();
+  writeArmed(notifyArmed, [{ action: "notification.show", title: "x", typo: 1 }]);
+
+  await expect
+    .poll(
+      () =>
+        (json(ch(["plugin", "errors"])) as { entry: string; message: string }[]).find(
+          (row) => row.entry === "automations.notify"
+        )?.message ?? "",
+      { timeout: 60_000 }
+    )
+    .toMatch(/item 0: notification\.show: unknown field typo/);
 });
 
 test("a failing automation is reported with its run log, never its output", async () => {

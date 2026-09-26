@@ -7,16 +7,9 @@ import { describe, it, expect } from "vitest";
 import { documentsFor, manifestJsonSchema, parseManifest } from "./manifest";
 
 describe("parseManifest", () => {
-  it("fills the defaults: bash, every platform, workspace.create reconciled", () => {
+  it("fills the defaults: bash, every platform; an automation is its script", () => {
     const [doc] = parseManifest(
-      [
-        "hooks:",
-        "  on-workspace-opened: echo hi",
-        "automations:",
-        "  prs:",
-        "    script: gh pr list --json title",
-        '    template: { name: "{{ title }}" }',
-      ].join("\n")
+      ["hooks:", "  on-workspace-opened: echo hi", "automations:", "  prs: ./prs.sh"].join("\n")
     );
 
     expect(doc).toMatchObject({
@@ -24,22 +17,8 @@ describe("parseManifest", () => {
       shell: "bash",
       platforms: ["linux", "windows", "macos"],
       hooks: { "on-workspace-opened": "echo hi" },
-      automations: [{ name: "prs", action: "workspace.create", mode: "workspaces" }],
+      automations: [{ name: "prs", script: "./prs.sh" }],
     });
-  });
-
-  it("makes any other action fire per item", () => {
-    const [doc] = parseManifest(
-      [
-        "automations:",
-        "  stale:",
-        "    action: workspace.hibernate",
-        "    script: ./find-stale",
-        '    template: { workspace: "{{ ws }}" }',
-      ].join("\n")
-    );
-
-    expect(doc?.automations[0]).toMatchObject({ action: "workspace.hibernate", mode: "events" });
   });
 
   it("reads a stream of documents, skipping empty ones", () => {
@@ -58,30 +37,11 @@ describe("parseManifest", () => {
     ["an unknown hook", "hooks:\n  after-open: x\n", /hooks: unknown key after-open/],
     ["an unknown shell", "shell: zsh\n", /document 1: shell:/],
     [
-      "an action no automation may run",
-      "automations:\n  a:\n    action: config.set\n    script: x\n    template: {}\n",
-      /automations\.a\.action/,
+      "an automation that is not a script",
+      "automations:\n  a:\n    action: workspace.create\n    script: x\n",
+      /automations\.a/,
     ],
-    [
-      "reconciling anything but workspace.create",
-      "automations:\n  a:\n    action: workspace.wake\n    mode: workspaces\n    script: x\n    template: {}\n",
-      /mode: workspaces only applies to workspace\.create/,
-    ],
-    [
-      "a workspace.create without a name",
-      "automations:\n  a:\n    script: x\n    template: { base: main }\n",
-      /workspace\.create needs template\.name/,
-    ],
-    [
-      "invalid Liquid",
-      'automations:\n  a:\n    script: x\n    template: { name: "{{ title" }\n',
-      /invalid Liquid/,
-    ],
-    [
-      "an automation name that is not plain",
-      "automations:\n  a b:\n    script: x\n    template: { name: x }\n",
-      /automation names/,
-    ],
+    ["an automation name that is not plain", "automations:\n  a b: x\n", /automation names/],
     ["broken YAML", "hooks: [\n", /document 1:/],
     ["the second document", "hooks: {}\n---\nshell: fish\n", /document 2:/],
   ])("refuses %s", (_what, text, message) => {

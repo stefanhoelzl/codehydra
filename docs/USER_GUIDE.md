@@ -438,15 +438,11 @@ hooks:
     echo '{"title": "Ready"}'
   before-workspace-opened: '"$CH_PLUGIN_DIR/env.sh"'
 automations:
-  reviews:
-    script: gh pr list --search review-requested:@me --json number,title
-    template:
-      name: "pr-{{ number }}"
-      git: org/repo
+  reviews: "$CH_PLUGIN_DIR/reviews.sh"
 ```
 
-- A hook's value **is** its script, in the document's `shell`. An automation's
-  script is its `script` field.
+- A hook's or an automation's value **is** its script, in the document's
+  `shell`.
 - A manifest may hold several `---`-separated documents. **Every document whose
   `platform` includes the one you are on applies**, in file order — the usual
   split is one document per platform where the scripts differ:
@@ -465,7 +461,7 @@ automations:
   CodeHydra adds — is reported and the whole plugin is skipped, so a broken
   edit never half-runs.
 - `ch plugin schema` prints the manifest's JSON Schema, with a description for
-  every key. Point your editor's YAML schema at it
+  every key (`--items`: the format an automation's script prints). Point your editor's YAML schema at it
   (`ch plugin schema > ~/.codehydra/plugin.schema.json`, then a
   `# yaml-language-server: $schema=…` comment at the top of the manifest).
 
@@ -531,14 +527,16 @@ ch plugin list                      # name, origin, enabled/disabled/ask, platfo
 ch plugin disable local:github      # stop running it: hooks and automations
 ch plugin enable workspace:setup    # trust one of this repository's plugins
 ch plugin errors                    # what is wrong, with run logs
-ch plugin schema                    # the manifest's JSON Schema
+ch plugin schema [--items]          # the manifest's JSON Schema, or the items'
+ch plugin render <template>         # render piped items through a Liquid template
 ```
 
 A plugin is named `local:<name>` (yours) or `workspace:<name>` (the
 repository's). `ch plugin list` run inside a workspace also shows that
 repository's plugins; `workspace:<name>` needs a workspace too (run it from
 one, or pass `--workspace`). MCP has the same as `plugin_list`,
-`plugin_enable`, `plugin_disable`, `plugin_errors` and `plugin_schema`.
+`plugin_enable`, `plugin_disable`, `plugin_errors`, `plugin_schema` and
+`plugin_render`.
 
 To stop every plugin at once — hooks and automations — set `plugins.enabled`
 to `false` (settings, `ch config set plugins.enabled false`,
@@ -800,115 +798,126 @@ every plugin of the repository not yet answered for, each with a checkbox
 
 ### Automations
 
-An automation is a script your plugin runs every poll cycle. It prints a JSON
-array; each item runs the automation's **action**, with the `template`
-rendered for that item as the action's input:
+An automation is a script your plugin runs every poll cycle. Like a hook, its
+value is the script itself:
 
 ```yaml
 automations:
-  reviews:
-    action: workspace.create # the default
-    mode: workspaces # the default for workspace.create
-    script: … # prints a JSON array
-    template: { … } # every string is a Liquid template
+  reviews: "$CH_PLUGIN_DIR/reviews.sh"
+```
+
+The script prints a JSON array of **items**. Each item names its `action` and
+carries that action's input — the same fields its `ch` command and MCP tool
+take — so one script can create workspaces, hibernate others and raise a
+notification in the same poll:
+
+```json
+[
+  { "action": "workspace.create", "project": "org/repo", "name": "pr-7", "prompt": "Review #7" },
+  { "action": "workspace.hibernate", "workspace": "pr-3" },
+  { "action": "notification.show", "title": "CI failed", "type": "error" }
+]
 ```
 
 The first poll runs at startup; after that, `automations.poll-interval` is the
 number of seconds between the end of one poll and the start of the next
 (default 60, minimum 1; a change applies once the current wait ends; the old
 `auto-workspace.poll-interval` is still read). Every automation runs each
-poll. The script gets `{}` on stdin. A failed or timed-out script, or output
-that is not a JSON array, skips that automation for the poll and raises
-**Plugin failed**.
+poll. The script gets `{}` on stdin and is killed after 30 seconds. A failed or
+timed-out script, or output that is not a JSON array, skips that automation for
+the poll and raises **Plugin failed**.
 
-The render context of the template is the item itself: `{{ title }}`,
-`{{ user.login }}`, `{{ title | truncate: 60 }}`, `{% if draft %}…{% endif %}`.
-A field the item does not have renders empty.
+`ch plugin schema --items` prints the item format as a JSON Schema, one branch
+per action; `ch <command> --help` (`ch ws create --help`, …) describes each
+action's fields.
+
+Items are strict: an item with no `action`, an action no automation may run, a
+missing field, a value of the wrong type or a field the action does not know
+(a typo) is refused, and raises **Plugin failed** naming the automation, the
+item's position, the action and the field. The next item still runs; the run
+log holds the whole output.
 
 #### Creating workspaces
 
-`workspace.create` creates workspaces for the items. Its template:
+A `workspace.create` item takes `ch ws create`'s fields:
 
-| Key        | Meaning                                                                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`     | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-{{ number }}` to a title                                                                        |
-| `key`      | Dedup identity across polls (default: the rendered name). `workspaces` mode only                                                                                                         |
-| `project`  | Absolute path of a local repository. Opened if it is not already                                                                                                                         |
-| `git`      | Clone URL (or `org/repo`) — cloned once, then reused. `project` wins if both are given; with neither, the item is skipped                                                                |
-| `base`     | Branch to fork from (default: the project's default branch). Only when creating                                                                                                          |
-| `tracking` | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                                                |
-| `focus`    | `true` switches to the workspace once created (default `false`)                                                                                                                          |
-| `prompt`   | Sent to the new workspace's agent. In `events` mode also sent to a matched workspace's agent, as a message. Never sent to an adopted workspace                                           |
-| `agent`    | `{ type, name, permission-mode, model: { provider, id } }`; `type` is `claude` or `opencode`, `permission-mode` is Claude only, `model` needs both fields. Default: the configured agent |
-| `metadata` | `title` (sidebar title), `tags` (`tags.<name>: { color, label, description }`), and any other keys                                                                                       |
+| Field                                           | Meaning                                                                                                   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `project`                                       | Required. An open project's name, a local path, or a git URL (or `org/repo`) — opened or cloned if needed |
+| `name`                                          | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-7` to a title    |
+| `base`                                          | Branch to fork from (default: the project's default branch). Only when creating                           |
+| `tracking`                                      | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base` |
+| `prompt`                                        | Sent to the new workspace's agent — or, for an event that matches, as a message                           |
+| `agent`, `model`, `permissionMode`, `agentName` | The agent: `claude` or `opencode`, `provider/model`, a Claude permission mode, a named agent              |
+| `stealFocus`                                    | `true` switches to the workspace (default `false`)                                                        |
+
+and three that only automations have:
+
+| Field      | Meaning                                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------- |
+| `event`    | `false` (default): this workspace should exist. `true`: something happened. See below                         |
+| `key`      | What a `false` item is remembered by across polls (default: `name`)                                           |
+| `metadata` | `title` (sidebar title), `tags` (by name: `{ color, label, description }`) and any other keys (string values) |
 
 Metadata keys must start with a letter and contain only letters, digits and
-`-`; an invalid key is dropped with a warning in the log. Every workspace an
-automation creates or matches also gets `source: <plugin>/<automation>` in its
-metadata, and a created one gets the blue **new** tag.
+`-`. Every workspace an automation creates or matches also gets
+`source: <plugin>/<automation>` in its metadata, and a created one gets the blue
+**new** tag.
 
-- **`mode: workspaces`** — the script prints the workspaces that _should_
-  exist, and each poll reconciles against that list:
+- **`event: false`** — the item says the workspace _should_ exist. The script
+  prints the whole list every poll, and each poll reconciles against it:
   - an item not seen before creates a workspace — or, if a workspace with that
     name already exists in the project, **adopts** it: tracked from then on,
     otherwise untouched (no metadata, wake, focus or prompt);
   - an item already handled is skipped, so deleting its workspace by hand is
     final while the item is still listed;
-  - an item that disappears is forgotten once its workspace is gone too; if it
-    comes back after that, it is created again.
+  - an item that disappears from the list is forgotten once its workspace is
+    gone too; if it comes back after that, it is created again.
 
-  Nothing is ever deleted automatically. Removing the automation, disabling
-  its plugin or switching it to `events` forgets everything it tracked.
+  "The list" is this automation's `event: false` items of this poll. Nothing is
+  ever deleted automatically. Removing the automation, or disabling its plugin,
+  forgets everything it tracked.
 
-- **`mode: events`** — the script prints things that _happened_, and each
-  item fires exactly once. Nothing is tracked, so the script must not print
-  the same thing twice (mark it read, pop a queue, keep its own cursor). Per
-  event, `template.name` is matched against the project's workspaces:
-  - no match — the workspace is created, as in `workspaces` mode;
+- **`event: true`** — the item says something _happened_, and fires every time
+  it is printed. Nothing is tracked, so the script must not print the same thing
+  twice (mark it read, pop a queue, keep its own cursor). `name` is matched
+  against the project's workspaces:
+  - no match — the workspace is created, as for `event: false`;
   - a match — its metadata is re-applied, then it is woken if hibernated, or
-    switched to if `focus: true`. Its `prompt`, if there is one, then reaches
-    the running agent as a [message](#messages-to-a-running-agent), signed
+    switched to if `stealFocus`. Its `prompt`, if there is one, then reaches the
+    running agent as a [message](#messages-to-a-running-agent), signed
     `CodeHydra · automation <plugin>/<automation>`; an agent terminal you
     closed is reopened for it;
   - a match being deleted — skipped.
 
   A failed event is logged and dropped; there is no retry.
 
-A clone that fails shows a "Clone failed" notification. A bad project raises
-**Plugin failed** with the fix: a `project` that is not an absolute path (a git
-URL belongs under `git`), a `project` that cannot be opened, or a template
-with neither. A workspace that cannot be created (an invalid branch name, a bad
-`tracking`) shows an error notification too. A `mode: workspaces` item that
-fails either way is retried every poll (an event is still dropped).
+A clone that fails shows a "Clone failed" notification. A `project` that is
+neither an open project's name, an absolute path nor a git URL, or one that
+cannot be opened, raises **Plugin failed**. A workspace that cannot be created
+(an invalid branch name, a bad `tracking`) shows an error notification too. An
+`event: false` item that fails either way is retried every poll.
 
-Example — a workspace per pull request that requests your review:
+Example — a workspace per pull request that requests your review, with `jq`
+(`gh --jq` takes the same program):
 
 ```yaml
 automations:
-  reviews:
-    script: |
-      gh api graphql -f q='is:open is:pr review-requested:@me' \
-        -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body baseRefName author{login} repository{url}}}}}' \
-        --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
-    template:
-      name: "pr-{{ number }}"
-      key: "{{ html_url }}"
-      base: "{{ base.ref }}"
-      git: "{{ clone_url }}"
-      metadata:
-        title: "PR #{{ number }}: {{ title }}"
-        tags:
-          review: { color: "#4b6de8" }
-      prompt: |
-        Review pull request #{{ number }} "{{ title }}" opened by {{ user.login }}.
-
-        {{ body }}
+  reviews: |
+    gh pr list --repo org/repo --search review-requested:@me \
+      --json number,title,url,baseRefName \
+      --jq '[.[] | {
+        action: "workspace.create", project: "org/repo",
+        name: "pr-\(.number)", key: .url, base: .baseRefName,
+        metadata: {title: "PR #\(.number): \(.title)", tags: {review: {color: "#4b6de8"}}},
+        prompt: "Review pull request #\(.number) \"\(.title)\": \(.url)"
+      }]'
 ```
 
 #### Other actions
 
-Any of these operations can be an automation's `action`; each item runs it
-once, and nothing is tracked:
+These operations can be an item's `action`; each item runs it once, and
+nothing is tracked:
 
 `workspace.hibernate`, `workspace.wake`, `workspace.delete`,
 `workspace.switch`, `workspace.title`, `workspace.tag.set`,
@@ -917,34 +926,50 @@ once, and nothing is tracked:
 `notification.show`, `notification.close`, `project.open`, `project.close`,
 `log`.
 
-The rendered template is the operation's input — the same fields its MCP tool
-takes, and its `ch` command's flags (`ch ws hibernate --help`). Strings are
-rendered; numbers, booleans and lists are passed as written, so write
-`dismissible: true`, not `"true"`. An operation that acts on a workspace needs
-`workspace` (a name, looked up in every open project, or an absolute path) and
-may add `project` to say where to look the name up. An input the operation
-refuses raises **Plugin failed**; the next item still runs.
+An operation that acts on a workspace needs `workspace` (a name, looked up in
+every open project, or an absolute path) and may add `project` to say where to
+look the name up. An action that waits for you (`notification.show` with
+`wait: true`, say) holds up the whole poll until it is answered.
+
+#### Templates
+
+A script that would rather describe its items as a template than build them
+in `jq` can pipe its raw output through `ch plugin render`:
 
 ```yaml
 automations:
-  ci-failures:
-    action: notification.show
-    script: |
-      gh run list --status failure --limit 5 --json databaseId,displayTitle \
-        | jq '[.[] | {id: .databaseId, title: .displayTitle}]'
-    template:
-      title: "CI failed"
-      message: "{{ title }}"
-      type: error
+  reviews: |
+    gh pr list --repo org/repo --json number,title,url \
+      | ch plugin render "$CH_PLUGIN_DIR/reviews.yaml"
 ```
 
-An action that waits for you (`notification.show` with `wait: true`, say)
-holds up the whole poll until it is answered.
+```yaml
+# reviews.yaml — rendered once per input item
+action: workspace.create
+project: org/repo
+name: "pr-{{ number }}"
+key: "{{ url }}"
+metadata:
+  title: "PR #{{ number }}: {{ title }}"
+prompt: "{{ body }}"
+```
 
-The `auto-workspace.sources` setting this replaces is moved on the first start:
-its sources become the automations of a plugin at
-`~/.codehydra/plugins/auto-workspaces/plugin.yaml` (bash, or cmd on Windows),
-what they already created stays tracked, and the setting is cleared.
+Every string in the template is a Liquid template evaluated against one item
+(`{{ user.login }}`, `{{ title | truncate: 60 }}`, `{% if draft %}…{% endif %}`);
+every other value — `stealFocus: true`, a number, a list — is kept as written.
+A field whose string renders empty is left out, so `prompt: "{{ body }}"` for an
+item without a body means no prompt. Input that is not a JSON array fails the
+render, so a command that failed and printed nothing is not taken for an empty
+list. MCP has the same as `plugin_render`.
+
+The `auto-workspace.sources` setting this replaces is moved on the first start
+into `~/.codehydra/plugins/auto-workspaces/`: each source becomes an automation
+that pipes its `cmd` through `ch plugin render` and a template in `templates/`,
+rewritten to the item fields above (`git` → `project`, `focus` → `stealFocus`,
+the nested `agent` → `agent`/`agentName`/`permissionMode`/`model`, `mode:
+events` → `event: true`). What the sources already created stays tracked, and
+the setting is cleared. A template field with no counterpart is named in the
+notification.
 
 ### Repository hooks from before plugins
 
@@ -1152,7 +1177,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `project list`, `project open <target>`, `project close <project>` | Projects (a path, a git URL or `org/repo`; `--remove-local-repo`)                                                |
 | `lock take`, `lock release`, `lock ls`, `lock run`                 | Locks, see below                                                                                                 |
 | `config list\|get\|set\|reset`                                     | Settings, see [Configuration](#configuration)                                                                    |
-| `plugin list\|enable\|disable\|errors\|schema`                     | Plugins, see [Managing plugins](#managing-plugins)                                                               |
+| `plugin list\|enable\|disable\|errors\|schema\|render`             | Plugins, see [Managing plugins](#managing-plugins)                                                               |
 | `guide [section]`                                                  | This guide, or one `##` section of it                                                                            |
 | `log <level> <message>`                                            | Write to CodeHydra's log                                                                                         |
 | `report-issue <description>`                                       | File a bug report                                                                                                |

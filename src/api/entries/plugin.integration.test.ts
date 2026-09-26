@@ -71,7 +71,9 @@ function setup() {
       },
       { plugin: "local:broken", message: "document 1: unknown key x", at: "2026-09-26T10:00:00Z" },
     ],
-    schema: () => ({ type: "object" }),
+    schema: (which) => ({ type: which === "items" ? "array" : "object" }),
+    render: async (template, itemsJson) =>
+      (JSON.parse(itemsJson) as unknown[]).map((item) => ({ template, item })),
   };
   const registry = createRegistry(
     {

@@ -977,8 +977,8 @@ The app must be running: `ch config` never edits config.json on its own.
 
 ### Plugins
 
-`ch plugin list|enable|disable|errors|schema` manages plugins (MCP: `plugin_list`,
-`plugin_enable`, `plugin_disable`, `plugin_errors`, `plugin_schema`). Not on the API
+`ch plugin list|enable|disable|errors|schema|render` manages plugins (MCP: `plugin_list`,
+`plugin_enable`, `plugin_disable`, `plugin_errors`, `plugin_schema`, `plugin_render`). Not on the API
 server: no extension needs it. What a plugin is, and how its scripts run, is in the
 user guide (`ch guide plugins`).
 
@@ -988,18 +988,22 @@ $ ch plugin disable local:github    # local:<name> is yours, workspace:<name> th
 $ ch plugin enable workspace:setup  # = trusting it; needs a workspace (cwd or --workspace)
 $ ch plugin errors                  # plugin, entry, message, log, at (rows)
 $ ch plugin schema                  # the manifest's JSON Schema
+$ ch plugin schema --items          # what an automation's script prints (oneOf per action)
+$ gh pr list --json number | ch plugin render reviews.yaml   # items through a Liquid template
 ```
 
-|             |                                                                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Scope**   | The caller's workspace decides which repository's plugins are listed; outside every workspace only the user's own are.                                                                           |
-| **State**   | `enabled`, `disabled` or `ask` (a repository's plugin not answered yet). `enable`/`disable` answer the trust question for good and return the plugin's row.                                      |
-| **Errors**  | A problem (the plugin cannot run: `entry` empty) or the last failed run of a hook or automation (`automations.<name>`), until it next succeeds or the app restarts. `log` is the run's log file. |
-| **Failure** | An unknown plugin is not found (exit 6); `workspace:<name>` with no workspace is exit 4.                                                                                                         |
+|             |                                                                                                                                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Scope**   | The caller's workspace decides which repository's plugins are listed; outside every workspace only the user's own are.                                                                                                                     |
+| **State**   | `enabled`, `disabled` or `ask` (a repository's plugin not answered yet). `enable`/`disable` answer the trust question for good and return the plugin's row.                                                                                |
+| **Errors**  | A problem (the plugin cannot run: `entry` empty) or the last failed run of a hook or automation (`automations.<name>`), until it next succeeds or the app restarts. `log` is the run's log file.                                           |
+| **Render**  | Items come from stdin when not given (the CLI mapping's `stdinByDefault`); the template path is relative to the caller's cwd. Input that is not a JSON array is a usage error (exit 2), so a failed command upstream is not an empty list. |
+| **Failure** | An unknown plugin is not found (exit 6); `workspace:<name>` with no workspace is exit 4.                                                                                                                                                   |
 
-Automations run registry operations too: the ones `src/api/adapters/plugin-actions-map.ts`
-allows, through `plugin-actions.ts`, with a `workspace` input resolved the way
-`--workspace` is.
+Automations run registry operations too: each item an automation's script prints names
+one of the operations `src/api/adapters/plugin-actions-map.ts` allows, validated strictly
+(`plugin-module/items.ts`) and invoked through `plugin-actions.ts` with a `workspace` input
+resolved the way `--workspace` is.
 
 ### Guide
 

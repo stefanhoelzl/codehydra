@@ -130,8 +130,14 @@ import { createPluginTrust, type PluginTrust } from "./trust";
 import { createShellResolver, ShellUnavailableError } from "./shells";
 import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
 import type { HookOutputSink } from "./output-sink";
+import { createItemSchemas, type ItemSchemas } from "./items";
+import { parseTemplate, renderInput, type TemplateObject } from "./template-render";
 import { createAutomations, type AutomationSource } from "./automations";
-import { convertLegacySources, LEGACY_SOURCES_PLUGIN } from "./legacy-sources";
+import {
+  convertLegacySources,
+  LEGACY_SOURCES_PLUGIN,
+  LEGACY_TEMPLATES_DIR,
+} from "./legacy-sources";
 import { MANIFEST_FILE, discoverPlugins } from "./discovery";
 import {
   LEGACY_HOOKS_DIR,
@@ -976,14 +982,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
             continue;
           }
           scripts.set(id, { plugin, doc, script: spec.script });
-          sources.push({
-            id,
-            plugin: plugin.id,
-            name: spec.name,
-            action: spec.action,
-            mode: spec.mode,
-            template: spec.template,
-          });
+          sources.push({ id, plugin: plugin.id, name: spec.name });
         }
       }
     }
@@ -1052,6 +1051,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return items;
   }
 
+  /** Item schemas, built from the registry the first time they are needed. */
+  let itemSchemas: ItemSchemas | undefined;
+  function items(): ItemSchemas {
+    itemSchemas ??= createItemSchemas(deps.registry());
+    return itemSchemas;
+  }
+
   const automations = createAutomations({
     logger: deps.logger,
     dispatcher: deps.dispatcher,
@@ -1060,6 +1066,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     enabled: allowed,
     sources: automationSources,
     runScript: runAutomationScript,
+    parseItem: (raw) => items().parse(raw),
     invokeAction: async (action, input) => {
       await invokePluginAction({ registry: deps.registry() }, action, input);
     },
@@ -1088,7 +1095,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       }
       if (!exists) {
         const converted = convertLegacySources(raw, platform);
-        await deps.fileSystem.mkdir(pluginDir);
+        // The templates first and the manifest last: the manifest is what says
+        // the move happened, so a move cut short is redone on the next start.
+        const templatesDir = new Path(pluginDir, LEGACY_TEMPLATES_DIR);
+        await deps.fileSystem.mkdir(templatesDir);
+        for (const [file, text] of Object.entries(converted.templates)) {
+          await deps.fileSystem.writeFile(new Path(templatesDir, file), text);
+        }
         await deps.fileSystem.writeFile(manifestPath, converted.manifest);
         await automations.renameTracking((key) => {
           const slash = key.indexOf("/");
@@ -1104,14 +1117,21 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
             message: error.message,
           });
         }
+        const dropped = converted.dropped.map((item) => `${item.source}: ${item.field}`);
+        if (dropped.length > 0) {
+          deps.logger.warn("Auto-workspace template fields could not be moved", {
+            fields: dropped.join(", "),
+          });
+        }
         notify(deps.dispatcher, {
-          type: "info",
+          type: dropped.length > 0 || converted.errors.length > 0 ? "warning" : "info",
           title: "Auto-workspace sources are now a plugin",
           message:
             `They moved to ${manifestPath.toNative()}` +
             (converted.errors.length > 0
               ? ` (${converted.errors.length} invalid source(s) left out)`
-              : ""),
+              : "") +
+            (dropped.length > 0 ? `. Template fields left out: ${dropped.join(", ")}` : ""),
           dismissible: true,
         });
         deps.logger.info("Moved auto-workspace.sources into a plugin", {
@@ -1249,7 +1269,27 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       return { ...found, state };
     },
     errors: () => errors.list(),
-    schema: () => manifestJsonSchema(),
+    schema: (which) => (which === "items" ? items().jsonSchema() : manifestJsonSchema()),
+    async render(templatePath, itemsJson) {
+      let template: TemplateObject;
+      try {
+        template = parseTemplate(await deps.fileSystem.readFile(new Path(templatePath)));
+      } catch (error) {
+        throw new ApiError("usage", `${templatePath}: ${getErrorMessage(error)}`);
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(itemsJson);
+      } catch {
+        throw new ApiError("usage", "the items to render are not JSON");
+      }
+      // A command that failed and printed nothing must not read as "no items":
+      // in cmd.exe a pipe reports only this, its last command's, exit.
+      if (!Array.isArray(parsed)) {
+        throw new ApiError("usage", "the items to render must be a JSON array");
+      }
+      return parsed.map((item) => renderInput(template, item));
+    },
   };
 
   // ---------------------------------------------------------------------------

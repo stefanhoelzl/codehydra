@@ -1,9 +1,9 @@
 /**
  * Which operations a plugin's automation may run.
  *
- * An automation's script prints a JSON array; each item renders the entry's
- * `template` into the input of one `action` — an operation from the registry,
- * the same vocabulary `ch` and MCP speak. This map says which ones.
+ * An automation's script prints a JSON array of items, each naming its
+ * `action` — an operation from the registry, the same vocabulary `ch` and MCP
+ * speak — and carrying that operation's input. This map says which ones.
  *
  * Exhaustive: a new operation fails to compile until this file says whether an
  * automation may run it, so the set can only grow by decision. `null` = not an
@@ -17,13 +17,13 @@ import type { InputShaping } from "../registry";
 
 export type PluginActionMapping =
   /**
-   * The auto-workspace behavior: the template is a workspace definition
-   * (`name`, `key`, `project`/`git`, `base`, `prompt`, `agent`, `metadata`, …),
-   * and the entry's `mode` decides between reconciling a list of workspaces
-   * and firing events that create or refresh one.
+   * The auto-workspace behavior: the item is `workspace.create`'s input plus
+   * `event`, `key` and `metadata` (plugin-module/items.ts), and `event`
+   * decides between reconciling a list of workspaces and firing events that
+   * create or refresh one.
    */
   | { readonly kind: "create-workspace" }
-  /** Render the template into the operation's input and invoke it. */
+  /** Invoke the operation with the item as its input. */
   | ({ readonly kind: "invoke" } & InputShaping);
 
 const INVOKE = { kind: "invoke" } as const;
@@ -81,6 +81,7 @@ export const PLUGIN_ACTIONS_MAP: Readonly<Record<OperationName, PluginActionMapp
   "plugin.disable": null,
   "plugin.errors": null,
   "plugin.schema": null,
+  "plugin.render": null,
   "config.get": null,
   "config.list": null,
   "config.set": null,

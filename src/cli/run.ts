@@ -109,9 +109,13 @@ export async function run(options: RunOptions): Promise<RunResult> {
     );
 
     const stdinField = resolved.match.stdin;
-    if (stdinField !== undefined && input[stdinField] === "-") {
+    if (
+      stdinField !== undefined &&
+      (input[stdinField] === "-" ||
+        (input[stdinField] === undefined && resolved.match.stdinByDefault === true))
+    ) {
       if (options.readStdin === undefined) {
-        throw new UsageError(`"-" reads ${stdinField} from standard input, and there is none`);
+        throw new UsageError(`${stdinField} is read from standard input, and there is none`);
       }
       // Drop the one newline a pipeline's last line ends with.
       input[stdinField] = (await options.readStdin()).replace(/\r?\n$/, "");

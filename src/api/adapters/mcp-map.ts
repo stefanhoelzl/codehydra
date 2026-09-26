@@ -74,6 +74,7 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
   "plugin.disable": { tool: "plugin_disable" },
   "plugin.errors": { tool: "plugin_errors" },
   "plugin.schema": { tool: "plugin_schema" },
+  "plugin.render": { tool: "plugin_render" },
   "config.get": { tool: "config_get" },
   "config.list": { tool: "config_list" },
   "config.set": { tool: "config_set" },

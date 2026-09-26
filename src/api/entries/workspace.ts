@@ -32,7 +32,7 @@ import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
 
 /** The agent options `workspace.create` accepts, as the caller typed them. */
-interface AgentInput {
+export interface AgentInput {
   readonly prompt?: string | undefined;
   readonly agent?: string | undefined;
   readonly model?: string | undefined;
@@ -73,7 +73,7 @@ function parseModel(model: string, backend: "claude" | "opencode"): PromptModel 
  * "default" arm — which is why an option that needs a backend is a usage error
  * rather than a silent drop.
  */
-function buildAgentSpec(input: AgentInput): AgentSpec | undefined {
+export function buildAgentSpec(input: AgentInput): AgentSpec | undefined {
   const { prompt, agent, model, permissionMode, agentName } = input;
 
   if (agent === undefined) {
