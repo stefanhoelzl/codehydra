@@ -77,7 +77,8 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
 
   constructor(workspacePath: string, logger: Logger) {
     this.workspacePath = workspacePath;
-    this.logger = logger;
+    // Everything this provider (and its SDK client) logs is about its one workspace.
+    this.logger = logger.scoped({ path: workspacePath });
   }
 
   /**
@@ -150,7 +151,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     );
     if (!result.ok) throw result.error;
     this.logger.info("Message queued on OpenCode session", {
-      workspacePath: this.workspacePath,
       sessionId,
       from: message.from,
       length: message.text.length,
@@ -234,10 +234,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
         if (matchingSession) {
           this._primarySessionId = matchingSession.id;
           client.addRootSession(matchingSession.id);
-          this.logger.info("Found existing session", {
-            workspacePath: this.workspacePath,
-            sessionId: matchingSession.id,
-          });
+          this.logger.info("Found existing session", { sessionId: matchingSession.id });
         } else {
           // No matching session found, create a new one
           await this.createNewSession(client);
@@ -245,7 +242,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       } else {
         // listSessions failed, try to create a new session instead
         this.logger.warn("Failed to list sessions, creating new session", {
-          workspacePath: this.workspacePath,
           error: sessionsResult.error.message,
         });
         await this.createNewSession(client);
@@ -258,7 +254,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       // This can happen if the server is not ready yet or network issues
       // The client can retry later or will receive updates when connection is established
       this.logger.warn("Failed to initialize client", {
-        workspacePath: this.workspacePath,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -274,15 +269,9 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     const createResult = await client.createSession();
     if (createResult.ok) {
       this._primarySessionId = createResult.value.id;
-      this.logger.info("Created new session", {
-        workspacePath: this.workspacePath,
-        sessionId: createResult.value.id,
-      });
+      this.logger.info("Created new session", { sessionId: createResult.value.id });
     } else {
-      this.logger.error("Failed to create session", {
-        workspacePath: this.workspacePath,
-        error: createResult.error.message,
-      });
+      this.logger.error("Failed to create session", { error: createResult.error.message });
     }
   }
 
@@ -344,7 +333,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    * Call reconnect() after the server has restarted.
    */
   disconnect(): void {
-    this.logger.info("Disconnecting for restart", { workspacePath: this.workspacePath });
+    this.logger.info("Disconnecting for restart");
     if (this.client) {
       this.client.dispose();
       this.client = null;
@@ -363,14 +352,11 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    */
   async reconnect(): Promise<void> {
     if (this._port === null) {
-      this.logger.error("Cannot reconnect: no port stored", {
-        workspacePath: this.workspacePath,
-      });
+      this.logger.error("Cannot reconnect: no port stored");
       return;
     }
 
     this.logger.info("Reconnecting after restart", {
-      workspacePath: this.workspacePath,
       port: this._port,
       sessionId: this._primarySessionId,
     });
@@ -389,7 +375,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       await client.connect();
     } catch (error) {
       this.logger.warn("Failed to reconnect", {
-        workspacePath: this.workspacePath,
         error: error instanceof Error ? error.message : String(error),
       });
     }

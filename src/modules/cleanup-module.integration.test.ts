@@ -24,7 +24,7 @@ import {
   file,
   type MockFileSystemBoundary,
 } from "../boundaries/platform/filesystem.state-mock";
-import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
+import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging.test-utils";
 import type { Logger } from "../boundaries/platform/logging";
 import { createCleanupModule, type CleanupRule } from "./cleanup-module";
 
@@ -134,7 +134,7 @@ describe("CleanupModule Integration", () => {
     });
 
     it("reports nothing when the retired path was never there", async () => {
-      const logger = { ...SILENT_LOGGER, info: vi.fn(), warn: vi.fn() };
+      const logger = createMockLogger();
       const { run } = createTestSetup({
         entries: { [data("logs")]: directory() },
         rules: [{ kind: "retire", path: "code-server" }],
@@ -405,7 +405,7 @@ describe("CleanupModule Integration", () => {
 
   describe("rule isolation", () => {
     it("runs the remaining rules after one fails, and warns about the failure", async () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn(), info: vi.fn() };
+      const logger = createMockLogger();
       const { run, fileSystem } = createTestSetup({
         entries: {
           // Unreadable, not absent: the rule must report it rather than treat
@@ -429,7 +429,7 @@ describe("CleanupModule Integration", () => {
       });
       expect(logger.warn).toHaveBeenCalledWith(
         "Cleanup rule failed",
-        expect.objectContaining({ rule: "pruneEmpty", path: "screenshots" })
+        expect.objectContaining({ rule: "pruneEmpty", "scope.path": "screenshots" })
       );
     });
 
@@ -464,7 +464,7 @@ describe("CleanupModule Integration", () => {
     });
 
     it("summarises what it removed once, at info", async () => {
-      const logger = { ...SILENT_LOGGER, warn: vi.fn(), info: vi.fn() };
+      const logger = createMockLogger();
       const { run } = createTestSetup({
         entries: {
           [data("code-server")]: directory(),

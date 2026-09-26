@@ -1354,6 +1354,7 @@ describe("PresentationModule - ui:event routing", () => {
         dispatched.push(intent);
         return Promise.resolve();
       }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
     } as unknown as Deps["dispatcher"];
     return dispatched;
   }
@@ -1735,6 +1736,7 @@ describe("PresentationModule - startup flow", () => {
         dispatched.push(intent);
         return Promise.resolve();
       }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
     } as unknown as Deps["dispatcher"];
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1797,6 +1799,7 @@ describe("PresentationModule - startup flow", () => {
         dispatched.push(intent);
         return Promise.resolve();
       }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
     } as unknown as Deps["dispatcher"];
     createPresentationModule(deps);
     connect(deps);
@@ -2272,6 +2275,7 @@ describe("PresentationModule - shortcut navigation", () => {
         dispatched.push(intent);
         return Promise.resolve();
       }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
     } as unknown as Deps["dispatcher"];
     return dispatched;
   }

@@ -25,7 +25,7 @@ import {
 } from "./api-server-module";
 import { DefaultNetworkLayer } from "../boundaries/platform/network";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
-import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
+import { Dispatcher, IntentHandle, type DispatchOptions } from "../intents/lib/dispatcher";
 import type {
   Operation,
   OperationContext,
@@ -249,6 +249,12 @@ function createMinimalFinalizeOperation(): Operation<typeof finalizeSchemas> & {
     async execute(
       ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
     ): Promise<void> {
+      // What the real operation's resolve step does before finalize runs.
+      ctx.setLogTarget({
+        project: "project",
+        ws: "test",
+        path: op.hookInput.workspacePath ?? "/test/workspace",
+      });
       const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
         workspacePath: "/test/workspace",
@@ -349,8 +355,14 @@ export async function createApiServerEnv(
   // The module subscribes to domain events at start, so the mock needs a real
   // subscription registry — and the test needs a way to fire one.
   const subscribers = new Map<string, Set<(event: DomainEvent) => void>>();
+  /** Every origin a connection tagged its packets' work with, in order. */
+  const origins: DispatchOptions[] = [];
   const mockDispatcher = {
     dispatch: mockDispatch,
+    withOrigin: <T>(options: DispatchOptions, fn: () => T): T => {
+      origins.push(options);
+      return fn();
+    },
     subscribe: (type: string, handler: (event: DomainEvent) => void) => {
       const forType = subscribers.get(type) ?? new Set();
       forType.add(handler);
@@ -376,7 +388,10 @@ export async function createApiServerEnv(
   const { module } = apiServer;
 
   // Wire up a real dispatcher to drive the module through hooks
-  const testDispatcher = new Dispatcher({ logger: createMockLogger() });
+  const testDispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    ...(options?.logScope !== undefined && { logScope: options.logScope }),
+  });
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(new MinimalStartOperation());
   testDispatcher.registerOperation(
@@ -402,6 +417,7 @@ export async function createApiServerEnv(
   return {
     port,
     mockDispatch,
+    origins,
     networkLayer,
     testDispatcher,
     /** The module handle, for probes like `isConnected` that read live state. */

@@ -276,10 +276,9 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
         if (!names.has(norm(candidate))) continue;
         const executable = new Path(dir, candidate).toNative();
         if (await runsVersion(executable)) return executable;
-        logger.warn("Ignoring system binary that does not run", {
-          name: descriptor.name,
-          path: executable,
-        });
+        logger
+          .scoped({ path: executable })
+          .warn("Ignoring system binary that does not run", { name: descriptor.name });
       }
     }
     return null;
@@ -381,7 +380,7 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
     if (setting === null) {
       const system = await findSystem();
       if (system !== null) {
-        logger.info("Using system install", { name: descriptor.name, path: system });
+        logger.scoped({ path: system }).info("Using system install", { name: descriptor.name });
         currentBinary = { path: system, source: "system", version: null };
         return;
       }

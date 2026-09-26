@@ -280,11 +280,9 @@ export function createCleanupModule(deps: CleanupModuleDeps): IntentModule {
           done.push(`${rule.kind} ${rule.path} (${removed})`);
         }
       } catch (error) {
-        logger.warn("Cleanup rule failed", {
-          rule: rule.kind,
-          path: rule.path,
-          error: getErrorMessage(error),
-        });
+        logger
+          .scoped({ path: rule.path })
+          .warn("Cleanup rule failed", { rule: rule.kind, error: getErrorMessage(error) });
       }
     }
 

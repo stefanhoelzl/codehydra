@@ -65,10 +65,9 @@ export function createHibernationScreenshotModule(
     try {
       await fileSystem.rm(filePath, { force: true });
     } catch (error) {
-      logger.debug("hibernation-screenshot: rm failed (ignored)", {
-        path: filePath.toString(),
-        error: getErrorMessage(error),
-      });
+      logger
+        .scoped({ path: filePath.toString() })
+        .debug("hibernation-screenshot: rm failed (ignored)", { error: getErrorMessage(error) });
     }
   }
 

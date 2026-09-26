@@ -252,7 +252,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   describe("JSON format mode", () => {
-    it("writes one JSON object per line with scope and message", async () => {
+    it("writes one JSON object per line with the logger name and message", async () => {
       const service = new ElectronLog(createTestPathProvider(tempDir));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
 
@@ -263,7 +263,7 @@ describe("ElectronLog boundary tests", () => {
       const entry = JSON.parse(line) as Record<string, unknown>;
 
       expect(entry.level).toBe("info");
-      expect(entry.scope).toBe("git");
+      expect(entry.scope).toEqual({ logger: "git" });
       expect(entry.message).toBe("Services started");
       expect(entry.context).toBeUndefined();
       expect(typeof entry.timestamp).toBe("string");
@@ -306,6 +306,85 @@ describe("ElectronLog boundary tests", () => {
       const logContent = await readLogFile();
       expect(logContent).toContain("Clone complete repo=myrepo");
       expect(() => JSON.parse(logContent.trim())).toThrow();
+    });
+
+    it("carries the ambient scope in the scope object, beside the logger name", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
+
+      service.scope.run(
+        () => ({ trace: "7f3a01", intent: "workspace:switch", project: "proj", ws: "feat" }),
+        () => service.createLogger("git").info("ListBranches", { ref: "main" })
+      );
+      await waitForWrite();
+
+      const entry = JSON.parse((await readLogFile()).trim()) as Record<string, unknown>;
+      expect(entry.scope).toEqual({
+        logger: "git",
+        trace: "7f3a01",
+        intent: "workspace:switch",
+        project: "proj",
+        ws: "feat",
+      });
+      expect(entry.context).toEqual({ ref: "main" });
+    });
+  });
+
+  describe("ambient scope", () => {
+    it("writes the scope as a block between the logger name and the message", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure(DEFAULT_OPTIONS);
+
+      service.scope.run(
+        () => ({
+          trace: "7f3a01",
+          intent: "workspace:switch",
+          project: "proj",
+          ws: "feat",
+          module: "git-worktree",
+          hook: "create",
+          origin: "cli",
+        }),
+        () => service.createLogger("git").info("ListBranches", { ref: "main" })
+      );
+      await waitForWrite();
+
+      expect(await readLogFile()).toMatch(
+        /\(git\)\s+\[7f3a01 proj\/feat workspace:switch@git-worktree\/create cli\] ListBranches ref=main/
+      );
+    });
+
+    it("writes a line scoped to a named workspace's path under its name", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      service.configure(DEFAULT_OPTIONS);
+      const ws = join(tempDir, "ws", "feat");
+      service.scope.nameWorkspace(ws, { project: "proj", ws: "feat" });
+
+      const git = service.createLogger("git");
+      git.scoped({ path: ws }).info("Status", { dirty: false });
+      git.scoped({ path: join(ws, "src") }).info("Read");
+      await waitForWrite();
+
+      const logContent = await readLogFile();
+      expect(logContent).toContain("[proj/feat] Status dirty=false");
+      expect(logContent).toContain("[proj/feat] Read path=src");
+    });
+
+    it("keeps the scope a buffered line was written in, not the one it is flushed in", async () => {
+      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const logger = service.createLogger("app");
+
+      service.scope.run(
+        () => ({ trace: "aaaaaa", intent: "app:start" }),
+        () => logger.info("Buffered")
+      );
+      service.scope.run(
+        () => ({ trace: "bbbbbb", intent: "other" }),
+        () => service.configure(DEFAULT_OPTIONS)
+      );
+      await waitForWrite();
+
+      expect(await readLogFile()).toContain("[aaaaaa app:start] Buffered");
     });
   });
 });

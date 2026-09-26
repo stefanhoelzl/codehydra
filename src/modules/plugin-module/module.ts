@@ -402,10 +402,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       if (plugin.applied.some((doc) => doc.automations.length > 0)) {
         if (!warnedWorkspaceAutomations.has(key)) {
           warnedWorkspaceAutomations.add(key);
-          deps.logger.warn("A repository's plugin may not run automations; ignoring them", {
-            plugin: plugin.id,
-            path: key,
-          });
+          deps.logger
+            .scoped({ path: key })
+            .warn("A repository's plugin may not run automations; ignoring them", {
+              plugin: plugin.id,
+            });
         }
       }
     }
@@ -924,10 +925,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         ...(base !== undefined && { base }),
       };
     } catch (error) {
-      deps.logger.debug("Could not resolve branch/base for a hook", {
-        workspacePath,
-        error: getErrorMessage(error),
-      });
+      deps.logger
+        .scoped({ path: workspacePath })
+        .debug("Could not resolve branch/base for a hook", { error: getErrorMessage(error) });
       return {};
     }
   }
@@ -1134,9 +1134,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
             (dropped.length > 0 ? `. Template fields left out: ${dropped.join(", ")}` : ""),
           dismissible: true,
         });
-        deps.logger.info("Moved auto-workspace.sources into a plugin", {
-          path: manifestPath.toString(),
-        });
+        deps.logger
+          .scoped({ path: manifestPath.toString() })
+          .info("Moved auto-workspace.sources into a plugin");
       }
       await legacySources.reset();
     } catch (error) {
@@ -1214,10 +1214,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         },
       });
     } catch (error) {
-      deps.logger.warn("Could not offer to migrate .codehydra/hooks", {
-        workspacePath,
-        error: getErrorMessage(error),
-      });
+      deps.logger
+        .scoped({ path: workspacePath })
+        .warn("Could not offer to migrate .codehydra/hooks", { error: getErrorMessage(error) });
     } finally {
       offering.delete(workspacePath);
     }

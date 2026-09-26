@@ -222,8 +222,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
         } catch (error) {
           // Forget what we thought we wrote, so the next change retries it.
           written.delete(workspace);
-          logger.warn("Failed to update lock tags", {
-            workspacePath,
+          logger.scoped({ path: workspacePath }).warn("Failed to update lock tags", {
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -348,10 +347,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       const onAbort = () => {
         const current = locks.get(id);
         if (current?.holder !== holder) return;
-        logger.info("Lock released: holder disconnected", {
-          lock: current.key.name,
-          workspace: workspacePath,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .info("Lock released: holder disconnected", { lock: current.key.name });
         releaseHolder(current);
       };
       options.signal.addEventListener("abort", onAbort, { once: true });
@@ -382,7 +380,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
 
     if (next === undefined) {
       locks.delete(id);
-      logger.debug("Lock released", { lock: lock.key.name, workspace: previous.workspacePath });
+      logger
+        .scoped({ path: previous.workspacePath })
+        .debug("Lock released", { lock: lock.key.name });
       refreshTags(touched);
       return;
     }
@@ -428,10 +428,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
         }
       }
       if (lock.holder.workspace === workspace) {
-        logger.info(`Lock released: workspace ${why}`, {
-          lock: lock.key.name,
-          workspace: workspacePath,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .info(`Lock released: workspace ${why}`, { lock: lock.key.name });
         releaseHolder(lock);
       }
     }
@@ -454,11 +453,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
           queue: [],
         };
         locks.set(id, created);
-        logger.info("Lock taken", {
-          lock: key.name,
-          project: key.project,
-          workspace: workspacePath,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .info("Lock taken", { lock: key.name, project: key.project });
         refreshTags([workspacePath]);
         return Promise.resolve({ acquired: true, waitedMs: 0 });
       }
@@ -498,21 +495,18 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
             const index = lock.queue.indexOf(waiter);
             if (index === -1) return;
             lock.queue.splice(index, 1);
-            logger.debug("Lock waiter left: caller disconnected", {
-              lock: key.name,
-              workspace: workspacePath,
-            });
+            logger
+              .scoped({ path: workspacePath })
+              .debug("Lock waiter left: caller disconnected", { lock: key.name });
             reject(new ApiError("failed", "The caller disconnected while waiting."));
             refreshTags([workspacePath]);
           },
         };
         options.signal.addEventListener("abort", waiter.onAbort, { once: true });
         lock.queue.push(waiter);
-        logger.debug("Lock queued", {
-          lock: key.name,
-          workspace: workspacePath,
-          position: lock.queue.length,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .debug("Lock queued", { lock: key.name, position: lock.queue.length });
         refreshTags([workspacePath]);
       });
     },

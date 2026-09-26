@@ -41,6 +41,8 @@ import type { AddressInfo } from "node:net";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { formatLogScope } from "../src/boundaries/platform/log-scope";
+import type { LogScope } from "../src/boundaries/platform/logging-types";
 
 /** Repo root — this file lives in <root>/scripts/. */
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -78,7 +80,8 @@ const LOG_LEVELS = ["silly", "debug", "info", "warn", "error"] as const;
 export interface LogEntry {
   timestamp: string;
   level: string;
-  scope?: string;
+  /** The logger name (`logger`) plus the line's ambient scope (trace, intent, ws…). */
+  scope?: LogScope & { logger?: string };
   message: string;
   context?: Record<string, unknown>;
   error?: { message: string; stack?: string };
@@ -86,8 +89,9 @@ export interface LogEntry {
 
 function formatLogEntry(entry: LogEntry): string {
   const ts = entry.timestamp.replace("T", " ").replace("Z", "");
-  const scope = entry.scope ? ` [${entry.scope}]` : "";
-  let line = `[${ts}] [${entry.level}]${scope} ${entry.message}`;
+  const logger = entry.scope?.logger ? ` [${entry.scope.logger}]` : "";
+  const block = formatLogScope(entry.scope);
+  let line = `[${ts}] [${entry.level}]${logger}${block ? ` ${block}` : ""} ${entry.message}`;
   if (entry.context && Object.keys(entry.context).length > 0) {
     const pairs = Object.entries(entry.context)
       .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
@@ -378,14 +382,14 @@ export async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
       entries.push({
         timestamp: "",
         level: "error",
-        scope: "appctrl",
+        scope: { logger: "appctrl" },
         message: `Failed to parse log line: ${line}`,
       });
     }
   }
 
   let filtered = entries;
-  if (scope) filtered = filtered.filter((e) => e.scope === scope);
+  if (scope) filtered = filtered.filter((e) => e.scope?.logger === scope);
   if (level) {
     const minPriority = LOG_LEVELS.indexOf(level as (typeof LOG_LEVELS)[number]);
     if (minPriority >= 0) {

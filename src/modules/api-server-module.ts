@@ -21,6 +21,7 @@ import type { OperationRegistry } from "../api/registry";
 import {
   attachApiServerAdapter,
   type ClientKind,
+  OPERATION_CHANNEL_PREFIX,
   type ApiServerConnection,
 } from "../api/adapters/api-server";
 import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
@@ -35,8 +36,8 @@ import type { ListProjectsIntent } from "../intents/list-projects";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { Logger } from "../boundaries/platform/logging-types";
-import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
+import type { LogContext, Logger, LogScopeStore } from "../boundaries/platform/logging-types";
+import { SILENT_LOGGER, logAtLevel, toLogContext } from "../boundaries/platform/logging";
 import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
 import type { Workspace, WorkspaceStatus } from "../shared/api/types";
@@ -55,7 +56,6 @@ import type {
   ExecuteCommandRequest,
   WorkspaceCreateRequest,
   GetWorkspaceStatusRequest,
-  LogContext,
   ShowNotificationRequest,
   ShowNotificationResponse,
   StatusBarUpdateRequest,
@@ -186,6 +186,11 @@ export interface ApiServerOptions {
   readonly isDevelopment?: boolean;
   /** Logger for extension-side logs. Default: SILENT_LOGGER */
   readonly extensionLogger?: Logger;
+  /**
+   * The logging service's scope store, where a connection's workspace is
+   * looked up by name for the `caller` of the work it dispatches.
+   */
+  readonly logScope?: LogScopeStore;
 }
 
 // =============================================================================
@@ -281,6 +286,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   ];
   const isDevelopment = deps.options?.isDevelopment ?? false;
   const extensionLogger: Logger = deps.options?.extensionLogger ?? SILENT_LOGGER;
+  const logScope = deps.options?.logScope;
 
   // ---------------------------------------------------------------------------
   // Closure state (replaces ApiServer class fields)
@@ -417,17 +423,15 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
-        logger.warn("Command timeout", { workspace: normalized, command, timeoutMs });
+        logger.scoped({ path: normalized }).warn("Command timeout", { command, timeoutMs });
         resolve({ success: false, error: "Command timed out" });
       }, timeoutMs);
 
       socket.emit("command", request, (result: ApiResult<unknown>) => {
         clearTimeout(timeoutId);
-        logger.debug("Command result", {
-          workspace: normalized,
-          command,
-          success: result.success,
-        });
+        logger
+          .scoped({ path: normalized })
+          .debug("Command result", { command, success: result.success });
         resolve(result);
       });
     });
@@ -533,8 +537,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       // full timeout for nothing.
       const data = result.success ? (result.data as { closed?: boolean } | undefined) : undefined;
       if (!result.success || data?.closed !== true) {
-        logger.debug("No agent terminal to close", {
-          workspace: normalized,
+        logger.scoped({ path: normalized }).debug("No agent terminal to close", {
           ...(result.success ? {} : { error: result.error }),
         });
         return;
@@ -547,12 +550,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       try {
         const outcome = await Promise.race([closed.then(() => "closed" as const), timedOut]);
         if (outcome === "timeout") {
-          logger.warn("Agent terminal did not close in time; falling back to process cleanup", {
-            workspace: normalized,
-            timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
-          });
+          logger
+            .scoped({ path: normalized })
+            .warn("Agent terminal did not close in time; falling back to process cleanup", {
+              timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+            });
         } else {
-          logger.debug("Agent terminal closed", { workspace: normalized });
+          logger.scoped({ path: normalized }).debug("Agent terminal closed");
         }
       } finally {
         clearTimeout(timeoutId!);
@@ -621,7 +625,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       if (timeoutMs > 0) {
         timeoutId = setTimeout(() => {
-          logger.warn("UI event timeout", { workspace: normalized, event, timeoutMs });
+          logger.scoped({ path: normalized }).warn("UI event timeout", { event, timeoutMs });
           resolve({ success: false, error: "UI event timed out" });
         }, timeoutMs);
       }
@@ -630,11 +634,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       socket.emit(event, request, (result: ApiResult<TRes>) => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
         closeModal();
-        logger.debug("UI event result", {
-          workspace: normalized,
-          event,
-          success: result.success,
-        });
+        logger
+          .scoped({ path: normalized })
+          .debug("UI event result", { event, success: result.success });
         resolve(result);
       });
     });
@@ -672,11 +674,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
           payload: { workspacePath, open },
         });
       } catch (error) {
-        logger.warn("Failed to report modal change", {
-          workspace: workspacePath,
-          open,
-          error: getErrorMessage(error),
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .warn("Failed to report modal change", { open, error: getErrorMessage(error) });
       }
     });
     modalReports.set(workspacePath, report);
@@ -842,29 +842,95 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * an error — that is simply a shell standing outside any worktree, and
    * app-global commands still work there.
    */
-  async function resolveCaller(handshake: Handshake): Promise<WorkspacePath | null> {
+  async function resolveCaller(
+    handshake: Handshake,
+    listProjects: () => Promise<readonly ProjectLocation[] | null>
+  ): Promise<WorkspacePath | null> {
     if (handshake.workspacePath !== undefined) return ownWorkspace(handshake.workspacePath);
     if (handshake.cwd === undefined) return null;
 
-    // Deliberately NOT workspace:resolve: that intent throws when the path is
-    // not a workspace, and the dispatcher logs the rejection at error level —
-    // so a shell standing outside every worktree, which is a normal caller,
-    // would write a fault into the log and into every bug report. Listing is
-    // the non-throwing way to ask the same question.
-    let projects: readonly ProjectLocation[];
+    const projects = await listProjects();
+    if (projects === null) return null;
+    const here = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
+    return here === null ? null : workspacePathSchema.parse(here);
+  }
+
+  /**
+   * The open projects, for resolving a client's workspace; null if they could
+   * not be listed.
+   *
+   * Deliberately NOT workspace:resolve: that intent throws when the path is
+   * not a workspace, and the dispatcher logs the rejection at error level —
+   * so a shell standing outside every worktree, which is a normal caller,
+   * would write a fault into the log and into every bug report. Listing is
+   * the non-throwing way to ask the same question.
+   */
+  async function listProjects(kind: ClientKind): Promise<readonly ProjectLocation[] | null> {
     try {
-      projects = ((await dispatcher.dispatch<ListProjectsIntent>({
-        type: INTENT_LIST_PROJECTS,
-        payload: {} as Record<string, never>,
-      })) ?? []) as readonly ProjectLocation[];
+      return ((await dispatcher.dispatch<ListProjectsIntent>(
+        { type: INTENT_LIST_PROJECTS, payload: {} as Record<string, never> },
+        { origin: kind }
+      )) ?? []) as readonly ProjectLocation[];
     } catch (error) {
       logger.debug("Could not list projects to resolve a client's workspace", {
         error: getErrorMessage(error),
       });
       return null;
     }
-    const here = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
-    return here === null ? null : workspacePathSchema.parse(here);
+  }
+
+  /** A workspace's project and name as listed, for log scopes; undefined when not listed. */
+  function nameWorkspace(
+    projects: readonly ProjectLocation[] | null,
+    workspacePath: WorkspacePath
+  ): { readonly project: string; readonly ws: string } | undefined {
+    const target = new Path(workspacePath);
+    for (const project of projects ?? []) {
+      const found = project.workspaces.find((w) => new Path(w.path).equals(target));
+      if (found) return { project: new Path(project.path).basename, ws: found.name };
+    }
+    return undefined;
+  }
+
+  /**
+   * Tag a connection's work with who it is, for the log scope: every dispatch
+   * its packets start carries its client kind, its own workspace (`caller`) and
+   * the channel called (`api`); every line its extension forwards is scoped to
+   * its workspace.
+   *
+   * The caller is named when each packet arrives — from the workspaces the app
+   * has named (a sidekick's is named when it is opened), else from the listing
+   * that found a shell's workspace — so no lookup holds up the connection.
+   */
+  function tagConnection(
+    socket: TypedSocket,
+    kind: ClientKind,
+    workspacePath: WorkspacePath | null,
+    projects: readonly ProjectLocation[] | null
+  ): Logger {
+    const listed = workspacePath === null ? undefined : nameWorkspace(projects, workspacePath);
+    const callerName = (): string | undefined => {
+      if (workspacePath === null) return undefined;
+      const name = logScope?.workspaceAt(workspacePath) ?? listed;
+      return name === undefined ? undefined : `${name.project}/${name.ws}`;
+    };
+
+    socket.use(([event], next) => {
+      const api = event.startsWith(OPERATION_CHANNEL_PREFIX)
+        ? event.slice(OPERATION_CHANNEL_PREFIX.length)
+        : event.replace(/^api:/, "");
+      const caller = callerName();
+      // socket.io runs the handler on a nextTick scheduled inside `next`, so it
+      // inherits the origin set here.
+      dispatcher.withOrigin({ origin: kind, ...(caller !== undefined && { caller }), api }, () =>
+        next()
+      );
+    });
+
+    return extensionLogger.scoped({
+      ...(workspacePath !== null && { path: workspacePath }),
+      origin: kind,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -892,10 +958,21 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       return;
     }
 
-    const resolved = await resolveCaller(handshake);
+    // One listing per connection, shared by resolving and naming the caller.
+    let listed: Promise<readonly ProjectLocation[] | null> | undefined;
+    const listing = (): Promise<readonly ProjectLocation[] | null> =>
+      (listed ??= listProjects(handshake.kind));
+    const resolved = await resolveCaller(handshake, listing);
 
     // The socket may have gone while we were resolving.
     if (socket.disconnected) return;
+
+    const connectionLogger = tagConnection(
+      socket,
+      handshake.kind,
+      resolved,
+      listed === undefined ? null : await listed
+    );
 
     // Registry operations are mounted for every kind of client. Which operations
     // that is, and what they are called, follows the client kind.
@@ -921,19 +998,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         eventClients.delete(client);
         // Most guests are one-shot commands, but `ch mcp` holds its connection
         // for a whole agent session; when it drops, this is the only trace.
-        logger.debug("Client disconnected", {
-          kind: handshake.kind,
-          workspace: resolved,
-          socketId: socket.id,
-          reason,
-        });
+        logger
+          .scoped({ path: resolved })
+          .debug("Client disconnected", { kind: handshake.kind, socketId: socket.id, reason });
       });
 
-      logger.debug("Client connected", {
-        kind: handshake.kind,
-        workspace: resolved,
-        socketId: socket.id,
-      });
+      logger
+        .scoped({ path: resolved })
+        .debug("Client connected", { kind: handshake.kind, socketId: socket.id });
       return;
     }
 
@@ -950,10 +1022,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       // that socket (see the duplicate-connection handling below) and strand the
       // wait.
       if (closingWorkspaces.has(workspacePath)) {
-        logger.info("Connection rejected: workspace teardown in progress", {
-          workspace: workspacePath,
-          socketId: socket.id,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .info("Connection rejected: workspace teardown in progress", { socketId: socket.id });
         socket.disconnect(true);
         return;
       }
@@ -962,8 +1033,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       const existingSocket = connections.get(workspacePath);
       if (existingSocket) {
-        logger.info("Disconnecting duplicate connection", {
-          workspace: workspacePath,
+        logger.scoped({ path: workspacePath }).info("Disconnecting duplicate connection", {
           oldSocketId: existingSocket.id,
           newSocketId: socket.id,
         });
@@ -975,16 +1045,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         try {
           listener(workspacePath);
         } catch (error) {
-          logger.warn("A workspace-connected listener threw", {
-            workspace: workspacePath,
+          logger.scoped({ path: workspacePath }).warn("A workspace-connected listener threw", {
             error: error instanceof Error ? error.message : String(error),
           });
         }
       }
-      logger.info("Client connected", {
-        workspace: workspacePath,
-        socketId: socket.id,
-      });
+      logger.scoped({ path: workspacePath }).info("Client connected", { socketId: socket.id });
 
       const storedConfig = workspaceConfigs.get(workspacePath);
       const env: Record<string, string> | null = storedConfig?.env ?? null;
@@ -1006,21 +1072,15 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       if (storedConfig?.resetWorkspace) {
         storedConfig.resetWorkspace = false;
       }
-      logger.debug("Config sent", {
-        workspace: workspacePath,
-        isDevelopment,
-        hasEnv: env !== null,
-        agentType: agentTypeValue,
-      });
+      logger
+        .scoped({ path: workspacePath })
+        .debug("Config sent", { isDevelopment, hasEnv: env !== null, agentType: agentTypeValue });
 
       socket.on("disconnect", (reason) => {
         const currentSocket = connections.get(workspacePath);
         if (currentSocket === socket) {
           connections.delete(workspacePath);
-          logger.info("Client disconnected", {
-            workspace: workspacePath,
-            reason,
-          });
+          logger.scoped({ path: workspacePath }).info("Client disconnected", { reason });
           const disconnect: WorkspaceDisconnect = {
             workspacePath,
             reason,
@@ -1031,16 +1091,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
             try {
               listener(disconnect);
             } catch (error) {
-              logger.warn("A workspace-disconnected listener threw", {
-                workspace: workspacePath,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              logger
+                .scoped({ path: workspacePath })
+                .warn("A workspace-disconnected listener threw", {
+                  error: error instanceof Error ? error.message : String(error),
+                });
             }
           }
         }
       });
 
-      setupApiHandlers(socket, workspacePath);
+      setupApiHandlers(socket, workspacePath, connectionLogger);
     }
   }
 
@@ -1055,19 +1116,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     workspacePath: WorkspacePath,
     operation: string,
     fn: () => Promise<T>,
-    logContext?: Record<string, unknown>
+    logContext?: LogContext
   ): Promise<ApiResult<T>> {
     try {
       const result = await fn();
-      logger.debug(`${operation} success`, { workspace: workspacePath, ...logContext });
+      logger.scoped({ path: workspacePath }).debug(`${operation} success`, logContext);
       return { success: true, data: result };
     } catch (error) {
       const message = getErrorMessage(error);
-      logger.error(`${operation} error`, {
-        workspace: workspacePath,
-        error: message,
-        ...logContext,
-      });
+      logger
+        .scoped({ path: workspacePath })
+        .error(`${operation} error`, { error: message, ...logContext });
       return { success: false, error: message };
     }
   }
@@ -1081,7 +1140,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     dispatchFn: () => Promise<R>
   ): (ack: (result: ApiResult<R>) => void) => void {
     return (ack) => {
-      logger.debug("API call", { event: eventName, workspace: workspacePath });
+      logger.scoped({ path: workspacePath }).debug("API call", { event: eventName });
 
       // handleApiCall never rejects (it converts all errors into a
       // ApiResult), so this guard only covers ack() itself throwing.
@@ -1106,21 +1165,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     return (request, ack) => {
       const validation = validator(request);
       if (!validation.valid) {
-        logger.warn("API call validation failed", {
-          event: eventName,
-          workspace: workspacePath,
-          error: validation.error,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .warn("API call validation failed", { event: eventName, error: validation.error });
         ack({ success: false, error: validation.error });
         return;
       }
 
       const validatedRequest = validation.request ?? (request as unknown as TValidated);
-      logger.debug("API call", {
-        event: eventName,
-        workspace: workspacePath,
-        ...logContext?.(request),
-      });
+      logger
+        .scoped({ path: workspacePath })
+        .debug("API call", { event: eventName, ...logContext?.(request) });
 
       // Every dispatchFn resolves through handleApiCall, which never
       // rejects, so this guard only covers ack() itself throwing.
@@ -1134,7 +1189,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // API event handlers (dispatch intents directly)
   // ---------------------------------------------------------------------------
 
-  function setupApiHandlers(socket: TypedSocket, workspacePath: WorkspacePath): void {
+  function setupApiHandlers(
+    socket: TypedSocket,
+    workspacePath: WorkspacePath,
+    connectionLogger: Logger
+  ): void {
     // No-arg handlers
     socket.on(
       "api:workspace:getStatus",
@@ -1342,13 +1401,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       const validation = validateLogRequest(request);
       if (!validation.valid) return;
 
-      const context: LogContext = {
-        ...(request.context ?? {}),
-        workspace: workspacePath,
-      };
+      const context = toLogContext(request.context ?? {});
 
       const level = request.level as LogLevel;
-      logAtLevel(extensionLogger, level, request.message, context);
+      logAtLevel(connectionLogger, level, request.message, context);
     });
 
     // Handle api:workspace:agentLifecycle (fire-and-forget) — drives agent
@@ -1356,10 +1412,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     socket.on("api:workspace:agentLifecycle", (request) => {
       const validation = validateAgentLifecycleRequest(request);
       if (!validation.valid) {
-        logger.warn("Invalid agentLifecycle request", {
-          workspace: workspacePath,
-          error: validation.error,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .warn("Invalid agentLifecycle request", { error: validation.error });
         return;
       }
 
@@ -1410,10 +1465,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         void showNotification(workspacePath, { severity: type, message: message! }).then(
           (result) => {
             if (!result.success) {
-              logger.debug("Notification ended without dismissal", {
-                workspace: workspacePath,
-                error: result.error,
-              });
+              logger
+                .scoped({ path: workspacePath })
+                .debug("Notification ended without dismissal", { error: result.error });
             }
           }
         );

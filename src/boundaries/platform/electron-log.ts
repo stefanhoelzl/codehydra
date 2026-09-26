@@ -21,8 +21,12 @@ import type {
   Logging,
   LogContext,
   LogLevel,
+  LogScope,
+  LogScopeHint,
+  LogScopeStore,
 } from "./logging-types";
 import { LogLevel as LogLevelValues } from "./logging-types";
+import { AsyncLogScopeStore, formatLogScope, ScopedLogger } from "./log-scope";
 
 /**
  * Type for electron-log scope (log functions).
@@ -117,6 +121,14 @@ export function splitLogLevelSpec(spec: string): {
 const TEXT_FORMAT = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
 
 /**
+ * Carries a line's ambient scope through electron-log to the JSON format function.
+ * A class, so the format function can tell it apart from the plain-object context.
+ */
+class ScopeArg {
+  constructor(readonly scope: LogScope | undefined) {}
+}
+
+/**
  * Create a format function for JSON log output.
  *
  * The returned function receives electron-log's FormatParams and produces
@@ -138,8 +150,13 @@ function createJsonFormatFn(): (params: {
       level: message.level,
     };
 
-    if (message.scope) {
-      entry.scope = message.scope;
+    // `scope` is an object: the logger name plus the line's ambient scope.
+    let ambient: LogScope | undefined;
+    for (const arg of message.data) {
+      if (arg instanceof ScopeArg) ambient = arg.scope;
+    }
+    if (message.scope || ambient) {
+      entry.scope = { ...(message.scope && { logger: message.scope }), ...ambient };
     }
 
     entry.message = typeof message.data[0] === "string" ? message.data[0] : String(message.data[0]);
@@ -147,6 +164,7 @@ function createJsonFormatFn(): (params: {
     // Find context and error in remaining data arguments
     for (let i = 1; i < message.data.length; i++) {
       const arg = message.data[i];
+      if (arg instanceof ScopeArg) continue;
       if (arg instanceof Error) {
         entry.error = { message: arg.message, stack: arg.stack };
       } else if (arg !== null && typeof arg === "object" && !Array.isArray(arg)) {
@@ -159,59 +177,46 @@ function createJsonFormatFn(): (params: {
 }
 
 /**
- * JSON-mode logger that passes message and context as separate arguments
- * to the electron-log scope, so the format function can include context
- * as a structured JSON field.
+ * JSON-mode logger that passes message, context and ambient scope as separate
+ * arguments to the electron-log scope, so the format function can emit them as
+ * structured JSON fields.
  */
 class JsonLogLogger implements Logger {
-  private readonly scope: ElectronLogScope;
+  constructor(
+    private readonly scope: ElectronLogScope,
+    private readonly store: LogScopeStore
+  ) {}
 
-  constructor(scope: ElectronLogScope) {
-    this.scope = scope;
+  private args(context: LogContext | undefined): unknown[] {
+    const args: unknown[] = [new ScopeArg(this.store.current())];
+    if (context) args.push(context);
+    return args;
   }
 
   silly(message: string, context?: LogContext): void {
-    if (context) {
-      this.scope.silly(message, context);
-    } else {
-      this.scope.silly(message);
-    }
+    this.scope.silly(message, ...this.args(context));
   }
 
   debug(message: string, context?: LogContext): void {
-    if (context) {
-      this.scope.debug(message, context);
-    } else {
-      this.scope.debug(message);
-    }
+    this.scope.debug(message, ...this.args(context));
   }
 
   info(message: string, context?: LogContext): void {
-    if (context) {
-      this.scope.info(message, context);
-    } else {
-      this.scope.info(message);
-    }
+    this.scope.info(message, ...this.args(context));
   }
 
   warn(message: string, context?: LogContext): void {
-    if (context) {
-      this.scope.warn(message, context);
-    } else {
-      this.scope.warn(message);
-    }
+    this.scope.warn(message, ...this.args(context));
   }
 
   error(message: string, context?: LogContext, error?: Error): void {
-    if (context && error) {
-      this.scope.error(message, context, error);
-    } else if (error) {
-      this.scope.error(message, error);
-    } else if (context) {
-      this.scope.error(message, context);
-    } else {
-      this.scope.error(message);
-    }
+    const args = this.args(context);
+    if (error) args.push(error);
+    this.scope.error(message, ...args);
+  }
+
+  scoped(hint: LogScopeHint): Logger {
+    return new ScopedLogger(this, this.store, hint);
   }
 }
 
@@ -233,47 +238,48 @@ function generateSessionFilename(): string {
 
 /**
  * Logger implementation wrapping an electron-log scope.
+ * Writes `<scope block> <message> <key=value context>` as one text message.
  */
 class ElectronLogLogger implements Logger {
-  private readonly scope: ElectronLogScope;
+  constructor(
+    private readonly scope: ElectronLogScope,
+    private readonly store: LogScopeStore
+  ) {}
 
-  constructor(scope: ElectronLogScope) {
-    this.scope = scope;
+  private text(message: string, context: LogContext | undefined): string {
+    return [formatLogScope(this.store.current()), message, formatContext(context)]
+      .filter((part) => part.length > 0)
+      .join(" ");
   }
 
   silly(message: string, context?: LogContext): void {
-    const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
-    this.scope.silly(fullMessage);
+    this.scope.silly(this.text(message, context));
   }
 
   debug(message: string, context?: LogContext): void {
-    const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
-    this.scope.debug(fullMessage);
+    this.scope.debug(this.text(message, context));
   }
 
   info(message: string, context?: LogContext): void {
-    const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
-    this.scope.info(fullMessage);
+    this.scope.info(this.text(message, context));
   }
 
   warn(message: string, context?: LogContext): void {
-    const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
-    this.scope.warn(fullMessage);
+    this.scope.warn(this.text(message, context));
   }
 
   error(message: string, context?: LogContext, error?: Error): void {
-    const contextStr = formatContext(context);
-    const fullMessage = contextStr ? `${message} ${contextStr}` : message;
+    const fullMessage = this.text(message, context);
     if (error) {
       // Include error message and stack
       this.scope.error(fullMessage, error);
     } else {
       this.scope.error(fullMessage);
     }
+  }
+
+  scoped(hint: LogScopeHint): Logger {
+    return new ScopedLogger(this, this.store, hint);
   }
 }
 
@@ -301,7 +307,12 @@ class FilteredLogger implements Logger {
   private readonly inner: Logger;
   private readonly enabled: boolean;
 
-  constructor(inner: Logger, allowedLoggers: Set<LoggerName> | undefined, name: LoggerName) {
+  constructor(
+    inner: Logger,
+    allowedLoggers: Set<LoggerName> | undefined,
+    name: LoggerName,
+    private readonly store: LogScopeStore
+  ) {
     this.inner = inner;
     // If no filter set, all loggers are enabled. Otherwise, check the set.
     this.enabled = allowedLoggers === undefined || allowedLoggers.has(name);
@@ -326,6 +337,10 @@ class FilteredLogger implements Logger {
   error(message: string, context?: LogContext, error?: Error): void {
     if (this.enabled) this.inner.error(message, context, error);
   }
+
+  scoped(hint: LogScopeHint): Logger {
+    return new ScopedLogger(this, this.store, hint);
+  }
 }
 
 /**
@@ -336,6 +351,8 @@ interface QueueEntry {
   readonly message: string;
   readonly context: LogContext | undefined;
   readonly error: Error | undefined;
+  /** The ambient scope when the line was written, not when it is flushed. */
+  readonly scope: LogScope | undefined;
 }
 
 /**
@@ -348,59 +365,67 @@ class QueuedLogger implements Logger {
   private queue: QueueEntry[] | undefined = [];
   private inner: Logger | undefined;
 
+  constructor(private readonly store: LogScopeStore) {}
+
   activate(inner: Logger): void {
     const pending = this.queue;
     this.inner = inner;
     this.queue = undefined;
     if (pending) {
       for (const entry of pending) {
-        if (entry.level === "error") {
-          inner.error(entry.message, entry.context, entry.error);
-        } else {
-          inner[entry.level](entry.message, entry.context);
-        }
+        this.store.run(
+          () => entry.scope ?? {},
+          () => {
+            if (entry.level === "error") {
+              inner.error(entry.message, entry.context, entry.error);
+            } else {
+              inner[entry.level](entry.message, entry.context);
+            }
+          }
+        );
       }
     }
   }
 
-  silly(message: string, context?: LogContext): void {
+  private write(
+    level: LogLevel,
+    message: string,
+    context: LogContext | undefined,
+    error?: Error
+  ): void {
     if (this.inner) {
-      this.inner.silly(message, context);
+      if (level === "error") {
+        this.inner.error(message, context, error);
+      } else {
+        this.inner[level](message, context);
+      }
     } else {
-      this.queue!.push({ level: "silly", message, context, error: undefined });
+      this.queue!.push({ level, message, context, error, scope: this.store.current() });
     }
+  }
+
+  silly(message: string, context?: LogContext): void {
+    this.write("silly", message, context);
   }
 
   debug(message: string, context?: LogContext): void {
-    if (this.inner) {
-      this.inner.debug(message, context);
-    } else {
-      this.queue!.push({ level: "debug", message, context, error: undefined });
-    }
+    this.write("debug", message, context);
   }
 
   info(message: string, context?: LogContext): void {
-    if (this.inner) {
-      this.inner.info(message, context);
-    } else {
-      this.queue!.push({ level: "info", message, context, error: undefined });
-    }
+    this.write("info", message, context);
   }
 
   warn(message: string, context?: LogContext): void {
-    if (this.inner) {
-      this.inner.warn(message, context);
-    } else {
-      this.queue!.push({ level: "warn", message, context, error: undefined });
-    }
+    this.write("warn", message, context);
   }
 
   error(message: string, context?: LogContext, error?: Error): void {
-    if (this.inner) {
-      this.inner.error(message, context, error);
-    } else {
-      this.queue!.push({ level: "error", message, context, error });
-    }
+    this.write("error", message, context, error);
+  }
+
+  scoped(hint: LogScopeHint): Logger {
+    return new ScopedLogger(this, this.store, hint);
   }
 }
 
@@ -431,6 +456,7 @@ export class ElectronLog implements Logging {
   private logFormat: LogFormat = "text";
   private allowedLoggers: Set<LoggerName> | undefined;
   private readonly logPath: string;
+  readonly scope: LogScopeStore = new AsyncLogScopeStore();
 
   constructor(pathProvider: PathProvider) {
     // Transports start silent — configure() enables them
@@ -470,9 +496,12 @@ export class ElectronLog implements Logging {
     // Activate all existing queued loggers
     for (const [name, queued] of this.loggers) {
       const scope = log.scope(name);
-      const inner =
-        this.logFormat === "json" ? new JsonLogLogger(scope) : new ElectronLogLogger(scope);
-      const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
+      const filtered = new FilteredLogger(
+        this.createInner(scope),
+        this.allowedLoggers,
+        name,
+        this.scope
+      );
       queued.activate(filtered);
     }
 
@@ -490,19 +519,28 @@ export class ElectronLog implements Logging {
       return existing;
     }
 
-    const queued = new QueuedLogger();
+    const queued = new QueuedLogger(this.scope);
 
     // If already configured, activate immediately
     if (this.configured) {
       const scope = log.scope(name);
-      const inner =
-        this.logFormat === "json" ? new JsonLogLogger(scope) : new ElectronLogLogger(scope);
-      const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
+      const filtered = new FilteredLogger(
+        this.createInner(scope),
+        this.allowedLoggers,
+        name,
+        this.scope
+      );
       queued.activate(filtered);
     }
 
     this.loggers.set(name, queued);
     return queued;
+  }
+
+  private createInner(scope: ElectronLogScope): Logger {
+    return this.logFormat === "json"
+      ? new JsonLogLogger(scope, this.scope)
+      : new ElectronLogLogger(scope, this.scope);
   }
 
   /**

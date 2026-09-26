@@ -99,18 +99,16 @@ export async function detectCwdProcesses(
   const result: ProcessResult = await proc.wait(DETECT_TIMEOUT_MS);
 
   if (result.running) {
-    logger.warn("Process detection timed out", { workspacePath });
+    logger.scoped({ path: workspacePath }).warn("Process detection timed out");
     await proc.kill(1000, 1000);
     return [];
   }
 
   // lsof exit code 1 = "no files found" (not an error)
   if (result.exitCode !== null && result.exitCode !== 0 && result.exitCode !== 1) {
-    logger.warn("Process detection failed", {
-      workspacePath,
-      exitCode: result.exitCode,
-      stderr: result.stderr,
-    });
+    logger
+      .scoped({ path: workspacePath })
+      .warn("Process detection failed", { exitCode: result.exitCode, stderr: result.stderr });
     return [];
   }
 
@@ -188,10 +186,11 @@ async function runCwdReleaseKill(
     const detected = await detectCwdProcesses(deps.processRunner, workspacePath, deps.logger);
 
     if (detected.length > 0) {
-      deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
-        workspacePath,
-        pids: detected.map((p) => p.pid).join(","),
-      });
+      deps.logger
+        .scoped({ path: workspacePath })
+        .info(`Killing CWD-blocking processes before ${phase}`, {
+          pids: detected.map((p) => p.pid).join(","),
+        });
       await killPosixProcesses(
         deps.processRunner,
         detected.map((p) => p.pid)

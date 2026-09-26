@@ -304,7 +304,8 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness(true);
       activate(callbacks);
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 
@@ -312,7 +313,8 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 
@@ -320,7 +322,8 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 
@@ -330,7 +333,8 @@ describe("ShortcutModule integration", () => {
       simulateInput(callbacks, "ui-view", createKeyboardInput("j", "keyDown"));
       vi.runAllTimers();
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 
@@ -353,7 +357,8 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyUp"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 
@@ -363,7 +368,8 @@ describe("ShortcutModule integration", () => {
       simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
       expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }, { active: false }]);
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY }),
+        { origin: "shortcut" }
       );
     });
 
@@ -371,7 +377,8 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
   });
@@ -429,17 +436,21 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput(input, "keyDown"));
-      expect(dispatchSpy).toHaveBeenCalledWith({
-        type: INTENT_SHORTCUT_KEY,
-        payload: { key: expected },
-      });
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        {
+          type: INTENT_SHORTCUT_KEY,
+          payload: { key: expected },
+        },
+        { origin: "shortcut" }
+      );
     });
 
     it("does not forward shortcut keys when not in shortcut mode", async () => {
       const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyDown"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY }),
+        { origin: "shortcut" }
       );
     });
 
@@ -447,10 +458,13 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness();
       activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput("a", "keyDown"));
-      expect(dispatchSpy).toHaveBeenCalledWith({
-        type: INTENT_SHORTCUT_KEY,
-        payload: { key: "a" },
-      });
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        {
+          type: INTENT_SHORTCUT_KEY,
+          payload: { key: "a" },
+        },
+        { origin: "shortcut" }
+      );
     });
 
     it("does not forward on keyUp", async () => {
@@ -459,7 +473,8 @@ describe("ShortcutModule integration", () => {
       dispatchSpy.mockClear();
       simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyUp"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY }),
+        { origin: "shortcut" }
       );
     });
   });
@@ -469,10 +484,13 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatchSpy } = await createHarness(true);
       activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput("b", "keyDown"));
-      expect(dispatchSpy).toHaveBeenCalledWith({
-        type: INTENT_SHORTCUT_KEY,
-        payload: { key: "b" },
-      });
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        {
+          type: INTENT_SHORTCUT_KEY,
+          payload: { key: "b" },
+        },
+        { origin: "shortcut" }
+      );
     });
 
     it("drops non-'b' keys while a modal is open", async () => {
@@ -482,7 +500,8 @@ describe("ShortcutModule integration", () => {
         simulateInput(callbacks, "ui-view", createKeyboardInput(key, "keyDown"));
       }
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY }),
+        { origin: "shortcut" }
       );
     });
 
@@ -493,7 +512,8 @@ describe("ShortcutModule integration", () => {
       // Never broadcast on entry → nothing to reverse on exit.
       expect(setActiveCalls(dispatchSpy)).toEqual([]);
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY }),
+        { origin: "shortcut" }
       );
     });
 
@@ -513,13 +533,17 @@ describe("ShortcutModule integration", () => {
       setModalOpen(true);
       simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyDown"));
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY, payload: { key: "up" } })
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY, payload: { key: "up" } }),
+        { origin: "shortcut" }
       );
       simulateInput(callbacks, "ui-view", createKeyboardInput("b", "keyDown"));
-      expect(dispatchSpy).toHaveBeenCalledWith({
-        type: INTENT_SHORTCUT_KEY,
-        payload: { key: "b" },
-      });
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        {
+          type: INTENT_SHORTCUT_KEY,
+          payload: { key: "b" },
+        },
+        { origin: "shortcut" }
+      );
     });
   });
 
@@ -541,7 +565,8 @@ describe("ShortcutModule integration", () => {
       simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
       vi.runAllTimers();
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE }),
+        { origin: "shortcut" }
       );
     });
 

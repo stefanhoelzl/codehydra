@@ -226,7 +226,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const pendingPrompt = this.consumePendingPrompt(workspacePath);
 
     // pid is guaranteed to be defined since spawnServerOnPort validates it
-    this.logger.info("Server started", { workspacePath, port, pid: proc.pid! });
+    this.logger.scoped({ path: workspacePath }).info("Server started", { port, pid: proc.pid! });
 
     // Fire callback with pending prompt (caller handles sending)
     for (const callback of this.startedCallbacks) {
@@ -395,10 +395,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       );
 
       if (!killResult.success) {
-        this.logger.warn("Failed to kill OpenCode server", {
-          workspacePath,
-          pid: currentEntry.process.pid ?? 0,
-        });
+        this.logger
+          .scoped({ path: workspacePath })
+          .warn("Failed to kill OpenCode server", { pid: currentEntry.process.pid ?? 0 });
         stopResult = { success: false, error: "Process did not terminate" };
       }
     }
@@ -418,7 +417,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       callback(workspacePath, isRestart);
     }
 
-    this.logger.info("Server stopped", { workspacePath, isRestart });
+    this.logger.scoped({ path: workspacePath }).info("Server stopped", { isRestart });
 
     return stopResult;
   }
@@ -522,7 +521,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.servers.set(workspacePath, { state: "running", port, process: proc });
 
     // pid is guaranteed to be defined since spawnServerOnPort validates it
-    this.logger.info("Server started", { workspacePath, port, pid: proc.pid! });
+    this.logger.scoped({ path: workspacePath }).info("Server started", { port, pid: proc.pid! });
 
     // Fire callback (no pending prompt for restart scenarios)
     for (const callback of this.startedCallbacks) {
@@ -557,7 +556,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    */
   triggerWrapperStart(workspacePath: string): void {
     const normalizedPath = new Path(workspacePath).toString();
-    this.logger.debug("Agent terminal opened", { workspacePath: normalizedPath });
+    this.logger.scoped({ path: normalizedPath }).debug("Agent terminal opened");
     this.markActiveHandler?.(normalizedPath);
   }
 
@@ -615,8 +614,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       entry.model = model;
     }
     this.pendingPrompts.set(normalizedPath, entry);
-    this.logger.debug("Pending prompt stored", {
-      workspacePath: normalizedPath,
+    this.logger.scoped({ path: normalizedPath }).debug("Pending prompt stored", {
       promptLength: prompt.length,
       ...(agent !== undefined && { agent }),
       ...(model !== undefined && { model: `${model.providerID}/${model.modelID}` }),
@@ -636,7 +634,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const pending = this.pendingPrompts.get(normalizedPath);
     if (pending) {
       this.pendingPrompts.delete(normalizedPath);
-      this.logger.debug("Pending prompt consumed", { workspacePath: normalizedPath });
+      this.logger.scoped({ path: normalizedPath }).debug("Pending prompt consumed");
     }
     return pending;
   }

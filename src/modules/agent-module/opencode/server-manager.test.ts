@@ -19,7 +19,7 @@ import {
   createPortManagerMock,
   type MockPortManager,
 } from "../../../boundaries/platform/network.test-utils";
-import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { ResolvedAgentBinary } from "../binary-resolver";
@@ -319,14 +319,7 @@ describe("OpenCodeServerManager", () => {
 
     it("logs warning when kill fails", async () => {
       // Create a mock logger to verify logging
-      const loggerWithSpy = {
-        ...SILENT_LOGGER,
-        warn: vi.fn(),
-        info: vi.fn(),
-        debug: vi.fn(),
-        error: vi.fn(),
-        silly: vi.fn(),
-      };
+      const loggerWithSpy = createMockLogger();
 
       mockProcessRunner = createMockProcessRunner({
         onSpawn: () => ({

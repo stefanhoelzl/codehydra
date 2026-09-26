@@ -40,6 +40,8 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
+import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
+import type { LogContext, Logger, LogScope } from "../boundaries/platform/logging-types";
 
 /**
  * A delete-workspace operation reduced to what this file needs: run the "shutdown"
@@ -987,6 +989,74 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           }),
         })
       );
+    });
+  });
+
+  describe("extension logs", () => {
+    /** An extension logger recording the ambient scope of each line it writes. */
+    function recordingLogger(store: AsyncLogScopeStore): {
+      logger: Logger;
+      lines: { message: string; context?: LogContext; scope: LogScope | undefined }[];
+    } {
+      const lines: { message: string; context?: LogContext; scope: LogScope | undefined }[] = [];
+      const record = (message: string, context?: LogContext): void => {
+        lines.push({ message, ...(context && { context }), scope: store.current() });
+      };
+      const logger: Logger = {
+        silly: record,
+        debug: record,
+        info: record,
+        warn: record,
+        error: record,
+        scoped: (hint) => new ScopedLogger(logger, store, hint),
+      };
+      return { lines, logger };
+    }
+
+    it("tags an opened workspace's extension logs with its name instead of its path", async () => {
+      await env.cleanup();
+      const store = new AsyncLogScopeStore();
+      const { logger, lines } = recordingLogger(store);
+      env = await createApiServerEnv({ extensionLogger: logger, logScope: store });
+      const workspace = wsPath("/test/workspace");
+      await env.setWorkspaceConfig(workspace, {}, "claude", true);
+
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      client.emit("api:log", { level: "info", message: "hello", context: { n: 1 } });
+      await vi.waitFor(() => expect(lines).toHaveLength(1));
+
+      expect(lines[0]?.context).toEqual({ n: 1 });
+      expect(lines[0]?.scope).toEqual(
+        expect.objectContaining({
+          project: "project",
+          ws: "test",
+          path: workspace,
+          origin: "sidekick",
+        })
+      );
+    });
+
+    it("names a workspace it has no name for by path, and drops scope.* keys", async () => {
+      await env.cleanup();
+      const store = new AsyncLogScopeStore();
+      const { logger, lines } = recordingLogger(store);
+      env = await createApiServerEnv({ extensionLogger: logger, logScope: store });
+      const workspace = wsPath("/test/unopened");
+
+      const client = createClient(workspace);
+      await waitForConnect(client);
+      client.emit("api:log", {
+        level: "info",
+        message: "hello",
+        context: { "scope.ws": "spoofed" },
+      });
+      await vi.waitFor(() => expect(lines).toHaveLength(1));
+
+      expect(lines[0]?.message).toBe("hello");
+      expect(lines[0]?.context).toEqual({ path: workspace });
+      expect(lines[0]?.scope).not.toHaveProperty("ws");
+      expect(lines[0]?.scope?.origin).toBe("sidekick");
     });
   });
 

@@ -339,7 +339,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       settings: { ...agentSettings },
     };
     await fileSystemLayer.writeFile(filePath, JSON.stringify(content, null, 2));
-    logger.debug("Created workspace file", { workspaceName, path: filePath.toString() });
+    logger.scoped({ path: filePath.toString() }).debug("Created workspace file", { workspaceName });
     return filePath;
   }
 
@@ -349,7 +349,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   ): Promise<void> {
     const filePath = workspaceFilePath(workspaceName, projectWorkspacesDir);
     await fileSystemLayer.rm(filePath, { force: true });
-    logger.debug("Deleted workspace file", { workspaceName, path: filePath.toString() });
+    logger.scoped({ path: filePath.toString() }).debug("Deleted workspace file", { workspaceName });
   }
 
   // -------------------------------------------------------------------------
@@ -488,10 +488,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         "text/html; charset=utf-8"
       );
     } catch (error) {
-      logger.debug("Local file not served", {
-        path: request.path,
-        error: getErrorMessage(error),
-      });
+      logger
+        .scoped({ path: request.path })
+        .debug("Local file not served", { error: getErrorMessage(error) });
       return null;
     }
   }
@@ -1229,10 +1228,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
                 if (oldVersion) {
                   const oldDirName = `${entry.id}-${oldVersion}`;
                   const oldPath = new Path(extensionsDir, oldDirName);
-                  logger.debug("Cleaning extension", {
-                    extId: entry.id,
-                    path: oldPath.toString(),
-                  });
+                  logger
+                    .scoped({ path: oldPath.toString() })
+                    .debug("Cleaning extension", { extId: entry.id });
                   await fileSystemLayer.rm(oldPath, { recursive: true, force: true });
                 }
 
@@ -1295,10 +1293,11 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
               workspaceUrl = ide.urlForWorkspace(ideServerPort, wsFilePath.toString());
             } catch (error) {
-              logger.warn("Failed to ensure workspace file, using folder URL", {
-                workspacePath: finalizeCtx.workspacePath,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              logger
+                .scoped({ path: finalizeCtx.workspacePath })
+                .warn("Failed to ensure workspace file, using folder URL", {
+                  error: error instanceof Error ? error.message : String(error),
+                });
               workspaceUrl = ide.urlForFolder(ideServerPort, finalizeCtx.workspacePath);
             }
 

@@ -31,6 +31,7 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type { ProjectPath, WorkspaceName } from "./contract";
+import { Path } from "../utils/path/path";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   agentSpecSchema,
@@ -407,6 +408,12 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // project that is not open, and opening it can clone from the network. The
     // row would otherwise appear against a project that turns out not to exist.
     const projectPath = await this.resolveProjectPath(ctx);
+    const { existingWorkspace } = ctx.intent.payload;
+    ctx.setLogTarget({
+      project: new Path(projectPath).basename,
+      ws: existingWorkspace?.name ?? ctx.intent.payload.workspaceName,
+      ...(existingWorkspace !== undefined && { path: existingWorkspace.path }),
+    });
 
     // Announce every fresh worktree creation, foreground or background: the
     // placeholder row is how the user learns a creation started, and gating it
@@ -526,6 +533,12 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     if (workspacePath === undefined || branch === undefined || metadata === undefined) {
       throw new Error("Create hook did not provide all required fields");
     }
+    // A creation learns its workspace's path here: complete the log target with it.
+    ctx.setLogTarget({
+      project: new Path(projectPath).basename,
+      ws: ctx.intent.payload.existingWorkspace?.name ?? ctx.intent.payload.workspaceName,
+      path: workspacePath,
+    });
 
     // Metadata written by later hook points folds into the create snapshot, so the
     // workspace:created event (and the returned Workspace) carry it. Without this a

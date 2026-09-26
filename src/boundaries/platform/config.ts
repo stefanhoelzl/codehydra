@@ -532,12 +532,11 @@ export class DefaultConfig implements Config {
         this.deps.writeFileSync ?? ((p: string, c: string) => writeFileSync(p, c, "utf-8"));
       try {
         syncWrite(configPath.toNative(), JSON.stringify(kept, null, 2));
-        this.deps.logger.debug("Config rewritten (unknown keys stripped)", {
-          path: configPath.toString(),
-        });
+        this.deps.logger
+          .scoped({ path: configPath.toString() })
+          .debug("Config rewritten (unknown keys stripped)");
       } catch (error) {
-        this.deps.logger.warn("Config rewrite failed", {
-          path: configPath.toString(),
+        this.deps.logger.scoped({ path: configPath.toString() }).warn("Config rewrite failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       }
@@ -593,10 +592,11 @@ export class DefaultConfig implements Config {
     try {
       syncUnlink(legacyConfigPath.toNative());
     } catch (error) {
-      logger.warn("Moved config.json, but could not remove the old file", {
-        path: legacyConfigPath.toString(),
-        error: getErrorMessage(error),
-      });
+      logger
+        .scoped({ path: legacyConfigPath.toString() })
+        .warn("Moved config.json, but could not remove the old file", {
+          error: getErrorMessage(error),
+        });
     }
     logger.info("Moved config.json", {
       from: legacyConfigPath.toString(),
@@ -636,10 +636,12 @@ export class DefaultConfig implements Config {
           });
           break;
         case "broken-json":
-          logger.warn(
-            "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
-            { path: issue.path, backup: issue.backup, error: issue.error }
-          );
+          logger
+            .scoped({ path: issue.path })
+            .warn("Invalid JSON in config.json, backed up to config.json.broken; using defaults", {
+              backup: issue.backup,
+              error: issue.error,
+            });
           break;
         case "invalid":
           break;

@@ -325,10 +325,13 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         defaultId: 0,
       })
       .then(() =>
-        deps.dispatcher.dispatch<AppShutdownIntent>({
-          type: INTENT_APP_SHUTDOWN,
-          payload: {},
-        })
+        deps.dispatcher.dispatch<AppShutdownIntent>(
+          {
+            type: INTENT_APP_SHUTDOWN,
+            payload: {},
+          },
+          { origin: "app" }
+        )
       )
       .catch(() => {
         // Dialog failure must not mask the crash; log + report already happened.

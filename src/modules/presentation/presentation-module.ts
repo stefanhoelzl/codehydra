@@ -172,7 +172,7 @@ export interface PresentationModuleDeps {
   };
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
-  readonly dispatcher: Pick<IDispatcher, "dispatch">;
+  readonly dispatcher: Pick<IDispatcher, "dispatch" | "withOrigin">;
   /**
    * Persisted expanded-sidebar width (px). Read into every snapshot's sidebar
    * region and written when the renderer emits a `resize-sidebar` drag result.
@@ -1606,7 +1606,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
   };
 
-  const unsubscribeFromUI = deps.viewManager.onFromUI(ApiIpcChannels.UI_EVENT, listener);
+  // Everything the UI asks for — directly here, or through the dialogs and
+  // forms this routes events to — is dispatched with origin "ui".
+  const unsubscribeFromUI = deps.viewManager.onFromUI(ApiIpcChannels.UI_EVENT, (...args) =>
+    deps.dispatcher.withOrigin({ origin: "ui" }, () => listener(...args))
+  );
 
   // ---------------------------------------------------------------------------
   // Shortcut navigation (ported from the renderer's shortcuts store)

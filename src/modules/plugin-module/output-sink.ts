@@ -86,7 +86,7 @@ export function createHookOutputSink(deps: HookOutputSinkDeps): HookOutputSink {
       !deps.transport.appendOutput(workspacePath, { channel: HOOK_OUTPUT_CHANNEL, lines: pending })
     ) {
       // Connected a moment ago and gone already. The log still has every line.
-      deps.logger.debug("Could not flush buffered hook output", { workspace: workspacePath });
+      deps.logger.scoped({ path: workspacePath }).debug("Could not flush buffered hook output");
     }
   });
 

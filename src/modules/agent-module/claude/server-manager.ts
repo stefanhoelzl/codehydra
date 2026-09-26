@@ -343,7 +343,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Generate config files for this workspace
     await this.generateConfigFiles(normalizedPath);
 
-    this.logger.info("Workspace registered", { workspacePath: normalizedPath, port: this.port });
+    this.logger.scoped({ path: normalizedPath }).info("Workspace registered", { port: this.port });
 
     // Fire started callback
     for (const callback of this.startedCallbacks) {
@@ -378,7 +378,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       callback(normalizedPath, isRestart);
     }
 
-    this.logger.info("Workspace unregistered", { workspacePath: normalizedPath, isRestart });
+    this.logger.scoped({ path: normalizedPath }).info("Workspace unregistered", { isRestart });
 
     // Stop HTTP server if no more workspaces
     if (this.workspaces.size === 0 && this.httpServer !== null) {
@@ -434,7 +434,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       callback(normalizedPath, this.port!);
     }
 
-    this.logger.info("Workspace restarted", { workspacePath: normalizedPath, port: this.port });
+    this.logger.scoped({ path: normalizedPath }).info("Workspace restarted", { port: this.port });
 
     return { success: true, port: this.port! };
   }
@@ -536,8 +536,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     }
 
     await this.localSocketClient.send(inbox.socketPath, inboxPayload(message, inbox.token));
-    this.logger.info("Message delivered to Claude inbox", {
-      workspacePath: normalizedPath,
+    this.logger.scoped({ path: normalizedPath }).info("Message delivered to Claude inbox", {
       from: message.from,
       length: message.text.length,
     });
@@ -574,9 +573,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const state = this.workspaces.get(normalizedPath);
 
     if (!state) {
-      this.logger.warn("setInitialPrompt called for unknown workspace", {
-        workspacePath: normalizedPath,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .warn("setInitialPrompt called for unknown workspace");
       return;
     }
 
@@ -616,16 +615,17 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // mode was chosen) has nothing to run, so it starts "idle".
       state.busyOnWrapperStart = (config.prompt ?? "").trim() !== "";
 
-      this.logger.info("Initial prompt file created", {
-        workspacePath: normalizedPath,
-        path: promptFilePath.toString(),
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .info("Initial prompt file created", { path: promptFilePath.toString() });
     } catch (error) {
-      this.logger.error(
-        "Failed to create initial prompt file",
-        { workspacePath: normalizedPath },
-        error instanceof Error ? error : undefined
-      );
+      this.logger
+        .scoped({ path: normalizedPath })
+        .error(
+          "Failed to create initial prompt file",
+          undefined,
+          error instanceof Error ? error : undefined
+        );
       // Don't throw - initial prompt is optional, workspace should still work
     }
   }
@@ -655,9 +655,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const state = this.workspaces.get(normalizedPath);
 
     if (!state) {
-      this.logger.warn("setNoSessionMarker called for unknown workspace", {
-        workspacePath: normalizedPath,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .warn("setNoSessionMarker called for unknown workspace");
       return;
     }
 
@@ -671,16 +671,17 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
       state.noSessionMarkerPath = markerPath;
 
-      this.logger.debug("No-session marker created", {
-        workspacePath: normalizedPath,
-        path: markerPath.toString(),
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .debug("No-session marker created", { path: markerPath.toString() });
     } catch (error) {
-      this.logger.error(
-        "Failed to create no-session marker",
-        { workspacePath: normalizedPath },
-        error instanceof Error ? error : undefined
-      );
+      this.logger
+        .scoped({ path: normalizedPath })
+        .error(
+          "Failed to create no-session marker",
+          undefined,
+          error instanceof Error ? error : undefined
+        );
     }
   }
 
@@ -865,10 +866,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Find workspace state
     const state = this.workspaces.get(normalizedPath);
     if (!state) {
-      this.logger.silly("Hook received for unknown workspace", {
-        hookName,
-        workspacePath: normalizedPath,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .silly("Hook received for unknown workspace", { hookName });
       return;
     }
 
@@ -901,11 +901,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // and background sub-agents are already reflected in that Stop's
     // background_tasks. Ignore it entirely.
     if ((hookName === "Stop" || hookName === "StopFailure") && payload.agent_id) {
-      this.logger.silly("Ignoring sub-agent Stop for main status", {
-        hookName,
-        workspacePath: normalizedPath,
-        agentId: payload.agent_id,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .silly("Ignoring sub-agent Stop for main status", { hookName, agentId: payload.agent_id });
       return;
     }
 
@@ -920,11 +918,12 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // no Stop ever to follow. A sub-agent's tool activity reaches the status
     // through PostToolUse; its PreToolUse has nothing to add.
     if (hookName === "PreToolUse" && payload.agent_id) {
-      this.logger.silly("Ignoring sub-agent PreToolUse for main status", {
-        workspacePath: normalizedPath,
-        agentId: payload.agent_id,
-        toolName: payload.tool_name ?? null,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .silly("Ignoring sub-agent PreToolUse for main status", {
+          agentId: payload.agent_id,
+          toolName: payload.tool_name ?? null,
+        });
       return;
     }
 
@@ -1025,9 +1024,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // genuinely need the user, so they still transition to idle.
       if (payload.notification_type === "idle_prompt" && state.busyForBackgroundTasks) {
         newStatus = null;
-        this.logger.debug("Idle suppressed for background tasks", {
-          workspacePath: normalizedPath,
-        });
+        this.logger.scoped({ path: normalizedPath }).debug("Idle suppressed for background tasks");
       } else {
         newStatus = "idle";
         state.ignoreNextSessionStart = false;
@@ -1061,8 +1058,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.busyForBackgroundTasks = busyTasks.length > 0;
       if (busyTasks.length > 0) {
         newStatus = null;
-        this.logger.debug("Idle suppressed for background tasks", {
-          workspacePath: normalizedPath,
+        this.logger.scoped({ path: normalizedPath }).debug("Idle suppressed for background tasks", {
           tasks: busyTasks.map((task) => task.command ?? task.agent_type ?? task.type).join(", "),
         });
       }
@@ -1087,15 +1083,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // above before reaching here, so the user's answer still returns us to busy.
     if (state.awaitingUserInputResolution && newStatus === "busy") {
       newStatus = null;
-      this.logger.debug("Busy suppressed while parked on AskUserQuestion", {
-        workspacePath: normalizedPath,
-        hookName,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .debug("Busy suppressed while parked on AskUserQuestion", { hookName });
     }
 
-    this.logger.debug("Hook received", {
+    this.logger.scoped({ path: normalizedPath }).debug("Hook received", {
       hookName,
-      workspacePath: normalizedPath,
       currentStatus: state.status,
       newStatus: newStatus ?? "(no change)",
     });
@@ -1105,12 +1099,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       const oldStatus = state.status;
       state.status = newStatus;
 
-      this.logger.info("Status changed", {
-        workspacePath: normalizedPath,
-        from: oldStatus,
-        to: newStatus,
-        hookName,
-      });
+      this.logger
+        .scoped({ path: normalizedPath })
+        .info("Status changed", { from: oldStatus, to: newStatus, hookName });
 
       // Notify subscribers
       for (const callback of state.statusCallbacks) {
@@ -1147,7 +1138,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * needed. Final status is idle, so a following real turn proceeds normally.
    */
   private emitBusyIdleEdge(workspacePath: string, state: WorkspaceState): void {
-    this.logger.info("Emitting busy→idle edge for untracked turn", { workspacePath });
+    this.logger.scoped({ path: workspacePath }).info("Emitting busy→idle edge for untracked turn");
     state.status = "busy";
     for (const callback of state.statusCallbacks) {
       callback("busy");
@@ -1189,10 +1180,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       buildMcpConfigFile(workspacePath, this.mcpConfig ?? null)
     );
 
-    this.logger.debug("Config files generated", {
-      workspacePath,
-      configDir: workspaceConfigDir.toString(),
-    });
+    this.logger
+      .scoped({ path: workspacePath })
+      .debug("Config files generated", { configDir: workspaceConfigDir.toString() });
   }
 
   /**

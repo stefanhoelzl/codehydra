@@ -73,10 +73,11 @@ async function resolveAgent(
       return fromMetadata;
     }
   } catch (error) {
-    deps.logger.debug("metadata read failed; using global default", {
-      workspacePath,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    deps.logger
+      .scoped({ path: workspacePath })
+      .debug("metadata read failed; using global default", {
+        error: error instanceof Error ? error.message : String(error),
+      });
   }
   const fromConfig = deps.agentConfig.get();
   if (fromConfig === "claude" || fromConfig === "opencode") {
@@ -131,11 +132,12 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
             requested
           );
         } catch (error) {
-          deps.logger.warn("failed to persist workspace agent metadata", {
-            workspacePath,
-            requested,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          deps.logger
+            .scoped({ path: workspacePath })
+            .warn("failed to persist workspace agent metadata", {
+              requested,
+              error: error instanceof Error ? error.message : String(error),
+            });
         }
       }
 

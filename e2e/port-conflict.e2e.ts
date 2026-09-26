@@ -45,7 +45,7 @@ function spawnPortHolder(port: number): ChildProcess {
 function scanLog(): string {
   const lines = appLogEntries()
     .filter((entry) => {
-      const text = `${entry.scope ?? ""} ${entry.message ?? ""} ${JSON.stringify(entry.context ?? {})}`;
+      const text = `${entry.scope?.logger ?? ""} ${entry.message ?? ""} ${JSON.stringify(entry.context ?? {})}`;
       return /listener|scan|lsof|powershell|Get-NetTCPConnection|IDE server/i.test(text);
     })
     .map(

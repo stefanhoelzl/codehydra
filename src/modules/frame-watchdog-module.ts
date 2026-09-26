@@ -80,10 +80,11 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
       if (phase === "waiting") {
         judgeDead(workspacePath, reason);
       } else {
-        logger.warn("Workspace IDE still disconnected after reloading its frame; leaving it", {
-          workspace: workspacePath,
-          reason,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .warn("Workspace IDE still disconnected after reloading its frame; leaving it", {
+            reason,
+          });
       }
     }, RECONNECT_GRACE_MS);
     watches.set(workspacePath, { phase, reason, timer });
@@ -94,17 +95,17 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
     // released for deletion, or closed since the disconnect has nothing to
     // reload, and its IDE is supposed to be gone.
     if (!frames.reloadFrame(workspacePath)) {
-      logger.debug("Workspace IDE disconnected but its frame is gone; nothing to reload", {
-        workspace: workspacePath,
-        reason,
-      });
+      logger
+        .scoped({ path: workspacePath })
+        .debug("Workspace IDE disconnected but its frame is gone; nothing to reload", { reason });
       return;
     }
-    logger.warn("Workspace IDE disconnected and did not come back; reloaded its frame", {
-      workspace: workspacePath,
-      reason,
-      graceMs: RECONNECT_GRACE_MS,
-    });
+    logger
+      .scoped({ path: workspacePath })
+      .warn("Workspace IDE disconnected and did not come back; reloaded its frame", {
+        reason,
+        graceMs: RECONNECT_GRACE_MS,
+      });
     arm(workspacePath, "reloaded", reason);
   }
 
@@ -119,9 +120,9 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
     transport.onWorkspaceConnected((workspacePath) => {
       const watch = forget(workspacePath);
       if (watch?.phase === "reloaded") {
-        logger.info("Workspace IDE reconnected after its frame was reloaded", {
-          workspace: workspacePath,
-        });
+        logger
+          .scoped({ path: workspacePath })
+          .info("Workspace IDE reconnected after its frame was reloaded");
       }
     }),
   ];

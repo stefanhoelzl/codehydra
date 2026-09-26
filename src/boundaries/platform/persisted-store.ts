@@ -378,11 +378,12 @@ export class PersistedStore {
       } catch (error) {
         const backupPath = new Path(filePath.dirname, `${filePath.basename}.broken`);
         await fileSystem.rename(filePath, backupPath);
-        logger.warn(`Invalid JSON in ${filePath.basename}, backed up; writing fresh`, {
-          path: filePath.toString(),
-          backup: backupPath.toString(),
-          error: getErrorMessage(error),
-        });
+        logger
+          .scoped({ path: filePath.toString() })
+          .warn(`Invalid JSON in ${filePath.basename}, backed up; writing fresh`, {
+            backup: backupPath.toString(),
+            error: getErrorMessage(error),
+          });
         fileContent = {};
       }
     }
@@ -391,7 +392,7 @@ export class PersistedStore {
 
     await fileSystem.mkdir(filePath.dirname);
     await fileSystem.writeFile(filePath, JSON.stringify(fileContent, null, 2));
-    logger.debug("Store persisted", { path: filePath.toString() });
+    logger.scoped({ path: filePath.toString() }).debug("Store persisted");
   }
 
   // ---------------------------------------------------------------------------

@@ -76,10 +76,7 @@ Source: `src/intents/lib/operation.ts`
  * Dispatch function signature for nested intent dispatch.
  * Available in OperationContext for operations that need to trigger sub-intents.
  */
-export type DispatchFn = <I extends Intent>(
-  intent: I,
-  causation?: readonly string[]
-) => Promise<IntentResult<I>>;
+export type DispatchFn = <I extends Intent>(intent: I) => Promise<IntentResult<I>>;
 
 /** Sentinel for requires: capability must exist, any value accepted. */
 export const ANY_VALUE: unique symbol = Symbol("any-value");
@@ -156,6 +153,8 @@ export interface OperationContext<I extends Intent = Intent> {
   readonly emit: (event: DomainEvent) => void;
   readonly hooks: ResolvedHooks;
   readonly causation: readonly string[];
+  /** Name the workspace (or project) this dispatch acts on, for its log scope. */
+  readonly setLogTarget: (target: LogTarget) => void;
 }
 
 /**
@@ -169,7 +168,7 @@ export interface Operation<I extends Intent = Intent, R = void> {
 }
 ```
 
-`OperationContext<I>` provides everything an operation needs: the typed intent, a dispatch function for sub-intents, an emit function for domain events, resolved hooks for running hook points, and the causation chain for tracing. `Operation<I, R>` is the interface all operations implement -- `id` identifies the operation for hook registration, and `execute()` contains the orchestration logic.
+`OperationContext<I>` provides everything an operation needs: the typed intent, a dispatch function for sub-intents, an emit function for domain events, resolved hooks for running hook points, the causation chain for tracing, and `setLogTarget` — how a resolve step (`workspace:resolve`, `project:resolve`, `workspace:open`) names the target for the log scope, on its own dispatch and the one that asked (see [Log scope](#log-scope)). `Operation<I, R>` is the interface all operations implement -- `id` identifies the operation for hook registration, and `execute()` contains the orchestration logic.
 
 ### HookDeclarations, EventDeclarations, and IntentModule
 
@@ -245,10 +244,9 @@ export interface IntentInterceptor {
  * Dispatcher interface for dispatching intents and subscribing to domain events.
  */
 export interface IDispatcher {
-  dispatch<I extends Intent>(
-    intent: I,
-    causation?: readonly string[]
-  ): IntentHandle<IntentResult<I>>;
+  dispatch<I extends Intent>(intent: I, options?: DispatchOptions): IntentHandle<IntentResult<I>>;
+  /** Every dispatch `fn` starts carries `options` (a dispatch's own still win). */
+  withOrigin<T>(options: DispatchOptions, fn: () => T): T;
   subscribe(eventType: string, handler: EventHandler): () => void;
   addInterceptor(interceptor: IntentInterceptor): void;
   registerModule(module: IntentModule): void;
@@ -256,6 +254,16 @@ export interface IDispatcher {
 ```
 
 `IntentHandle<T>` is a deferred-based thenable that supports two-phase awaiting: `await handle` waits for the full result, while `await handle.accepted` resolves immediately after interceptors pass/reject the intent. `IntentInterceptor` is a pre-operation policy that can modify or cancel intents -- returning `null` from `before()` cancels the intent. Interceptors run in registration order. `IDispatcher` is the main entry point for the intent system, supporting dispatch, event subscription, interceptor registration, and module registration.
+
+### Log scope
+
+Every line any logger writes while a dispatch runs carries that dispatch's **log scope** (`LogScope`, read from the logging service's `LogScopeStore`): a per-dispatch `trace` id, the `intent`, the target `project`/`ws`, the `origin`, the API `caller`/`api`, and — while a hook handler runs — its `module` and `hook` (`event:<type>` for an event handler). The dispatcher is its only writer:
+
+- **Trace.** One short hex id per dispatch. A nested dispatch gets its own; its `dispatch` line names the parent's (`parent=`) next to `causation=`, so the tree can be walked from the log.
+- **Target.** Set by `ctx.setLogTarget` at the resolve step, on the dispatch and on the one that requested it; a target with a path also names that path in the logging store's index, which is how `logger.scoped({ path })` lines anywhere — in a dispatch or not — show the workspace by name. The first target a dispatch names wins (an inherited one is replaced once; a project-only one may still gain its workspace), so a switch A→B shows B only in the switch it dispatches. Lines before resolution carry none — the `completed` line does.
+- **Origin.** `DispatchOptions` (`origin`, `caller`, `api`) are given by the entry point: `dispatch(intent, { origin })`, or `withOrigin(options, fn)` where the dispatches are spread over code the entry point does not own — the presenter's `ui:event` intake (`ui`), the plugin server's per-connection socket middleware (`cli`/`mcp`/`sidekick` + `caller` + `api`), an auto-workspace poll cycle. Nested dispatches inherit them; `caller` and `api` are logged on the dispatch line where they enter the tree.
+
+The scope follows every callback created inside a dispatch — including long-lived ones (a server's output, a timer), by design. Rendering is the logger's: see ARCHITECTURE.md (Logging System).
 
 ---
 

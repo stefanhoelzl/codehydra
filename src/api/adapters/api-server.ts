@@ -196,7 +196,7 @@ export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiSer
     socket.on(mount.channel, (...args: unknown[]) => {
       const { request, ack } = splitArgs(args);
 
-      logger.debug("API call", { event: mount.channel, workspace: workspacePath });
+      logger.scoped({ path: workspacePath }).debug("API call", { event: mount.channel });
 
       const call: { target: WorkspacePath | null } = { target: null };
       inFlight.add(call);
@@ -224,9 +224,8 @@ export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiSer
           // every bug report, for something working as designed.
           const category = categoryOf(error);
           const level = category === "failed" ? "error" : "warn";
-          logger[level]("API call failed", {
+          logger.scoped({ path: workspacePath })[level]("API call failed", {
             event: mount.channel,
-            workspace: workspacePath,
             error: message,
           });
           ack?.({ success: false, error: message, category });

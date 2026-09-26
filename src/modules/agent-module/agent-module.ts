@@ -163,10 +163,13 @@ export function createAgentModule(
     if (initialized) return;
     provider.initialize(capturedMcpConfig);
     statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
-      void deps.dispatcher.dispatch<UpdateAgentStatusIntent>({
-        type: INTENT_UPDATE_AGENT_STATUS,
-        payload: { workspacePath, status },
-      });
+      void deps.dispatcher.dispatch<UpdateAgentStatusIntent>(
+        {
+          type: INTENT_UPDATE_AGENT_STATUS,
+          payload: { workspacePath, status },
+        },
+        { origin: "agent-hook" }
+      );
     });
     initialized = true;
   }

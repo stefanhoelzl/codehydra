@@ -13,6 +13,7 @@ import { attachApiServerAdapter, type AdapterSocket, type ApiResult } from "./ap
 import { OperationRegistry } from "../registry";
 import { ApiError } from "../errors";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
+import type { Logger } from "../../boundaries/platform/logging-types";
 import { createLockModule } from "../../modules/lock-module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { defineEntry } from "../types";
@@ -307,10 +308,11 @@ describe("API server adapter", () => {
     // exit code 4 exists for. Logging it at error level would put a fault in the
     // log and in every bug report for something working as designed.
     const logged: string[] = [];
-    const logger = {
+    const logger: Logger = {
       ...SILENT_LOGGER,
       warn: (message: string) => logged.push(`warn:${message}`),
       error: (message: string) => logged.push(`error:${message}`),
+      scoped: () => logger,
     };
 
     const harness = fakeSocket();

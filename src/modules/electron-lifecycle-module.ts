@@ -254,10 +254,13 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
   let quitReleased = false;
 
   function shutdown(): void {
-    void deps.dispatcher.dispatch<AppShutdownIntent>({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    });
+    void deps.dispatcher.dispatch<AppShutdownIntent>(
+      {
+        type: INTENT_APP_SHUTDOWN,
+        payload: {},
+      },
+      { origin: "app" }
+    );
   }
 
   deps.app.on("window-all-closed", () => {
@@ -350,10 +353,13 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             deps.powerMonitor.on("resume", () => {
               const sleptMs = takeSleptMs();
               deps.logger.info("System resumed — dispatching app:resume", { sleptMs });
-              void deps.dispatcher.dispatch<AppResumeIntent>({
-                type: INTENT_APP_RESUME,
-                payload: { sleptMs },
-              });
+              void deps.dispatcher.dispatch<AppResumeIntent>(
+                {
+                  type: INTENT_APP_RESUME,
+                  payload: { sleptMs },
+                },
+                { origin: "system" }
+              );
             });
           },
         },

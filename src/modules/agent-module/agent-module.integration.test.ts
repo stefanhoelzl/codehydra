@@ -682,7 +682,8 @@ describe("createAgentModule", () => {
         expect.objectContaining({
           type: INTENT_UPDATE_AGENT_STATUS,
           payload: { workspacePath: testPath("/test/workspace").toNative(), status },
-        })
+        }),
+        { origin: "agent-hook" }
       );
     });
 

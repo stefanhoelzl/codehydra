@@ -79,7 +79,7 @@ describe("FrameWatchdogModule", () => {
     expect(reloadFrame).toHaveBeenCalledExactlyOnceWith(WS);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("reloaded its frame"),
-      expect.objectContaining({ workspace: WS, reason: "client namespace disconnect" })
+      expect.objectContaining({ "scope.path": WS, reason: "client namespace disconnect" })
     );
   });
 
@@ -124,7 +124,7 @@ describe("FrameWatchdogModule", () => {
     expect(reloadFrame).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("still disconnected after reloading"),
-      expect.objectContaining({ workspace: WS })
+      expect.objectContaining({ "scope.path": WS })
     );
   });
 
@@ -138,7 +138,7 @@ describe("FrameWatchdogModule", () => {
 
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("reconnected after its frame was reloaded"),
-      expect.objectContaining({ workspace: WS })
+      expect.objectContaining({ "scope.path": WS })
     );
     expect(logger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("still disconnected"),

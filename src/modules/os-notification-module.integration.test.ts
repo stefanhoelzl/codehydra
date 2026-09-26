@@ -372,7 +372,8 @@ describe("OsNotificationModule", () => {
         expect.objectContaining({
           type: "workspace:switch",
           payload: { workspacePath: wsPath("/ws/alpha"), focus: true },
-        })
+        }),
+        { origin: "notification" }
       );
     });
   });
