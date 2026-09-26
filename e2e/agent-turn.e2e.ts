@@ -344,11 +344,7 @@ test("deleting the workspace waits for the agent to exit, not for a timeout", as
   // back to killing the orphaned shell. Only a real terminal running a real
   // agent shows that, which is why it is asserted here.
 
-  // Logged as a normalized Path, so compare separator-agnostically.
-  const forWorkspace = (entry: LogEntry): boolean =>
-    String(entry.context?.["workspace"] ?? "")
-      .replaceAll("\\", "/")
-      .endsWith(`/${WORKSPACE_NAME}`);
+  const forWorkspace = (entry: LogEntry): boolean => entry.scope?.["ws"] === WORKSPACE_NAME;
 
   const deleted = await chAsync([
     "ws",
