@@ -507,7 +507,7 @@ describe("DeletionDialogModule", () => {
     const hookRunning = makeProgress({
       operations: [
         { id: "kill-terminals", label: "Terminating processes", status: "done" },
-        { id: "repo-hook", label: "Running repository hook", status: "in-progress" },
+        { id: "repo-hook", label: "Running plugin hooks", status: "in-progress" },
         { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
       ],
     });
@@ -550,7 +550,7 @@ describe("DeletionDialogModule", () => {
             { id: "kill-terminals", label: "Terminating processes", status: "done" },
             {
               id: "repo-hook",
-              label: "Running repository hook",
+              label: "Running plugin hooks",
               status: "error",
               error: "before-worktree-deleted was canceled",
             },

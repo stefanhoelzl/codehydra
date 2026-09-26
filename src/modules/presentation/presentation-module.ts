@@ -203,7 +203,7 @@ export interface PresentationModuleDeps {
 const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
 /**
- * A blocking repository hook that is running, and how to stop it.
+ * A blocking plugin hook that is running, and how to stop it.
  *
  * Registered by the hooks module for the length of one process, so every
  * surface that could leave the user staring at a hook that never ends has a
@@ -259,9 +259,9 @@ export interface UiPresenter extends IntentModule {
    * name the workspace and never see a frame key.
    */
   reloadFrame(workspacePath: string): boolean;
-  /** Offer a Cancel for a running repository hook until the returned function is called. */
+  /** Offer a Cancel for a running plugin hook until the returned function is called. */
   trackRunningHook(hook: RunningHook): () => void;
-  /** Cancel every running repository hook of a workspace (the deletion panel's Cancel). */
+  /** Cancel every running plugin hook of a workspace (the deletion panel's Cancel). */
   cancelRunningHooks(workspacePath: string): void;
 }
 
@@ -697,7 +697,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   let inPush = false;
   /** Set once app:shutdown starts: the system dialog stays closed thereafter. */
   let shuttingDown = false;
-  /** Running repository hooks by registration id (see `trackRunningHook`). */
+  /** Running plugin hooks by registration id (see `trackRunningHook`). */
   const runningHooks = new Map<number, RunningHook>();
   let nextRunningHookId = 0;
   /**
@@ -1050,8 +1050,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             id: `${CANCEL_HOOK_ACTION}${id}`,
             label: hooks.length === 1 ? "Cancel" : `Cancel ${label(hook)}`,
             variant: "secondary" as const,
-            title:
-              "Stop the repository hook. The workspace opens without what it would have set up.",
+            title: "Stop the plugin hook. The workspace opens without what it would have set up.",
           })),
         },
       ],

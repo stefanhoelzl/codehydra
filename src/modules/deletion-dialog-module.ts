@@ -137,7 +137,7 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
           id: "cancel-hook",
           label: "Cancel",
           variant: "secondary",
-          title: "Stop the repository hook. The deletion stops, as when the hook fails.",
+          title: "Stop the plugin hook. The deletion stops, as when the hook fails.",
         },
       ],
     });

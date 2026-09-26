@@ -543,7 +543,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     };
 
     // Hook: "provision" — a new worktree's one-time setup. Best-effort by
-    // contract (the repository hook catches its own failures), so an error here
+    // contract (the plugin module catches its hooks' failures), so an error here
     // is a bug and fatal like any other.
     const provisionResult = await ctx.hooks.collect("provision", identity);
     throwHookErrors(provisionResult.errors, "workspace:open provision hooks failed");

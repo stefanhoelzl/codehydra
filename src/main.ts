@@ -164,8 +164,8 @@ import { createAgentModule } from "./modules/agent-module/agent-module";
 import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
-import { createHooksModule } from "./modules/hooks-module/module";
-import { createHookOutputSink } from "./modules/hooks-module/output-sink";
+import { createPluginModule } from "./modules/plugin-module/module";
+import { createHookOutputSink } from "./modules/plugin-module/output-sink";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
@@ -717,20 +717,21 @@ const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
   agentConfig,
   logger: loggingService.createLogger("agent-resolver"),
 });
-const hooksModule = createHooksModule({
+const pluginModule = createPluginModule({
   fileSystem: fileSystemLayer,
   processRunner,
-  logger: loggingService.createLogger("hooks"),
+  logger: loggingService.createLogger("plugins"),
   config: configService,
   stateService,
   dispatcher,
   ui: presentationModule,
-  // `ch` lives here, so a hook can call back into CodeHydra (set a title, tag a
-  // workspace) without its author having to locate the binary.
+  pathProvider,
+  // `ch` lives here, so a plugin script can call back into CodeHydra (set a
+  // title, tag a workspace) without its author having to locate the binary.
   binDir: pathProvider.dataPath("bin"),
   sink: createHookOutputSink({
     transport: apiServerModule,
-    logger: loggingService.createLogger("hooks"),
+    logger: loggingService.createLogger("plugins"),
   }),
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
@@ -783,7 +784,7 @@ const workspacesRootModule = createWorkspacesRootModule({
   ui: presentationModule,
   dispatcher,
   // Built further down; read only when a migration runs.
-  moveListeners: () => [hooksModule.moveProjects, autoWorkspaceModule.moveProjects],
+  moveListeners: () => [pluginModule.moveProjects, autoWorkspaceModule.moveProjects],
   legacyDataRoot: legacyDataRoot === null ? null : new Path(legacyDataRoot),
   logger: loggingService.createLogger("workspaces-root"),
 });
@@ -1120,7 +1121,7 @@ dispatcher.registerModule(workspaceAgentResolverModule);
 // A repository's open hooks run at their own hook points ("provision",
 // "prepare"), which precede the agents' "setup" — so the tree is set up and its
 // environment known before an agent server starts, whatever the order here.
-dispatcher.registerModule(hooksModule);
+dispatcher.registerModule(pluginModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);

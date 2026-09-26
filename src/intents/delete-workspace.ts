@@ -968,7 +968,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
           : undefined;
       operations.push({
         id: "repo-hook",
-        label: "Running repository hook",
+        label: "Running plugin hooks",
         status: applyCurrentStep("repo-hook", this.hookPointStatus(state.preDelete)),
         ...(preDeleteError && { error: preDeleteError }),
       });
