@@ -203,7 +203,6 @@ import { createErrorNotificationModule } from "./modules/error-notification-modu
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createCreationModule } from "./modules/creation-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
-import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createAutoTaggingModule } from "./modules/auto-tagging-module";
 import { createLockModule } from "./modules/lock-module";
 // Shared
@@ -733,6 +732,7 @@ const pluginModule = createPluginModule({
     transport: apiServerModule,
     logger: loggingService.createLogger("plugins"),
   }),
+  registry: () => operationRegistry,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -784,7 +784,7 @@ const workspacesRootModule = createWorkspacesRootModule({
   ui: presentationModule,
   dispatcher,
   // Built further down; read only when a migration runs.
-  moveListeners: () => [pluginModule.moveProjects, autoWorkspaceModule.moveProjects],
+  moveListeners: () => [pluginModule.moveProjects],
   legacyDataRoot: legacyDataRoot === null ? null : new Path(legacyDataRoot),
   logger: loggingService.createLogger("workspaces-root"),
 });
@@ -850,13 +850,6 @@ const creationModule = createCreationModule({
   logger: apiLogger,
 });
 const workspaceSelectionModule = createWorkspaceSelectionModule();
-const autoWorkspaceModule = createAutoWorkspaceModule({
-  logger: loggingService.createLogger("auto-workspace"),
-  dispatcher,
-  processRunner,
-  configService,
-  stateService,
-});
 const autoTaggingModule = createAutoTaggingModule({
   dispatcher,
   configService,
@@ -1152,7 +1145,6 @@ dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(settingsModule.module);
-dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(autoTaggingModule);
 dispatcher.registerModule(lockModule);
 dispatcher.registerModule(cloneNotificationModule);

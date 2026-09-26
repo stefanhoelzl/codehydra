@@ -1,12 +1,14 @@
 // @vitest-environment node
 /**
- * Integration tests for AutoWorkspaceModule through the Dispatcher.
+ * Integration tests for the automations engine through the Dispatcher.
  *
- * The module polls user-defined command sources: a mock ProcessRunner supplies
- * each cmd's stdout, and `auto-workspace.sources` config drives which sources
- * run. A chained timer re-reads config and polls, waiting
- * `auto-workspace.poll-interval` seconds (default 60) between the end of one
- * cycle and the start of the next; tests drive it with fake timers.
+ * The engine is handed its automations and their scripts' output by the plugin
+ * module; here a test adapter stands in for both. Sources are written in the
+ * compact one-document-per-source YAML of the pre-plugin setting (parsed by
+ * legacy-sources.ts) and each becomes an automation whose id is its name, so
+ * the tracking keys read `<name>/<key>`. A chained timer polls, waiting
+ * `automations.poll-interval` seconds (default 60) between the end of one cycle
+ * and the start of the next; tests drive it with fake timers.
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
@@ -59,8 +61,12 @@ import {
 } from "../../intents/switch-workspace";
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
-import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
-import { createAutoWorkspaceModule } from "./module";
+import { createAutomations } from "./automations";
+import { parseSources } from "./legacy-sources";
+import { notify } from "../presentation/notification-card";
+import type { IntentModule } from "../../intents/lib/module";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
@@ -339,7 +345,6 @@ template:
 interface CmdControl {
   items: unknown[];
   exitCode: number;
-  stderr: string;
 }
 
 function createSetup(options?: {
@@ -347,14 +352,7 @@ function createSetup(options?: {
   configDefaults?: Record<string, unknown>;
   existingEntries?: Record<string, StateEntry>;
 }) {
-  const cmd: CmdControl = { items: [], exitCode: 0, stderr: "" };
-  const processRunner = createMockProcessRunner({
-    onSpawn: () => ({
-      exitCode: cmd.exitCode,
-      stdout: JSON.stringify(cmd.items),
-      stderr: cmd.stderr,
-    }),
-  });
+  const cmd: CmdControl = { items: [], exitCode: 0 };
   const logger = createBehavioralLogger();
 
   const state = createMockState(
@@ -375,12 +373,12 @@ function createSetup(options?: {
   const sendMessageOp = new SendAgentMessageOp();
   const notificationManager = createMockNotificationManager();
 
-  const configDefaults: Record<string, unknown> = { ...(options?.configDefaults ?? {}) };
-  if (options?.sources !== undefined && options.sources !== null) {
-    configDefaults["auto-workspace.sources"] = options.sources;
-  }
-  const mockConfig = createMockConfig({ defaults: configDefaults });
-
+  const mockConfig = createMockConfig({ defaults: { ...(options?.configDefaults ?? {}) } });
+  let sourcesYaml = options?.sources ?? null;
+  /** Actions invoked for non-create automations, in order. */
+  const invoked: Array<{ action: OperationName; input: Record<string, unknown> }> = [];
+  /** Actions that throw instead. */
+  const failingActions = new Set<OperationName>();
   dispatcher.registerOperation(new MinimalActivateOperation());
   dispatcher.registerOperation(new AppShutdownOperation());
   dispatcher.registerOperation(openProjectOp);
@@ -393,23 +391,65 @@ function createSetup(options?: {
   dispatcher.registerOperation(switchOp);
   dispatcher.registerOperation(sendMessageOp);
 
-  const module = createAutoWorkspaceModule({
+  const automations = createAutomations({
     logger,
     dispatcher,
-    processRunner,
     configService: mockConfig,
     stateService: state,
+    sources: async () =>
+      parseSources(sourcesYaml).sources.map((source) => {
+        const action =
+          (source.template["action"] as OperationName | undefined) ?? "workspace.create";
+        return {
+          id: source.name,
+          plugin: "local:test",
+          name: source.name,
+          action,
+          mode: source.mode,
+          template: source.template,
+        };
+      }),
+    runScript: async () => (cmd.exitCode === 0 ? cmd.items : null),
+    invokeAction: async (action, input) => {
+      if (failingActions.has(action)) throw new Error(`${action} refused`);
+      invoked.push({ action, input });
+    },
+    reportError: (source, message) =>
+      notify(dispatcher, {
+        type: "error",
+        title: "Plugin failed",
+        message: `${source.id}: ${message}`,
+        dismissible: true,
+      }),
   });
+  const module: IntentModule & { moveProjects: typeof automations.moveProjects } = {
+    name: "automations",
+    moveProjects: automations.moveProjects,
+    hooks: {
+      [APP_SHUTDOWN_OPERATION_ID]: {
+        stop: { handler: async () => automations.stop() },
+      },
+    },
+    events: {
+      [EVENT_APP_STARTED]: { handler: () => automations.start() },
+    },
+  };
   dispatcher.registerModule(module);
   notificationManager.register(dispatcher);
 
   return {
     module,
+    automations,
     dispatcher,
     state,
     cmd,
     logger,
     mockConfig,
+    invoked,
+    failingActions,
+    setSources: (yaml: string | null): void => {
+      sourcesYaml = yaml;
+    },
     openProjectOp,
     openWorkspaceOp,
     getBasesOp,
@@ -442,7 +482,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("AutoWorkspaceModule Integration", () => {
+describe("automations: workspace.create", () => {
   it("creates a workspace for a new item on the first tick", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, setMetaOp } = createSetup({
@@ -643,46 +683,27 @@ describe("AutoWorkspaceModule Integration", () => {
     expect(entriesOf(state)).toHaveProperty("gh/1");
   });
 
-  it("keeps a failing cmd's stderr out of the warn line", async () => {
+  it("picks up a newly added automation without a restart (each cycle re-reads plugins)", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, logger } = createSetup({ sources: sourceYaml() });
-    cmd.items = [{ id: "1" }];
-    cmd.exitCode = 1;
-    cmd.stderr = "401 Unauthorized: token perm-SECRET is expired";
-
-    await dispatcher.dispatch(startIntent());
-
-    // This line is emitted at the DEFAULT log level, so a cmd that echoes its
-    // own credentials on failure would leak them to every bug report without
-    // anyone enabling debug logging.
-    const warned = logger.getMessagesByLevel("warn");
-    const text = warned.map((m) => `${m.message} ${JSON.stringify(m.context ?? {})}`).join("\n");
-    expect(text).toContain("Source cmd failed");
-    expect(text).not.toContain("perm-SECRET");
-    expect(text).toContain("46 bytes of stderr");
-  });
-
-  it("picks up a newly added source without a restart (each cycle re-reads config)", async () => {
-    vi.useFakeTimers();
-    const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({ sources: null });
+    const { dispatcher, cmd, setSources, openWorkspaceOp } = createSetup({ sources: null });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
 
-    await mockConfig.set("auto-workspace.sources", sourceYaml()); // user edits settings
+    setSources(sourceYaml()); // the user adds a plugin
     await tick();
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  it("forgets entries for a source removed from config (orphan cleanup)", async () => {
+  it("forgets entries for an automation that is gone (orphan cleanup)", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, mockConfig } = createSetup({ sources: sourceYaml("gh") });
+    const { dispatcher, cmd, state, setSources } = createSetup({ sources: sourceYaml("gh") });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)).toHaveProperty("gh/1");
 
     cmd.items = [];
-    await mockConfig.set("auto-workspace.sources", sourceYaml("other")); // gh removed
+    setSources(sourceYaml("other")); // gh removed
     await tick();
     expect(entriesOf(state)).not.toHaveProperty("gh/1");
   });
@@ -778,7 +799,7 @@ template:
     expect(entriesOf(state)).not.toHaveProperty("local/1");
     expect(notificationManager.notifications).toHaveLength(1);
     expect(notificationManager.notifications[0]!.opened.message).toBe(
-      `local: not a git repo: ${missing.toString()}`
+      `local: cannot open its project: not a git repo: ${missing.toString()}`
     );
   });
 
@@ -787,7 +808,7 @@ template:
       vi.useFakeTimers();
       const { dispatcher, cmd, openWorkspaceOp } = createSetup({
         sources: sourceYaml(),
-        configDefaults: { "auto-workspace.poll-interval": 10 },
+        configDefaults: { "automations.poll-interval": 10 },
       });
       cmd.items = [{ id: "1" }];
       await dispatcher.dispatch(startIntent());
@@ -809,7 +830,7 @@ template:
       await dispatcher.dispatch(startIntent());
 
       // User edits the setting; the current 60s wait still has to elapse.
-      await mockConfig.set("auto-workspace.poll-interval", 10);
+      await mockConfig.set("automations.poll-interval", 10);
       cmd.items = [{ id: "1" }, { id: "2" }];
       await advance(10_000);
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
@@ -959,7 +980,7 @@ template:
         {
           workspacePath: workspacePathOf("ws-1"),
           text: "Work on 1",
-          from: "CodeHydra · auto-workspace gh",
+          from: "CodeHydra · automation gh",
           // Also reopens an agent terminal the user closed.
           wake: true,
         },
@@ -1019,7 +1040,7 @@ template:
       expect(
         logger
           .getMessagesByLevel("warn")
-          .filter((entry) => entry.message === "Auto-workspace prompt not delivered")
+          .filter((entry) => entry.message === "Automation prompt not delivered")
       ).toHaveLength(2);
     });
 
@@ -1080,12 +1101,12 @@ ${sourceYaml("good")}`,
 
     it("forgets entries left behind when a source flips to events mode", async () => {
       vi.useFakeTimers();
-      const { dispatcher, cmd, state, mockConfig } = createSetup({ sources: sourceYaml("gh") });
+      const { dispatcher, cmd, state, setSources } = createSetup({ sources: sourceYaml("gh") });
       cmd.items = [{ id: "1" }];
       await dispatcher.dispatch(startIntent());
       expect(entriesOf(state)).toHaveProperty("gh/1");
 
-      await mockConfig.set("auto-workspace.sources", eventsYaml());
+      setSources(eventsYaml());
       cmd.items = [];
       await tick();
       expect(entriesOf(state)).not.toHaveProperty("gh/1");
@@ -1116,5 +1137,67 @@ describe("moveProjects", () => {
     expect(entriesOf(state)["gh/1"]?.projectPath).toBe("/new/lib");
     expect(entriesOf(state)["gh/2"]?.projectPath).toBe("/code/app");
     expect(entriesOf(state)["gh/3"]?.projectPath).toBeUndefined();
+  });
+});
+
+describe("automations: other actions", () => {
+  const hibernateYaml = `name: stale
+mode: events
+cmd: fetch
+template:
+  action: workspace.hibernate
+  name: unused
+  workspace: "{{ ws }}"`;
+
+  it("runs the action once per item with the rendered input, tracking nothing", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, invoked, openWorkspaceOp } = createSetup({
+      sources: hibernateYaml,
+    });
+    cmd.items = [{ ws: "a" }, { ws: "b" }];
+
+    await dispatcher.dispatch(startIntent());
+
+    expect(invoked.map((call) => [call.action, call.input["workspace"]])).toEqual([
+      ["workspace.hibernate", "a"],
+      ["workspace.hibernate", "b"],
+    ]);
+    expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    expect(entriesOf(state)).toEqual({});
+  });
+
+  it("reports a refused action and still runs the next item", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, invoked, failingActions, notificationManager } = createSetup({
+      sources: hibernateYaml,
+    });
+    failingActions.add("workspace.hibernate");
+    cmd.items = [{ ws: "a" }, { ws: "b" }];
+
+    await dispatcher.dispatch(startIntent());
+    await notificationManager.settle();
+
+    expect(invoked).toEqual([]);
+    expect(notificationManager.notifications[0]!.opened.message).toBe(
+      "stale: workspace.hibernate: workspace.hibernate refused"
+    );
+    expect(notificationManager.notifications[0]!.count).toBe(2);
+  });
+});
+
+describe("renameTracking", () => {
+  it("moves entries to new keys before polling starts", async () => {
+    const { automations, state } = createSetup({
+      existingEntries: {
+        "gh/1": { workspaceName: "one", createdAt: "2026-01-01T00:00:00.000Z" },
+        "other/2": { workspaceName: "two", createdAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+
+    await automations.renameTracking((key) =>
+      key.startsWith("gh/") ? `auto-workspaces/${key}` : undefined
+    );
+
+    expect(Object.keys(entriesOf(state)).sort()).toEqual(["auto-workspaces/gh/1", "other/2"]);
   });
 });

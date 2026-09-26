@@ -1,33 +1,34 @@
 /**
- * AutoWorkspaceModule — polls user-defined command sources and creates
- * workspaces to match.
+ * Automations — a plugin script run every poll cycle, whose items each run an
+ * action.
  *
- * Sources are data, not code: the `auto-workspace.sources` config value is a
- * multi-document YAML stream (one document per source; see source-config.ts).
- * Each source's `cmd` emits a JSON array of domain objects; the source's
- * `template` renders one workspace definition per object (see template-render.ts).
+ * An automation is a local plugin's `automations.<name>` (manifest.ts): a
+ * script that prints a JSON array, the `action` each item runs, and a
+ * `template` rendered once per item into that action's input. Its identity is
+ * `<plugin>/<name>`. The plugin module supplies the sources and runs the
+ * scripts; this file decides what the items mean.
  *
- * A single chained timer drives everything: each cycle re-reads the config
- * (picking up edits without a restart), then polls every source. What a poll
- * *means* depends on the source's `mode`:
+ * `action: workspace.create` (the default) is the auto-workspace behavior — the
+ * template is a workspace definition (template-render.ts), and `mode` says
+ * what the items mean:
  *
- * `mode: workspaces` (the default) — the cmd emits the desired workspace list,
- * and the poll reconciles against it:
+ * `mode: workspaces` (the default) — the script prints the desired workspace
+ * list, and the poll reconciles against it:
  *   - a key already tracked in state is skipped
  *   - a new key whose name is already taken adopts that workspace (entry only)
  *   - any other new key creates a workspace (entry written only on success)
  *   - a tracked key absent from this cycle is forgotten only if its workspace is
- *     gone too, so a source that returns a short list for one cycle cannot
+ *     gone too, so a script that returns a short list for one cycle cannot
  *     orphan a live workspace
  * There is no auto-deletion; a manually deleted workspace's entry simply
  * persists (so it is not recreated while its item is still active) and is
  * forgotten once the item disappears.
  *
- * `mode: events` — the cmd emits things that happened, and each one fires
- * exactly once. Nothing is tracked in state: the cmd owns dedup (it acks, pops
- * a queue, or keeps its own cursor), so an event that is emitted twice fires
- * twice. Per event the module resolves the project, then matches the rendered
- * `template.name` against that project's workspaces:
+ * `mode: events` — the script prints things that happened, and each one fires
+ * exactly once. Nothing is tracked in state: the script owns dedup (it acks,
+ * pops a queue, or keeps its own cursor), so an event printed twice fires
+ * twice. Per event the project is resolved, then the rendered `template.name`
+ * is matched against that project's workspaces:
  *   - no match          → create, exactly like the workspaces mode
  *   - match, closing    → skip (a teardown pipeline owns it)
  *   - match             → re-apply the rendered metadata, then wake it if it is
@@ -35,25 +36,19 @@
  *                         send the rendered `prompt` (if any) to its agent as a
  *                         message — reopening a closed agent terminal first
  * A failed event is logged and gone: unlike a workspaces-mode item there is no
- * retry, since the cmd has already consumed it.
+ * retry, since the script has already consumed it.
  *
- * `auto-workspace.poll-interval` (seconds, default 60) is the *gap between
- * runs*: the next wait is armed only once a cycle has settled, so a slow poll
- * never stacks. The value is re-read when each wait is armed, so a change made
- * in the settings dialog applies once the current wait elapses.
+ * Any other action runs as events: each item's rendered template is the input
+ * of that operation, invoked through the registry like `ch` would.
  *
- * Hooks:
- * - app:shutdown -> "stop": stop polling
- *
- * Events:
- * - app:started: load state, run the first cycle, start polling
+ * `automations.poll-interval` (seconds, default 60) is the *gap between runs*:
+ * the next wait is armed only once a cycle has settled, so a slow poll never
+ * stacks. The value is re-read when each wait is armed, so a change made in the
+ * settings dialog applies once the current wait elapses.
  */
 
 import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
-import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import { EVENT_APP_STARTED } from "../../intents/app-ready";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
   INTENT_GET_PROJECT_BASES,
@@ -78,22 +73,18 @@ import {
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import type { Config } from "../../boundaries/platform/config";
 import {
-  storeText,
   storeCustom,
   storeNumber,
   type PersistedAccessor,
 } from "../../boundaries/platform/store-definition";
-import { SOURCES_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
-import type { ProcessRunner } from "../../boundaries/platform/process";
-import { notify } from "../presentation/notification-card";
 import type { AgentSpec } from "../../shared/api/types";
+import type { OperationName } from "../../api/names";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
-import { parseSources, validateSourcesConfig, type ParsedSource } from "./source-config";
-import { renderDefinition, type WorkspaceDefinition } from "./template-render";
-import { runCmd } from "./cmd-runner";
+import { renderDefinition, renderInput, type WorkspaceDefinition } from "./template-render";
+import type { AutomationMode, TemplateObject } from "./manifest";
 import { projectPathSchema, type ProjectPath, type WorkspacePath } from "../../intents/contract";
 
 // =============================================================================
@@ -113,7 +104,7 @@ interface StateEntry {
   readonly projectPath?: string;
 }
 
-/** Tracking map `${source}/${itemKey}` -> entry, stored under `auto-workspaces`. */
+/** Tracking map `${plugin}/${automation}/${itemKey}` -> entry, stored under `auto-workspaces`. */
 type AutoWorkspaceEntries = Record<string, StateEntry>;
 
 function isStateEntry(value: unknown): value is StateEntry {
@@ -158,25 +149,43 @@ const METADATA_SOURCE_KEY = "source";
 // Dependencies
 // =============================================================================
 
-export interface AutoWorkspaceModuleDeps {
+/** One automation, as the plugin module hands it over. */
+export interface AutomationSource {
+  /** `<plugin>/<name>` — the identity, the tracking-key prefix and the `source` metadata. */
+  readonly id: string;
+  /** The plugin's id (`local:<name>`), for error reporting. */
+  readonly plugin: string;
+  /** The automation's name within its plugin. */
+  readonly name: string;
+  readonly action: OperationName;
+  readonly mode: AutomationMode;
+  readonly template: TemplateObject;
+}
+
+export interface AutomationsDeps {
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
-  readonly processRunner: ProcessRunner;
   readonly configService: Config;
   readonly stateService: StateService;
+  /** Every automation that may run now; read at the start of each cycle. */
+  readonly sources: () => Promise<readonly AutomationSource[]>;
+  /** Run a source's script: its items, or null when it failed (already reported). */
+  readonly runScript: (source: AutomationSource) => Promise<unknown[] | null>;
+  /** Run a non-create action with a rendered input. Throws on failure. */
+  readonly invokeAction: (action: OperationName, input: Record<string, unknown>) => Promise<void>;
+  /**
+   * An item of a source failed in a way the user must hear about (a template
+   * mistake, an action that was refused). Repeats of the same text collapse.
+   */
+  readonly reportError: (source: AutomationSource, message: string) => void;
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-function stateKey(sourceName: string, itemKey: string): string {
-  return `${sourceName}/${itemKey}`;
-}
-
-function sourceOfKey(key: string): string {
-  const slash = key.indexOf("/");
-  return slash === -1 ? key : key.slice(0, slash);
+function stateKey(sourceId: string, itemKey: string): string {
+  return `${sourceId}/${itemKey}`;
 }
 
 function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
@@ -187,51 +196,43 @@ function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
 // Factory
 // =============================================================================
 
-export interface AutoWorkspaceModule extends IntentModule {
+export interface Automations {
+  /** Load state, run the first cycle, start polling. */
+  start(): Promise<void>;
+  /** Stop polling. */
+  stop(): void;
   /** Point tracking entries at projects whose path changed. */
   readonly moveProjects: ProjectMoveListener;
+  /**
+   * Rename tracking keys (`undefined` keeps a key as it is). For moving the
+   * entries of the pre-plugin setting over to its automations, before `start`.
+   */
+  renameTracking(rename: (key: string) => string | undefined): Promise<void>;
 }
 
-export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWorkspaceModule {
-  const sourcesBase = storeText({
-    nullable: true,
-    rows: 20,
-    helpLabel: "Source format reference",
-    helpPanel: SOURCES_HELP,
-  });
-  const sourcesAccessor: PersistedAccessor<string | null> = deps.configService.register(
-    "auto-workspace.sources",
-    {
-      default: null,
-      description: "Auto-workspace sources (multi-document YAML; one document per source)",
-      applies: "live",
-      // May embed secrets (e.g. an inlined API token in a cmd): kept out of bug
-      // reports, but shown in the clear in the settings editor — hence omit.
-      omit: true,
-      ...sourcesBase,
-      validate: (v: unknown): string | null | undefined => {
-        const parsed = sourcesBase.validate(v);
-        if (parsed === undefined) return undefined;
-        return validateSourcesConfig(parsed);
-      },
-    }
-  );
+/** The pre-plugin name of the poll interval, still honored. */
+const LEGACY_INTERVAL_KEY = "auto-workspace.poll-interval";
 
+export function createAutomations(deps: AutomationsDeps): Automations {
   const intervalAccessor: PersistedAccessor<number> = deps.configService.register(
-    "auto-workspace.poll-interval",
+    "automations.poll-interval",
     {
       default: DEFAULT_POLL_INTERVAL_SECONDS,
       description:
-        "Seconds to wait between the end of one auto-workspace poll and the start of the next " +
+        "Seconds to wait between the end of one automations poll and the start of the next " +
         "(a change applies after the current wait elapses)",
       applies: "live",
       ...storeNumber({ min: 1 }),
+      legacyNames: {
+        [LEGACY_INTERVAL_KEY]: (value) =>
+          typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : undefined,
+      },
     }
   );
 
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
-    description: "Auto-workspace tracking entries (app-managed)",
+    description: "Automation tracking entries for workspace.create (app-managed)",
     ...storeCustom<AutoWorkspaceEntries>({
       parse: (raw) => validateEntries(safeJsonParse(raw)),
       validate: validateEntries,
@@ -250,21 +251,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
     try {
       await stateAccessor.set(entries);
     } catch (error) {
-      deps.logger.warn("Failed to save auto-workspace state", { error: getErrorMessage(error) });
+      deps.logger.warn("Failed to save automation state", { error: getErrorMessage(error) });
     }
   }
 
   // ------ Workspace lifecycle ------
-
-  /**
-   * Raise an error card for a per-item failure the log alone would hide. Every
-   * poll re-reports it, and a repeat of the same text collapses into the live
-   * card with a count; dismissing closes the card, and the next failing poll
-   * raises a fresh one.
-   */
-  function notifyItemError(title: string, message: string): void {
-    notify(deps.dispatcher, { type: "error", title, message, dismissible: true });
-  }
 
   /**
    * Open (cloning if needed) the project a rendered definition points at, and
@@ -278,16 +269,15 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
    * later item AND every later source. Null leaves a workspaces-mode item
    * unrecorded (retried next tick) and drops an event (there is no retry).
    *
-   * A template mistake would otherwise retry silently forever, so it also
-   * raises an error notification. A failed clone does not: the clone's own card
-   * already turns into "Clone failed".
+   * A template mistake would otherwise retry silently forever, so it is also
+   * reported. A failed clone is not: the clone's own card already turns into
+   * "Clone failed".
    */
   async function resolveProjectPath(
-    source: ParsedSource,
+    source: AutomationSource,
     definition: WorkspaceDefinition,
     key: string
   ): Promise<ProjectPath | null> {
-    const title = `Auto-workspace source "${source.name}" cannot open its project`;
     let projectPayload: OpenProjectIntent["payload"];
     if (definition.project) {
       try {
@@ -297,18 +287,18 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
         };
       } catch {
         // The value itself stays out of the log: a URL put here may carry a token.
-        deps.logger.warn("Skipping auto-workspace (project is not an absolute path)", { key });
-        notifyItemError(
-          title,
-          `${source.name}: project must be an absolute path — use git: for a URL (got "${definition.project}")`
+        deps.logger.warn("Skipping automation item (project is not an absolute path)", { key });
+        deps.reportError(
+          source,
+          `project must be an absolute path — use git: for a URL (got "${definition.project}")`
         );
         return null;
       }
     } else if (definition.git) {
       projectPayload = { git: definition.git };
     } else {
-      deps.logger.warn("Skipping auto-workspace (no project/git in template)", { key });
-      notifyItemError(title, `${source.name}: the template needs a project: path or a git: URL`);
+      deps.logger.warn("Skipping automation item (no project/git in template)", { key });
+      deps.reportError(source, "the template needs a project: path or a git: URL");
       return null;
     }
 
@@ -318,17 +308,17 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
         payload: projectPayload,
       });
       if (!project) {
-        deps.logger.warn("project:open returned null for auto-workspace", { key });
+        deps.logger.warn("project:open returned null for an automation", { key });
         return null;
       }
       return project.path;
     } catch (error) {
-      deps.logger.warn("Failed to open project for auto-workspace", {
+      deps.logger.warn("Failed to open project for an automation", {
         key,
         error: getErrorMessage(error),
       });
       if (projectPayload.path !== undefined) {
-        notifyItemError(title, `${source.name}: ${getErrorMessage(error)}`);
+        deps.reportError(source, `cannot open its project: ${getErrorMessage(error)}`);
       }
       return null;
     }
@@ -340,17 +330,18 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
    * fails the create (or the event) around it.
    *
    * `source` is rewritten on every hit, not only at create — an events-mode
-   * source that acts on a workspace is its current owner as far as the sidebar
-   * is concerned, including one the user made by hand under a matching name.
+   * automation that acts on a workspace is its current owner as far as the
+   * sidebar is concerned, including one the user made by hand under a matching
+   * name.
    */
   async function applyMetadata(
-    source: ParsedSource,
+    source: AutomationSource,
     workspacePath: WorkspacePath,
     definition: WorkspaceDefinition,
     key: string
   ): Promise<void> {
     const allMetadata: Record<string, string> = {
-      [METADATA_SOURCE_KEY]: source.name,
+      [METADATA_SOURCE_KEY]: source.id,
       ...(definition.metadata ?? {}),
     };
     for (const [metaKey, value] of Object.entries(allMetadata)) {
@@ -375,7 +366,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
    * record the item, so it is retried next tick.
    */
   async function createWorkspace(
-    source: ParsedSource,
+    source: AutomationSource,
     key: string,
     definition: WorkspaceDefinition,
     projectPath: ProjectPath
@@ -406,8 +397,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
 
       await applyMetadata(source, wsResult.path, definition, key);
 
-      deps.logger.info("Auto-workspace created", {
-        source: source.name,
+      deps.logger.info("Automation created a workspace", {
+        source: source.id,
         key,
         workspaceName: definition.name,
       });
@@ -419,8 +410,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       // in a worktree CodeHydra does not manage, or a transient git error. It
       // raises a user-facing error notification like any other failed create;
       // repeats of the same one collapse into a single card with a count.
-      deps.logger.warn("Failed to create auto-workspace (will retry)", {
-        source: source.name,
+      deps.logger.warn("Automation failed to create a workspace (will retry)", {
+        source: source.id,
         key,
         error: getErrorMessage(error),
       });
@@ -495,8 +486,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
    * Nothing here writes state — an event fires once and is then gone, so a
    * failure is logged rather than retried (the cmd has already consumed it).
    */
-  async function applyEvent(source: ParsedSource, definition: WorkspaceDefinition): Promise<void> {
-    const key = stateKey(source.name, definition.name);
+  async function applyEvent(
+    source: AutomationSource,
+    definition: WorkspaceDefinition
+  ): Promise<void> {
+    const key = stateKey(source.id, definition.name);
     try {
       const projectPath = await resolveProjectPath(source, definition, key);
       if (!projectPath) return;
@@ -515,8 +509,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
         // A teardown pipeline owns it: waking fights the deletion, and creating
         // would collide on the worktree that is still there. The next event
         // about it lands cleanly once the teardown finishes.
-        deps.logger.warn("Skipping auto-workspace event (workspace is closing)", {
-          source: source.name,
+        deps.logger.warn("Skipping automation event (workspace is closing)", {
+          source: source.id,
           key,
           closing: resolved.closing,
         });
@@ -551,29 +545,29 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
           payload: {
             workspacePath,
             text: definition.prompt,
-            from: `CodeHydra · auto-workspace ${source.name}`,
+            from: `CodeHydra · automation ${source.id}`,
             wake: true,
           },
         });
         if (!message.sent) {
-          deps.logger.warn("Auto-workspace prompt not delivered", {
-            source: source.name,
+          deps.logger.warn("Automation prompt not delivered", {
+            source: source.id,
             key,
             reason: message.reason ?? "",
           });
         }
       }
 
-      deps.logger.info("Auto-workspace event applied", {
-        source: source.name,
+      deps.logger.info("Automation event applied", {
+        source: source.id,
         key,
         workspaceName: definition.name,
         action: hibernated ? "wake" : "update",
       });
     } catch (error) {
       // No retry: the cmd owns dedup, so the event is gone either way.
-      deps.logger.warn("Failed to apply auto-workspace event", {
-        source: source.name,
+      deps.logger.warn("Failed to apply an automation event", {
+        source: source.id,
         key,
         error: getErrorMessage(error),
       });
@@ -582,25 +576,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
 
   // ------ Poll cycle ------
 
-  /** Run a source's cmd, or null when it failed (the tick is then skipped). */
-  async function runSourceCmd(source: ParsedSource): Promise<unknown[] | null> {
-    try {
-      return await runCmd({ processRunner: deps.processRunner }, source.name, source.cmd);
-    } catch (error) {
-      deps.logger.warn("Source cmd failed, skipping tick", {
-        source: source.name,
-        error: getErrorMessage(error),
-      });
-      return null;
-    }
-  }
-
   /**
    * Render one emitted object, logging any template warnings under `key`.
    * Null when Liquid rendering itself failed — that item is skipped.
    */
   function render(
-    source: ParsedSource,
+    source: AutomationSource,
     data: unknown,
     keyOf: (definition: WorkspaceDefinition) => string
   ): WorkspaceDefinition | null {
@@ -608,7 +589,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       const { definition, warnings } = renderDefinition(source.template, data);
       for (const warning of warnings) {
         deps.logger.warn("Template warning", {
-          source: source.name,
+          source: source.id,
           key: keyOf(definition),
           warning,
         });
@@ -616,26 +597,26 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       return definition;
     } catch (error) {
       deps.logger.warn("Failed to render item, skipping it", {
-        source: source.name,
+        source: source.id,
         error: getErrorMessage(error),
       });
       return null;
     }
   }
 
-  /** Reconcile a `mode: workspaces` source against the list its cmd emitted. */
-  async function pollWorkspacesSource(source: ParsedSource): Promise<boolean> {
-    const items = await runSourceCmd(source);
+  /** Reconcile a `mode: workspaces` source against the list its script printed. */
+  async function pollWorkspacesSource(source: AutomationSource): Promise<boolean> {
+    const items = await deps.runScript(source);
     if (items === null) return false;
 
-    const prefix = `${source.name}/`;
+    const prefix = `${source.id}/`;
     const activeStateKeys = new Set<string>();
     const newItems: { key: string; definition: WorkspaceDefinition }[] = [];
 
     for (const data of items) {
-      const definition = render(source, data, (d) => stateKey(source.name, d.key));
+      const definition = render(source, data, (d) => stateKey(source.id, d.key));
       if (!definition) continue;
-      const fullKey = stateKey(source.name, definition.key);
+      const fullKey = stateKey(source.id, definition.key);
       activeStateKeys.add(fullKey);
       if (!(fullKey in entries)) newItems.push({ key: fullKey, definition });
     }
@@ -649,8 +630,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       if (!key.startsWith(prefix) || activeStateKeys.has(key)) continue;
       const entry = entries[key];
       if (entry !== undefined && (await entryWorkspaceExists(entry))) {
-        deps.logger.debug("Keeping auto-workspace entry (workspace still exists)", {
-          source: source.name,
+        deps.logger.debug("Keeping automation entry (workspace still exists)", {
+          source: source.id,
           key,
           workspaceName: entry.workspaceName,
         });
@@ -658,8 +639,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       }
       delete entries[key];
       changed = true;
-      deps.logger.info("Forgot auto-workspace entry (item and workspace both gone)", {
-        source: source.name,
+      deps.logger.info("Forgot automation entry (item and workspace both gone)", {
+        source: source.id,
         key,
       });
     }
@@ -679,8 +660,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       if (existing) {
         entries[key] = newEntry(definition.name, projectPath);
         changed = true;
-        deps.logger.info("Adopted existing workspace for auto-workspace item", {
-          source: source.name,
+        deps.logger.info("Adopted existing workspace for an automation item", {
+          source: source.id,
           key,
           workspaceName: definition.name,
         });
@@ -697,45 +678,74 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
     return changed;
   }
 
-  /** Fire every event a `mode: events` source emitted, in order. Writes no state. */
-  async function pollEventsSource(source: ParsedSource): Promise<void> {
-    const items = await runSourceCmd(source);
+  /** Fire every event a `mode: events` workspace.create source printed, in order. */
+  async function pollEventsSource(source: AutomationSource): Promise<void> {
+    const items = await deps.runScript(source);
     if (items === null) return;
 
     for (const data of items) {
-      const definition = render(source, data, (d) => stateKey(source.name, d.name));
+      const definition = render(source, data, (d) => stateKey(source.id, d.name));
       if (!definition) continue;
       await applyEvent(source, definition);
     }
   }
 
-  async function reconcile(): Promise<void> {
-    const { sources, errors } = parseSources(sourcesAccessor.get());
-    for (const err of errors) {
-      deps.logger.warn("Invalid auto-workspace source, ignoring", {
-        source: err.name ?? `#${err.index}`,
-        message: err.message,
-      });
+  /**
+   * Run any other action once per printed item. Each failure is reported —
+   * a refused input is a template mistake the user must see — and the next
+   * item still runs. Writes no state.
+   */
+  async function pollActionSource(source: AutomationSource): Promise<void> {
+    const items = await deps.runScript(source);
+    if (items === null) return;
+
+    for (const data of items) {
+      let input: Record<string, unknown>;
+      try {
+        input = renderInput(source.template, data);
+      } catch (error) {
+        deps.logger.warn("Failed to render item, skipping it", {
+          source: source.id,
+          error: getErrorMessage(error),
+        });
+        continue;
+      }
+      try {
+        await deps.invokeAction(source.action, input);
+      } catch (error) {
+        deps.logger.warn("Automation action failed", {
+          source: source.id,
+          action: source.action,
+          error: getErrorMessage(error),
+        });
+        deps.reportError(source, `${source.action}: ${getErrorMessage(error)}`);
+      }
     }
+  }
+
+  async function reconcile(): Promise<void> {
+    const sources = await deps.sources();
 
     let changed = false;
 
-    // Orphan cleanup: drop entries whose source no longer exists in config — or
-    // is no longer a workspaces source, since an events source is defined as
+    // Orphan cleanup: drop entries whose automation no longer exists — or is no
+    // longer a reconciling one, since an events automation is defined as
     // writing no state and its old entries would resurrect wrongly on a flip back.
-    const validNames = new Set(sources.filter((s) => s.mode === "workspaces").map((s) => s.name));
+    const reconciling = sources.filter(
+      (s) => s.action === "workspace.create" && s.mode === "workspaces"
+    );
     for (const key of Object.keys(entries)) {
-      if (!validNames.has(sourceOfKey(key))) {
+      if (!reconciling.some((s) => key.startsWith(`${s.id}/`))) {
         delete entries[key];
         changed = true;
-        deps.logger.info("Forgot auto-workspace entry (source removed or now events-mode)", {
-          key,
-        });
+        deps.logger.info("Forgot automation entry (automation removed or now events)", { key });
       }
     }
 
     for (const source of sources) {
-      if (source.mode === "events") {
+      if (source.action !== "workspace.create") {
+        await pollActionSource(source);
+      } else if (source.mode === "events") {
         await pollEventsSource(source);
       } else if (await pollWorkspacesSource(source)) {
         changed = true;
@@ -754,7 +764,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
     if (stopped || timer) return;
     const intervalSeconds = intervalAccessor.get();
     if (armedIntervalSeconds !== null && armedIntervalSeconds !== intervalSeconds) {
-      deps.logger.info("Auto-workspace poll interval changed", {
+      deps.logger.info("Automations poll interval changed", {
         from: armedIntervalSeconds,
         to: intervalSeconds,
       });
@@ -764,7 +774,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
       timer = null;
       void reconcile()
         .catch((error: unknown) => {
-          deps.logger.warn("Auto-workspace poll failed", { error: getErrorMessage(error) });
+          deps.logger.warn("Automations poll failed", { error: getErrorMessage(error) });
         })
         .finally(scheduleNext);
     }, intervalSeconds * 1000);
@@ -772,7 +782,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
 
   function startPolling(): void {
     if (stopped || timer) return;
-    deps.logger.info("Auto-workspace polling started", {
+    deps.logger.info("Automations polling started", {
       intervalSeconds: intervalAccessor.get(),
     });
     scheduleNext();
@@ -783,7 +793,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
     if (timer) {
       clearTimeout(timer);
       timer = null;
-      deps.logger.info("Auto-workspace polling stopped");
+      deps.logger.info("Automations polling stopped");
     }
   }
 
@@ -805,24 +815,24 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): AutoWo
 
   return {
     moveProjects,
-    name: "auto-workspace",
-    hooks: {
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: {
-          handler: async () => {
-            stopPolling();
-          },
-        },
-      },
+    async renameTracking(rename): Promise<void> {
+      const current = stateAccessor.get();
+      let changed = false;
+      const next: AutoWorkspaceEntries = {};
+      for (const [key, entry] of Object.entries(current)) {
+        const to = rename(key);
+        if (to !== undefined && to !== key) changed = true;
+        next[to ?? key] = entry;
+      }
+      if (!changed) return;
+      entries = next;
+      await stateAccessor.set(next);
     },
-    events: {
-      [EVENT_APP_STARTED]: {
-        handler: async (): Promise<void> => {
-          entries = stateAccessor.get();
-          await reconcile();
-          startPolling();
-        },
-      },
+    async start(): Promise<void> {
+      entries = stateAccessor.get();
+      await reconcile();
+      startPolling();
     },
+    stop: stopPolling,
   };
 }

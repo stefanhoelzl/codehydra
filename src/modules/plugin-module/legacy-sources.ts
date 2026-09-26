@@ -1,5 +1,6 @@
 /**
- * Parsing + validation for the `auto-workspace.sources` config value.
+ * The `auto-workspace.sources` setting from before plugins, read once to move
+ * it into a plugin (see {@link convertLegacySources}).
  *
  * The value is a multi-document YAML stream — one document per source, separated
  * by `---`. Each document is a mapping:
@@ -23,14 +24,9 @@
  * objects *mean*, which is what actually changes the module's behavior.
  */
 
-import { parseAllDocuments } from "yaml";
+import { parseAllDocuments, stringify } from "yaml";
 import { isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
-
-export type TemplateScalar = string | number | boolean | null;
-export type TemplateValue = TemplateScalar | TemplateValue[] | TemplateObject;
-export interface TemplateObject {
-  readonly [key: string]: TemplateValue;
-}
+import type { TemplateObject, TemplateValue } from "./manifest";
 
 /**
  * What a source's cmd emits, which decides how the module treats each object.
@@ -168,15 +164,56 @@ export function parseSources(raw: string | null): ParseSourcesResult {
   return { sources, errors };
 }
 
+/** The plugin the old setting becomes, in `~/.codehydra/plugins`. */
+export const LEGACY_SOURCES_PLUGIN = "auto-workspaces";
+
+export interface ConvertedSources {
+  /** The plugin's manifest text. */
+  readonly manifest: string;
+  /** Old source name → automation name, for moving tracking state along. */
+  readonly renames: ReadonlyMap<string, string>;
+  /** Sources that could not be read and were left out. */
+  readonly errors: readonly SourceParseError[];
+}
+
+/** An automation name for an old source name: letters, digits, `-` and `_`. */
+function automationName(name: string, taken: ReadonlySet<string>): string {
+  const base =
+    name
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^[^A-Za-z0-9]+/, "")
+      .replace(/-+$/, "") || "source";
+  let candidate = base;
+  for (let n = 2; taken.has(candidate); n++) candidate = `${base}-${n}`;
+  return candidate;
+}
+
 /**
- * Config `validate` for the `auto-workspace.sources` key. Returns the raw string
- * unchanged when it parses with zero errors, `null` for a null value, or
- * `undefined` (rejected) when any document is malformed — so a bad edit is
- * caught in the settings dialog and on set().
+ * Turn the old setting into a plugin manifest, one automation per source.
+ *
+ * A source's `cmd` ran through the platform shell — `sh` on Linux and macOS,
+ * `cmd.exe` on Windows — so the automation keeps that: `bash` for a POSIX
+ * line (which also runs on Windows, through Git Bash), `cmd` pinned to Windows
+ * for a Windows one.
  */
-export function validateSourcesConfig(raw: unknown): string | null | undefined {
-  if (raw === null) return null;
-  if (typeof raw !== "string") return undefined;
-  if (raw.trim() === "") return raw;
-  return parseSources(raw).errors.length === 0 ? raw : undefined;
+export function convertLegacySources(raw: string, platform: NodeJS.Platform): ConvertedSources {
+  const { sources, errors } = parseSources(raw);
+  const renames = new Map<string, string>();
+  const automations: Record<string, unknown> = {};
+  for (const source of sources) {
+    const name = automationName(source.name, new Set(renames.values()));
+    renames.set(source.name, name);
+    automations[name] = {
+      mode: source.mode,
+      script: source.cmd,
+      template: source.template,
+    };
+  }
+
+  const document = {
+    description: "Moved from the auto-workspace.sources setting",
+    ...(platform === "win32" ? { shell: "cmd", platform: "windows" } : { shell: "bash" }),
+    automations,
+  };
+  return { manifest: stringify(document, { lineWidth: 0 }), renames, errors };
 }

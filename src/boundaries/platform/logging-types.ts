@@ -56,9 +56,6 @@ export type LoggerName =
   | "shortcut" // ShortcutController - keyboard shortcut detection
   | "presenter" // PresentationModule - ui:event intake (later: UiState presenter)
   | "dispatcher" // Dispatcher - intent dispatch pipeline
-  | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator
-  | "auto-workspace:github" // GitHubSource - GitHub PR polling
-  | "auto-workspace:youtrack" // YouTrackSource - YouTrack issue polling
   | "state" // StateService - state.json persistence
   | "settings" // SettingsModule - settings UI
   | "help" // HelpModule - user guide (ch guide, help dialog)

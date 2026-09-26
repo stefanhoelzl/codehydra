@@ -69,7 +69,12 @@ import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import type { RunningHook } from "../presentation/presentation-module";
 import { createPluginModule, type PluginModule } from "./module";
-import { APP_SHUTDOWN_OPERATION_ID as APP_SHUTDOWN_ID } from "../../intents/app-shutdown";
+import { z } from "zod/v4";
+import { OperationRegistry } from "../../api/registry";
+import { defineEntry } from "../../api/types";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import type { Config } from "../../boundaries/platform/config";
 import type { HookOutputSink } from "./output-sink";
 
 const PROJECT_ROOT = projPath("/project");
@@ -105,6 +110,10 @@ interface SetupOptions {
   readonly legacyTrusted?: Record<string, boolean>;
   /** How the trust dialog answers: an action id plus unchecked plugin names. */
   readonly trustAnswer?: { action: string; unchecked?: string[] };
+  /** Seeds the pre-plugin `auto-workspace.sources` setting. */
+  readonly legacySources?: string;
+  /** Seeds `auto-workspaces` tracking entries. */
+  readonly tracking?: Record<string, unknown>;
 }
 
 interface TestSetup {
@@ -128,7 +137,12 @@ interface TestSetup {
   /** Env of each script run, in order. */
   readonly envs: NodeJS.ProcessEnv[];
   readonly runningHooks: RunningHook[];
+  /** Inputs the registry's `log` entry was invoked with, by automations. */
+  readonly logged: unknown[];
+  readonly config: Config;
   killedCount(): number;
+  /** Start the app's automations (and stop them again when the test ends). */
+  startApp(): Promise<void>;
 }
 
 function manifestEntries(
@@ -308,21 +322,43 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     values: {
       "plugins.enabled": options?.pluginsEnabled ?? {},
       "hooks.trusted": options?.legacyTrusted ?? {},
+      ...(options?.tracking !== undefined && { "auto-workspaces": options.tracking }),
+    },
+  });
+  const logged: unknown[] = [];
+  const registry = new OperationRegistry([
+    defineEntry({
+      name: "log",
+      kind: "command",
+      description: "test log",
+      input: z.object({ message: z.string() }).strict(),
+      requiresWorkspace: false,
+      handler: async (_ctx, input) => {
+        logged.push(input);
+      },
+    }),
+  ]);
+  const config = createMockConfig({
+    defaults: {
+      "hooks.enabled": options?.enabled ?? true,
+      "paths.bash": null,
+      ...(options?.legacySources !== undefined && {
+        "auto-workspace.sources": options.legacySources,
+      }),
     },
   });
   const module = createPluginModule({
     fileSystem,
     processRunner,
     logger: createBehavioralLogger(),
-    config: createMockConfig({
-      defaults: { "hooks.enabled": options?.enabled ?? true, "paths.bash": null },
-    }),
+    config,
     stateService,
     dispatcher,
     ui,
     pathProvider: createMockPathProvider({ homeRootDir: HOME }),
     binDir: new Path(testPath("/data/bin")),
     sink,
+    registry: () => registry,
     platform: "linux",
     env: { PATH: "/usr/bin" },
   });
@@ -352,6 +388,16 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     },
     envs,
     runningHooks,
+    logged,
+    config,
+    startApp: async () => {
+      await module.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
+      stoppers.push(() =>
+        module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({
+          intent: { type: "app:shutdown", payload: {} },
+        })
+      );
+    },
     killedCount: () =>
       Array.from({ length: processRunner.$.spawnedCount }, (_, i) =>
         processRunner.$.spawned(i)
@@ -422,8 +468,12 @@ beforeEach(() => {
   vi.stubEnv("GIT_OPTIONAL_LOCKS", "0");
 });
 
-afterEach(() => {
+/** Stops polling started by a test's startApp(). */
+const stoppers: Array<() => unknown> = [];
+
+afterEach(async () => {
   vi.unstubAllEnvs();
+  for (const stop of stoppers.splice(0)) await stop();
 });
 
 // =============================================================================
@@ -648,7 +698,7 @@ describe("shutdown", () => {
     const opening = openWorkspace(setup);
     await untilHookRunning(setup);
 
-    await setup.module.hooks![APP_SHUTDOWN_ID]!["stop"]!.handler({
+    await setup.module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({
       intent: { type: "app:shutdown", payload: {} },
     });
     await opening;
@@ -663,7 +713,7 @@ describe("shutdown", () => {
       outcomes: { "echo a": {} },
     });
 
-    await setup.module.hooks![APP_SHUTDOWN_ID]!["stop"]!.handler({
+    await setup.module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({
       intent: { type: "app:shutdown", payload: {} },
     });
     await openWorkspace(setup);
@@ -842,6 +892,96 @@ describe("ch plugin", () => {
     expect(schema).toMatchObject({ type: "object", additionalProperties: false });
     expect(Object.keys(schema["properties"] as object)).toEqual(
       expect.arrayContaining(["shell", "platform", "hooks", "automations"])
+    );
+  });
+});
+
+describe("automations", () => {
+  it("runs an automation's action once per item its script prints", async () => {
+    const setup = createTestSetup({
+      local: {
+        "notes/plugin.yaml": [
+          "automations:",
+          "  hello:",
+          "    action: log",
+          "    script: list-notes",
+          '    template: { message: "note {{ n }}" }',
+        ].join("\n"),
+      },
+      outcomes: { "list-notes": { stdout: JSON.stringify([{ n: 1 }, { n: 2 }]) } },
+    });
+
+    await setup.startApp();
+
+    expect(setup.logged).toEqual([{ message: "note 1" }, { message: "note 2" }]);
+    // Run from the plugin's own directory, with ch on PATH.
+    expect(new Path(setup.envs[0]!.CH_PLUGIN_DIR!).equals(new Path(LOCAL_PLUGINS, "notes"))).toBe(
+      true
+    );
+  });
+
+  it("reports a script that does not print an array, pointing at its log", async () => {
+    const setup = createTestSetup({
+      local: {
+        "notes.yaml": [
+          "automations:",
+          "  hello:",
+          "    action: log",
+          "    script: list-notes",
+          '    template: { message: "x" }',
+        ].join("\n"),
+      },
+      outcomes: { "list-notes": { stdout: '{"not":"an array"}' } },
+    });
+
+    await setup.startApp();
+
+    expect(setup.module.api.errors()).toMatchObject([
+      {
+        plugin: "local:notes",
+        entry: "automations.hello",
+        message: "printed JSON that is not an array",
+      },
+    ]);
+    expect(setup.module.api.errors()[0]?.logPath).toBeDefined();
+  });
+
+  it("ignores a repository plugin's automations", async () => {
+    const setup = createTestSetup({
+      workspace: {
+        "repo.yaml":
+          "automations:\n  a:\n    action: log\n    script: x\n    template: { message: y }\n",
+      },
+    });
+
+    await setup.startApp();
+
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("moves the pre-plugin sources setting into a plugin, tracking entries included", async () => {
+    const setup = createTestSetup({
+      legacySources:
+        'name: gh\ncmd: fetch\ntemplate:\n  name: "ws-{{ id }}"\n  key: "{{ id }}"\n  git: "https://x/y.git"',
+      tracking: { "gh/1": { workspaceName: "ws-1", createdAt: "2026-01-01T00:00:00.000Z" } },
+      outcomes: { fetch: { stdout: JSON.stringify([{ id: "1" }]) } },
+    });
+
+    await setup.startApp();
+
+    const manifest = await setup.fileSystem.readFile(
+      new Path(LOCAL_PLUGINS, "auto-workspaces", "plugin.yaml")
+    );
+    expect(manifest).toContain("gh:");
+    expect(Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object)).toEqual([
+      "auto-workspaces/gh/1",
+    ]);
+    // The migrated automation ran, and found its item already handled.
+    expect(setup.ran).toEqual(["fetch"]);
+    // The setting is cleared, so the move happens once.
+    expect(setup.config.getEffective()).not.toHaveProperty("auto-workspace.sources");
+    expect(setup.notifications.map((n) => n.title)).toContain(
+      "Auto-workspace sources are now a plugin"
     );
   });
 });
