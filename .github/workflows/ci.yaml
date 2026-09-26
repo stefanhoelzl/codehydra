@@ -225,6 +225,9 @@ jobs:
             ${{ runner.temp }}/ch-e2e/logs/
           retention-days: 7
           if-no-files-found: warn
+          # e2e/.output is a dot-directory, which upload-artifact skips by default:
+          # without this the trace and screenshots never reach the artifact.
+          include-hidden-files: true
 
   # The installer is what most Windows users download; the portable dir above is not.
   # Install it silently, then run the download-binaries spec against the *installed* app.
@@ -282,6 +285,9 @@ jobs:
             ${{ runner.temp }}/ch-e2e-nsis/logs/
           retention-days: 7
           if-no-files-found: warn
+          # e2e/.output is a dot-directory, which upload-artifact skips by default:
+          # without this the trace and screenshots never reach the artifact.
+          include-hidden-files: true
 
   build-packages:
     name: Build Packages
