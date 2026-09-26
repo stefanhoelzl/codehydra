@@ -24,7 +24,7 @@
  * CLI — would mean a repository's deletion gate could be walked past by typing
  * `ch ws delete`.
  *
- * Stored in state.json as `plugins.enabled`: `local:<name>` for a local plugin,
+ * Stored in state.json as `plugins.state`: `local:<name>` for a local plugin,
  * `workspace:<projectPath>:<name>` for a repository's. The per-project answers
  * of the hooks that came before plugins (`hooks.trusted`) still count: a
  * workspace plugin with no answer of its own takes its project's.

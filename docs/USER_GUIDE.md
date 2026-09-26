@@ -332,7 +332,7 @@ A `config.json` left in the data directory by an older version is moved there
 on the first start.
 
 What the app writes lives in the data directory: `state.json` (what the app
-itself remembers: which plugins are enabled, the hide-hibernated toggle, tracked
+itself remembers: which plugins are enabled (`plugins.state`), the hide-hibernated toggle, tracked
 automations, a dismissed update, the workspaces folder in use) and
 the `logs/` folder (plugin run logs are in `logs/plugins/`):
 
@@ -540,10 +540,11 @@ repository's plugins; `workspace:<name>` needs a workspace too (run it from
 one, or pass `--workspace`). MCP has the same as `plugin_list`,
 `plugin_enable`, `plugin_disable`, `plugin_errors` and `plugin_schema`.
 
-To stop every plugin hook at once, set `hooks.enabled` to `false` (settings,
-`ch config set hooks.enabled false`, `CH_HOOKS__ENABLED=false`, or
-`--hooks.enabled=false`); it applies immediately. Automations keep running —
-disable their plugin instead.
+To stop every plugin at once — hooks and automations — set `plugins.enabled`
+to `false` (settings, `ch config set plugins.enabled false`,
+`CH_PLUGINS__ENABLED=false`, or `--plugins.enabled=false`); it applies
+immediately, and automations resume where they left off when it is turned back
+on. The old name `hooks.enabled` is still read.
 
 ### Hooks
 

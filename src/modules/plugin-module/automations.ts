@@ -167,6 +167,12 @@ export interface AutomationsDeps {
   readonly dispatcher: Dispatcher;
   readonly configService: Config;
   readonly stateService: StateService;
+  /**
+   * Whether automations run at all (`plugins.enabled`). Read at the start of
+   * each cycle; a cycle it stops is skipped whole, so nothing tracked is
+   * forgotten while plugins are switched off.
+   */
+  readonly enabled: () => boolean;
   /** Every automation that may run now; read at the start of each cycle. */
   readonly sources: () => Promise<readonly AutomationSource[]>;
   /** Run a source's script: its items, or null when it failed (already reported). */
@@ -724,6 +730,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   }
 
   async function reconcile(): Promise<void> {
+    if (!deps.enabled()) return;
     const sources = await deps.sources();
 
     let changed = false;
