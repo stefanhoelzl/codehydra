@@ -187,18 +187,8 @@ public class BlockingProcessDetector {
         return null;
     }
 
-    // Query object name with timeout to avoid hanging on problematic handles (pipes, etc.)
-    private static string GetObjectNameWithTimeout(IntPtr handle, int timeoutMs) {
-        string result = null;
-        var thread = new Thread(() => { result = GetObjectNameInternal(handle); });
-        thread.Start();
-        if (!thread.Join(timeoutMs)) {
-            // Thread is stuck - abandon it (will be cleaned up by OS on process exit)
-            return null;
-        }
-        return result;
-    }
-
+    // Can hang indefinitely on a synchronous pipe with a pending read, so it is
+    // only ever called from a worker that QueryObjectNames can abandon.
     private static string GetObjectNameInternal(IntPtr handle) {
         int bufferSize = 0x1000;
         IntPtr buffer = Marshal.AllocHGlobal(bufferSize);
@@ -360,6 +350,44 @@ public class BlockingProcessDetector {
     }
 
     // =============================================================================
+    // Command Line
+    // =============================================================================
+
+    private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    private const int ProcessCommandLineInformation = 60;
+
+    // Native replacement for Get-CimInstance Win32_Process: no WMI round-trip,
+    // and only limited-information access. Handles WoW64 targets without PEB
+    // offsets, since the kernel does the reading (Windows 8.1+).
+    public static string GetProcessCommandLine(int pid) {
+        IntPtr hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (hProcess == IntPtr.Zero) return null;
+
+        try {
+            int size;
+            NtQueryInformationProcess(hProcess, ProcessCommandLineInformation, IntPtr.Zero, 0, out size);
+            if (size <= 0) return null;
+
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try {
+                int status = NtQueryInformationProcess(hProcess, ProcessCommandLineInformation, buffer, size, out size);
+                if (status != 0) return null;
+
+                // A UNICODE_STRING whose Buffer points into our own allocation.
+                var commandLine = (UNICODE_STRING)Marshal.PtrToStructure(buffer, typeof(UNICODE_STRING));
+                if (commandLine.Buffer == IntPtr.Zero || commandLine.Length == 0) return null;
+                return Marshal.PtrToStringUni(commandLine.Buffer, commandLine.Length / 2);
+            } finally {
+                Marshal.FreeHGlobal(buffer);
+            }
+        } catch {
+            return null;
+        } finally {
+            CloseHandle(hProcess);
+        }
+    }
+
+    // =============================================================================
     // Blocking Process Detection
     // =============================================================================
 
@@ -474,8 +502,97 @@ public class BlockingProcessDetector {
         public string DosPath;
     }
 
+    // Longest a single name query may take before its handle is presumed hung.
+    private const int NameQueryTimeoutMs = 500;
+
+    // Budget for resolving handle names. The file list only tells the user WHAT
+    // is held; the processes (what gets killed) are already known by now, so
+    // running out of time returns the files found so far rather than nothing.
+    private const int NameQueryBudgetMs = 5000;
+
+    // Resolves handle names on ONE worker thread, replaced only when a query
+    // hangs. A thread per handle was the old design: under CPU contention each
+    // new thread missed its 100ms deadline, so every handle cost ~100ms (a
+    // 600-handle process took 75s) and came back unnamed.
+    //
+    // Returns the names (null where unresolved) and marks the handles whose
+    // query is still stuck, which must not be closed: closing a handle that
+    // another thread is blocked on can block the closer too.
+    private static string[] QueryObjectNames(IntPtr[] handles, bool[] stuck) {
+        var names = new string[handles.Length];
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int next = 0;
+
+        while (next < handles.Length && clock.ElapsedMilliseconds < NameQueryBudgetMs) {
+            int first = next;
+            int current = first;
+            long currentStarted = clock.ElapsedMilliseconds;
+            bool abandoned = false;
+            var sync = new object();
+
+            var worker = new Thread(() => {
+                for (int i = first; i < handles.Length; i++) {
+                    lock (sync) {
+                        if (abandoned) return;
+                        current = i;
+                        currentStarted = clock.ElapsedMilliseconds;
+                    }
+                    string name = GetObjectNameInternal(handles[i]);
+                    lock (sync) {
+                        if (abandoned) return;
+                        names[i] = name;
+                    }
+                }
+            });
+            // Background: a worker stuck in the kernel must not keep the script alive.
+            worker.IsBackground = true;
+            worker.Start();
+
+            for (;;) {
+                if (worker.Join(20)) {
+                    next = handles.Length;
+                    break;
+                }
+                lock (sync) {
+                    if (clock.ElapsedMilliseconds >= NameQueryBudgetMs) {
+                        abandoned = true;
+                        stuck[current] = true;
+                        next = handles.Length;
+                        break;
+                    }
+                    if (clock.ElapsedMilliseconds - currentStarted > NameQueryTimeoutMs) {
+                        abandoned = true;
+                        stuck[current] = true;
+                        next = current + 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return names;
+    }
+
     public static List<HandleInfo> GetFileHandles(string basePath, HashSet<int> filterPids) {
         var handles = new List<HandleInfo>();
+        var candidates = new List<SYSTEM_HANDLE_ENTRY_EX>();
+        int ownPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+
+        // A handle this process opens itself, to learn the "File" object type
+        // index. The index differs between Windows builds, so it cannot be a
+        // constant; knowing it skips events, keys, sections, threads and the
+        // rest before any per-handle work.
+        FileStream probe = null;
+        long probeHandle = -1;
+        try {
+            probe = new FileStream(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
+                FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            probeHandle = probe.SafeFileHandle.DangerousGetHandle().ToInt64();
+        } catch {
+            // Unknown type index: fall back to querying every handle.
+        }
+        int fileTypeIndex = -1;
+
         int bufferSize = 0x10000;
         IntPtr buffer = Marshal.AllocHGlobal(bufferSize);
 
@@ -492,58 +609,77 @@ public class BlockingProcessDetector {
             if (status != 0) return handles;
 
             // SYSTEM_HANDLE_INFORMATION_EX starts with NumberOfHandles (IntPtr-sized)
-            long handleCount = IntPtr.Size == 8 
-                ? Marshal.ReadInt64(buffer) 
+            long handleCount = IntPtr.Size == 8
+                ? Marshal.ReadInt64(buffer)
                 : Marshal.ReadInt32(buffer);
-            IntPtr handlePtr = IntPtr.Add(buffer, IntPtr.Size * 2); // Skip NumberOfHandles + Reserved
+            long handleBase = buffer.ToInt64() + IntPtr.Size * 2; // Skip NumberOfHandles + Reserved
             int entrySize = Marshal.SizeOf(typeof(SYSTEM_HANDLE_ENTRY_EX));
 
-            var processHandles = new Dictionary<int, IntPtr>();
-
+            // The table holds every handle on the system. Read only the pid
+            // (second field) of each entry, and marshal the whole entry only for
+            // the few that matter.
             for (long i = 0; i < handleCount; i++) {
-                var entry = (SYSTEM_HANDLE_ENTRY_EX)Marshal.PtrToStructure(IntPtr.Add(handlePtr, (int)(i * entrySize)), typeof(SYSTEM_HANDLE_ENTRY_EX));
+                IntPtr entryPtr = new IntPtr(handleBase + i * entrySize);
+                int pid = (int)Marshal.ReadIntPtr(entryPtr, IntPtr.Size).ToInt64();
 
-                // UniqueProcessId is pointer-sized, convert to int
-                int pid = (int)entry.UniqueProcessId.ToInt64();
-
-                // Filter by blocking PIDs
-                if (!filterPids.Contains(pid)) continue;
-
-                IntPtr processHandle;
-                if (!processHandles.TryGetValue(pid, out processHandle)) {
-                    processHandle = OpenProcess(PROCESS_DUP_HANDLE, false, pid);
-                    processHandles[pid] = processHandle;
-                }
-
-                if (processHandle == IntPtr.Zero) continue;
-
-                IntPtr dupHandle;
-                if (!DuplicateHandle(processHandle, entry.HandleValue, GetCurrentProcess(), out dupHandle, 0, false, 2)) {
+                if (pid == ownPid && probeHandle != -1 && fileTypeIndex == -1) {
+                    var own = (SYSTEM_HANDLE_ENTRY_EX)Marshal.PtrToStructure(entryPtr, typeof(SYSTEM_HANDLE_ENTRY_EX));
+                    if (own.HandleValue.ToInt64() == probeHandle) fileTypeIndex = own.ObjectTypeIndex;
                     continue;
                 }
 
-                try {
-                    string name = GetObjectNameWithTimeout(dupHandle, 100); // 100ms timeout
-                    if (name == null) continue;
-                    if (!name.StartsWith("\\Device\\", StringComparison.OrdinalIgnoreCase)) continue;
-                    string dosPath = ConvertToDosPath(name);
-                    if (dosPath == null) continue;
-                    if (!IsPathUnder(dosPath, basePath)) continue;
-                    handles.Add(new HandleInfo {
-                        ProcessId = pid,
-                        Handle = (short)entry.HandleValue.ToInt64(),
-                        DosPath = dosPath
-                    });
-                } finally {
-                    CloseHandle(dupHandle);
-                }
-            }
-
-            foreach (var h in processHandles.Values) {
-                if (h != IntPtr.Zero) CloseHandle(h);
+                if (!filterPids.Contains(pid)) continue;
+                candidates.Add((SYSTEM_HANDLE_ENTRY_EX)Marshal.PtrToStructure(entryPtr, typeof(SYSTEM_HANDLE_ENTRY_EX)));
             }
         } finally {
             Marshal.FreeHGlobal(buffer);
+            if (probe != null) probe.Dispose();
+        }
+
+        var processHandles = new Dictionary<int, IntPtr>();
+        var dupHandles = new List<IntPtr>();
+        var owners = new List<SYSTEM_HANDLE_ENTRY_EX>();
+
+        foreach (var entry in candidates) {
+            if (fileTypeIndex != -1 && entry.ObjectTypeIndex != fileTypeIndex) continue;
+
+            int pid = (int)entry.UniqueProcessId.ToInt64();
+            IntPtr processHandle;
+            if (!processHandles.TryGetValue(pid, out processHandle)) {
+                processHandle = OpenProcess(PROCESS_DUP_HANDLE, false, pid);
+                processHandles[pid] = processHandle;
+            }
+            if (processHandle == IntPtr.Zero) continue;
+
+            IntPtr dupHandle;
+            if (!DuplicateHandle(processHandle, entry.HandleValue, GetCurrentProcess(), out dupHandle, 0, false, 2)) {
+                continue;
+            }
+            dupHandles.Add(dupHandle);
+            owners.Add(entry);
+        }
+
+        foreach (var h in processHandles.Values) {
+            if (h != IntPtr.Zero) CloseHandle(h);
+        }
+
+        var stuck = new bool[dupHandles.Count];
+        string[] names = QueryObjectNames(dupHandles.ToArray(), stuck);
+
+        for (int i = 0; i < dupHandles.Count; i++) {
+            if (!stuck[i]) CloseHandle(dupHandles[i]);
+
+            string name = names[i];
+            if (name == null) continue;
+            if (!name.StartsWith("\\Device\\", StringComparison.OrdinalIgnoreCase)) continue;
+            string dosPath = ConvertToDosPath(name);
+            if (dosPath == null) continue;
+            if (!IsPathUnder(dosPath, basePath)) continue;
+            handles.Add(new HandleInfo {
+                ProcessId = (int)owners[i].UniqueProcessId.ToInt64(),
+                Handle = (short)owners[i].HandleValue.ToInt64(),
+                DosPath = dosPath
+            });
         }
 
         return handles;
@@ -566,10 +702,7 @@ public class BlockingProcessDetector {
         # Enrich with command line
         $blocking = @()
         foreach ($proc in $cwdProcesses) {
-            try {
-                $cimProc = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Pid)" -ErrorAction SilentlyContinue
-                if ($cimProc) { $proc.CommandLine = $cimProc.CommandLine }
-            } catch {}
+            $proc.CommandLine = [BlockingProcessDetector]::GetProcessCommandLine($proc.Pid)
             if ([string]::IsNullOrEmpty($proc.CommandLine)) {
                 $proc.CommandLine = $proc.Name
             }
@@ -634,10 +767,7 @@ public class BlockingProcessDetector {
     # Step 3: Get command line and CWD for each process, and assign files
     foreach ($proc in $blockingProcesses) {
         # Get command line
-        try {
-            $cimProc = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Pid)" -ErrorAction SilentlyContinue
-            if ($cimProc) { $proc.CommandLine = $cimProc.CommandLine }
-        } catch {}
+        $proc.CommandLine = [BlockingProcessDetector]::GetProcessCommandLine($proc.Pid)
         if ([string]::IsNullOrEmpty($proc.CommandLine)) {
             $proc.CommandLine = $proc.Name
         }
