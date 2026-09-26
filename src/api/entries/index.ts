@@ -17,6 +17,7 @@ import { appEntries } from "./app";
 import { lockEntries } from "./lock";
 import { configEntries } from "./config";
 import { guideEntries } from "./guide";
+import { pluginEntries } from "./plugin";
 
 export type { EntryDeps } from "./deps";
 
@@ -45,6 +46,7 @@ export function createRegistry(deps: RegistryDeps, logger: Logger): OperationReg
     ...appEntries(full, logger),
     ...configEntries(full),
     ...guideEntries(full),
+    ...pluginEntries(full),
   ]);
   return box.current;
 }

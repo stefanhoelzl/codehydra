@@ -86,6 +86,9 @@ function setup(options: { env?: Record<string, string> } = {}): Setup {
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config,
       readUserGuide: async () => "",
+      plugins: () => {
+        throw new Error("this test reaches no plugins");
+      },
     },
     SILENT_LOGGER
   );
