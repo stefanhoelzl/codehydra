@@ -70,9 +70,7 @@ test("renders a file:// page with its stylesheet and scripts", async () => {
     .poll(
       () =>
         appLogEntries().some(
-          (e) =>
-            e.message === "Client connected" &&
-            String(e.context?.["workspace"] ?? "").endsWith("local-page")
+          (e) => e.message === "Client connected" && e.scope?.["ws"] === "local-page"
         ),
       { timeout: 120_000 }
     )
