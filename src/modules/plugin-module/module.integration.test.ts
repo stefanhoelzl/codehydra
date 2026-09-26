@@ -109,7 +109,7 @@ interface SetupOptions {
   /** What each script does, keyed by its body (trimmed). */
   readonly outcomes?: Record<string, ScriptOutcome>;
   readonly enabled?: boolean;
-  /** Seeds `plugins.enabled`. */
+  /** Seeds `plugins.state`. */
   readonly pluginsEnabled?: Record<string, boolean>;
   /** Seeds the pre-plugin `hooks.trusted`. */
   readonly legacyTrusted?: Record<string, boolean>;
@@ -358,7 +358,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   const stateService = createMockState({
     values: {
-      "plugins.enabled": options?.pluginsEnabled ?? {},
+      "plugins.state": options?.pluginsEnabled ?? {},
       "hooks.trusted": options?.legacyTrusted ?? {},
       ...(options?.tracking !== undefined && { "auto-workspaces": options.tracking }),
     },
@@ -378,7 +378,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   ]);
   const config = createMockConfig({
     defaults: {
-      "hooks.enabled": options?.enabled ?? true,
+      "plugins.enabled": options?.enabled ?? true,
       "paths.bash": null,
       ...(options?.legacySources !== undefined && {
         "auto-workspace.sources": options.legacySources,
@@ -830,7 +830,7 @@ describe("trust", () => {
       ["b", true],
     ]);
     expect(setup.ran).toEqual(["echo a"]);
-    expect(setup.stateService.getEffective()["plugins.enabled"]).toEqual({
+    expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
       [`workspace:${new Path(PROJECT_ROOT).toString()}:a`]: true,
       [`workspace:${new Path(PROJECT_ROOT).toString()}:b`]: false,
     });
@@ -848,7 +848,7 @@ describe("trust", () => {
     await openWorkspace(setup);
 
     expect(setup.ran).toEqual(["echo a"]);
-    expect(setup.stateService.getEffective()["plugins.enabled"]).toEqual({});
+    expect(setup.stateService.getEffective()["plugins.state"]).toEqual({});
   });
 
   it("takes a project's answer from before plugins for its workspace plugins", async () => {
@@ -880,19 +880,34 @@ describe("trust", () => {
     });
     await setup.module.moveProjects([{ from: PROJECT_ROOT, to: moved }]);
 
-    expect(setup.stateService.getEffective()["plugins.enabled"]).toEqual({
+    expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
       [`workspace:${new Path(moved).toString()}:a`]: true,
     });
   });
 });
 
 describe("kill switch", () => {
-  it("runs no hooks when hooks.enabled is false", async () => {
+  it("runs no hooks when plugins.enabled is false", async () => {
     const setup = createTestSetup({
       enabled: false,
       local: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
     });
     await openWorkspace(setup);
+
+    expect(setup.ran).toEqual([]);
+  });
+
+  it("runs no automations either", async () => {
+    const setup = createTestSetup({
+      enabled: false,
+      local: {
+        "notes.yaml":
+          "automations:\n  a:\n    action: log\n    script: list\n    template: { message: x }\n",
+      },
+      outcomes: { list: { stdout: "[]" } },
+    });
+
+    await setup.startApp();
 
     expect(setup.ran).toEqual([]);
   });

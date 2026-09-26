@@ -280,11 +280,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   const platform = deps.platform ?? process.platform;
   const env = deps.env ?? process.env;
 
-  const hooksEnabled = deps.config.register("hooks.enabled", {
+  const pluginsEnabled = deps.config.register("plugins.enabled", {
     default: true,
-    description: "Run plugin hooks (the switch for when one is broken)",
+    description: "Run plugins: hooks and automations (the switch for when one is broken)",
     applies: "live",
     ...storeBoolean(),
+    legacyNames: { "hooks.enabled": (value) => (typeof value === "boolean" ? value : undefined) },
   });
 
   const folder = storeFolder();
@@ -300,7 +301,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     settingsControl: { kind: "string" },
   });
 
-  const enabledState = deps.stateService.register<Record<string, boolean>>("plugins.enabled", {
+  const enabledState = deps.stateService.register<Record<string, boolean>>("plugins.state", {
     default: {},
     description: "Plugins enabled or disabled (unlisted: local enabled, workspace asked)",
     ...booleanMapStore,
@@ -887,10 +888,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     }
   }
 
-  /** The global switch — the way out when a plugin's hook is broken. */
+  /** The global switch — the way out when a plugin is broken. */
   function allowed(): boolean {
-    if (hooksEnabled.get()) return true;
-    deps.logger.debug("Plugin hooks are disabled by configuration");
+    if (pluginsEnabled.get()) return true;
+    deps.logger.debug("Plugins are disabled by configuration");
     return false;
   }
 
@@ -1056,6 +1057,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     dispatcher: deps.dispatcher,
     configService: deps.config,
     stateService: deps.stateService,
+    enabled: allowed,
     sources: automationSources,
     runScript: runAutomationScript,
     invokeAction: async (action, input) => {

@@ -375,6 +375,7 @@ function createSetup(options?: {
 
   const mockConfig = createMockConfig({ defaults: { ...(options?.configDefaults ?? {}) } });
   let sourcesYaml = options?.sources ?? null;
+  let enabled = true;
   /** Actions invoked for non-create automations, in order. */
   const invoked: Array<{ action: OperationName; input: Record<string, unknown> }> = [];
   /** Actions that throw instead. */
@@ -396,6 +397,7 @@ function createSetup(options?: {
     dispatcher,
     configService: mockConfig,
     stateService: state,
+    enabled: () => enabled,
     sources: async () =>
       parseSources(sourcesYaml).sources.map((source) => {
         const action =
@@ -449,6 +451,9 @@ function createSetup(options?: {
     failingActions,
     setSources: (yaml: string | null): void => {
       sourcesYaml = yaml;
+    },
+    setEnabled: (value: boolean): void => {
+      enabled = value;
     },
     openProjectOp,
     openWorkspaceOp,
@@ -1199,5 +1204,25 @@ describe("renameTracking", () => {
     );
 
     expect(Object.keys(entriesOf(state)).sort()).toEqual(["auto-workspaces/gh/1", "other/2"]);
+  });
+});
+
+describe("switched off", () => {
+  it("skips whole cycles, forgetting nothing it tracks", async () => {
+    vi.useFakeTimers();
+    const { dispatcher, cmd, state, setEnabled, setSources, openWorkspaceOp } = createSetup({
+      sources: sourceYaml("gh"),
+    });
+    cmd.items = [{ id: "1" }];
+    await dispatcher.dispatch(startIntent());
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+
+    setEnabled(false);
+    setSources(null); // would forget gh/1, were the cycle run
+    cmd.items = [{ id: "2" }];
+    await tick();
+
+    expect(entriesOf(state)).toHaveProperty("gh/1");
+    expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 });
