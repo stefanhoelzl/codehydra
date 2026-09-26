@@ -14,7 +14,7 @@
  * So it cannot be how we stop our OWN processes, and it no longer is:
  * - workspace-lifecycle-module claims the workspace, and the git and sidekick
  *   paths refuse to start new work in it,
- * - the plugin server asks the agent to exit and waits for it,
+ * - the API server asks the agent to exit and waits for it,
  * - the presenter releases the IDE frame so the IDE server lets go — but only
  *   AFTER the above, gated on the "agent-stopped" capability. Releasing it
  *   earlier disconnects the IDE client out from under the agent exit, which

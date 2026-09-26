@@ -2586,7 +2586,7 @@ describe("PresentationModule - background-focus suppression", () => {
     expect(await interceptor(module).before(other)).toBe(other);
   });
 
-  for (const source of ["mcp", "plugin-server", "auto-workspace"] as const) {
+  for (const source of ["mcp", "api-server", "auto-workspace"] as const) {
     it(`downgrades stealFocus for a background ${source} open while the sidebar is expanded`, async () => {
       const deps = createDeps();
       // Steady state with no workspace ⇒ creation panel ⇒ hover (expanded).

@@ -16,7 +16,7 @@ import type { OperationName } from "../names";
 import { MCP_MAP } from "./mcp-map";
 import { CLI_MAP } from "./cli-map";
 
-/** Channel the plugin wire answers describe requests on. */
+/** Channel the API server wire answers describe requests on. */
 export const DESCRIBE_CHANNEL = "api:registry:describe";
 
 export type DescribeTarget = "mcp" | "cli";

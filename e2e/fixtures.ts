@@ -424,7 +424,7 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
  * Wait until the app has published its connection details.
  *
  * `launchApp` returns once the UI is visible, and the UI is shown at the
- * `show-ui` hook point — two points before `start`, where the plugin server
+ * `show-ui` hook point — two points before `start`, where the API server
  * binds and the port and token are written. So anything that reads them
  * immediately after launch legitimately races startup.
  */
@@ -439,10 +439,10 @@ export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void
       // writes them in two separate persists, so a reader can catch the file
       // between them; the port is written last precisely so that cannot happen,
       // and checking both here keeps this honest if that order ever changes.
-      const token = state["plugin.token"];
+      const token = state["api.token"];
       if (
-        typeof state["plugin.port"] === "number" &&
-        state["plugin.port"] > 0 &&
+        typeof state["api.port"] === "number" &&
+        state["api.port"] > 0 &&
         typeof token === "string" &&
         token.length > 0
       ) {

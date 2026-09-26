@@ -91,7 +91,7 @@ export const deleteWorkspacePayloadSchema = z
     /**
      * The dispatch is user-interactive: the "confirm" hook point runs before the
      * pipeline, parking the dispatch on a confirmation dialog that contributes
-     * keepBranch or cancels. Programmatic callers (MCP, plugin, auto-workspace)
+     * keepBranch or cancels. Programmatic callers (MCP, API server, automations)
      * omit it and never see a dialog. Only honored on the full-pipeline path
      * (removeWorktree, not force).
      */

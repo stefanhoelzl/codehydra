@@ -16,8 +16,8 @@
 import { dirname, join } from "node:path";
 
 /** State keys the CLI needs. Written by cli-module at app:start. */
-export const STATE_PORT_KEY = "plugin.port";
-export const STATE_TOKEN_KEY = "plugin.token";
+export const STATE_PORT_KEY = "api.port";
+export const STATE_TOKEN_KEY = "api.token";
 
 export interface DiscoveryFs {
   readFileSync(path: string, encoding: "utf-8"): string;
@@ -61,13 +61,13 @@ export function resolveDataDir(selfPath: string, fs: DiscoveryFs, override?: str
 export interface ConnectionEnv {
   /** Overrides everything: the instance whose data directory this is. */
   readonly _CH_DATA_DIR?: string | undefined;
-  readonly _CH_PLUGIN_PORT?: string | undefined;
-  readonly _CH_PLUGIN_TOKEN?: string | undefined;
+  readonly _CH_API_PORT?: string | undefined;
+  readonly _CH_API_TOKEN?: string | undefined;
 }
 
 /**
- * Pick the connection: `_CH_DATA_DIR`, then `_CH_PLUGIN_PORT` +
- * `_CH_PLUGIN_TOKEN`, then the data directory this copy of `ch` belongs to.
+ * Pick the connection: `_CH_DATA_DIR`, then `_CH_API_PORT` +
+ * `_CH_API_TOKEN`, then the data directory this copy of `ch` belongs to.
  *
  * The port and token exist so `ch mcp` can run with no state file to read, as
  * it does under OpenCode's server. `_CH_DATA_DIR` beats them because it is the
@@ -84,8 +84,8 @@ export function chooseConnection(
   const override = env._CH_DATA_DIR || undefined;
   const dataDir = resolveDataDir(selfPath, fs, override);
   if (override === undefined) {
-    const port = Number(env._CH_PLUGIN_PORT);
-    const token = env._CH_PLUGIN_TOKEN;
+    const port = Number(env._CH_API_PORT);
+    const token = env._CH_API_TOKEN;
     if (Number.isInteger(port) && port > 0 && token) {
       return { port, token, dataDir };
     }
@@ -120,7 +120,7 @@ export function readConnection(dataDir: string, fs: DiscoveryFs): Connection {
   const port = state[STATE_PORT_KEY];
   const token = state[STATE_TOKEN_KEY];
 
-  // A zero port is the sentinel the app writes when the plugin server is not
+  // A zero port is the sentinel the app writes when the API server is not
   // running, and is as good as absent from here.
   if (typeof port !== "number" || port <= 0 || typeof token !== "string" || token.length === 0) {
     throw new DiscoveryError(

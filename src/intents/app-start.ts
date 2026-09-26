@@ -38,7 +38,7 @@
  * sub-operation. Setup manages its own UI (shows/hides setup screen).
  *
  * Aborts on error in any hook. Services that are optional must handle
- * their own errors internally (e.g., PluginServer graceful degradation in
+ * their own errors internally (e.g., ApiServer graceful degradation in
  * IdeServerModule).
  *
  * Contract schemas (item 2): zod is the single source of truth. Payload, per-hook-point

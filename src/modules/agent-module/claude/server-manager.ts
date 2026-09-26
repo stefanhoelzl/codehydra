@@ -150,7 +150,7 @@ function hookInterpreter(mcpConfig: McpConfig | null, logger: Logger): string {
  *
  * With no config the server is omitted rather than written with empty strings:
  * the template used to emit `command: ""`, so an agent started before the
- * plugin server bound was handed an MCP server whose launch command was the
+ * API server bound was handed an MCP server whose launch command was the
  * empty string. The file itself is still written — the wrapper refuses to
  * launch without `_CH_CLAUDE_MCP_CONFIG` pointing at one — and Claude merges an
  * empty `mcpServers` harmlessly.
@@ -168,8 +168,8 @@ export function buildMcpConfigFile(
         args: [mcpConfig.cliPath, "mcp"],
         env: {
           _CH_WORKSPACE_PATH: workspacePath,
-          _CH_PLUGIN_PORT: String(mcpConfig.port),
-          _CH_PLUGIN_TOKEN: mcpConfig.token,
+          _CH_API_PORT: String(mcpConfig.port),
+          _CH_API_TOKEN: mcpConfig.token,
         },
       },
     },
@@ -1166,7 +1166,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private async generateConfigFiles(workspacePath: string): Promise<void> {
     // Config directory is in the app temp dir, not in the workspace.
     // Temp, not data: the generated files bake in this launch's bridge port,
-    // plugin port and plugin token, so a file that outlives the launch is not
+    // API server port and API token, so a file that outlives the launch is not
     // just garbage but actively wrong. temp-dir-module clears the temp root on
     // every app:start, which is exactly the lifetime these files want.
     // Using a hash of workspace path to make it unique

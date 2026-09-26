@@ -20,7 +20,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
-import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/plugin";
+import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/api-server";
 import { connect, NotConnectedError, type Client } from "./client";
 import type { Connection } from "./discovery";
 

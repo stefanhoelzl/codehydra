@@ -270,14 +270,14 @@ describe("ClaudeCodeProvider integration", () => {
       expect(env).toHaveProperty("_CH_CLAUDE_MCP_CONFIG");
       expect(env).toHaveProperty("_CH_CLAUDE_SYSTEM_PROMPT");
       expect(env).toHaveProperty("_CH_BRIDGE_PORT");
-      expect(env).toHaveProperty("_CH_PLUGIN_TOKEN");
+      expect(env).toHaveProperty("_CH_API_TOKEN");
       expect(env).toHaveProperty("_CH_WORKSPACE_PATH");
 
       // Check values
       expect(env._CH_BRIDGE_PORT).toBe(String(port));
       // The token lets `ch` in this terminal reach CodeHydra; the MCP server has
       // no port of its own any more, being a stdio subprocess.
-      expect(env._CH_PLUGIN_TOKEN).toBe("test-token");
+      expect(env._CH_API_TOKEN).toBe("test-token");
       expect(env._CH_WORKSPACE_PATH).toBe(workspacePath);
       expect(env._CH_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
       expect(env._CH_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
@@ -306,7 +306,7 @@ describe("ClaudeCodeProvider integration", () => {
       await providerNoMcp.connect(port);
 
       const env = providerNoMcp.getEnvironmentVariables();
-      expect(env._CH_PLUGIN_TOKEN).toBe("");
+      expect(env._CH_API_TOKEN).toBe("");
 
       providerNoMcp.dispose();
       await serverManagerNoMcp.dispose();

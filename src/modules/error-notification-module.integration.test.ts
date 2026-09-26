@@ -153,8 +153,8 @@ describe("ErrorNotificationModule", () => {
       payload: {
         workspaceName: "plugin-workspace",
         projectPath: projPath("/projects/test"),
-        error: "Some plugin error",
-        source: "plugin-server",
+        error: "Some API server error",
+        source: "api-server",
       },
     };
 

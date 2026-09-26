@@ -2,7 +2,7 @@
  * ShowNotificationOperation - Raise or update a CodeHydra sidebar notification.
  *
  * The one way anything raises a sidebar card: in-process modules dispatch it,
- * and the registry exposes it (`notification.show`) to `ch`, MCP and the plugin
+ * and the registry exposes it (`notification.show`) to `ch`, MCP and the API server
  * wire. The presenter owns the cards and does the work in the "show" hook.
  *
  * Runs two steps:

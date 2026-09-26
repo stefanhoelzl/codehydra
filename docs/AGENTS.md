@@ -271,7 +271,7 @@ These are the event names since OpenCode 1.1.1; the older `permission.updated` i
 
 A modal in the workspace's editor — a notification, quick pick or input box raised through `vscode:show-message` (MCP `ui_show_message`, `ch`, repo hooks; with or without action buttons) — blocks it on the user, so the workspace reads **idle** while one is open, whatever the agent is doing and even with no agent session.
 
-- **Lifetime**: the sidekick acks every modal only when it is dismissed. The plugin server counts open modals per workspace from emit until that ack or a socket disconnect, independent of the caller's wait: a notification without actions returns to its caller at once, and a call's `timeout` ends only the wait (VS Code cannot close a modal from code). Notifications have no default timeout.
+- **Lifetime**: the sidekick acks every modal only when it is dismissed. The API server counts open modals per workspace from emit until that ack or a socket disconnect, independent of the caller's wait: a notification without actions returns to its caller at once, and a call's `timeout` ends only the wait (VS Code cannot close a modal from code). Notifications have no default timeout.
 - **Edges**: the 0↔1 transitions are dispatched as `vscode:modal-changed` (serialized per workspace), resolved to the workspace's agent module like `agent:lifecycle`, which calls `setModalOpen`.
 - **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while a modal is open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core) is corrected on the next edge. `getStatus` returns the effective status.
 - Parking is ordinary idle: the badge, chime and OS notification follow their usual idle-count rules.
@@ -526,7 +526,7 @@ const myAgentProvider = createMyAgentModuleProvider({ ... });
 dispatcher.registerModule(createAgentModule(myAgentProvider, { dispatcher, logger, agentConfig }));
 ```
 
-Also extend the `AgentType` union (`src/shared/plugin-protocol`) — this is an interface change requiring approval (see CLAUDE.md).
+Also extend the `AgentType` union (`src/shared/api-protocol`) — this is an interface change requiring approval (see CLAUDE.md).
 
 ---
 

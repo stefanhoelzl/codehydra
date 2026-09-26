@@ -13,7 +13,7 @@
  * This file is type-only: it is checked by tsc but never imported or bundled.
  */
 import type * as shared from "../../../src/shared/api/types";
-import type { WorkspaceCreateRequest, LogContext } from "../../../src/shared/plugin-protocol";
+import type { WorkspaceCreateRequest, LogContext } from "../../../src/shared/api-protocol";
 import type * as api from "../api";
 
 type Expect<T extends true> = T;

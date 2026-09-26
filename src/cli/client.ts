@@ -1,7 +1,7 @@
 /**
  * The CLI's connection to a running CodeHydra.
  *
- * Rides the plugin server's Socket.IO wire as a distinct client kind. Unlike the
+ * Rides the API server's Socket.IO wire as a distinct client kind. Unlike the
  * sidekick, a CLI connection is short-lived and non-exclusive: it never becomes
  * the workspace's registered socket, so it cannot displace the extension or
  * strand a teardown that is waiting on one.
@@ -18,7 +18,7 @@ import { API_ERROR_CATEGORIES, type ApiErrorCategory } from "../api/errors";
 import type { Connection } from "./discovery";
 
 /** Result wrapper every command is acknowledged with. */
-export type PluginResult<T> =
+export type ApiResult<T> =
   | { readonly success: true; readonly data: T }
   | { readonly success: false; readonly error: string; readonly category?: unknown };
 
@@ -162,13 +162,13 @@ export async function connect(options: ClientOptions): Promise<Client> {
       // the call. A long-lived client (`ch mcp`) meets this after a suspend.
       if (!socket.connected) throw new NotConnectedError();
 
-      const result = await new Promise<PluginResult<T>>((resolve, reject) => {
+      const result = await new Promise<ApiResult<T>>((resolve, reject) => {
         // With no timeout, this is the only thing that ends a call the app will
         // never answer: without it a lost app would hang the command forever.
         const onDisconnect = () => reject(new UnreachableError("CodeHydra closed the connection"));
         socket.once("disconnect", onDisconnect);
 
-        const done = (value: PluginResult<T>) => {
+        const done = (value: ApiResult<T>) => {
           socket.off("disconnect", onDisconnect);
           resolve(value);
         };

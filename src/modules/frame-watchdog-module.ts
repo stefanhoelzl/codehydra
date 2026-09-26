@@ -15,8 +15,8 @@
  * reloading again would only loop.
  *
  * Subscribes to:
- * - plugin transport connect/disconnect (not intents: the sidekick socket is
- *   the only witness, and it lives in the plugin server)
+ * - API server transport connect/disconnect (not intents: the sidekick socket is
+ *   the only witness, and it lives in the API server)
  * - ide-server:restarted / ide-server:sessions-stale: those already reload
  *   every frame, so pending verdicts are dropped rather than reloading twice
  *
@@ -28,7 +28,7 @@ import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import type { Logger } from "../boundaries/platform/logging";
-import type { WorkspaceDisconnect } from "./plugin-server-module";
+import type { WorkspaceDisconnect } from "./api-server-module";
 import type { UiPresenter } from "./presentation/presentation-module";
 
 /**

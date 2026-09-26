@@ -1,7 +1,7 @@
 /**
  * AgentLifecycleOperation - Applies an agent terminal lifecycle transition.
  *
- * The sidekick reports when the agent terminal opens or closes (over the plugin
+ * The sidekick reports when the agent terminal opens or closes (over the API server
  * socket). This operation routes that signal into the owning agent provider,
  * which drives the status state machine:
  *  - "open"  → WrapperStart (Claude) / markActive (OpenCode)
@@ -32,7 +32,7 @@ export const AGENT_LIFECYCLE_OPERATION_ID = "agent-lifecycle";
 // =============================================================================
 
 /**
- * Local schema for `AgentLifecycleEvent` (`"open" | "close"`, from shared/plugin-protocol).
+ * Local schema for `AgentLifecycleEvent` (`"open" | "close"`, from shared/api-protocol).
  * That shared type is not part of the intent `contract` vocabulary, so it is defined here;
  * its inferred type is structurally identical to `AgentLifecycleEvent`.
  */

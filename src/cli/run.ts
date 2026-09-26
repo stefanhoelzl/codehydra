@@ -157,7 +157,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
  *
  * Derived from the operation name rather than carried in the descriptor: the CLI
  * calls operations by name, and the app maps that to its own channel. Keeping
- * the plugin channel out of the CLI's view is what stops the CLI depending on
+ * the API server channel out of the CLI's view is what stops the CLI depending on
  * the extension-facing contract.
  */
 function channelFor(descriptor: OperationDescriptor): string {

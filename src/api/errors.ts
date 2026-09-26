@@ -2,8 +2,8 @@
  * Registry error categories.
  *
  * The category is what adapters translate into their own failure vocabulary:
- * the CLI maps it to an exit code, MCP to `isError`, the plugin server to a
- * `PluginResult` error string. Keeping the category on the error means no
+ * the CLI maps it to an exit code, MCP to `isError`, the API server to a
+ * `ApiResult` error string. Keeping the category on the error means no
  * adapter has to string-match a message to decide how a failure is reported.
  */
 

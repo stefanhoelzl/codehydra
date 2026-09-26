@@ -2,7 +2,7 @@
  * Workspace registry entries.
  *
  * These carry the divergence resolutions from planning/CLI.md. Where MCP and the
- * plugin server previously disagreed, one behavior is defined here and any
+ * API server previously disagreed, one behavior is defined here and any
  * remaining difference is expressed as an adapter `defaults`/`pick` rather than
  * as a second implementation.
  */
@@ -68,7 +68,7 @@ function parseModel(model: string, backend: "claude" | "opencode"): PromptModel 
  *
  * The creation panel emits a backend-specific arm carrying prompt, model,
  * permission mode and named agent; this is the same projection for callers that
- * come in through the CLI, MCP or the plugin, so the two surfaces offer the same
+ * come in through the CLI, MCP or the API server, so the two surfaces offer the same
  * options. Only with no backend named at all do we fall back to the option-less
  * "default" arm — which is why an option that needs a backend is a usage error
  * rather than a silent drop.
@@ -225,7 +225,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       "discover paths).",
     input: z.object({
       // Divergence 4: optional, inferred from the caller when absent, so the MCP
-      // caller can target a project and the plugin caller can stay implicit.
+      // caller can target a project and the API server caller can stay implicit.
       project: z
         .string()
         .min(1)
@@ -324,9 +324,9 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     input: z.object({
       ...targetFields,
       // Divergence 1: one default everywhere. `api:workspace:delete` has no
-      // caller today, so nothing real relied on the plugin's inverted `true`.
+      // caller today, so nothing real relied on the API server's inverted `true`.
       keepBranch: z.boolean().optional().default(false),
-      // Divergence 3: the plugin surface gains this.
+      // Divergence 3: the API server surface gains this.
       ignoreWarnings: z.boolean().optional().default(false),
       // Divergence 2: blocking is the single behavior; opt out per call.
       wait: z.boolean().optional().default(true),

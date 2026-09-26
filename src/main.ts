@@ -159,7 +159,7 @@ import { ResolveProjectOperation } from "./intents/resolve-project";
 import { createExtensionModule } from "./modules/extension-module";
 import { createViewModule } from "./modules/view-module";
 import { createIdeServerModule } from "./modules/ide-server-module/ide-server-module";
-import { createPluginServerModule } from "./modules/plugin-server-module";
+import { createApiServerModule } from "./modules/api-server-module";
 import { createAgentModule } from "./modules/agent-module/agent-module";
 import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
@@ -594,7 +594,7 @@ const ideServerModule = createIdeServerModule({
 });
 
 // The CLI's scripts, token and published connection details. Constructed before
-// the plugin server so its token can be read lazily from the handshake.
+// the API server so its token can be read lazily from the handshake.
 const cliModule = createCliModule({
   stateService,
   logger: loggingService.createLogger("cli"),
@@ -608,11 +608,11 @@ const cliBundlePath = pathProvider.dataPath("bin/ch.cjs").toNative();
  *
  * `ch mcp` is given everything explicitly at launch — interpreter, bundle, port
  * and token — so it reads no state file and needs nothing on PATH. Null until
- * the plugin server has bound and published a token, which is the same condition
+ * the API server has bound and published a token, which is the same condition
  * under which no agent should be told to connect.
  */
 const resolveMcpConfig = (): McpConfig | null => {
-  const port = pluginServerModule.port();
+  const port = apiServerModule.port();
   const token = cliModule.token();
   const nodePath = ideServerModule.nodePath();
   if (port === null || token === null) return null;
@@ -622,7 +622,7 @@ const resolveMcpConfig = (): McpConfig | null => {
 /**
  * Every operation the outside world can reach, in one place.
  *
- * The MCP, plugin and CLI adapters are generic loops over this; none of them
+ * The MCP, API server and CLI adapters are generic loops over this; none of them
  * holds per-operation code, so an operation cannot exist on one surface and be
  * missing or behave differently on another.
  */
@@ -646,7 +646,7 @@ const operationRegistry = createRegistry(
   apiLogger
 );
 
-const pluginServerModule = createPluginServerModule({
+const apiServerModule = createApiServerModule({
   portManager: networkLayer,
   dispatcher,
   appLayer,
@@ -728,7 +728,7 @@ const hooksModule = createHooksModule({
   // workspace) without its author having to locate the binary.
   binDir: pathProvider.dataPath("bin"),
   sink: createHookOutputSink({
-    transport: pluginServerModule,
+    transport: apiServerModule,
     logger: loggingService.createLogger("hooks"),
   }),
 });
@@ -830,7 +830,7 @@ const powerModule = createPowerModule({
   logger: loggingService.createLogger("power"),
 });
 const frameWatchdogModule = createFrameWatchdogModule({
-  transport: pluginServerModule,
+  transport: apiServerModule,
   frames: presentationModule,
   logger: loggingService.createLogger("view"),
 });
@@ -907,7 +907,7 @@ const cleanupModule = createCleanupModule({
   logger: loggingService.createLogger("cleanup"),
   isPackagedBuild: !buildInfo.isDevelopment,
   rules: [
-    // Agent hook/MCP configs. They bake in this launch's ports and plugin token,
+    // Agent hook/MCP configs. They bake in this launch's ports and API token,
     // so they were never data: they now live under the temp root.
     { kind: "retire", path: "claude/configs" },
     // The IDE server we shipped before VSCodium. Nothing has read it since the
@@ -1047,7 +1047,7 @@ const focusTerminal = (workspacePath: string): void => {
   //
   // `isConnected`, not `isReady`: a listening server says nothing about *this*
   // workspace, so the server-level check let exactly the torn-down case through.
-  if (!pluginServerModule.isConnected(workspacePath)) return;
+  if (!apiServerModule.isConnected(workspacePath)) return;
 
   void dispatcher
     .dispatch({
@@ -1111,7 +1111,7 @@ dispatcher.registerModule(idempotencyModule);
 // failed. See workspace-lifecycle-module.ts.
 dispatcher.registerModule(workspaceLifecycleModule);
 dispatcher.registerModule(viewModule);
-dispatcher.registerModule(pluginServerModule.module);
+dispatcher.registerModule(apiServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);

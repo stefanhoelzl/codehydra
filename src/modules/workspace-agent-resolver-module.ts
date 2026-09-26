@@ -14,7 +14,7 @@ import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-pr
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import type { Logger } from "../boundaries/platform/logging-types";
-import type { AgentType } from "../shared/plugin-protocol";
+import type { AgentType } from "../shared/api-protocol";
 import { Path } from "../utils/path/path";
 
 import {

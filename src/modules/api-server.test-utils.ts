@@ -1,5 +1,5 @@
 /**
- * Test utilities for plugin server module testing.
+ * Test utilities for API server module testing.
  *
  * Provides helpers for creating test environments with real Socket.IO
  * (polling transport) and mock dispatchers for boundary and integration tests.
@@ -14,15 +14,15 @@ import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
-  PluginResult,
+  ApiResult,
   CommandRequest,
   AgentType,
-} from "../shared/plugin-protocol";
+} from "../shared/api-protocol";
 import {
-  createPluginServerModule,
-  type PluginServerModuleDeps,
-  type PluginServerOptions,
-} from "./plugin-server-module";
+  createApiServerModule,
+  type ApiServerModuleDeps,
+  type ApiServerOptions,
+} from "./api-server-module";
 import { DefaultNetworkLayer } from "../boundaries/platform/network";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
@@ -64,7 +64,7 @@ import type { WorkspacePath } from "../intents/contract";
 // ============================================================================
 
 /**
- * Typed client socket for connecting to the plugin server in tests.
+ * Typed client socket for connecting to the API server in tests.
  */
 export type TestClientSocket = ClientSocket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -85,7 +85,7 @@ export interface TestClientOptions {
 }
 
 /**
- * Create a Socket.IO client for testing the plugin server.
+ * Create a Socket.IO client for testing the API server.
  *
  * @param port - Port to connect to
  * @param options - Client configuration
@@ -155,9 +155,9 @@ export async function waitForDisconnect(client: TestClientSocket, timeoutMs = 50
  */
 export interface MockCommandHandlerOptions {
   /** Default result to return. Default: { success: true, data: undefined } */
-  readonly defaultResult?: PluginResult<unknown>;
+  readonly defaultResult?: ApiResult<unknown>;
   /** Map of command names to specific results */
-  readonly commandResults?: Record<string, PluginResult<unknown>>;
+  readonly commandResults?: Record<string, ApiResult<unknown>>;
   /** Delay before responding in ms. Default: 0 */
   readonly delayMs?: number;
 }
@@ -167,12 +167,12 @@ export interface MockCommandHandlerOptions {
  */
 export function createMockCommandHandler(
   options?: MockCommandHandlerOptions
-): Mock<(request: CommandRequest, ack: (result: PluginResult<unknown>) => void) => void> {
+): Mock<(request: CommandRequest, ack: (result: ApiResult<unknown>) => void) => void> {
   const defaultResult = options?.defaultResult ?? { success: true, data: undefined };
   const commandResults = options?.commandResults ?? {};
   const delayMs = options?.delayMs ?? 0;
 
-  return vi.fn((request: CommandRequest, ack: (result: PluginResult<unknown>) => void) => {
+  return vi.fn((request: CommandRequest, ack: (result: ApiResult<unknown>) => void) => {
     const result = commandResults[request.command] ?? defaultResult;
 
     if (delayMs > 0) {
@@ -224,7 +224,7 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    return (capabilities.pluginPort as number | null) ?? null;
+    return (capabilities.apiPort as number | null) ?? null;
   }
 }
 
@@ -325,11 +325,11 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
 }
 
 // ============================================================================
-// Plugin Server Test Environment
+// API Server Test Environment
 // ============================================================================
 
 /**
- * Create a plugin server test environment with real Socket.IO (polling transport).
+ * Create a API server test environment with real Socket.IO (polling transport).
  *
  * The server is started via the module's app:start hook, just like in production.
  * A mock dispatcher is injected so that API calls can be verified without real operations.
@@ -339,8 +339,8 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
  * - showMessage: dispatches VscodeShowMessageIntent
  * - setWorkspaceConfig: dispatches workspace:open finalize
  */
-export async function createPluginServerEnv(
-  options?: PluginServerOptions,
+export async function createApiServerEnv(
+  options?: ApiServerOptions,
   extra?: { registry?: OperationRegistry; cliToken?: string | null }
 ) {
   const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -359,7 +359,7 @@ export async function createPluginServerEnv(
     },
   } as unknown as Dispatcher;
 
-  const moduleDeps: PluginServerModuleDeps = {
+  const moduleDeps: ApiServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
     appLayer: { openPath: async () => {} },
@@ -372,8 +372,8 @@ export async function createPluginServerEnv(
     },
   };
 
-  const pluginServer = createPluginServerModule(moduleDeps);
-  const { module } = pluginServer;
+  const apiServer = createApiServerModule(moduleDeps);
+  const { module } = apiServer;
 
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({ logger: createMockLogger() });
@@ -405,7 +405,7 @@ export async function createPluginServerEnv(
     networkLayer,
     testDispatcher,
     /** The module handle, for probes like `isConnected` that read live state. */
-    pluginServer,
+    apiServer,
 
     createClient(workspacePath: WorkspacePath): TestClientSocket {
       const client = createTestClient(this.port, { workspacePath });

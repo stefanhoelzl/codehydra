@@ -21,7 +21,7 @@
  * the command then runs under that outer hold and leaves it in place.
  */
 
-import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/plugin";
+import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/api-server";
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
 import { parseArgs, readFormat, UsageError } from "./args";
 import { CallError, type Client } from "./client";

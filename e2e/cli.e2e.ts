@@ -76,9 +76,9 @@ test.describe("ch CLI", () => {
       unknown
     >;
 
-    expect(typeof state["plugin.port"]).toBe("number");
-    expect(state["plugin.port"]).toBeGreaterThan(0);
-    expect(typeof state["plugin.token"]).toBe("string");
+    expect(typeof state["api.port"]).toBe("number");
+    expect(state["api.port"]).toBeGreaterThan(0);
+    expect(typeof state["api.token"]).toBe("string");
   });
 
   test("connects, authenticates and answers an app-global command", () => {

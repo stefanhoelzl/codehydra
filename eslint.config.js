@@ -149,7 +149,7 @@ export default tseslint.config(
   // zod confinement: zod is the intent system's dependency (src/intents/contract, item 2).
   // Renderer, preload, and shared consume contract *types* (type-only, erased at build) — they
   // must not import zod directly, so contract types never pull zod into those bundles. Two
-  // pre-existing shared IPC/plugin message validators (ui-event, plugin-protocol) are exempted.
+  // pre-existing shared IPC/API message validators (ui-event, api-protocol) are exempted.
   {
     files: [
       "src/renderer/**/*.ts",
@@ -157,7 +157,7 @@ export default tseslint.config(
       "src/preload/**/*.ts",
       "src/shared/**/*.ts",
     ],
-    ignores: ["src/shared/ui-event.ts", "src/shared/plugin-protocol.ts"],
+    ignores: ["src/shared/ui-event.ts", "src/shared/api-protocol.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -166,7 +166,7 @@ export default tseslint.config(
             {
               group: ["zod", "zod/*"],
               message:
-                "zod is confined to the intent system (src/intents/contract). Import contract types (type-only) or a re-exported schema value; do not import zod in renderer/preload/shared. (Legacy exceptions: src/shared/ui-event.ts, src/shared/plugin-protocol.ts.)",
+                "zod is confined to the intent system (src/intents/contract). Import contract types (type-only) or a re-exported schema value; do not import zod in renderer/preload/shared. (Legacy exceptions: src/shared/ui-event.ts, src/shared/api-protocol.ts.)",
             },
           ],
         },

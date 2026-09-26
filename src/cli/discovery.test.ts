@@ -98,7 +98,7 @@ describe("readConnection", () => {
   });
 
   it("treats a zero port as not running", () => {
-    // The app writes 0 when the plugin server failed to start.
+    // The app writes 0 when the API server failed to start.
     const fs = fakeFs({
       [statePath]: JSON.stringify({ [STATE_PORT_KEY]: 0, [STATE_TOKEN_KEY]: "t" }),
     });
@@ -123,7 +123,7 @@ describe("chooseConnection", () => {
       [STATE_TOKEN_KEY]: `token-${port}`,
     }),
   });
-  const inherited = { _CH_PLUGIN_PORT: "41000", _CH_PLUGIN_TOKEN: "from-env" };
+  const inherited = { _CH_API_PORT: "41000", _CH_API_TOKEN: "from-env" };
 
   it("uses the port and token it was handed, so ch mcp needs no state file", () => {
     expect(chooseConnection(SELF, inherited, fakeFs({}))).toEqual({
@@ -146,7 +146,7 @@ describe("chooseConnection", () => {
   it("falls back to its own data directory when the environment names nothing usable", () => {
     const fs = fakeFs(state("/self", 43000));
 
-    expect(chooseConnection(SELF, { _CH_PLUGIN_PORT: "41000", _CH_DATA_DIR: "" }, fs)).toEqual({
+    expect(chooseConnection(SELF, { _CH_API_PORT: "41000", _CH_DATA_DIR: "" }, fs)).toEqual({
       port: 43000,
       token: "token-43000",
       dataDir: "/self",

@@ -30,7 +30,7 @@ Documentation for the CodeHydra project.
 
 - **PATTERNS.md** - Code conventions for IPC communication, VSCode Elements, Svelte 5 patterns, and CSS theming.
 
-- **API.md** - Complete API reference including IPC channels, events, and Plugin API for extensions.
+- **API.md** - Complete API reference including IPC channels, events, and CodeHydra API for extensions.
 
 - **TESTING.md** - How to write tests. Test types (integration, boundary, focused), behavioral mocks, operation/module testing patterns, and coverage requirements.
 

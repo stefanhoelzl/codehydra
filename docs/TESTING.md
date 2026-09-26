@@ -416,7 +416,7 @@ Code change involves external system interface?
 | Condition                                     | Entry Point                        | Example                                     |
 | --------------------------------------------- | ---------------------------------- | ------------------------------------------- |
 | Module is reached through an intent           | `dispatcher.dispatch()`            | GitWorktreeWorkspaceModule, AgentModule     |
-| Module is internal service with complex state | Direct service                     | IdeServerModule, PluginServer               |
+| Module is internal service with complex state | Direct service                     | IdeServerModule, ApiServer                  |
 | Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager                  |
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
 | Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
@@ -1366,7 +1366,7 @@ Integration tests go through specific entry points, not arbitrary internal modul
 | ----------------------------- | ---------------------------- | -------------------------------------------------------------- |
 | `dispatcher.dispatch(intent)` | The main-process facade      | The intent's operation plus every hook module registered on it |
 | `createXModule()`             | A single hook module, direct | Just that module                                               |
-| `PluginServer`                | Direct (not via dispatcher)  | Just PluginServer                                              |
+| `ApiServer`                   | Direct (not via dispatcher)  | Just ApiServer                                                 |
 | `McpServerManager`            | Direct (not via dispatcher)  | McpServerManager, McpServer                                    |
 | `ViewManager`                 | Direct (mocked Electron)     | Just ViewManager                                               |
 | `WindowManager`               | Direct (mocked Electron)     | Just WindowManager                                             |

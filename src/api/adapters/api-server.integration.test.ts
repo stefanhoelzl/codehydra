@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for the plugin adapter.
+ * Integration tests for the API server adapter.
  *
  * Drives the adapter through a fake socket, so these cover the generic loop
  * itself: channel mounting, both ack shapes the protocol uses, fire-and-forget,
@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod/v4";
-import { attachPluginAdapter, type AdapterSocket, type PluginResult } from "./plugin";
+import { attachApiServerAdapter, type AdapterSocket, type ApiResult } from "./api-server";
 import { OperationRegistry } from "../registry";
 import { ApiError } from "../errors";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
@@ -53,12 +53,12 @@ function fakeSocket() {
     channels: () => [...handlers.keys()],
     /** Emit with a payload and an ack, as a channel that takes a request does. */
     call: (channel: string, request: unknown) =>
-      new Promise<PluginResult<unknown>>((resolve) => {
+      new Promise<ApiResult<unknown>>((resolve) => {
         handlers.get(channel)!(request, resolve);
       }),
     /** Emit with only an ack, as a no-argument channel does. */
     callNoArgs: (channel: string) =>
-      new Promise<PluginResult<unknown>>((resolve) => {
+      new Promise<ApiResult<unknown>>((resolve) => {
         handlers.get(channel)!(resolve);
       }),
     /** Emit with neither payload nor ack, as a fire-and-forget channel does. */
@@ -74,7 +74,7 @@ function build(
   workspacePath = WS as string | null
 ) {
   const harness = fakeSocket();
-  attachPluginAdapter({
+  attachApiServerAdapter({
     socket: harness.socket,
     registry: new OperationRegistry(entries),
     workspacePath: workspacePath as never,
@@ -85,7 +85,7 @@ function build(
   return harness;
 }
 
-describe("plugin adapter", () => {
+describe("API server adapter", () => {
   it("mounts one channel per mapped operation, plus describe", () => {
     const harness = build(
       [
@@ -311,7 +311,7 @@ describe("plugin adapter", () => {
     };
 
     const harness = fakeSocket();
-    attachPluginAdapter({
+    attachApiServerAdapter({
       socket: harness.socket,
       registry: new OperationRegistry([
         defineEntry({
@@ -361,7 +361,7 @@ describe("plugin adapter", () => {
 describe("client kinds", () => {
   function realWire(kind: "sidekick" | "cli" | "mcp") {
     const harness = fakeSocket();
-    attachPluginAdapter({
+    attachApiServerAdapter({
       socket: harness.socket,
       registry: realRegistry(),
       workspacePath: WS,
@@ -410,7 +410,7 @@ describe("client kinds", () => {
     // dropped by another's shaping and acted out on the caller instead.
     const inputs: unknown[] = [];
     const harness = fakeSocket();
-    attachPluginAdapter({
+    attachApiServerAdapter({
       socket: harness.socket,
       registry: new OperationRegistry([
         defineEntry({

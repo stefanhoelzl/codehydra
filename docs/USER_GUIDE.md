@@ -960,7 +960,7 @@ and `--agent-name`; these need `--agent`.
 A message reaches an agent that is **already running**, the way one Claude
 Code session messages another. An initial prompt only reaches it at launch.
 Send one with `ch ws agent message <text>` (`-` reads the text from standard
-input), the `workspace_send_agent_message` MCP tool or the plugin API.
+input), the `workspace_send_agent_message` MCP tool or the CodeHydra API.
 [Automatic workspaces](#automatic-workspaces) in `events` mode use it for the
 prompt of a workspace that already exists.
 
@@ -1209,7 +1209,7 @@ agents launch):
 Tools that can act on another workspace take `workspace` (a name or an
 absolute path, looked up like `--workspace`: the agent's own project first) and
 `project`. They are the same fields as `ch`'s `--workspace` and `--project` and
-the plugin API's `workspace` and `project`, and mean the same thing on each.
+the API server's `workspace` and `project`, and mean the same thing on each.
 
 You don't need to learn any of it. Just describe what you want in plain
 language:

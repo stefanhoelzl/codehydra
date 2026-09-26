@@ -483,8 +483,8 @@ describe("OpenCodeServerManager", () => {
       expect(parsed.mcp.codehydra.type).toBe("local");
       expect(parsed.mcp.codehydra.command).toEqual(["/ide/node", "/data/bin/ch.cjs", "mcp"]);
       expect(parsed.mcp.codehydra.environment._CH_WORKSPACE_PATH).toBe("/workspace/feature-a");
-      expect(parsed.mcp.codehydra.environment._CH_PLUGIN_PORT).toBe("12345");
-      expect(parsed.mcp.codehydra.environment._CH_PLUGIN_TOKEN).toBe("test-token");
+      expect(parsed.mcp.codehydra.environment._CH_API_PORT).toBe("12345");
+      expect(parsed.mcp.codehydra.environment._CH_API_TOKEN).toBe("test-token");
       expect(parsed.mcp.codehydra.enabled).toBe(true);
     });
 

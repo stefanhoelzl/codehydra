@@ -2,7 +2,7 @@
  * Operation registry types — the single source of truth for every operation
  * CodeHydra exposes to the outside world.
  *
- * One entry per operation. The MCP, plugin and CLI adapters are generic loops
+ * One entry per operation. The MCP, API server and CLI adapters are generic loops
  * over the registry: none of them contains per-operation code, so an operation
  * cannot exist on one surface and be missing (or behave differently) on another.
  *
@@ -70,7 +70,7 @@ export interface OperationContext {
   /**
    * Aborted when the caller goes away.
    *
-   * Lives as long as the caller's *connection*, not the call: the plugin adapter
+   * Lives as long as the caller's *connection*, not the call: the API server adapter
    * aborts it when the socket disconnects, which may be long after a handler has
    * returned. That is what lets a handler tie state to its caller — `lock.hold`
    * returns once the lock is granted and keeps listening, so killing `ch lock
