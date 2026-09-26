@@ -919,7 +919,8 @@ const cleanupModule = createCleanupModule({
     { kind: "retire", path: "opencode/opencode.codehydra.json" },
     // One log file per launch, and electron-log only ever rotates the current
     // one, so nothing bounded the directory's growth.
-    { kind: "keepRecent", path: "logs", keep: 20 },
+    // Plugin run logs prune themselves per entry (plugin-module/run-log.ts).
+    { kind: "keepRecent", path: "logs", keep: 20, exclude: ["plugins"] },
     // Hibernation screenshots are deleted on wake and on workspace delete; the
     // per-project directory is what outlives the project.
     { kind: "pruneEmpty", path: "screenshots" },

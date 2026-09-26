@@ -194,6 +194,28 @@ describe("CleanupModule Integration", () => {
       expect(exists(fileSystem, data("logs/2026-08-27T14-09-13-aaaa.log"))).toBe(true);
     });
 
+    it("never counts or removes an excluded child", async () => {
+      // Plugin run logs live in logs/plugins and prune themselves; ranked as an
+      // unknown entry it would be the first thing swept.
+      const { run, fileSystem } = createTestSetup({
+        entries: {
+          [data("logs")]: directory(),
+          [data("logs/plugins/local/x/entry/run.failed.log")]: file("run"),
+          [data("logs/2026-08-27T14-09-13-aaaa.log")]: file("older"),
+          [data("logs/2026-08-28T07-35-51-bbbb.log")]: file("current"),
+        },
+        rules: [{ kind: "keepRecent", path: "logs", keep: 1, exclude: ["plugins"] }],
+      });
+
+      await run();
+
+      await vi.waitFor(() => {
+        expect(exists(fileSystem, data("logs/2026-08-27T14-09-13-aaaa.log"))).toBe(false);
+      });
+      expect(exists(fileSystem, data("logs/2026-08-28T07-35-51-bbbb.log"))).toBe(true);
+      expect(exists(fileSystem, data("logs/plugins/local/x/entry/run.failed.log"))).toBe(true);
+    });
+
     it("still recognises session logs when their names arrived lowercased", async () => {
       // What Windows looks like: `Path` lowercases there (it models a
       // case-insensitive filesystem), so names reach the rule as
