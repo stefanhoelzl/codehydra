@@ -12,6 +12,7 @@
  * unset, the app would resolve it to the directory holding every real CodeHydra
  * project, so a mistyped value must fail loudly rather than delete a home directory.
  */
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
@@ -32,12 +33,17 @@ export function mode(): Mode {
 
 /**
  * Deterministic so every Playwright worker and project resolves the same root:
- * `download-binaries` seeds it, the warm projects reuse it. Overridable, but the guard
- * below still applies to whatever is set.
+ * `download-binaries` seeds it, the warm projects reuse it. Keyed to the checkout, so
+ * two worktrees running the suite at once never wipe each other's root. Overridable,
+ * but the guard below still applies to whatever is set.
  */
 export const ROOT_DIR =
   // `||`, not `??`: an empty string means "unset" here, as it does everywhere else.
-  process.env._CH_ROOT_DIR || join(realpathSync(tmpdir()), "codehydra-e2e");
+  process.env._CH_ROOT_DIR ||
+  join(
+    realpathSync(tmpdir()),
+    `codehydra-e2e-${createHash("sha256").update(realpathSync(REPO_ROOT)).digest("hex").slice(0, 8)}`
+  );
 
 /** One root: the app puts config.json, projects/, and the binary bundles all here. */
 export const DATA_ROOT = ROOT_DIR;
