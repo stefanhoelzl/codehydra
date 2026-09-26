@@ -733,6 +733,7 @@ const pluginModule = createPluginModule({
     transport: apiServerModule,
     logger: loggingService.createLogger("plugins"),
   }),
+  workspaceConnected: (listener) => apiServerModule.onWorkspaceConnected(listener),
   registry: () => operationRegistry,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({

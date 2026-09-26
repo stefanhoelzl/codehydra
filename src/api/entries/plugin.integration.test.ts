@@ -56,7 +56,7 @@ function setup() {
         ...(scope.workspacePath === null ? [] : [listing("workspace:setup", "ask", ["linux"])]),
       ];
     },
-    setState: async (scope, id, state) => {
+    setState: async (_scope, id, state) => {
       if (id === "local:nope") throw new ApiError("not-found", "No plugin local:nope");
       states.push([id, state]);
       return listing(id, state, ["linux"]);
