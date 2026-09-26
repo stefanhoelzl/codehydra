@@ -37,24 +37,28 @@ export type EntryKind = "command" | "event";
 /**
  * What a handler knows about its caller.
  *
- * `workspacePath` is null for app-global callers — a `ch` invocation from outside
- * any worktree, which is legitimate for `project.list` and `report.issue`. Entries
- * that need a workspace declare `requiresWorkspace`, and adapters reject the call
- * before the handler runs.
+ * Who is calling, never what the call acts on: the target is always the
+ * input's `workspace` field (see `targetFields`), defaulting to the caller's own
+ * workspace. `workspacePath` is null for app-global callers — a `ch` invocation
+ * from outside any worktree, which is legitimate for `project.list` and
+ * `report.issue`. Entries that need a workspace declare `requiresWorkspace`,
+ * and the registry rejects a call that neither stands in one nor names one.
  */
 export interface OperationContext {
-  /** The workspace the call acts on: the one the caller named, else its own. */
-  readonly workspacePath: WorkspacePath | null;
   /**
-   * The caller's own workspace — where it stands, whatever it named.
-   *
-   * The same as `workspacePath` unless a shell named another one
-   * (`ch --workspace other …`): then this is still the workspace the shell is
-   * in, or null outside every workspace. An agent or extension is always its
-   * own workspace. It is what a workspace name is looked up relative to, and
+   * The caller's own workspace: the one a shell stands in, an agent's or an
+   * extension's own. It is what a workspace name is looked up relative to, and
    * who a message is signed by.
    */
-  readonly callerWorkspacePath: WorkspacePath | null;
+  readonly workspacePath: WorkspacePath | null;
+  /**
+   * Told the workspace a call acts on, once the handler has resolved it.
+   *
+   * How a connection learns which workspace's progress to show while the call
+   * runs (see `FORWARDED_EVENTS`). Optional: a caller that watches nothing
+   * leaves it out.
+   */
+  readonly onTarget?: (workspacePath: WorkspacePath) => void;
   /**
    * Directory the caller is standing in, when it told us.
    *
@@ -94,7 +98,8 @@ export interface OperationEntry<TInput = never, TOutput = unknown> {
   readonly input: z.ZodType<TInput>;
   /**
    * Whether the operation acts on a specific workspace. When true and the caller
-   * supplied none, adapters fail before dispatching (CLI exit code 4).
+   * neither stands in one nor names one, the call fails before dispatching (CLI
+   * exit code 4).
    */
   readonly requiresWorkspace: boolean;
   readonly handler: (ctx: OperationContext, input: TInput) => Promise<TOutput>;

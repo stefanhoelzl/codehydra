@@ -50,8 +50,8 @@ function harness(options: {
   const run: LockRunOptions = {
     argv: options.argv,
     isTty: true,
-    connect: async (workspace) => {
-      steps.push({ step: "connect", detail: workspace });
+    connect: async () => {
+      steps.push({ step: "connect" });
       return client;
     },
     runCommand: async (command, args) => {
@@ -128,7 +128,7 @@ describe("ch lock run", () => {
     expect(code).toBe(EXIT.OK);
   });
 
-  it("passes scope, no-wait and workspace through, and leaves the command's flags alone", async () => {
+  it("passes scope, no-wait and the holder through, and leaves the command's flags alone", async () => {
     const h = harness({
       argv: [
         "fixtures",
@@ -146,9 +146,15 @@ describe("ch lock run", () => {
 
     await h.run();
 
-    expect(h.steps[0]).toEqual({ step: "connect", detail: "/w" });
-    expect(h.steps[1]?.detail).toEqual({ name: "fixtures", scope: "project", noWait: true });
+    expect(h.steps[1]?.detail).toEqual({
+      name: "fixtures",
+      scope: "project",
+      noWait: true,
+      workspace: "/w",
+    });
     expect(h.steps[2]?.detail).toEqual(["make", "--workspace", "other"]);
+    // Released as the workspace that held it.
+    expect(h.steps[3]?.detail).toEqual({ name: "device", scope: "global", workspace: "/w" });
   });
 
   it("reports a refused take with the category's exit code and runs nothing", async () => {

@@ -20,13 +20,11 @@ import { testPath } from "../shared/test-fixtures";
 const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
 const IN_WORKSPACE: OperationContext = {
   workspacePath: WS,
-  callerWorkspacePath: WS,
   cwd: null,
   signal: new AbortController().signal,
 };
 const NO_WORKSPACE: OperationContext = {
   workspacePath: null,
-  callerWorkspacePath: null,
   cwd: null,
   signal: new AbortController().signal,
 };
@@ -107,22 +105,6 @@ describe("OperationRegistry", () => {
 
       expect(calls[0]).toMatchObject({ keepBranch: false });
     });
-
-    it("drops fields outside the adapter's pick", async () => {
-      const calls: unknown[] = [];
-      const entry = deleteEntry(calls);
-      const registry = new OperationRegistry([entry]);
-
-      await registry.invoke(
-        entry,
-        IN_WORKSPACE,
-        { keepBranch: true, ignoreWarnings: true },
-        { pick: ["keepBranch"] }
-      );
-
-      // ignoreWarnings reverts to the schema default rather than the caller's value.
-      expect(calls[0]).toMatchObject({ keepBranch: true, ignoreWarnings: false });
-    });
   });
 
   describe("requiresWorkspace", () => {
@@ -138,6 +120,15 @@ describe("OperationRegistry", () => {
 
       expect(error).toBeInstanceOf(ApiError);
       expect((error as ApiError).category).toBe("no-workspace");
+    });
+
+    it("lets a caller outside every workspace name the one to act on", async () => {
+      const entry = strictEntry();
+      const registry = new OperationRegistry([entry]);
+
+      await expect(
+        registry.invoke(entry, NO_WORKSPACE, { workspace: "other", status: "idle" })
+      ).resolves.toBeNull();
     });
 
     it("allows an app-global entry with no workspace", async () => {

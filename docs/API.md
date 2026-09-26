@@ -416,23 +416,24 @@ External systems can connect directly to CodeHydra's plugin server via Socket.IO
 The wire carries three kinds of client, declared in the handshake. They differ in
 what they may call and in how operations are addressed.
 
-| Kind     | Handshake                                                   | Addresses operations as      |
-| -------- | ----------------------------------------------------------- | ---------------------------- |
-| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.**          | `api:workspace:getStatus`, … |
-| `cli`    | `{ client: "cli", token, cwd? , workspacePath?, project? }` | `api:operation:<name>`       |
-| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`            | `api:operation:<name>`       |
+| Kind     | Handshake                                          | Addresses operations as      |
+| -------- | -------------------------------------------------- | ---------------------------- |
+| _(none)_ | `{ workspacePath }` — an extension. **Unchanged.** | `api:workspace:getStatus`, … |
+| `cli`    | `{ client: "cli", token, cwd? }`                   | `api:operation:<name>`       |
+| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`   | `api:operation:<name>`       |
 
 The historical channel names are a compatibility surface for extensions, so they
 are kept exactly as they are and never grow for a new client. `ch` and the stdio
 MCP shim address operations by registry name instead, which is why adding an
 operation does not widen the extension-facing contract.
 
-For a `cli` client, `workspacePath` is the `--workspace` reference (a name or a
-path) and `project` the `--project` to look it up in; `cwd` is always sent. The
-connection then acts on the named workspace, while the workspace `cwd` sits in
-stays the **caller** — what a name is looked up relative to, and who
-`agent.message` signs as. For `mcp` and extensions, the caller is the
-workspace they present.
+The handshake says only who the **caller** is — what a name is looked up
+relative to, and who `agent.message` signs as. For a `cli` client that is the
+workspace containing `cwd` (none outside every worktree); for `mcp` and
+extensions it is the workspace they present. What a call acts on is never part
+of the handshake: it is the call's own target fields, below. A `cli` handshake
+that still carries `workspacePath` or `project` (a `ch` older than the app) has
+them ignored.
 
 **Naming a target.** Every operation that can act on another workspace takes
 `workspace` (a name or an absolute path) and `project` (a name or path to look
@@ -440,8 +441,10 @@ the name up in). A name is looked up in the caller's project first, where a matc
 wins; otherwise it must be unique across the other open projects (several →
 `usage`, none → `not-found`). `project` without `workspace` is `usage`. These
 two fields replace the former path-only `workspacePath` field — a breaking
-rename, with no alias. `ch` hides both: its global `--workspace` / `--project`
-name the target for the whole connection instead.
+rename, with no alias. Every client kind accepts them on every such operation,
+the extension's historical `api:workspace:*` channels included (omitted, a call
+acts on the caller's own workspace), and `ch` spells them `--workspace` /
+`--project` on the commands that take them.
 
 Two further differences matter for anyone writing a client:
 
@@ -778,12 +781,12 @@ operations that instance actually has.
 
 ### Conventions
 
-|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the first command that needs a workspace with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). |
-| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                |
-| **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                                                                      | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
-| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                   |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace** | Resolved from the current directory — the deepest workspace containing it. `--workspace <name\|path>` overrides on every command that acts on a workspace (a name: your own project first, then unique elsewhere), and `--project <name\|path>` scopes that name to one project; an unknown name fails the command with exit `6`, an ambiguous one with exit `2`. `--project` without `--workspace` is exit `2`, except where the command has its own `--project` (`ws create`). On a command that acts on no workspace, `--workspace` is exit `2`. |
+| **Arguments** | Flags mirror field names (`--keep-branch` for `keepBranch`); a repeated flag builds a list; a value starting with `[` or `{` is parsed as JSON. `--input '<json>'` supplies the whole payload, so anything expressible through MCP is expressible here. A flag that is neither global nor a field of the operation is a usage error.                                                                                                                                                                                                                |
+| **Output**    | `--format json                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | text | auto`. `auto`, the default, is JSON when stdout is not a terminal — a pipe, or an agent's shell — and human-readable when it is. Errors follow the format: JSON mode writes `{"error","exitCode"}` to stderr. |
+| **Instance**  | Found by resolving `ch`'s own path to its data directory and reading `plugin.port` and `plugin.token` from `state.json`. `_CH_PLUGIN_PORT` + `_CH_PLUGIN_TOKEN` (given to agents, and to `ch mcp`) take precedence over that; `_CH_DATA_DIR=<path>` beats both and targets the instance with that data directory. `pnpm preview` sets it for the app it launches, so `ch` inside the preview reaches the preview.                                                                                                                                   |
 
 ### Exit codes
 
@@ -932,10 +935,13 @@ reaches clients because it was declared, not because it was emitted:
 | `workspace:loading` / `workspace:created` / `workspace:create-failed` | creation start, finish, failure                                                                                               |
 | `workspace:deletion-progress`                                         | full state each step: labelled operations, `completed`, `hasErrors`, and `blockingProcesses` when a worktree will not release |
 
-A client scoped to a workspace receives only that workspace's events. A
-workspace-less client receives instance-wide ones too — which is what makes a
-clone visible, since a clone has no workspace and `project open <url>` is run
-from outside every worktree.
+Events follow the calls a client has in flight, not where it stands. While a
+call runs, its client receives the events of the workspace that call targets
+(`ch ws delete --workspace other` sees the other workspace's teardown), events
+that concern no workspace (a clone), and — for a call with no target, such as
+`workspace.create` or `project.open` — every workspace's, since it cannot say
+which workspace its progress will be about. A client with no call in flight
+receives nothing.
 
 ### Config
 

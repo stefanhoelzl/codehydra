@@ -68,7 +68,6 @@ async function createdAgentSpec(
   await create.handler(
     {
       workspacePath: null,
-      callerWorkspacePath: null,
       cwd: null,
       signal: new AbortController().signal,
     },
@@ -224,7 +223,6 @@ describe("registry contents", () => {
         const shape = (entry.input as unknown as { shape?: Record<string, unknown> }).shape ?? {};
         return Object.keys(shape)
           .filter((field) => !(cli.positionals ?? []).includes(field))
-          .filter((field) => !(cli.omit ?? []).includes(field))
           .filter((field) => GLOBAL_FLAG_NAMES.includes(toKebabCase(field)))
           .map((field) => `${entry.name}.${field}`);
       });

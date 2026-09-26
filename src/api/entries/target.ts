@@ -4,8 +4,8 @@
  * Every entry that can act on a workspace other than the caller's own takes the
  * same two optional fields — `workspace` (a name or an absolute path) and
  * `project` (to look the name up in) — and resolves them here, so a name means
- * the same thing on every surface. The CLI hides both: its global `--workspace`
- * / `--project` flags name the target for the whole connection instead.
+ * the same thing on every surface: an MCP tool's arguments, the CLI's
+ * `--workspace` / `--project` flags, an extension's request.
  */
 
 import { z } from "zod/v4";
@@ -43,9 +43,6 @@ export interface TargetInput {
   readonly project?: string | undefined;
 }
 
-/** The CLI hides these: its global flags name the target instead. */
-export const TARGET_FIELD_NAMES = ["workspace", "project"] as const;
-
 /**
  * Turn a workspace reference into a path, the way `--workspace` does.
  *
@@ -64,7 +61,7 @@ export function createReferenceResolver(
     const resolved = resolveWorkspaceReference(
       (projects ?? []) as readonly ProjectLocation[],
       reference,
-      { callerWorkspace: ctx.callerWorkspacePath, cwd: ctx.cwd, project }
+      { callerWorkspace: ctx.workspacePath, cwd: ctx.cwd, project }
     );
     if ("error" in resolved) throw new ApiError(resolved.category, resolved.error);
     return workspacePathSchema.parse(resolved.path);
@@ -72,14 +69,15 @@ export function createReferenceResolver(
 }
 
 /**
- * Resolve an operation's target: the workspace the input names, else the one
- * the call is scoped to.
+ * Resolve an operation's target: the workspace the input names, else the
+ * caller's own. Reported to the caller's connection (`ctx.onTarget`), which
+ * then shows that workspace's progress while the call runs.
  */
 export function createTargetResolver(
   dispatcher: Dispatcher
 ): (ctx: OperationContext, input: TargetInput) => Promise<WorkspacePath> {
   const resolveReference = createReferenceResolver(dispatcher);
-  return async (ctx, input) => {
+  const resolve = async (ctx: OperationContext, input: TargetInput): Promise<WorkspacePath> => {
     if (input.workspace !== undefined) {
       return resolveReference(ctx, input.workspace, input.project);
     }
@@ -90,6 +88,11 @@ export function createTargetResolver(
       throw new ApiError("no-workspace", "No workspace to act on.");
     }
     return ctx.workspacePath;
+  };
+  return async (ctx, input) => {
+    const target = await resolve(ctx, input);
+    ctx.onTarget?.(target);
+    return target;
   };
 }
 

@@ -16,20 +16,15 @@ import type { OperationName } from "./names";
 import type { AnyOperationEntry, OperationContext } from "./types";
 
 /**
- * How one adapter narrows and pre-fills an operation's input.
+ * How one adapter pre-fills an operation's input.
  *
- * `pick` limits which fields that adapter accepts; `defaults` fills fields the
- * caller omitted. Both exist for divergences that are deliberate — an adapter
- * that deliberately hides a field, or keeps a different default from another.
+ * Every adapter accepts the same fields — an operation means the same thing on
+ * every surface, target included. What may differ is a default, and only where
+ * the difference is deliberate: an MCP `lock_take` fails fast rather than hang
+ * the agent's turn, and `ch ws title` with no title clears it because argv
+ * cannot spell null.
  */
 export interface InputShaping {
-  readonly pick?: readonly string[];
-  /**
-   * Fields this adapter does not carry, when that is easier said than `pick`:
-   * the CLI names a target with its global `--workspace` / `--project`, so it
-   * drops every entry's own target fields.
-   */
-  readonly omit?: readonly string[];
   readonly defaults?: Readonly<Record<string, unknown>>;
 }
 
@@ -82,7 +77,8 @@ export class OperationRegistry {
    *
    * Workspace enforcement runs before validation so a command written correctly
    * but run outside a worktree reports `no-workspace` (CLI exit 4) rather than a
-   * confusing message about a missing field.
+   * confusing message about a missing field. A caller outside every workspace
+   * that names one to act on has given it one.
    */
   async invoke(
     entry: AnyOperationEntry,
@@ -90,7 +86,7 @@ export class OperationRegistry {
     rawInput: unknown,
     shaping: InputShaping = {}
   ): Promise<unknown> {
-    if (entry.requiresWorkspace && ctx.workspacePath === null) {
+    if (entry.requiresWorkspace && ctx.workspacePath === null && !namesWorkspace(rawInput)) {
       throw new ApiError(
         "no-workspace",
         `"${entry.name}" acts on a workspace, but no workspace was given. ` +
@@ -107,31 +103,25 @@ export class OperationRegistry {
   }
 }
 
+/** Whether the input names a workspace to act on (see `targetFields`). */
+function namesWorkspace(rawInput: unknown): boolean {
+  return (
+    rawInput !== null &&
+    typeof rawInput === "object" &&
+    typeof (rawInput as Record<string, unknown>).workspace === "string"
+  );
+}
+
 /**
- * Narrow the caller's input to what the adapter accepts, then lay its defaults
- * underneath.
- *
- * Defaults go underneath rather than over the top so an explicit value from the
- * caller always wins and the default only fills a field that was omitted.
+ * Lay the adapter's defaults underneath the caller's input, so an explicit
+ * value from the caller always wins and a default only fills a field that was
+ * omitted.
  */
 function applyShaping(rawInput: unknown, shaping: InputShaping): unknown {
-  if (shaping.pick === undefined && shaping.omit === undefined && shaping.defaults === undefined) {
-    return rawInput;
-  }
-  const input: Record<string, unknown> =
-    rawInput !== null && typeof rawInput === "object"
-      ? { ...(rawInput as Record<string, unknown>) }
-      : {};
-
-  const picked = Object.fromEntries(
-    Object.entries(input).filter(
-      ([key]) =>
-        (shaping.pick === undefined || shaping.pick.includes(key)) &&
-        !(shaping.omit ?? []).includes(key)
-    )
-  );
-
-  return { ...(shaping.defaults ?? {}), ...picked };
+  if (shaping.defaults === undefined) return rawInput;
+  const input =
+    rawInput !== null && typeof rawInput === "object" ? (rawInput as Record<string, unknown>) : {};
+  return { ...shaping.defaults, ...input };
 }
 
 /** Render a validation failure as one line, prefixed with the operation name. */

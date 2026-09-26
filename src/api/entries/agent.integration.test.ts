@@ -120,17 +120,10 @@ function setup() {
     SILENT_LOGGER
   );
 
-  /**
-   * `scope` is the workspace the connection acts on (a shell's `--workspace`,
-   * else where it stands); `caller` is where it stands.
-   */
-  const call = (
-    at: { scope: WorkspacePath | null; caller: WorkspacePath | null },
-    input: Record<string, unknown>
-  ) => {
+  /** `caller` is the caller's own workspace; the target is the input's `workspace`. */
+  const call = (caller: WorkspacePath | null, input: Record<string, unknown>) => {
     const ctx: OperationContext = {
-      workspacePath: at.scope,
-      callerWorkspacePath: at.caller,
+      workspacePath: caller,
       cwd: null,
       signal: new AbortController().signal,
     };
@@ -146,8 +139,8 @@ function setup() {
   };
 }
 
-const inFeat = { scope: FEAT, caller: FEAT };
-const nowhere = { scope: null, caller: null };
+const inFeat = FEAT;
+const nowhere = null;
 
 describe("agent.message entry", () => {
   it("sends to the caller's own workspace, signed with its name", async () => {
@@ -164,15 +157,15 @@ describe("agent.message entry", () => {
   it("signs with the workspace's name, not its directory", async () => {
     const { call, sent } = setup();
 
-    await call({ scope: OTHER, caller: FEATURE_X }, { text: "hello" });
+    await call(FEATURE_X, { workspace: OTHER, text: "hello" });
 
     expect(sent[0]?.from).toBe("CodeHydra · workspace feature/x");
   });
 
-  it("signs with where the shell stands when --workspace names another", async () => {
+  it("signs with the caller's own workspace when it names another", async () => {
     const { call, sent } = setup();
 
-    await call({ scope: OTHER, caller: FEAT }, { text: "hello" });
+    await call(FEAT, { workspace: OTHER, text: "hello" });
 
     expect(sent).toEqual([
       { workspacePath: OTHER, text: "hello", from: "CodeHydra · workspace feat", wake: false },
@@ -182,12 +175,12 @@ describe("agent.message entry", () => {
   it("signs as the CLI from outside every workspace", async () => {
     const { call, sent } = setup();
 
-    await call({ scope: OTHER, caller: null }, { text: "hello" });
+    await call(null, { workspace: OTHER, text: "hello" });
 
     expect(sent[0]!.from).toBe("CodeHydra · ch");
   });
 
-  describe("naming the target (MCP and plugin)", () => {
+  describe("naming the target", () => {
     it("takes a name, looked up in the caller's project first", async () => {
       const { call, sent } = setup();
 

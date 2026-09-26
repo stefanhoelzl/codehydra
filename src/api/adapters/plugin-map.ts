@@ -29,10 +29,9 @@ export interface PluginMapping extends InputShaping {
 }
 
 export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> = {
-  // Workspace-scoped channels predate the optional `workspacePath` target, and
-  // a plugin client is always scoped to its own workspace by the handshake — so
-  // they pick only the fields the published contract documents.
-  "workspace.status": { channel: "api:workspace:getStatus", pick: ["refresh"] },
+  // Every channel takes the entry's full input, target fields included: an
+  // extension is its own workspace, and names another the way any caller does.
+  "workspace.status": { channel: "api:workspace:getStatus" },
   "workspace.hibernate": { channel: "api:workspace:hibernate" },
   "workspace.wake": { channel: "api:workspace:wake" },
   "workspace.create": { channel: "api:workspace:create" },
@@ -43,11 +42,11 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   "workspace.tag.set": { channel: "api:workspace:setTag" },
   "workspace.tag.remove": { channel: "api:workspace:removeTag" },
 
-  "metadata.get": { channel: "api:workspace:getMetadata", pick: [] },
-  "metadata.set": { channel: "api:workspace:setMetadata", pick: ["key", "value"] },
+  "metadata.get": { channel: "api:workspace:getMetadata" },
+  "metadata.set": { channel: "api:workspace:setMetadata" },
 
-  "agent.session": { channel: "api:workspace:getAgentSession", pick: [] },
-  "agent.restart": { channel: "api:workspace:restartAgentServer", pick: [] },
+  "agent.session": { channel: "api:workspace:getAgentSession" },
+  "agent.restart": { channel: "api:workspace:restartAgentServer" },
   "agent.open": { channel: "api:workspace:openAgent" },
   "agent.close": { channel: "api:workspace:closeAgent" },
   "agent.message": { channel: "api:workspace:sendAgentMessage" },
@@ -56,7 +55,7 @@ export const PLUGIN_MAP: Readonly<Record<OperationName, PluginMapping | null>> =
   // it truthfully, and the sidekick is that observer.
   "agent.lifecycle": { channel: "api:workspace:agentLifecycle", fireAndForget: true },
 
-  "vscode.command": { channel: "api:workspace:executeCommand", pick: ["command", "args"] },
+  "vscode.command": { channel: "api:workspace:executeCommand" },
   "vscode.message": { channel: "api:workspace:showMessage" },
   // The notify / status-bar / ask forms exist to give the CLI three commands
   // instead of one with a mode flag. On the wire that split buys nothing, so the

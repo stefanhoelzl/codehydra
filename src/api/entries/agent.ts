@@ -41,9 +41,9 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
    * caller cannot sign as someone else.
    */
   const messageSender = async (ctx: OperationContext): Promise<string> =>
-    ctx.callerWorkspacePath === null
+    ctx.workspacePath === null
       ? "CodeHydra · ch"
-      : `CodeHydra · workspace ${await nameOf(ctx.callerWorkspacePath)}`;
+      : `CodeHydra · workspace ${await nameOf(ctx.workspacePath)}`;
 
   const runVscodeCommand = (workspacePath: WorkspacePath, command: string) =>
     dispatcher.dispatch<VscodeCommandIntent>({

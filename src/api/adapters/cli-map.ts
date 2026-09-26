@@ -9,7 +9,6 @@
 
 import type { OperationName } from "../names";
 import type { InputShaping } from "../registry";
-import { TARGET_FIELD_NAMES } from "../entries/target";
 
 export interface CliMapping extends InputShaping {
   /** Subcommand path, e.g. `["ws", "delete"]` for `ch ws delete`. */
@@ -35,64 +34,54 @@ export interface CliMapping extends InputShaping {
   readonly stdin?: string;
 }
 
-/**
- * For an entry that can act on another workspace: its own `workspace` /
- * `project` fields are dropped, because the CLI's global `--workspace` and
- * `--project` name the target for the whole connection — one spelling for
- * every command, and a name resolved the same way everywhere.
- */
-const TARGETED = { omit: TARGET_FIELD_NAMES } as const;
-
 export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
-  "workspace.status": { ...TARGETED, path: ["ws", "status"] },
-  "workspace.hibernate": { ...TARGETED, path: ["ws", "hibernate"] },
-  "workspace.wake": { ...TARGETED, path: ["ws", "wake"] },
+  "workspace.status": { path: ["ws", "status"] },
+  "workspace.hibernate": { path: ["ws", "hibernate"] },
+  "workspace.wake": { path: ["ws", "wake"] },
   "workspace.create": { path: ["ws", "create"], positionals: ["name", "base"] },
-  "workspace.delete": { ...TARGETED, path: ["ws", "delete"] },
+  "workspace.delete": { path: ["ws", "delete"] },
   "workspace.switch": { path: ["ws", "switch"], positionals: ["workspace"] },
   // No title clears it: argv cannot spell null, and `ch ws title ""` is not
   // portable (Windows PowerShell 5.1 drops an empty argument).
   "workspace.title": {
-    ...TARGETED,
     path: ["ws", "title"],
     positionals: ["title"],
     defaults: { title: null },
   },
-  "workspace.tag.list": { ...TARGETED, path: ["ws", "tag", "ls"] },
-  "workspace.tag.set": { ...TARGETED, path: ["ws", "tag", "set"], positionals: ["name"] },
-  "workspace.tag.remove": { ...TARGETED, path: ["ws", "tag", "rm"], positionals: ["name"] },
+  "workspace.tag.list": { path: ["ws", "tag", "ls"] },
+  "workspace.tag.set": { path: ["ws", "tag", "set"], positionals: ["name"] },
+  "workspace.tag.remove": { path: ["ws", "tag", "rm"], positionals: ["name"] },
 
-  "metadata.get": { ...TARGETED, path: ["ws", "metadata", "get"] },
-  "metadata.set": { ...TARGETED, path: ["ws", "metadata", "set"], positionals: ["key", "value"] },
+  "metadata.get": { path: ["ws", "metadata", "get"] },
+  "metadata.set": { path: ["ws", "metadata", "set"], positionals: ["key", "value"] },
 
-  "agent.session": { ...TARGETED, path: ["ws", "agent", "session"] },
-  "agent.restart": { ...TARGETED, path: ["ws", "agent", "restart"] },
-  "agent.open": { ...TARGETED, path: ["ws", "agent", "open"] },
-  "agent.close": { ...TARGETED, path: ["ws", "agent", "close"] },
+  "agent.session": { path: ["ws", "agent", "session"] },
+  "agent.restart": { path: ["ws", "agent", "restart"] },
+  "agent.open": { path: ["ws", "agent", "open"] },
+  "agent.close": { path: ["ws", "agent", "close"] },
   "agent.message": {
-    ...TARGETED,
     path: ["ws", "agent", "message"],
     positionals: ["text"],
     stdin: "text",
   },
   // Nests under the status command: `ch ws status` reads it, `ch ws status set`
   // reports it. Resolution is longest-path so the two never collide.
-  "agent.status.set": { ...TARGETED, path: ["ws", "status", "set"], positionals: ["status"] },
+  "agent.status.set": { path: ["ws", "status", "set"], positionals: ["status"] },
   // Only the sidekick can witness the terminal event this reports.
   "agent.lifecycle": null,
 
-  "vscode.command": { ...TARGETED, path: ["ws", "vscode-command"], positionals: ["command"] },
+  "vscode.command": { path: ["ws", "vscode-command"], positionals: ["command"] },
   // Split into the three forms below, which is the whole point of having them.
   "vscode.message": null,
-  "vscode.notify": { ...TARGETED, path: ["ws", "notify"], positionals: ["message"] },
-  "vscode.status-bar": { ...TARGETED, path: ["ws", "status-bar"], positionals: ["message"] },
-  "vscode.ask": { ...TARGETED, path: ["ws", "ask"], positionals: ["message"] },
-  "vscode.browser": { ...TARGETED, path: ["ws", "browser"], positionals: ["url"] },
-  "vscode.diff": { ...TARGETED, path: ["ws", "diff"], positionals: ["left", "right"] },
-  "vscode.goto": { ...TARGETED, path: ["ws", "goto"], positionals: ["location"] },
-  "vscode.preview": { ...TARGETED, path: ["ws", "preview"], positionals: ["path"] },
+  "vscode.notify": { path: ["ws", "notify"], positionals: ["message"] },
+  "vscode.status-bar": { path: ["ws", "status-bar"], positionals: ["message"] },
+  "vscode.ask": { path: ["ws", "ask"], positionals: ["message"] },
+  "vscode.browser": { path: ["ws", "browser"], positionals: ["url"] },
+  "vscode.diff": { path: ["ws", "diff"], positionals: ["left", "right"] },
+  "vscode.goto": { path: ["ws", "goto"], positionals: ["location"] },
+  "vscode.preview": { path: ["ws", "preview"], positionals: ["path"] },
   "system.open": { path: ["ws", "open"], positionals: ["path"] },
-  "notification.show": { ...TARGETED, path: ["notification", "show"], positionals: ["title"] },
+  "notification.show": { path: ["notification", "show"], positionals: ["title"] },
   "notification.close": { path: ["notification", "close"], positionals: ["id"] },
 
   "project.list": { path: ["project", "list"] },

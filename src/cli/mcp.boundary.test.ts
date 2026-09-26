@@ -3,13 +3,13 @@
  * Boundary tests for `ch mcp`'s connection, in the compiled `ch` bundle
  * (dist/bin/ch.cjs), which `pnpm build:wrappers` builds before tests run.
  *
- * What the app offers a connection — MCP's tools or the CLI's commands, and how
- * each shapes its arguments — follows the client kind its handshake declares.
- * `ch mcp` once declared itself the CLI, so the app applied the CLI's shaping,
- * dropped every tool's `workspace` argument, and acted on the calling agent's
- * own workspace instead. The adapter's side of that contract is covered with
- * hand-built handshakes (plugin-server-cli.boundary.test.ts); this pins the
- * side the shim actually sends.
+ * What the app offers a connection — MCP's tools or the CLI's commands, with
+ * whose defaults — follows the client kind its handshake declares, and who the
+ * caller is follows the workspace it presents. `ch mcp` once declared itself
+ * the CLI, and the CLI's shaping then dropped every tool's `workspace` argument
+ * so the call acted on the calling agent's own workspace instead. The server's
+ * side of the contract is covered with hand-built handshakes
+ * (plugin-server-cli.boundary.test.ts); this pins the side the shim sends.
  *
  * The compiled bundle rather than `connect()` in-process: under vitest,
  * `require("ws")` resolves to ws's browser stub, so Socket.IO's websocket

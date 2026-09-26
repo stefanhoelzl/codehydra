@@ -26,12 +26,37 @@ import { lockEntries } from "../api/entries/lock";
 import { createLockModule } from "./lock-module";
 import { IntentHandle } from "../intents/lib/dispatcher";
 import type { ProjectLocation } from "../api/workspace-lookup";
+import { targetFields } from "../api/entries/target";
+import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
 const TOKEN = "test-token";
 
-/** A registry holding two operations: one workspace-scoped, one app-global. */
-function testRegistry(seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = []) {
+/** What a test operation saw: the caller, and the input it was handed. */
+interface Seen {
+  readonly workspacePath: unknown;
+  readonly input?: unknown;
+}
+
+/**
+ * Calls held open until the test releases them, so events can be emitted while
+ * one is in flight — the only time a client is shown any.
+ */
+function gate() {
+  let open: () => void = () => {};
+  let entered: () => void = () => {};
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  const reached = new Promise<void>((resolve) => (entered = resolve));
+  return { opened, reached, open: () => open(), enter: () => entered() };
+}
+
+/**
+ * A registry of test operations: one workspace-scoped, one app-global, one that
+ * takes the target fields, and two held open by `hold` — `workspace.delete`,
+ * which resolves a target (the named path, else the caller), and
+ * `workspace.create`, which has none.
+ */
+function testRegistry(seen: Seen[] = [], hold = gate()) {
   return new OperationRegistry([
     defineEntry({
       name: "workspace.status",
@@ -40,10 +65,7 @@ function testRegistry(seen: { workspacePath: unknown; callerWorkspacePath?: unkn
       input: z.object({}),
       requiresWorkspace: true,
       handler: async (ctx) => {
-        seen.push({
-          workspacePath: ctx.workspacePath,
-          callerWorkspacePath: ctx.callerWorkspacePath,
-        });
+        seen.push({ workspacePath: ctx.workspacePath });
         return { dirty: false };
       },
     }),
@@ -56,6 +78,42 @@ function testRegistry(seen: { workspacePath: unknown; callerWorkspacePath?: unkn
       handler: async (ctx) => {
         seen.push({ workspacePath: ctx.workspacePath });
         return [];
+      },
+    }),
+    defineEntry({
+      name: "workspace.title",
+      kind: "command",
+      description: "Set the title.",
+      input: z.object({ ...targetFields, title: z.string().nullable() }),
+      requiresWorkspace: true,
+      handler: async (ctx, input) => {
+        seen.push({ workspacePath: ctx.workspacePath, input });
+        return null;
+      },
+    }),
+    defineEntry({
+      name: "workspace.delete",
+      kind: "command",
+      description: "Delete a workspace.",
+      input: z.object(targetFields),
+      requiresWorkspace: true,
+      handler: async (ctx, input) => {
+        ctx.onTarget?.(workspacePathSchema.parse(input.workspace ?? ctx.workspacePath));
+        hold.enter();
+        await hold.opened;
+        return null;
+      },
+    }),
+    defineEntry({
+      name: "workspace.create",
+      kind: "command",
+      description: "Create a workspace.",
+      input: z.object({}),
+      requiresWorkspace: false,
+      handler: async () => {
+        hold.enter();
+        await hold.opened;
+        return null;
       },
     }),
   ]);
@@ -173,7 +231,7 @@ describe("CLI clients on the plugin wire", () => {
       sidekick.connect();
       await waitForConnect(sidekick);
 
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       cli.connect();
       await waitForConnect(cli);
 
@@ -183,8 +241,8 @@ describe("CLI clients on the plugin wire", () => {
     it("admits several CLI clients on one workspace at once", async () => {
       env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
 
-      const first = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
-      const second = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+      const first = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
+      const second = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       first.connect();
       second.connect();
       await waitForConnect(first);
@@ -197,12 +255,13 @@ describe("CLI clients on the plugin wire", () => {
 
   describe("operations", () => {
     it("addresses operations by registry name", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+      listProjectsReturns(PROJECTS);
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       cli.connect();
       await waitForConnect(cli);
 
@@ -215,12 +274,12 @@ describe("CLI clients on the plugin wire", () => {
     it("does not answer the extension-facing channel names", async () => {
       // Those exist for backwards compatibility with extensions; `ch` must not
       // depend on them, so it cannot reach them.
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       cli.connect();
       await waitForConnect(cli);
 
@@ -235,7 +294,7 @@ describe("CLI clients on the plugin wire", () => {
 
     it("serves the registry description so a client can build its surface", async () => {
       env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
       cli.connect();
       await waitForConnect(cli);
 
@@ -257,7 +316,7 @@ describe("CLI clients on the plugin wire", () => {
     });
 
     it("runs app-global operations for it", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
@@ -280,81 +339,72 @@ describe("CLI clients on the plugin wire", () => {
 
       const result = await call(cli, "api:operation:workspace.status");
 
-      expect(result.success).toBe(false);
+      expect(result).toMatchObject({ success: false, category: "no-workspace" });
       expect(result.error).toContain("workspace");
+    });
+
+    it("runs a workspace operation that names the workspace to act on", async () => {
+      const seen: Seen[] = [];
+      env = await createPluginServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: "/elsewhere" });
+      cli.connect();
+      await waitForConnect(cli);
+
+      const result = await call(cli, "api:operation:workspace.title", {
+        workspace: "feature",
+        title: "t",
+      });
+
+      expect(result).toMatchObject({ success: true });
+      expect(seen).toEqual([{ workspacePath: null, input: { workspace: "feature", title: "t" } }]);
     });
   });
 
-  describe("a named workspace (`ch --workspace <name>`)", () => {
-    it("acts on the workspace the name resolves to", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+  describe("who the caller is", () => {
+    it("is the workspace a shell stands in", async () => {
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
       listProjectsReturns(PROJECTS);
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "feature" });
-      cli.connect();
-      await waitForConnect(cli);
-
-      await expect(call(cli, "api:operation:workspace.status")).resolves.toMatchObject({
-        success: true,
-      });
-      expect(seen).toMatchObject([{ workspacePath: WS }]);
-    });
-
-    it("reports an unknown name as not-found on the first workspace command", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-      listProjectsReturns(PROJECTS);
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "absent" });
-      cli.connect();
-      await waitForConnect(cli);
-
-      const result = await call(cli, "api:operation:workspace.status");
-
-      expect(result).toMatchObject({ success: false, category: "not-found" });
-      expect(result.error).toContain('No open workspace named "absent"');
-    });
-
-    it("reports an ambiguous name as a usage error that asks for a path", async () => {
-      env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-      listProjectsReturns(PROJECTS);
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "twin" });
-      cli.connect();
-      await waitForConnect(cli);
-
-      const result = await call(cli, "api:operation:workspace.status");
-
-      expect(result).toMatchObject({ success: false, category: "usage" });
-      expect(result.error).toContain("--project");
-    });
-
-    it("looks the name up in the caller's own project first", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
-      env = await createPluginServerEnv(undefined, {
-        registry: testRegistry(seen),
-        cliToken: TOKEN,
-      });
-      listProjectsReturns(PROJECTS);
-      // "twin" is in two projects; the shell stands in one of them.
-      const cli = env.createCliClient({
-        client: "cli",
-        token: TOKEN,
-        workspacePath: "twin",
-        cwd: "/third/wt/twin/src",
-      });
+      const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: `${WS}/src` });
       cli.connect();
       await waitForConnect(cli);
 
       await call(cli, "api:operation:workspace.status");
 
-      expect(seen).toEqual([
-        { workspacePath: "/third/wt/twin", callerWorkspacePath: "/third/wt/twin" },
-      ]);
+      expect(seen).toEqual([{ workspacePath: WS }]);
     });
 
-    it("looks the name up in the project it names", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+    it("is the workspace the MCP shim presents, wherever it runs", async () => {
+      const seen: Seen[] = [];
+      env = await createPluginServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      listProjectsReturns(PROJECTS);
+      const mcp = env.createCliClient({
+        client: "mcp",
+        token: TOKEN,
+        workspacePath: WS,
+        cwd: "/other/wt/shared",
+      });
+      mcp.connect();
+      await waitForConnect(mcp);
+
+      await call(mcp, "api:operation:workspace.status");
+
+      expect(seen).toEqual([{ workspacePath: WS }]);
+    });
+
+    it("is never a workspace a shell's handshake names", async () => {
+      // A `ch` older than the app named its target there. Honouring it as the
+      // caller would sign messages and resolve names as the wrong workspace.
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
@@ -363,29 +413,7 @@ describe("CLI clients on the plugin wire", () => {
       const cli = env.createCliClient({
         client: "cli",
         token: TOKEN,
-        workspacePath: "twin",
-        project: "other",
-        cwd: "/elsewhere",
-      });
-      cli.connect();
-      await waitForConnect(cli);
-
-      await call(cli, "api:operation:workspace.status");
-
-      expect(seen).toEqual([{ workspacePath: "/other/wt/twin", callerWorkspacePath: null }]);
-    });
-
-    it("keeps the shell's own workspace as the caller while it acts on another", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
-      env = await createPluginServerEnv(undefined, {
-        registry: testRegistry(seen),
-        cliToken: TOKEN,
-      });
-      listProjectsReturns(PROJECTS);
-      const cli = env.createCliClient({
-        client: "cli",
-        token: TOKEN,
-        workspacePath: "shared",
+        workspacePath: "/other/wt/shared",
         cwd: WS,
       });
       cli.connect();
@@ -393,25 +421,30 @@ describe("CLI clients on the plugin wire", () => {
 
       await call(cli, "api:operation:workspace.status");
 
-      expect(seen).toEqual([{ workspacePath: "/other/wt/shared", callerWorkspacePath: WS }]);
+      expect(seen).toEqual([{ workspacePath: WS }]);
     });
+  });
 
-    it("still runs commands that need no workspace", async () => {
-      const seen: { workspacePath: unknown; callerWorkspacePath?: unknown }[] = [];
+  describe("the call's own target", () => {
+    // What one surface once dropped: the MCP shim, connected as the CLI, lost
+    // every tool's `workspace` to the CLI's shaping and acted on its caller.
+    it.each([
+      ["a shell", { client: "cli", token: TOKEN, cwd: WS }],
+      ["the MCP shim", { client: "mcp", token: TOKEN, workspacePath: WS }],
+    ])("reaches the operation from %s", async (_kind, auth) => {
+      const seen: Seen[] = [];
       env = await createPluginServerEnv(undefined, {
         registry: testRegistry(seen),
         cliToken: TOKEN,
       });
       listProjectsReturns(PROJECTS);
-      const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: "absent" });
-      cli.connect();
-      await waitForConnect(cli);
+      const client = env.createCliClient(auth);
+      client.connect();
+      await waitForConnect(client);
 
-      await expect(call(cli, "api:operation:project.list")).resolves.toEqual({
-        success: true,
-        data: [],
-      });
-      expect(seen).toMatchObject([{ workspacePath: null }]);
+      await call(client, "api:operation:workspace.title", { workspace: "shared", title: "t" });
+
+      expect(seen).toEqual([{ workspacePath: WS, input: { workspace: "shared", title: "t" } }]);
     });
   });
 });
@@ -427,56 +460,99 @@ describe("forwarded events", () => {
     return received;
   }
 
-  it("pushes a domain event to a CLI client", async () => {
-    // The whole point: `ch ws delete` sits through a multi-step pipeline, and
-    // without this it sees nothing until the pipeline finishes.
-    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-    const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+  const deletion = (workspacePath: string) =>
+    ({
+      type: "workspace:deletion-progress",
+      payload: { workspacePath, completed: false, operations: [] },
+    }) as DomainEvent;
+
+  const clone = {
+    type: "clone:progress",
+    payload: { stage: "receiving", progress: 10, name: "repo", url: "u" },
+  } as DomainEvent;
+
+  /** A shell in WS with `channel` in flight, held open until `hold.open()`. */
+  async function callInFlight(channel: string, request: unknown = {}) {
+    const hold = gate();
+    env = await createPluginServerEnv(undefined, {
+      registry: testRegistry([], hold),
+      cliToken: TOKEN,
+    });
+    listProjectsReturns(PROJECTS);
+    const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     cli.connect();
     await waitForConnect(cli);
     const received = collect(cli);
+    const done = call(cli, channel, request);
+    await hold.reached;
+    return { received, hold, done };
+  }
 
-    env.emitDomainEvent({
-      type: "workspace:deletion-progress",
-      payload: { workspacePath: WS, completed: false, operations: [] },
-    } as DomainEvent);
+  it("pushes the target's events to the call acting on it", async () => {
+    // The whole point: `ch ws delete` sits through a multi-step pipeline, and
+    // without this it sees nothing until the pipeline finishes.
+    const { received, hold, done } = await callInFlight("api:operation:workspace.delete");
+
+    env!.emitDomainEvent(deletion(WS));
 
     await vi.waitFor(() => expect(received).toHaveLength(1));
     expect(received[0]!.type).toBe("workspace:deletion-progress");
+    hold.open();
+    await done;
   });
 
-  it("does not push another workspace's event to a scoped client", async () => {
-    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-    const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
-    cli.connect();
-    await waitForConnect(cli);
-    const received = collect(cli);
+  it("follows the target a call names, not where the caller stands", async () => {
+    // `ch ws delete --workspace other`, run from inside WS.
+    const other = "/other/wt/shared";
+    const { received, hold, done } = await callInFlight("api:operation:workspace.delete", {
+      workspace: other,
+    });
 
-    env.emitDomainEvent({
-      type: "workspace:deletion-progress",
-      payload: { workspacePath: "/somewhere/else", completed: false, operations: [] },
-    } as DomainEvent);
+    env!.emitDomainEvent(deletion(WS));
+    env!.emitDomainEvent(deletion(other));
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(received).toEqual([]);
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+    expect(received[0]!.payload).toMatchObject({ workspacePath: other });
+    hold.open();
+    await done;
   });
 
-  it("pushes an instance-wide event to a workspace-less client", async () => {
-    // A clone has no workspace, and a shell outside every worktree is exactly
-    // where `ch project open <url>` is run.
-    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
-    const cli = env.createCliClient({ client: "cli", token: TOKEN });
-    cli.connect();
-    await waitForConnect(cli);
-    const received = collect(cli);
+  it("pushes an event about no workspace to any call", async () => {
+    // A clone has no workspace; `ch project open <url>` is waiting on it.
+    const { received, hold, done } = await callInFlight("api:operation:workspace.delete");
 
-    env.emitDomainEvent({
-      type: "clone:progress",
-      payload: { stage: "receiving", progress: 10, name: "repo", url: "u" },
-    } as DomainEvent);
+    env!.emitDomainEvent(clone);
 
     await vi.waitFor(() => expect(received).toHaveLength(1));
     expect(received[0]!.type).toBe("clone:progress");
+    hold.open();
+    await done;
+  });
+
+  it("pushes every workspace's events to a call with no target", async () => {
+    // `ch ws create` cannot say which workspace its progress will be about.
+    const { received, hold, done } = await callInFlight("api:operation:workspace.create");
+
+    env!.emitDomainEvent(deletion("/other/wt/twin"));
+
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+    hold.open();
+    await done;
+  });
+
+  it("pushes nothing to a client with no call in flight", async () => {
+    env = await createPluginServerEnv(undefined, { registry: testRegistry(), cliToken: TOKEN });
+    listProjectsReturns(PROJECTS);
+    const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
+    cli.connect();
+    await waitForConnect(cli);
+    const received = collect(cli);
+
+    env.emitDomainEvent(deletion(WS));
+    env.emitDomainEvent(clone);
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(received).toEqual([]);
   });
 
   it("does not push events to a sidekick", async () => {
@@ -498,11 +574,17 @@ describe("forwarded events", () => {
 });
 
 describe("locks tied to a CLI connection", () => {
-  const OTHER = workspacePathSchema.parse("/repo/wt/other") as WorkspacePath;
-
-  /** The real lock entries over a real lock table, and nothing else. */
+  /**
+   * The real lock entries over a real lock table, and a project listing for
+   * them to look a named holder up in.
+   */
   function lockRegistry() {
     const dispatcher = createMockDispatcher();
+    dispatcher.registerOperation({
+      id: "list-projects",
+      schemas: { type: INTENT_LIST_PROJECTS, payload: z.unknown(), result: z.unknown() },
+      execute: async () => PROJECTS,
+    });
     const locks = createLockModule({ dispatcher, logger: SILENT_LOGGER }).locks;
     const registry: OperationRegistry = new OperationRegistry(
       lockEntries({
@@ -521,7 +603,8 @@ describe("locks tied to a CLI connection", () => {
   it("releases a `lock.hold` when the socket that took it disconnects", async () => {
     const { registry, locks } = lockRegistry();
     env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
-    const run = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    listProjectsReturns(PROJECTS);
+    const run = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     run.connect();
     await waitForConnect(run);
 
@@ -539,7 +622,8 @@ describe("locks tied to a CLI connection", () => {
   it("keeps a `lock.take` after the socket that took it disconnects", async () => {
     const { registry, locks } = lockRegistry();
     env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
-    const cli = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    listProjectsReturns(PROJECTS);
+    const cli = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     cli.connect();
     await waitForConnect(cli);
 
@@ -552,24 +636,25 @@ describe("locks tied to a CLI connection", () => {
     expect(locks.list()).toHaveLength(1);
   });
 
-  it("releases another workspace's lock for a client that names that workspace", async () => {
+  it("releases another workspace's lock for a call that names that workspace", async () => {
     // The documented way to break a stuck lock: `ch lock release <name>
     // --workspace <holder>`, run from anywhere.
     const { registry, locks } = lockRegistry();
     env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
-    const holder = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    listProjectsReturns(PROJECTS);
+    const holder = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
     holder.connect();
     await waitForConnect(holder);
     await call(holder, "api:operation:lock.take", { name: "device" });
     holder.disconnect();
     await waitForDisconnect(holder);
 
-    const breaker = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
+    const breaker = env.createCliClient({ client: "cli", token: TOKEN, cwd: "/elsewhere" });
     breaker.connect();
     await waitForConnect(breaker);
 
     await expect(
-      call(breaker, "api:operation:lock.release", { name: "device" })
+      call(breaker, "api:operation:lock.release", { name: "device", workspace: "feature" })
     ).resolves.toMatchObject({ success: true, data: { released: ["device"] } });
     expect(locks.list()).toEqual([]);
   });
@@ -577,8 +662,9 @@ describe("locks tied to a CLI connection", () => {
   it("drops a queued waiter whose socket disconnects", async () => {
     const { registry, locks } = lockRegistry();
     env = await createPluginServerEnv(undefined, { registry, cliToken: TOKEN });
-    const holder = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: WS });
-    const waiter = env.createCliClient({ client: "cli", token: TOKEN, workspacePath: OTHER });
+    listProjectsReturns(PROJECTS);
+    const holder = env.createCliClient({ client: "cli", token: TOKEN, cwd: WS });
+    const waiter = env.createCliClient({ client: "cli", token: TOKEN, cwd: "/other/wt/shared" });
     holder.connect();
     waiter.connect();
     await Promise.all([waitForConnect(holder), waitForConnect(waiter)]);

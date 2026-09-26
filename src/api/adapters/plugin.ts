@@ -2,8 +2,9 @@
  * The Socket.IO wire, and the three kinds of client that ride it.
  *
  * One connection, but not one adapter: a sidekick extension, the `ch` CLI and
- * the stdio MCP shim each get their own mapping and their own input shaping,
- * selected by the client kind declared in the handshake.
+ * the stdio MCP shim each get their own mapping and their own defaults,
+ * selected by the client kind declared in the handshake. They all accept the
+ * same fields: an operation means the same thing on every surface.
  *
  * They also differ in how operations are addressed:
  *
@@ -61,25 +62,31 @@ export const OPERATION_CHANNEL_PREFIX = "api:operation:";
 export interface PluginAdapterOptions {
   readonly socket: AdapterSocket;
   readonly registry: OperationRegistry;
-  /** Workspace this connection is scoped to, or null for a workspace-less client. */
+  /** The client's own workspace, or null for a shell standing outside every one. */
   readonly workspacePath: WorkspacePath | null;
-  /**
-   * The client's own workspace (see OperationContext.callerWorkspacePath).
-   * Defaults to `workspacePath`: only a shell naming another workspace differs.
-   */
-  readonly callerWorkspacePath?: WorkspacePath | null;
-  /**
-   * Why `workspacePath` is null although the client named a workspace — an
-   * unknown or ambiguous `--workspace`. Raised instead of the generic
-   * `no-workspace` by any operation that requires a workspace.
-   */
-  readonly workspaceError?: ApiError | null;
   /** Directory the client is running in, when it is a shell that has one. */
   readonly cwd?: string | null;
   readonly logger: Logger;
   readonly kind: ClientKind;
   /** Channel mapping override. Injectable so tests can drive the loop directly. */
   readonly map?: Readonly<Record<string, PluginMapping | null>>;
+}
+
+/**
+ * One attached connection, as the server sees it afterwards.
+ *
+ * Progress is shown for what a caller is doing, so which forwarded events a
+ * connection receives follows the calls it has in flight.
+ */
+export interface PluginConnection {
+  /**
+   * Whether an event about `eventWorkspace` (undefined: about no workspace in
+   * particular) concerns a call this connection is making right now. One that
+   * names no workspace concerns every call; one about a workspace concerns a
+   * call targeting it, and a call with no target yet — `ws create`, `project
+   * open` — which cannot say which workspace its progress will be about.
+   */
+  concerns(eventWorkspace: string | undefined): boolean;
 }
 
 /** One mountable operation: where it answers, and how its input is shaped. */
@@ -145,8 +152,8 @@ function splitArgs(args: readonly unknown[]): {
   return { request: args[0] };
 }
 
-export function attachPluginAdapter(options: PluginAdapterOptions): void {
-  const { socket, registry, workspacePath, workspaceError, logger, kind, map } = options;
+export function attachPluginAdapter(options: PluginAdapterOptions): PluginConnection {
+  const { socket, registry, workspacePath, logger, kind, map } = options;
 
   // One per connection, not per call: a handler may tie state to its caller
   // beyond its own return (`lock.hold`), and a caller still waiting (a queued
@@ -154,13 +161,8 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
   const connection = new AbortController();
   socket.on("disconnect", () => connection.abort());
 
-  const ctx: OperationContext = {
-    workspacePath,
-    callerWorkspacePath:
-      options.callerWorkspacePath !== undefined ? options.callerWorkspacePath : workspacePath,
-    cwd: options.cwd ?? null,
-    signal: connection.signal,
-  };
+  /** The target of each call in flight; null until (unless) it resolves one. */
+  const inFlight = new Set<{ target: WorkspacePath | null }>();
 
   // Describe is adapter infrastructure rather than an operation: it is how an
   // out-of-process client learns what exists, so it is mounted here rather than
@@ -196,12 +198,17 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
 
       logger.debug("API call", { event: mount.channel, workspace: workspacePath });
 
-      // A workspace the client named but that did not resolve fails the
-      // commands that need one with the real reason, not "no workspace".
-      const invocation =
-        entry.requiresWorkspace && workspaceError
-          ? Promise.reject(workspaceError)
-          : registry.invoke(entry, ctx, request ?? {}, mount.shaping);
+      const call: { target: WorkspacePath | null } = { target: null };
+      inFlight.add(call);
+      const ctx: OperationContext = {
+        workspacePath,
+        onTarget: (target) => {
+          call.target = target;
+        },
+        cwd: options.cwd ?? null,
+        signal: connection.signal,
+      };
+      const invocation = registry.invoke(entry, ctx, request ?? {}, mount.shaping);
 
       void invocation
         .then((data) => {
@@ -225,9 +232,19 @@ export function attachPluginAdapter(options: PluginAdapterOptions): void {
           ack?.({ success: false, error: message, category });
         })
         // Only reachable if ack() itself throws; the caller is gone either way.
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => inFlight.delete(call));
     });
   }
+
+  return {
+    concerns(eventWorkspace) {
+      return [...inFlight].some(
+        (call) =>
+          eventWorkspace === undefined || call.target === null || call.target === eventWorkspace
+      );
+    },
+  };
 }
 
 /** Re-exported so callers can narrow on the category without importing errors. */

@@ -18,14 +18,16 @@ import { dirname } from "node:path";
 import { stat } from "node:fs/promises";
 
 import type { OperationRegistry } from "../api/registry";
-import { attachPluginAdapter, type ClientKind } from "../api/adapters/plugin";
-import { ApiError } from "../api/errors";
+import {
+  attachPluginAdapter,
+  type ClientKind,
+  type PluginConnection,
+} from "../api/adapters/plugin";
 import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import {
   allWorkspaces,
   findWorkspaceContaining,
-  resolveWorkspaceReference,
   type ProjectLocation,
 } from "../api/workspace-lookup";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
@@ -444,7 +446,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    */
   const eventClients = new Set<{
     readonly socket: TypedSocket;
-    readonly workspacePath: WorkspacePath | null;
+    readonly connection: PluginConnection;
   }>();
 
   /** Unsubscribe callbacks for the forwarded-event subscriptions. */
@@ -453,21 +455,16 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
   /**
    * Forward one domain event to the clients it concerns.
    *
-   * A client scoped to a workspace hears only that workspace's events; a
-   * workspace-less client — a shell standing outside every worktree — hears
-   * everything, which is what makes progress visible for `project open`.
+   * A client hears about what it is doing: the workspace a call in flight
+   * targets, and anything that names no workspace — a clone, a project opening
+   * (see `PluginConnection.concerns`). Where the caller stands does not matter,
+   * so `ch ws delete --workspace other` shows the other workspace's teardown.
    */
   function forwardEvent(event: DomainEvent): void {
     const eventWorkspace = eventWorkspacePath(event.payload);
 
     for (const client of eventClients) {
-      if (
-        eventWorkspace !== undefined &&
-        client.workspacePath !== null &&
-        client.workspacePath !== eventWorkspace
-      ) {
-        continue;
-      }
+      if (!client.connection.concerns(eventWorkspace)) continue;
       // The typed socket describes the sidekick's server-to-client events; this
       // channel exists only for CLI and MCP clients, so it is emitted untyped.
       (client.socket as unknown as { emit: (channel: string, payload: unknown) => void }).emit(
@@ -771,30 +768,19 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
    *
    * Two shapes arrive here. A sidekick presents a workspace path and nothing
    * else — unchanged, because that handshake is a published contract. `ch` and
-   * the MCP shim present a client kind and a token, and may present a working
-   * directory instead of a workspace path, because a shell knows where it is
-   * standing but not which worktree that is.
+   * the MCP shim present a client kind and a token. The handshake says only who
+   * the caller is; what a call acts on is that call's own `workspace` field.
    */
   interface Handshake {
     readonly kind: ClientKind;
-    /** Explicit workspace, when the client named one. */
+    /**
+     * The caller's own workspace, when it knows it: a sidekick's, and the MCP
+     * shim's (its agent's). A shell does not — it presents where it stands.
+     */
     readonly workspacePath?: string;
-    /** Working directory: the caller's own workspace, and the target when it named none. */
+    /** Working directory: a shell's own workspace is the one containing it. */
     readonly cwd?: string;
-    /** Project to look a named workspace up in (`ch --project p --workspace w`). */
-    readonly project?: string;
   }
-
-  /** The workspace a connection acts on, and why it has none when it asked for one. */
-  interface ResolvedWorkspace {
-    readonly workspacePath: WorkspacePath | null;
-    /** The caller's own workspace (see OperationContext.callerWorkspacePath). */
-    readonly callerWorkspacePath: WorkspacePath | null;
-    /** Set when the client named a workspace that could not be resolved. */
-    readonly workspaceError?: ApiError;
-  }
-
-  const NO_WORKSPACE: ResolvedWorkspace = { workspacePath: null, callerWorkspacePath: null };
 
   function readHandshake(auth: unknown): Handshake | { error: string } {
     if (typeof auth !== "object" || auth === null) {
@@ -829,51 +815,42 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
 
     return {
       kind,
-      ...(typeof record.workspacePath === "string" &&
+      // Only the MCP shim knows its workspace. A shell's `workspacePath` would
+      // be a target from a `ch` older than the app; it is a call's field now.
+      ...(kind === "mcp" &&
+        typeof record.workspacePath === "string" &&
         record.workspacePath.length > 0 && { workspacePath: record.workspacePath }),
       ...(typeof record.cwd === "string" && record.cwd.length > 0 && { cwd: record.cwd }),
-      ...(typeof record.project === "string" &&
-        record.project.length > 0 && { project: record.project }),
     };
   }
 
-  /**
-   * The workspace a connection acts on, or null when it acts on none.
-   *
-   * A path the client gave is normalized and used as-is; a working directory is
-   * resolved through workspace:resolve, which matches the deepest workspace
-   * containing it. Resolving to nothing is not an error for a CLI client — that
-   * is simply a shell standing outside any worktree, and app-global commands
-   * still work there.
-   *
-   * A workspace the client *named* (`ch --workspace <name>`) that cannot be
-   * resolved is different: the caller asked for one and would otherwise get a
-   * misleading "no workspace" on its first workspace command. The error is kept
-   * and raised by the adapter on the first command that needs a workspace,
-   * rather than refusing the connection — commands that need none still work.
-   */
-  async function resolveConnectionWorkspace(handshake: Handshake): Promise<ResolvedWorkspace> {
-    // A sidekick always presents its own workspace path, and has always been
-    // taken at its word — it may name a workspace still being opened.
-    if (handshake.kind === "sidekick") {
-      if (handshake.workspacePath === undefined) return NO_WORKSPACE;
-      try {
-        const own = workspacePathSchema.parse(new Path(handshake.workspacePath).toString());
-        return { workspacePath: own, callerWorkspacePath: own };
-      } catch {
-        return NO_WORKSPACE;
-      }
+  /** A path a client presented as its own workspace, normalized; null if it is none. */
+  function ownWorkspace(path: string): WorkspacePath | null {
+    try {
+      return workspacePathSchema.parse(new Path(path).toString());
+    } catch {
+      return null;
     }
+  }
 
-    const reference = handshake.workspacePath;
-    if (reference === undefined && handshake.cwd === undefined) return NO_WORKSPACE;
+  /**
+   * The caller's own workspace, or null when it has none.
+   *
+   * A sidekick and the MCP shim present theirs and are taken at their word — it
+   * may be a workspace still being opened. A shell presents a working directory,
+   * matched to the deepest workspace containing it; resolving to nothing is not
+   * an error — that is simply a shell standing outside any worktree, and
+   * app-global commands still work there.
+   */
+  async function resolveCaller(handshake: Handshake): Promise<WorkspacePath | null> {
+    if (handshake.workspacePath !== undefined) return ownWorkspace(handshake.workspacePath);
+    if (handshake.cwd === undefined) return null;
 
     // Deliberately NOT workspace:resolve: that intent throws when the path is
     // not a workspace, and the dispatcher logs the rejection at error level —
     // so a shell standing outside every worktree, which is a normal caller,
     // would write a fault into the log and into every bug report. Listing is
-    // the non-throwing way to ask the same question, and it is also what lets a
-    // caller name a workspace instead of pasting its path.
+    // the non-throwing way to ask the same question.
     let projects: readonly ProjectLocation[];
     try {
       projects = ((await dispatcher.dispatch<ListProjectsIntent>({
@@ -884,43 +861,10 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       logger.debug("Could not list projects to resolve a client's workspace", {
         error: getErrorMessage(error),
       });
-      return NO_WORKSPACE;
+      return null;
     }
-
-    // A shell is the workspace it stands in, whatever it names. An MCP client
-    // presents its agent's own workspace, which is who it is.
-    const here =
-      handshake.cwd === undefined
-        ? null
-        : findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
-    const callerWorkspacePath =
-      handshake.kind === "mcp" && reference !== undefined
-        ? workspacePathSchema.parse(new Path(reference).toString())
-        : here === null
-          ? null
-          : workspacePathSchema.parse(here);
-
-    if (reference !== undefined) {
-      const resolved = resolveWorkspaceReference(projects, reference, {
-        callerWorkspace: callerWorkspacePath,
-        cwd: handshake.cwd ?? null,
-        project: handshake.project,
-      });
-      if ("error" in resolved) {
-        logger.debug("Could not resolve the workspace a client named", {
-          reference,
-          error: resolved.error,
-        });
-        return {
-          workspacePath: null,
-          callerWorkspacePath,
-          workspaceError: new ApiError(resolved.category, resolved.error),
-        };
-      }
-      return { workspacePath: workspacePathSchema.parse(resolved.path), callerWorkspacePath };
-    }
-
-    return { workspacePath: callerWorkspacePath, callerWorkspacePath };
+    const here = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
+    return here === null ? null : workspacePathSchema.parse(here);
   }
 
   // ---------------------------------------------------------------------------
@@ -948,36 +892,30 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): PluginSe
       return;
     }
 
-    const {
-      workspacePath: resolved,
-      callerWorkspacePath,
-      workspaceError,
-    } = await resolveConnectionWorkspace(handshake);
+    const resolved = await resolveCaller(handshake);
 
     // The socket may have gone while we were resolving.
     if (socket.disconnected) return;
 
     // Registry operations are mounted for every kind of client. Which operations
     // that is, and what they are called, follows the client kind.
-    if (deps.registry) {
-      attachPluginAdapter({
-        socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
-        registry: deps.registry,
-        workspacePath: resolved,
-        callerWorkspacePath,
-        workspaceError: workspaceError ?? null,
-        cwd: handshake.cwd ?? null,
-        logger,
-        kind: handshake.kind,
-      });
-    }
+    const connection: PluginConnection = deps.registry
+      ? attachPluginAdapter({
+          socket: socket as unknown as Parameters<typeof attachPluginAdapter>[0]["socket"],
+          registry: deps.registry,
+          workspacePath: resolved,
+          cwd: handshake.cwd ?? null,
+          logger,
+          kind: handshake.kind,
+        })
+      : { concerns: () => false };
 
     // A CLI or MCP client is a guest: it never becomes the workspace's
     // registered socket, so it cannot displace the sidekick, and teardown's wait
     // for the agent to close is not something it can strand. That is what lets
     // it connect during teardown, and without a workspace at all.
     if (handshake.kind !== "sidekick") {
-      const client = { socket, workspacePath: resolved };
+      const client = { socket, connection };
       eventClients.add(client);
       socket.on("disconnect", (reason: string) => {
         eventClients.delete(client);
