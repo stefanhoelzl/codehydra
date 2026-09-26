@@ -2,7 +2,7 @@ You are running inside CodeHydra. This directory is a git worktree CodeHydra cre
 
 **Status.** CodeHydra shows this workspace as busy or idle. Busy means there is work left that you can do without further user input; idle means you are done or waiting on the user. Ending your turn makes it idle, which notifies the user and marks the workspace as needing them — so end your turn when you genuinely need input, not to report progress.
 
-**Help.** Every CodeHydra tool is also on your PATH as `ch` — run `ch --help`; `code <path>` opens a file in the user's editor. How CodeHydra itself works (repository hooks in `.codehydra/hooks`, config, auto-workspaces, shortcuts) is in its user guide: `ch guide` prints it, `ch guide <section>` one part. Read it rather than guess.
+**Help.** Every CodeHydra tool is also on your PATH as `ch` — run `ch --help`; `code <path>` opens a file in the user's editor. How CodeHydra itself works (plugins in `.codehydra/plugins`, config, shortcuts) is in its user guide: `ch guide` prints it, `ch guide <section>` one part. Read it rather than guess.
 
 **Showing pages.** Open URLs and local HTML for the user with `ch ws browser --url <url>` (files as `file://…`), not the OS browser — login pages excepted. Unasked, open only what you made to be viewed (a report, a dev server showing your change); print other links.
 

@@ -3,7 +3,7 @@
  *
  * The same docs/USER_GUIDE.md the site renders and the help dialog shows,
  * shipped beside the system prompts. This is how an agent inside a workspace
- * learns how CodeHydra works (hooks, config, auto-workspaces, shortcuts) instead
+ * learns how CodeHydra works (plugins, config, shortcuts) instead
  * of guessing: its system prompt points here.
  */
 
@@ -20,16 +20,16 @@ export function guideEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "Print CodeHydra's user guide, or one section of it.",
     instructions:
-      "How CodeHydra itself works: workspaces, shortcuts, configuration, automatic " +
-      "workspaces, repository hooks (.codehydra/hooks), the ch CLI and MCP. Pass a section " +
-      "slug (e.g. 'repository-hooks') to get just that part; an unknown slug fails and " +
+      "How CodeHydra itself works: workspaces, shortcuts, configuration, plugins (hooks and " +
+      "automations, in ~/.codehydra/plugins and .codehydra/plugins), the ch CLI and MCP. " +
+      "Pass a section slug (e.g. 'plugins') to get just that part; an unknown slug fails and " +
       "lists the valid ones.",
     input: z.object({
       section: z
         .string()
         .min(1)
         .optional()
-        .describe("Section slug, e.g. 'repository-hooks'. Omit for the whole guide"),
+        .describe("Section slug, e.g. 'plugins'. Omit for the whole guide"),
     }),
     requiresWorkspace: false,
     handler: async (_ctx, input) => {

@@ -9,10 +9,9 @@ Run multiple AI agents in parallel, each in its own isolated workspace.
 3. [Core concepts](#core-concepts)
 4. [Using CodeHydra](#using-codehydra)
 5. [Configuration](#configuration)
-6. [Automatic workspaces](#automatic-workspaces)
-7. [Repository hooks](#repository-hooks)
-8. [Agents](#agents)
-9. [CLI and MCP](#cli-and-mcp)
+6. [Plugins](#plugins)
+7. [Agents](#agents)
+8. [CLI and MCP](#cli-and-mcp)
 
 ## Why CodeHydra?
 
@@ -210,8 +209,8 @@ uncommitted or unmerged work is refused unless told to ignore warnings.)
 Deleting the workspace you are on moves you to another one. Select the
 deleting workspace to watch it: a progress panel shows the steps — terminating
 processes, stopping the agent server, closing the editor, running the
-repository hook (if the repository has one; **Cancel** stops it while it
-runs), removing the worktree. If the deletion finishes while you are on it,
+plugins' `before-worktree-deleted` hooks (if any plugin has one; **Cancel**
+stops it while it runs), removing the worktree. If the deletion finishes while you are on it,
 you are moved away again; if it fails, you stay, and the panel offers
 **Retry**, **Kill & Retry** (with a table of the processes holding files open)
 and **Dismiss**, which force-removes the workspace from CodeHydra even if files
@@ -327,14 +326,15 @@ The same keys work in three places, highest precedence first:
 
 `config.json` lives in your CodeHydra home, `~/.codehydra/`
 (`%USERPROFILE%\.codehydra\` on Windows), the one folder for what you write
-yourself — the same place on every platform, so it can live in your dotfiles.
+yourself — settings and your [plugins](#plugins) — the same place on every
+platform, so it can live in your dotfiles.
 A `config.json` left in the data directory by an older version is moved there
 on the first start.
 
 What the app writes lives in the data directory: `state.json` (what the app
-itself remembers: trusted hook answers, the hide-hibernated toggle, tracked
-automatic workspaces, a dismissed update, the workspaces folder in use) and
-the `logs/` folder:
+itself remembers: which plugins are enabled, the hide-hibernated toggle, tracked
+automations, a dismissed update, the workspaces folder in use) and
+the `logs/` folder (plugin run logs are in `logs/plugins/`):
 
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
@@ -390,213 +390,182 @@ A folder that cannot be used — inside a project, or not writable — offers on
 the next start until the setting is changed. A migrated workspace on a detached
 HEAD cannot be kept (it stays on disk) and is named in a notification.
 
-## Automatic workspaces
+## Plugins
 
-CodeHydra can create workspaces for you on a schedule from any command that
-emits JSON — for example, a workspace per pull request that requests your
-review. Configure them under `auto-workspace.sources` in the settings; the
-editor there has a help panel with the same reference. The first poll runs at
-startup; after that, `auto-workspace.poll-interval` is the number of seconds
-between the end of one poll and the start of the next (default 60, minimum 1;
-a change applies once the current wait ends).
+A plugin is your own script — or a repository's — attached to CodeHydra. A
+plugin can contribute:
 
-### Sources
+- **hooks**: scripts run at a few points in a workspace's life — set a new
+  worktree up, give a workspace its environment each time it opens, refuse to
+  delete one, or hear that one was opened;
+- **automations**: scripts run on a timer, whose output creates workspaces —
+  for example one per pull request that requests your review — or runs other
+  actions (hibernate, wake, notify, …).
 
-The value is a multi-document YAML stream, one `---`-separated document per
-source:
+### Where plugins live
 
-| Key        | Meaning                                                                              |
-| ---------- | ------------------------------------------------------------------------------------ |
-| `name`     | Source name; must be unique                                                          |
-| `type`     | The trigger: `cron` (the default and only type)                                      |
-| `mode`     | `workspaces` (default) or `events` — what the command's objects mean                 |
-| `cmd`      | Shell command printing a top-level JSON array of objects                             |
-| `template` | Rendered once per object into one workspace; every string in it is a Liquid template |
+| Where                                                                  | Whose            | Applies to    | Contributes           | Runs                               |
+| ---------------------------------------------------------------------- | ---------------- | ------------- | --------------------- | ---------------------------------- |
+| `~/.codehydra/plugins/` (Windows: `%USERPROFILE%\.codehydra\plugins\`) | yours            | every project | hooks and automations | right away (enabled)               |
+| `.codehydra/plugins/` in a worktree                                    | the repository's | that worktree | hooks only            | once trusted (see [Trust](#trust)) |
 
-The command runs with `/bin/sh -c` on POSIX and `cmd.exe /d /s /c` on Windows
-(use cmd.exe syntax there: `"…"` quoting, `^` to continue a line). It inherits
-CodeHydra's environment and working directory, and is killed after 30
-seconds. A non-zero exit, a timeout or output that is not a JSON array skips
-that poll. The command line is never logged, so an inlined token stays out of
-the logs (the value is also left out of bug reports).
+In either folder a plugin is **one YAML file**, `<name>.yaml`, or **a folder**
+holding `plugin.yaml` and whatever files its scripts use. The file or folder
+name is the plugin's name (letters, digits, `.`, `-` and `_`); there is no name
+key. Other files in the plugins folder are ignored; a folder without
+`plugin.yaml`, or a name used by both a file and a folder, is reported as a
+problem.
 
-An invalid value — bad YAML, a document that fails validation — is rejected by
-the settings dialog and `ch config set`; given at startup (config.json, env
-var, CLI flag) it stops CodeHydra from starting. On the command line,
-`--auto-workspace.sources=@./sources.yaml` reads the value from a file, the
-only way to pass multi-line YAML there.
+A repository's plugins are read from the **worktree**, so they must be
+committed on the branch the worktree checks out. They run as they are in the
+worktree at that moment, uncommitted edits included — so an agent in the
+workspace can change what `before-worktree-deleted` does. A repository's plugin
+cannot run automations: an `automations:` section there is ignored (a warning
+is logged).
 
-### The template
+Plugins are read each time they would run, so an edit takes effect the next
+time without a restart.
 
-The render context is the JSON object itself: `{{ title }}`, `{{ user.login }}`,
-`{{ title | truncate: 60 }}`, `{% if draft %}…{% endif %}`. A field the object
-does not have renders empty.
-
-| Key        | Meaning                                                                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`     | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-{{ number }}` to a title                                                                        |
-| `key`      | Dedup identity across polls (default: the rendered name). `workspaces` mode only                                                                                                         |
-| `project`  | Absolute path of a local repository. Opened if it is not already                                                                                                                         |
-| `git`      | Clone URL (or `org/repo`) — cloned once, then reused. `project` wins if both are given; with neither, the item is skipped                                                                |
-| `base`     | Branch to fork from (default: the project's default branch). Only when creating                                                                                                          |
-| `tracking` | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                                                |
-| `focus`    | `true` switches to the workspace once created (default `false`)                                                                                                                          |
-| `prompt`   | Sent to the new workspace's agent. In `events` mode also sent to a matched workspace's agent, as a message. Never sent to an adopted workspace                                           |
-| `agent`    | `{ type, name, permission-mode, model: { provider, id } }`; `type` is `claude` or `opencode`, `permission-mode` is Claude only, `model` needs both fields. Default: the configured agent |
-| `metadata` | `title` (sidebar title), `tags` (`tags.<name>: { color, label, description }`), and any other keys                                                                                       |
-
-Metadata keys must start with a letter and contain only letters, digits and
-`-`; an invalid key is dropped with a warning in the log. Every workspace a
-source creates or matches also gets `source: <source name>` in its metadata,
-and a created one gets the blue **new** tag.
-
-### Modes
-
-- **`mode: workspaces`** — the command emits the workspaces that _should_
-  exist, and each poll reconciles against that list:
-  - an item not seen before creates a workspace — or, if a workspace with that
-    name already exists in the project, **adopts** it: tracked from then on,
-    otherwise untouched (no metadata, wake, focus or prompt);
-  - an item already handled is skipped, so deleting its workspace by hand is
-    final while the item is still listed;
-  - an item that disappears is forgotten once its workspace is gone too; if it
-    comes back after that, it is created again.
-
-  Nothing is ever deleted automatically. Removing a source, or switching it to
-  `events`, forgets everything it tracked.
-
-- **`mode: events`** — the command emits things that _happened_, and each
-  object fires exactly once. Nothing is tracked, so the command must not emit
-  the same thing twice (mark it read, pop a queue, keep its own cursor). Per
-  event, `template.name` is matched against the project's workspaces:
-  - no match — the workspace is created, as in `workspaces` mode;
-  - a match — its metadata is re-applied, then it is woken if hibernated, or
-    switched to if `focus: true`. Its `prompt`, if there is one, then reaches
-    the running agent as a [message](#messages-to-a-running-agent), signed
-    `CodeHydra · auto-workspace <source>`; an agent terminal you closed is
-    reopened for it;
-  - a match being deleted — skipped.
-
-  A failed event is logged and dropped; there is no retry.
-
-### When something goes wrong
-
-Most problems only reach the log, at `warn`: a failing or timed-out command,
-bad JSON, a template that does not render, a failed event. A clone that fails
-shows a "Clone failed" notification. A bad project shows an error notification
-naming the source and the fix: a `project` that is not an absolute path (a git
-URL belongs under `git`, not `project`), a `project` that cannot be opened, or a
-template with neither. A workspace that cannot be created (an invalid branch
-name, a bad `tracking`) shows an error notification too. A `mode: workspaces`
-item that fails either way is retried every poll (an event is still dropped),
-and a repeat of the same error adds to its notification's count instead of
-stacking a new one.
-
-### Example
+### The manifest
 
 ```yaml
-name: github
-cmd: |
-  gh api graphql -f q='is:open is:pr review-requested:@me' \
-    -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body baseRefName author{login} repository{url}}}}}' \
-    --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
-template:
-  name: "pr-{{ number }}"
-  key: "{{ html_url }}"
-  base: "{{ base.ref }}"
-  git: "{{ clone_url }}"
-  metadata:
-    title: "PR #{{ number }}: {{ title }}"
-    tags:
-      review: { color: "#4b6de8" }
-  prompt: |
-    Review pull request #{{ number }} "{{ title }}" opened by {{ user.login }}.
-
-    {{ body }}
+description: Set up the database # optional
+shell: bash # bash (default) | powershell | cmd
+platform: [linux, macos] # default: every platform
+hooks:
+  after-worktree-created: |
+    pnpm install >&2
+    echo '{"title": "Ready"}'
+  before-workspace-opened: '"$CH_PLUGIN_DIR/env.sh"'
+automations:
+  reviews:
+    script: gh pr list --search review-requested:@me --json number,title
+    template:
+      name: "pr-{{ number }}"
+      git: org/repo
 ```
 
-## Repository hooks
+- A hook's value **is** its script, in the document's `shell`. An automation's
+  script is its `script` field.
+- A manifest may hold several `---`-separated documents. **Every document whose
+  `platform` includes the one you are on applies**, in file order — the usual
+  split is one document per platform where the scripts differ:
 
-A repository can ship scripts that CodeHydra runs at a few points in a
-workspace's life: set a new worktree up, give a workspace its environment each
-time it opens, refuse to delete one, or hear that one was opened. They live in the repository, so everyone who works on it gets them.
-(They replace `.keepfiles`, which CodeHydra no longer reads.)
+  ```yaml
+  hooks:
+    after-worktree-created: ./setup.sh
+  ---
+  platform: windows
+  shell: powershell
+  hooks:
+    before-workspace-opened: '& "$env:CH_PLUGIN_DIR\env.ps1"'
+  ```
 
-### Where hooks go
+- Unknown keys are errors, not ignored: a typo — or a section a newer
+  CodeHydra adds — is reported and the whole plugin is skipped, so a broken
+  edit never half-runs.
+- `ch plugin schema` prints the manifest's JSON Schema, with a description for
+  every key. Point your editor's YAML schema at it
+  (`ch plugin schema > ~/.codehydra/plugin.schema.json`, then a
+  `# yaml-language-server: $schema=…` comment at the top of the manifest).
 
-One directory, read from the **worktree** — so a hook must be committed on the
-branch the worktree checks out: its base (in practice, `main`), or the remote
-branch it tracks. A hook runs as it is in the worktree at that moment,
-uncommitted edits included — so an agent in the workspace can change what
-`before-worktree-deleted` does.
+### How scripts run
 
+Every script — hook or automation — is written to a temporary file and run
+the way GitHub Actions runs a `run:` step for its shell:
+
+| `shell`      | Runs                                                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `bash`       | `bash --noprofile --norc -eo pipefail <file>` — a failing command or pipe stops the script                                 |
+| `powershell` | `pwsh` if it is on `PATH`, else Windows PowerShell, with `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File <file>` |
+| `cmd`        | `cmd /d /s /c <file>`, with `@echo off` first. Windows only                                                                |
+
+- **bash on Windows** is Git Bash: `paths.bash` when set, else the `bash.exe`
+  of the Git for Windows whose `git` is on `PATH`, else the usual install
+  locations. WSL's `bash` is never used — it sees neither CodeHydra's paths nor
+  its environment. Without a Git Bash, a bash script fails, saying so.
+  Git Bash runs a file's shebang, so a bundled `./tool.py` works as on Linux.
+- A shell that is not available (`cmd` off Windows, PowerShell without `pwsh`)
+  fails that script with a message; mark the document's `platform` instead.
+- **stdin**: one JSON object, newline-terminated (so `read` works under
+  `bash -e`). **stdout**: the result (below). **stderr**: yours, for people.
+- **Environment**: CodeHydra's own, with CodeHydra's bin directory first on
+  `PATH` — so `ch` works in every script — plus:
+  - `CH_PLUGIN_DIR`: the plugin's folder (folder plugins only), to reach the
+    files it bundles;
+  - `CH_WORKSPACE_DIR`: the worktree, for hooks.
+- **Working directory**: the worktree for a hook; the plugin's folder (or the
+  plugins folder, for a one-file plugin) for an automation. From a worktree,
+  `ch` acts on that workspace without being told which (`ch ws title`, …).
+- **Timeout**: none for a hook (see [Canceling a hook](#canceling-a-hook)); an
+  automation's script is killed after 30 seconds.
+
+### Run logs and errors
+
+Every run writes its own log file:
+`<data directory>/logs/plugins/<local|workspace/<project>>/<plugin>/<hooks|automations>/<entry>/<time>.<ok|failed>.log`.
+It holds the plugin, entry, shell, working directory, times and exit, then the
+JSON the script was handed, its stderr and its stdout. The environment is never
+written. Per entry the newest ten failed runs and the latest successful one are
+kept.
+
+A script's output never reaches CodeHydra's own log, and an error never quotes
+it — output can carry credentials an automation inlines. Instead:
+
+- a failed run raises a **Plugin failed** notification naming the plugin, the
+  entry, the exit and the run log (`local:github automations.reviews: exit 1 —
+log: …`); a plugin that cannot run at all — an invalid manifest, a folder
+  without `plugin.yaml` — raises **Plugin cannot run**. Each is raised once
+  per distinct message, not every time it happens again;
+- `ch plugin errors` lists the same: every plugin that cannot run, and the last
+  failed run of each hook and automation (until it next succeeds, or
+  CodeHydra restarts), with its log file;
+- a hook's stderr and stdout are also shown in the **CodeHydra Plugins** output
+  channel of the workspace's editor after it exits, each line tagged with the
+  plugin and entry (up to 500 lines are held until the editor is up).
+
+### Managing plugins
+
+```sh
+ch plugin list                      # name, origin, enabled/disabled/ask, platforms, path
+ch plugin disable local:github      # stop running it: hooks and automations
+ch plugin enable workspace:setup    # trust one of this repository's plugins
+ch plugin errors                    # what is wrong, with run logs
+ch plugin schema                    # the manifest's JSON Schema
 ```
-.codehydra/hooks/
-  after-worktree-created      # blocking; new worktrees only; may return title, tags
-  before-workspace-opened     # blocking; every open; may return env
-  before-worktree-deleted     # blocking; may refuse the deletion
-  on-workspace-opened         # fire-and-forget; every open; output ignored
+
+A plugin is named `local:<name>` (yours) or `workspace:<name>` (the
+repository's). `ch plugin list` run inside a workspace also shows that
+repository's plugins; `workspace:<name>` needs a workspace too (run it from
+one, or pass `--workspace`). MCP has the same as `plugin_list`,
+`plugin_enable`, `plugin_disable`, `plugin_errors` and `plugin_schema`.
+
+To stop every plugin hook at once, set `hooks.enabled` to `false` (settings,
+`ch config set hooks.enabled false`, `CH_HOOKS__ENABLED=false`, or
+`--hooks.enabled=false`); it applies immediately. Automations keep running —
+disable their plugin instead.
+
+### Hooks
+
+```yaml
+hooks:
+  after-worktree-created: … # blocking; new worktrees only; may return title, tags
+  before-workspace-opened: … # blocking; every open; may return env
+  before-worktree-deleted: … # blocking; may refuse the deletion
+  on-workspace-opened: … # fire-and-forget; every open; output ignored
 ```
 
 An entry starting with `on-` reports something that already happened: it is
 started and forgotten. Every other entry blocks the operation, and what it
-prints matters.
+prints matters: one JSON object, or nothing (the same as `{}`). Anything else —
+invalid JSON, `null`, an array, an unknown key — is a failed run.
 
-One file per entry. If the file is there it runs; if not, nothing happens. The
-file is named after the entry, with or without an extension —
-`after-worktree-created`, `after-worktree-created.sh` and
-`after-worktree-created.py` are all the same entry.
-
-A file can be pinned to one platform with a suffix right after the entry name:
-`.win`, `.linux` or `.mac`, optionally followed by an extension
-(`after-worktree-created.win.cmd`, `after-worktree-created.mac.sh`). On each
-platform:
-
-- a file suffixed for that platform runs, and the unsuffixed ones are ignored;
-- otherwise the unsuffixed file runs;
-- a file suffixed for another platform never runs.
-
-So a repository that supports Windows too ships `after-worktree-created` (a
-shebang script) and `after-worktree-created.win.cmd`. Only the whole segment
-counts: `after-worktree-created.windows.cmd` is an ordinary unsuffixed file.
-
-If more than one file is left for the platform — `after-worktree-created.sh`
-beside a forgotten `after-worktree-created.bak`, or two `.win.*` files —
-nothing runs: a **Repository hook failed** notification names the files, and
-the entry counts as a failed hook (a `before-worktree-deleted` gate therefore
-stops the deletion). Remove all but one, or pin them to their platforms.
-
-How a hook is started:
-
-- **Linux / macOS**: `/bin/sh -c '<path>'`, so the shebang picks the
-  interpreter. The file must be executable (`chmod +x`); unlike git, CodeHydra
-  reports a non-executable blocking hook instead of skipping it silently.
-- **Windows**: `cmd.exe /d /s /c "<path>"`. The shebang means nothing there, so
-  use `.cmd` or `.bat` — as a `.win.cmd` file, so the other platforms do not
-  try to run it.
-- Symlinks and directories are not run (a warning is logged), and they do not
-  count when choosing the file: a real file beside them still runs.
-
-### The exchange
-
-- **stdin**: one JSON object (below), then stdin is closed.
-- **stdout**: one JSON object, or nothing (empty output is the same as `{}`).
-  Anything else — invalid JSON, `null`, an array, an unknown key — is a hook
-  failure. Output shapes are strict for every blocking hook.
-- **stderr**: never parsed. It is shown in the **CodeHydra Hooks** output
-  channel of the workspace's editor after the hook exits (not live), and logged
-  at `warn` level — whether the hook succeeds or fails — so it is in the log
-  file at the default log level.
-- **Working directory**: the worktree.
-- **Environment**: CodeHydra's own environment, with CodeHydra's bin directory
-  put first on `PATH`. `ch` therefore works inside a hook and finds the
-  workspace from the working directory (`ch ws title`, `ch ws tag set`, …).
-  Nothing workspace-specific is added to the environment; stdin is the context.
-- **Paths**: on Windows, `workspacePath` is lower-case with forward slashes
-  (`c:/users/…`). For a project cloned from a URL, `projectPath` is
-  CodeHydra's bare clone, which has no working files.
-- **Timeout**: none. A blocking hook runs until it exits or you cancel it (see
-  [Canceling a hook](#canceling-a-hook)).
+**Several plugins** may define the same entry. They run one after another —
+your plugins by name, then the repository's by name, each plugin's documents
+in file order — and their results combine: `env` variables and `tags` merge,
+a later plugin winning for the same name; the last `title` set wins; the first
+refusal of a deletion stops the rest. A failed plugin contributes nothing, and
+for an open the next one still runs.
 
 Every entry receives this core, plus a field of its own:
 
@@ -613,22 +582,12 @@ Every entry receives this core, plus a field of its own:
 `branch` is the checked-out branch; it is absent on a detached HEAD. `base` is
 the base recorded for the workspace (the branch it was created from); it is
 absent when none is recorded, for example for a worktree adopted when the
-project was added. Neither is ever filled in with a stand-in such as the
-workspace name or `""`, and the rule is the same for every entry, whatever
-triggered it.
+project was added. Neither is ever filled in with a stand-in. On Windows,
+`workspacePath` is lower-case with forward slashes (`c:/users/…`). For a
+project cloned from a URL, `projectPath` is CodeHydra's bare clone, which has no
+working files.
 
-A minimal hook:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-input=$(cat)                          # the JSON above
-echo "setting up" >&2                 # goes to the output channel
-echo '{"title": "Feature X"}'         # the result
-```
-
-### after-worktree-created
+#### after-worktree-created
 
 Runs once, on a newly created worktree, before the editor and the agent start
 — the place for setup work: installing dependencies, copying untracked config.
@@ -656,38 +615,33 @@ Output — every field optional:
 - `tags` are keyed by tag name; `color`, `label` and `description` are optional.
   Each dot-separated part of a tag name must start with a letter and contain
   only letters, digits and `-`, not ending in `-`; at most 59 characters. An
-  invalid tag name makes the whole output invalid: a hook failure whose message
-  names it (`tags.1st-review: not a valid tag name …`), and neither the title
-  nor any tag is applied.
+  invalid tag name makes that plugin's whole output invalid: a failed run whose
+  message names it, and none of its title or tags are applied.
 
 `title` and `tags` are stored in the workspace's git config, so they survive a
-restart like a title set by hand. `env` is not accepted here (it is a hook
-failure): environment belongs to `before-workspace-opened`.
+restart like a title set by hand. `env` is not accepted here: environment
+belongs to `before-workspace-opened`.
 
-**Failure is loud but not fatal.** A non-zero exit, invalid output or a cancel
-shows a **Repository hook failed** notification (e.g. `after-worktree-created
-failed: exit 1 — <last stderr line>`, or `after-worktree-created was canceled`)
-and is logged; the workspace still opens, without anything the hook returned. A
-hook that never exits leaves the workspace loading until you cancel it.
+**Failure is loud but not fatal**: a failed or canceled run raises **Plugin
+failed** and the workspace still opens, without what that plugin returned. A
+script that never exits leaves the workspace loading until you cancel it.
 
-Replacing a `.keepfiles` that listed `.env` and `config/local.yml`:
+Copying untracked files from the main checkout:
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-input=$(cat)
-project=$(printf '%s' "$input" | jq -r .projectPath)
-workspace=$(printf '%s' "$input" | jq -r .workspacePath)
-
-for f in .env config/local.yml; do
-  if [ -e "$project/$f" ]; then
-    mkdir -p "$(dirname "$workspace/$f")"
-    cp "$project/$f" "$workspace/$f"
-  fi
-done
+```yaml
+hooks:
+  after-worktree-created: |
+    input=$(cat)
+    project=$(printf '%s' "$input" | jq -r .projectPath)
+    for f in .env config/local.yml; do
+      if [ -e "$project/$f" ]; then
+        mkdir -p "$(dirname "$f")"
+        cp "$project/$f" "$f"
+      fi
+    done
 ```
 
-### before-workspace-opened
+#### before-workspace-opened
 
 Runs every time a workspace opens, before its editor and agent start: when it
 is created (right after `after-worktree-created`), for every non-hibernated
@@ -718,24 +672,24 @@ starts things with; there is no appending, so an `env` that sets `PATH` must
 contain the whole path. Keys starting with `_CH_` are CodeHydra's own and are
 dropped (a warning is logged).
 
-CodeHydra puts `GIT_OPTIONAL_LOCKS=0` in the same places, hook or no hook, so
-`git status` there never takes `index.lock` — one killed mid-way cannot leave a
-stale lock behind. (The editor's Source Control view already runs `git status`
-that way. `git diff` against the working tree still takes the lock briefly
-whatever the setting, and skips it when it is held.) It is a default: an `env` that sets `GIT_OPTIONAL_LOCKS` wins, and so does a value
-already in the environment CodeHydra was started with.
+CodeHydra puts `GIT_OPTIONAL_LOCKS=0` in the same places, plugin or no plugin,
+so `git status` there never takes `index.lock` — one killed mid-way cannot
+leave a stale lock behind. (The editor's Source Control view already runs `git
+status` that way. `git diff` against the working tree still takes the lock
+briefly whatever the setting, and skips it when it is held.) It is a default:
+an `env` that sets `GIT_OPTIONAL_LOCKS` wins, and so does a value already in
+the environment CodeHydra was started with.
 
 The environment is held in memory only: it is never written to a file, and
 nothing of it survives a restart or a hibernation — which is why this hook runs
 on every open, and why it suits short-lived values such as a freshly minted
 token. When it changes between opens, the new values apply from that open on.
 
-**Failure is loud but not fatal**, as for `after-worktree-created`: a
-**Repository hook failed** notification, and the workspace opens without the
-environment. A hook that never exits leaves the workspace unopened (a new one
-keeps loading) until you cancel it.
+**Failure is loud but not fatal**, as for `after-worktree-created`: the
+workspace opens without that plugin's environment. A script that never exits
+leaves the workspace unopened (a new one keeps loading) until you cancel it.
 
-### before-worktree-deleted
+#### before-worktree-deleted
 
 The last gate before the worktree is removed. By the time it runs the workspace
 is shut down — terminals killed, agent server stopped, editor closed — and it
@@ -744,8 +698,7 @@ project with "remove all" confirmed. It does not run when closing a project
 leaves the worktrees on disk, and not for a forced deletion.
 
 Extra input: `"keepBranch": true | false` (the user's choice in the delete
-dialog). `branch` and `base` are absent when CodeHydra does not know them (a
-detached HEAD, or a worktree without a recorded base).
+dialog). `branch` and `base` are absent when CodeHydra does not know them.
 
 To refuse, exit **0** and print:
 
@@ -757,32 +710,28 @@ Printing nothing, or `{}`, allows the deletion. `{"reason": "…"}` without
 `"blocked": true` also allows it; `{"blocked": true}` without a reason shows
 "blocked".
 
-A **non-zero exit**, invalid output or a cancel means the hook broke. That stops
-the deletion too — the gate fails closed — but is reported as a hook failure,
-with the last stderr line (or `before-worktree-deleted was canceled`), rather
-than as a refusal.
+A **non-zero exit**, invalid output or a cancel means the script broke. That
+stops the deletion too — the gate fails closed — and the progress row names
+the plugin, the exit and its run log, rather than a refusal.
 
 Either way the deletion stops before the worktree is removed and the reason
 appears on the progress row, with **Retry** and **Dismiss**. Neither keeps the
 workspace: Retry runs the whole deletion again (trust question included, unless
-answered Always or Never); Dismiss force-deletes, skipping hooks, and keeps
-the branch if you chose to keep it. **Escape on the failed panel means
-Dismiss.** These buttons appear once the hook has exited; while it runs, the
-panel offers **Cancel** instead, which stops it (see
-[Canceling a hook](#canceling-a-hook)) and leads to Retry and Dismiss.
+answered for good); Dismiss force-deletes, skipping hooks, and keeps the branch
+if you chose to keep it. **Escape on the failed panel means Dismiss.** These
+buttons appear once the script has exited; while it runs, the panel offers
+**Cancel** instead, which stops it (see [Canceling a hook](#canceling-a-hook))
+and leads to Retry and Dismiss.
 
 When closing a project with "remove all", a refused deletion does not stop the
 project from closing; that worktree stays on disk.
 
-### on-workspace-opened
+#### on-workspace-opened
 
 Started after a workspace is open — its editor and agent already running, so
 it cannot prepare anything for them; use `before-workspace-opened` for that —
-and forgotten immediately. Nothing waits for it, its stdout is ignored, and a
-failure (including a non-executable file) only logs a warning with the exit
-code; its stderr is logged at `warn`. It cannot be canceled from CodeHydra. The
-one failure that raises a notification is several files claiming the entry (see
-[Where hooks go](#where-hooks-go)), because then nothing ran.
+and forgotten immediately. Nothing waits for it and its stdout is not read. A
+failure still raises **Plugin failed**. It cannot be canceled from CodeHydra.
 
 It runs on the same opens as `before-workspace-opened`: creation, app start,
 project open (adopted worktrees included) and wake. Extra input:
@@ -790,30 +739,26 @@ project open (adopted worktrees included) and wake. Extra input:
 workspaces with something external can skip reopens, while one that re-warms a
 cache will not.
 
-(This entry was called `on-workspace-created`; a file with that name is no
-longer run.)
-
-### Canceling a hook
+#### Canceling a hook
 
 A blocking hook has no timeout, so while one runs CodeHydra offers **Cancel**
-for it:
+for it, naming the entry and the plugin:
 
 - `after-worktree-created` and `before-workspace-opened`: on the
-  **Loading workspace...** screen — at startup, one Cancel per running hook,
+  **Loading workspace...** screen — at startup, one Cancel per running script,
   each naming its workspace; later, on the loading panel of the workspace you
-  are looking at. A hook of a workspace you are not looking at (a background
+  are looking at. A script of a workspace you are not looking at (a background
   creation, a wake, a project being opened) gets a sidebar notification with
   Cancel once it has run for about a second and a half.
 - `before-worktree-deleted`: on the deletion progress panel, below the
-  hook's row.
+  row.
 
-Cancel kills the hook and everything it started (on Linux and macOS SIGTERM,
-then SIGKILL for whatever is still running a second later; on Windows the
-whole process tree at once) and
-counts as the hook failing, with that entry's usual consequence: an open goes
-on without what the hook would have returned, and a deletion stops with Retry
-and Dismiss. Cancel is not offered while the trust question is open — answer
-Skip there instead.
+Cancel kills the script and everything it started (on Linux and macOS SIGTERM,
+then SIGKILL for whatever is still running a second later; on Windows the whole
+process tree at once) and counts as that run failing, with the entry's usual
+consequence: an open goes on without what it would have returned, and a
+deletion stops with Retry and Dismiss. Cancel is not offered while the trust
+question is open.
 
 Quitting CodeHydra cancels every hook still running, `on-` entries included,
 the same way, and starts no new ones — a hook never outlives the app. A
@@ -822,66 +767,196 @@ still there on the next start.
 
 ### Trust
 
-Hooks are code from a repository, so the first time one would run for a
-project, CodeHydra asks:
+A repository's plugins are code from that repository, so the first time one
+would run for a project, CodeHydra asks — one question per project, listing
+every plugin of the repository not yet answered for, each with a checkbox
+(checked):
 
-> **Run repository hooks?** "my-app" defines CodeHydra hooks. Running them
-> executes scripts from the repository on your machine.
-> `.codehydra/hooks/after-worktree-created`
+> **Run this repository's plugins?** "my-app" ships CodeHydra plugins. Running
+> them executes scripts from the repository on your machine.
 >
-> Buttons: **Always**, **Once**, **Skip**, **Never**
+> ☑ setup ☑ deploy-gate
+>
+> Buttons: **Remember**, **Just this time**
 
-- **Always** and **Never** are remembered for that project; **Once** and
-  **Skip** apply to that one run. Escape means Skip.
-- Trust is per project, not per script: after **Always**, edited hooks run
-  without asking.
-- One question per project is open at a time; every hook waiting on it gets
-  the same answer.
-- The operation waits while the question is open, and the workspace's sidebar
+- **Remember** enables the checked plugins and disables the unchecked ones for
+  the project, for good. **Just this time** runs the checked ones this once and
+  remembers nothing, so the question comes back the next time a plugin would
+  run.
+- A plugin the repository adds later is asked about on its own.
+- While the question is open, the operation waits and the workspace's sidebar
   row turns green — during `after-worktree-created` that is the placeholder row
-  of the workspace being created. With a `before-workspace-opened` or
-  `on-workspace-opened` hook, it can appear right at app start — and until it is
-  answered, the workspace being opened waits.
-- **Once** and **Skip** answer a single hook run, so without **Always** or
-  **Never** the question comes back for each hook that fires: creating a
-  workspace can ask for `after-worktree-created`, then
-  `before-workspace-opened`, then `on-workspace-opened`, and an app start asks
-  per workspace.
-- Skip or Never on a `before-worktree-deleted` lets the deletion proceed
-  without the gate.
+  of the workspace being created. Every hook waiting on it gets the same
+  answer.
 - The question is asked whatever triggered the hook — the UI, `ch ws delete`,
-  an automatic workspace.
-- A repository with no hooks is never asked anything.
-- To change a remembered answer, remove the project's entry from `hooks.trusted`
-  in `state.json` (in the data directory) while CodeHydra is not running.
+  an automation. An unchecked or disabled `before-worktree-deleted` lets the
+  deletion proceed without that gate.
+- A repository with no plugins is never asked anything.
+- Change an answer with `ch plugin enable|disable workspace:<name>`. Your own
+  plugins are never asked about; `ch plugin disable local:<name>` stops one.
+- A project's Always or Never for the repository hooks CodeHydra ran before
+  plugins still stands for its plugins until they are answered for.
 
-To turn hooks off entirely, set `hooks.enabled` to `false` (settings,
-`ch config set hooks.enabled false`, `CH_HOOKS__ENABLED=false`, or
-`--hooks.enabled=false`). The change applies immediately.
+### Automations
 
-### Debugging hooks
+An automation is a script your plugin runs every poll cycle. It prints a JSON
+array; each item runs the automation's **action**, with the `template`
+rendered for that item as the action's input:
 
-- Test a hook by hand from the worktree:
-  `echo '{"workspaceName":"x","workspacePath":"'"$PWD"'","projectPath":"/path/to/project","branch":"x","base":"main"}' | .codehydra/hooks/after-worktree-created`
-  — add `"keepBranch": false` for `before-worktree-deleted`, or
-  `"reopened": false` for `before-workspace-opened` and `on-workspace-opened`.
-- stderr appears in the **CodeHydra Hooks** output channel once the hook
-  exits, each line tagged with the hook's name (up to 500 lines are kept until
-  the editor is up; the log keeps them all). `before-worktree-deleted` has no editor left to show it in: only its
-  reason, or its last stderr line on failure, reaches the progress row.
-- stderr is logged at `warn` under the `[hooks]` logger, so it is in the log
-  file at the default log level, for hooks that succeed too. The process
-  details (command line, exit code, stdout) are under the `[process]` logger at
-  `debug`; run with `--log.level=debug` to see them. At `debug` stdout is
-  logged in full, including any `env` values.
-- `exit 126: a file could not be executed (is it chmod +x?)` is usually the
-  hook file missing its exec bit — or a command the script ran that is not
-  executable. `exit 127: a command was not found (the shebang interpreter, or
-one the script ran)` means the `#!` line points at something that is not
-  installed, or the script called a command that is not on `PATH`. The shell
-  reports both cases with the same code, so check the last stderr line.
-- `several files claim it on this platform (…)` lists the files CodeHydra could
-  not choose between; see [Where hooks go](#where-hooks-go).
+```yaml
+automations:
+  reviews:
+    action: workspace.create # the default
+    mode: workspaces # the default for workspace.create
+    script: … # prints a JSON array
+    template: { … } # every string is a Liquid template
+```
+
+The first poll runs at startup; after that, `automations.poll-interval` is the
+number of seconds between the end of one poll and the start of the next
+(default 60, minimum 1; a change applies once the current wait ends; the old
+`auto-workspace.poll-interval` is still read). Every automation runs each
+poll. The script gets `{}` on stdin. A failed or timed-out script, or output
+that is not a JSON array, skips that automation for the poll and raises
+**Plugin failed**.
+
+The render context of the template is the item itself: `{{ title }}`,
+`{{ user.login }}`, `{{ title | truncate: 60 }}`, `{% if draft %}…{% endif %}`.
+A field the item does not have renders empty.
+
+#### Creating workspaces
+
+`workspace.create` creates workspaces for the items. Its template:
+
+| Key        | Meaning                                                                                                                                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | Required. Workspace name **and git branch** — must be a valid branch name, so prefer `pr-{{ number }}` to a title                                                                        |
+| `key`      | Dedup identity across polls (default: the rendered name). `workspaces` mode only                                                                                                         |
+| `project`  | Absolute path of a local repository. Opened if it is not already                                                                                                                         |
+| `git`      | Clone URL (or `org/repo`) — cloned once, then reused. `project` wins if both are given; with neither, the item is skipped                                                                |
+| `base`     | Branch to fork from (default: the project's default branch). Only when creating                                                                                                          |
+| `tracking` | Existing remote branch to check out with upstream set, e.g. `origin/feature-x`, instead of forking `base`                                                                                |
+| `focus`    | `true` switches to the workspace once created (default `false`)                                                                                                                          |
+| `prompt`   | Sent to the new workspace's agent. In `events` mode also sent to a matched workspace's agent, as a message. Never sent to an adopted workspace                                           |
+| `agent`    | `{ type, name, permission-mode, model: { provider, id } }`; `type` is `claude` or `opencode`, `permission-mode` is Claude only, `model` needs both fields. Default: the configured agent |
+| `metadata` | `title` (sidebar title), `tags` (`tags.<name>: { color, label, description }`), and any other keys                                                                                       |
+
+Metadata keys must start with a letter and contain only letters, digits and
+`-`; an invalid key is dropped with a warning in the log. Every workspace an
+automation creates or matches also gets `source: <plugin>/<automation>` in its
+metadata, and a created one gets the blue **new** tag.
+
+- **`mode: workspaces`** — the script prints the workspaces that _should_
+  exist, and each poll reconciles against that list:
+  - an item not seen before creates a workspace — or, if a workspace with that
+    name already exists in the project, **adopts** it: tracked from then on,
+    otherwise untouched (no metadata, wake, focus or prompt);
+  - an item already handled is skipped, so deleting its workspace by hand is
+    final while the item is still listed;
+  - an item that disappears is forgotten once its workspace is gone too; if it
+    comes back after that, it is created again.
+
+  Nothing is ever deleted automatically. Removing the automation, disabling
+  its plugin or switching it to `events` forgets everything it tracked.
+
+- **`mode: events`** — the script prints things that _happened_, and each
+  item fires exactly once. Nothing is tracked, so the script must not print
+  the same thing twice (mark it read, pop a queue, keep its own cursor). Per
+  event, `template.name` is matched against the project's workspaces:
+  - no match — the workspace is created, as in `workspaces` mode;
+  - a match — its metadata is re-applied, then it is woken if hibernated, or
+    switched to if `focus: true`. Its `prompt`, if there is one, then reaches
+    the running agent as a [message](#messages-to-a-running-agent), signed
+    `CodeHydra · automation <plugin>/<automation>`; an agent terminal you
+    closed is reopened for it;
+  - a match being deleted — skipped.
+
+  A failed event is logged and dropped; there is no retry.
+
+A clone that fails shows a "Clone failed" notification. A bad project raises
+**Plugin failed** with the fix: a `project` that is not an absolute path (a git
+URL belongs under `git`), a `project` that cannot be opened, or a template
+with neither. A workspace that cannot be created (an invalid branch name, a bad
+`tracking`) shows an error notification too. A `mode: workspaces` item that
+fails either way is retried every poll (an event is still dropped).
+
+Example — a workspace per pull request that requests your review:
+
+```yaml
+automations:
+  reviews:
+    script: |
+      gh api graphql -f q='is:open is:pr review-requested:@me' \
+        -f query='query($q:String!){search(query:$q,type:ISSUE,first:100){nodes{... on PullRequest{number title url body baseRefName author{login} repository{url}}}}}' \
+        --jq '[.data.search.nodes[]|{number,title,html_url:.url,body,user:{login:.author.login},base:{ref:.baseRefName},clone_url:(.repository.url+".git")}]'
+    template:
+      name: "pr-{{ number }}"
+      key: "{{ html_url }}"
+      base: "{{ base.ref }}"
+      git: "{{ clone_url }}"
+      metadata:
+        title: "PR #{{ number }}: {{ title }}"
+        tags:
+          review: { color: "#4b6de8" }
+      prompt: |
+        Review pull request #{{ number }} "{{ title }}" opened by {{ user.login }}.
+
+        {{ body }}
+```
+
+#### Other actions
+
+Any of these operations can be an automation's `action`; each item runs it
+once, and nothing is tracked:
+
+`workspace.hibernate`, `workspace.wake`, `workspace.delete`,
+`workspace.switch`, `workspace.title`, `workspace.tag.set`,
+`workspace.tag.remove`, `metadata.set`, `agent.message`, `agent.open`,
+`agent.close`, `agent.restart`, `vscode.notify`, `vscode.status-bar`,
+`notification.show`, `notification.close`, `project.open`, `project.close`,
+`log`.
+
+The rendered template is the operation's input — the same fields its MCP tool
+takes, and its `ch` command's flags (`ch ws hibernate --help`). Strings are
+rendered; numbers, booleans and lists are passed as written, so write
+`dismissible: true`, not `"true"`. An operation that acts on a workspace needs
+`workspace` (a name, looked up in every open project, or an absolute path) and
+may add `project` to say where to look the name up. An input the operation
+refuses raises **Plugin failed**; the next item still runs.
+
+```yaml
+automations:
+  ci-failures:
+    action: notification.show
+    script: |
+      gh run list --status failure --limit 5 --json databaseId,displayTitle \
+        | jq '[.[] | {id: .databaseId, title: .displayTitle}]'
+    template:
+      title: "CI failed"
+      message: "{{ title }}"
+      type: error
+```
+
+An action that waits for you (`notification.show` with `wait: true`, say)
+holds up the whole poll until it is answered.
+
+The `auto-workspace.sources` setting this replaces is moved on the first start:
+its sources become the automations of a plugin at
+`~/.codehydra/plugins/auto-workspaces/plugin.yaml` (bash, or cmd on Windows),
+what they already created stays tracked, and the setting is cleared.
+
+### Repository hooks from before plugins
+
+The `.codehydra/hooks/<entry>` files repositories used to ship no longer run.
+While a worktree still has them and no plugin of its own, every time it opens
+its editor shows a warning naming them, with **Migrate**: that writes
+`.codehydra/plugins/hooks.yaml`, which runs each file from its entry as before
+— a `.win`/`.linux`/`.mac` file only on its platform, a `.cmd`/`.bat` file
+through cmd, a `.ps1` through PowerShell, anything else through bash (which
+runs the file itself, so its shebang and exec bit still decide). Commit it; the
+hooks run again from the next open, once the plugin is trusted. An entry
+several files claimed on a platform ran nothing before and is left out,
+named in the message.
 
 ## Agents
 
@@ -956,7 +1031,7 @@ tools).
 
 A prompt given when a workspace is created — in the New workspace form, with
 `ch ws create … --prompt`, by `workspace_create` from another agent, or by an
-[automatic workspace](#automatic-workspaces) — is sent once, when the agent
+[automation](#automations) — is sent once, when the agent
 first starts. With it you can choose `--agent claude|opencode`, `--model`
 (OpenCode: `provider/model`), `--permission-mode` (Claude Code, e.g. `plan`)
 and `--agent-name`; these need `--agent`.
@@ -967,7 +1042,7 @@ A message reaches an agent that is **already running**, the way one Claude
 Code session messages another. An initial prompt only reaches it at launch.
 Send one with `ch ws agent message <text>` (`-` reads the text from standard
 input), the `workspace_send_agent_message` MCP tool or the CodeHydra API.
-[Automatic workspaces](#automatic-workspaces) in `events` mode use it for the
+[Automations](#automations) in `events` mode use it for the
 prompt of a workspace that already exists.
 
 ```sh
@@ -984,7 +1059,7 @@ ch ws agent message --wake "pick this back up"
 - The agent is told who sent it: `CodeHydra · workspace <name>` for the
   workspace your shell is in (even when `--workspace` names another),
   `CodeHydra · ch` from outside any workspace, or
-  `CodeHydra · auto-workspace <source>`. The sender cannot be chosen.
+  `CodeHydra · automation <plugin>/<automation>`. The sender cannot be chosen.
 - A hibernated workspace, or one whose agent terminal is closed, has no agent
   to take it, and the command fails (exit 6). `--wake` wakes the workspace or
   reopens the agent terminal, then waits up to 90 seconds for the agent to
@@ -1004,7 +1079,7 @@ OpenCode through its server's events. A pending permission prompt, or a
 question the agent asked you, counts as idle — the agent is waiting on you.
 
 So does a dialog in the workspace's editor — a notification, pick list or text
-prompt raised by the agent, `ch` or a repository hook. The workspace reads idle
+prompt raised by the agent, `ch` or a plugin. The workspace reads idle
 until you dismiss it, even while the agent keeps working and even with no agent
 running, then returns to its real status.
 
@@ -1048,7 +1123,7 @@ alongside any entries in your own `opencode.json`.
 ### The `ch` command
 
 `ch` lives in the `bin` folder of the data directory. It is on the `PATH` of
-every editor terminal, the agent, and repository hooks; to use it from any
+every editor terminal, the agent, and plugin scripts; to use it from any
 other shell, add that folder to your `PATH` or symlink `ch`. It finds the
 running CodeHydra by itself; if none is running, it exits 3.
 
@@ -1076,6 +1151,7 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `project list`, `project open <target>`, `project close <project>` | Projects (a path, a git URL or `org/repo`; `--remove-local-repo`)                                                |
 | `lock take`, `lock release`, `lock ls`, `lock run`                 | Locks, see below                                                                                                 |
 | `config list\|get\|set\|reset`                                     | Settings, see [Configuration](#configuration)                                                                    |
+| `plugin list\|enable\|disable\|errors\|schema`                     | Plugins, see [Managing plugins](#managing-plugins)                                                               |
 | `guide [section]`                                                  | This guide, or one `##` section of it                                                                            |
 | `log <level> <message>`                                            | Write to CodeHydra's log                                                                                         |
 | `report-issue <description>`                                       | File a bug report                                                                                                |
@@ -1089,7 +1165,7 @@ ch ws title "Auth rework"
 ch ws title                    # clears the title again
 ch ws tag set review --color "#3498db"
 ch ws delete --workspace feature-auth --keep-branch
-ch guide repository-hooks
+ch guide plugins
 ```
 
 - `ch` acts on the workspace containing the current directory.
