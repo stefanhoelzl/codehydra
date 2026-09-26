@@ -6,9 +6,17 @@ runs:
   steps:
     - uses: pnpm/action-setup@v6
 
+    # Tell pnpm where its store is rather than asking: `pnpm store path` is a
+    # cold pnpm start that took ~9-13s on Windows just to print a path. pnpm
+    # reads npm_config_store_dir, so every later pnpm in the job agrees with the
+    # cache steps. runner.temp is on the checkout's drive on every OS, so pnpm
+    # can still hardlink from the store instead of copying.
     - id: pnpm-cache
       shell: bash
-      run: echo "STORE_PATH=$(pnpm --silent store path)" >> $GITHUB_OUTPUT
+      run: |
+        STORE_PATH="${{ runner.temp }}/pnpm-store"
+        echo "npm_config_store_dir=$STORE_PATH" >> $GITHUB_ENV
+        echo "STORE_PATH=$STORE_PATH" >> $GITHUB_OUTPUT
 
     # Restore always, save only on main. GitHub scopes a cache to the ref that
     # wrote it: a PR-scoped cache is readable by that PR alone, while a cache
