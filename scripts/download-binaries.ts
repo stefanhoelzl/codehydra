@@ -8,9 +8,12 @@
  *
  * In production, binaries are downloaded during app setup to the same paths.
  *
- * For binaries with null version (like Claude), the script first checks if
- * the binary is available on the system (via --version check). If not, it fetches
- * the latest version and downloads to the versioned directory.
+ * Claude is never downloaded while CLAUDE_VERSION is null: the script only
+ * checks whether it is on PATH (via --version) and says how to install it.
+ *
+ * `_CH_SKIP_VSCODIUM_DOWNLOAD=1` skips VSCodium, the largest download. CI sets
+ * it: no CI job runs VSCodium from here (the e2e jobs point the packaged app at
+ * a fresh root, where it downloads its own).
  *
  * Wrapper scripts are copied separately via `pnpm build:wrappers` which
  * copies from resources/bin/ and dist/bin/ to app-data/bin/.
@@ -77,9 +80,11 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Progress callback that updates a single line
+// Progress callback that updates a single line. Only on a terminal: a CI log
+// turns every `\r` update into a line of its own, thousands per download.
 function createProgressCallback(binary: string): (progress: DownloadProgress) => void {
   return (progress: DownloadProgress) => {
+    if (!process.stdout.isTTY) return;
     const downloaded = formatBytes(progress.bytesDownloaded);
     const total = progress.totalBytes ? formatBytes(progress.totalBytes) : "unknown";
     const percent = progress.totalBytes
@@ -126,6 +131,25 @@ async function downloadBinary(
   }
 }
 
+async function downloadVscodium(
+  deps: DownloadDeps,
+  pathProvider: DefaultPathProvider,
+  platform: SupportedPlatform,
+  arch: SupportedArch
+): Promise<void> {
+  const ide = createVscodiumIdeServer();
+  const ideServerSubPath = ide.archiveSubPath(platform, arch);
+  const ideServerRequest: DownloadRequest = {
+    name: ide.id,
+    url: ide.downloadUrl(platform, arch),
+    destDir: pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
+    archiveExtension: ".tar.gz",
+    executablePath: ide.executablePath(platform),
+    ...(ideServerSubPath !== undefined ? { subPath: ideServerSubPath } : {}),
+  };
+  await downloadBinary(deps, ideServerRequest, VSCODIUM_VERSION);
+}
+
 async function main(): Promise<void> {
   console.log("Setting up binary dependencies...\n");
 
@@ -148,17 +172,11 @@ async function main(): Promise<void> {
 
   // Download binaries to production paths
   console.log("Checking vscodium...");
-  const ide = createVscodiumIdeServer();
-  const ideServerSubPath = ide.archiveSubPath(platform, arch);
-  const ideServerRequest: DownloadRequest = {
-    name: ide.id,
-    url: ide.downloadUrl(platform, arch),
-    destDir: pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
-    archiveExtension: ".tar.gz",
-    executablePath: ide.executablePath(platform),
-    ...(ideServerSubPath !== undefined ? { subPath: ideServerSubPath } : {}),
-  };
-  await downloadBinary(deps, ideServerRequest, VSCODIUM_VERSION);
+  if (process.env._CH_SKIP_VSCODIUM_DOWNLOAD === "1") {
+    console.log("  skipped (_CH_SKIP_VSCODIUM_DOWNLOAD=1)");
+  } else {
+    await downloadVscodium(deps, pathProvider, platform, arch);
+  }
 
   console.log("Checking opencode...");
   const opencodeRequest: DownloadRequest = {
