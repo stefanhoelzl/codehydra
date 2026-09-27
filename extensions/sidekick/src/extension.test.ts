@@ -333,12 +333,12 @@ describe("sidekick output channels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetVscodeFake();
-    process.env._CH_PLUGIN_PORT = "8123";
+    process.env._CH_API_PORT = "8123";
   });
 
   afterEach(() => {
     deactivate();
-    delete process.env._CH_PLUGIN_PORT;
+    delete process.env._CH_API_PORT;
   });
 
   function lastChannel(): Record<string, ReturnType<typeof vi.fn>> {
