@@ -358,7 +358,7 @@ Windows versions before this one kept it in `%APPDATA%\Codehydra\` (the
 roaming profile). The first start of a newer version moves settings, state,
 logs and binaries to `%LOCALAPPDATA%` and then migrates the workspaces without
 asking, as **Migrate** below does: cloned repositories move, existing
-workspaces stay in the old folder and keep working, new ones are created in
+workspaces stay in the old folder and remain listed, new ones are created in
 the new one. While an older CodeHydra is still running from the old folder,
 nothing moves and the next start tries again.
 
@@ -385,17 +385,19 @@ An unknown key exits with 6, an invalid value with 2, and no running app with 3.
 Worktrees and cloned repositories live in the data directory by default. Set
 `paths.workspaces` to an absolute folder to keep them elsewhere — for example
 on a Windows Dev Drive. The settings dialog has a **Browse…** button for it.
-Binaries and logs stay in the data directory, and settings in your CodeHydra home.
+Only source code moves there: binaries, logs and `state.json` stay in the data
+directory, and settings in your CodeHydra home.
 
 The change applies at the next start, which asks what to do with what is
 already there:
 
 - **Migrate** moves cloned repositories to the new folder. Existing workspaces
-  stay where they are and keep working (agent conversations and editor state
-  included), whatever branch is later checked out in them; new workspaces are
-  created in the new folder. Offered only when
-  the new folder is empty. If a step fails, the migration is undone and you can
-  retry, continue with the current folder, or quit.
+  are not moved: they stay in the old folder and remain in the sidebar as
+  ordinary workspaces, with their agent conversations and editor state, whatever
+  branch is later checked out in them. New workspaces are created in the new
+  folder. Offered only when the new folder is empty. If a step fails, the
+  migration is undone and you can retry, continue with the current folder, or
+  quit.
 - **Use as is** switches to the new folder without moving anything. Workspaces
   in the old folder stay on disk but are no longer listed.
 - **Quit** leaves everything as it is.
@@ -403,6 +405,10 @@ already there:
 A folder that cannot be used — inside a project, or not writable — offers only
 **Continue with current folder** and **Quit**, and the question comes back at
 the next start until the setting is changed.
+
+Earlier versions marked the workspaces a migration left behind with an
+`external` tag. The first start of this version removes that tag from them;
+they stay listed, now on any branch.
 
 ## Plugins
 

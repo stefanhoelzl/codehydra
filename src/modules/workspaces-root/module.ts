@@ -7,8 +7,9 @@
  * `migrations` hook settles that before any project is opened, on the starting
  * screen:
  *
- *   - Migrate: move the managed clones there and keep existing workspaces in
- *     place (see migrate.ts). Offered only when the new folder is empty.
+ *   - Migrate: move the managed clones there; existing workspaces stay in
+ *     place and stay workspaces (see migrate.ts). Offered only when the new
+ *     folder is empty.
  *   - Use as is: switch to the new folder without moving anything; worktrees
  *     under the old one are no longer workspaces (they stay on disk).
  *   - Quit.
@@ -20,6 +21,9 @@
  * Without asking when the data root itself moved (Windows: `%APPDATA%` to
  * `%LOCALAPPDATA%`, see data-root-relocation.ts) and left the source code behind:
  * the user changed nothing, so there is nothing to choose — Migrate runs directly.
+ *
+ * Once, before any of that: the external tags earlier migrations wrote become
+ * recorded directories (see convert-adoptions.ts).
  */
 
 import type { IntentModule } from "../../intents/lib/module";
@@ -29,7 +33,12 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
-import { storeCustom, storeFolder, storeString } from "../../boundaries/platform/store-definition";
+import {
+  storeBoolean,
+  storeCustom,
+  storeFolder,
+  storeString,
+} from "../../boundaries/platform/store-definition";
 import type { DialogConfig, DialogSection, ProgressItem } from "../../shared/dialog-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
@@ -51,10 +60,12 @@ import {
   type MigrationDeps,
   type MigrationReport,
 } from "./migrate";
+import { convertMigrationAdoptions, type ConvertAdoptionsDeps } from "./convert-adoptions";
 
 export const WORKSPACES_ROOT_KEY = "paths.workspaces";
 export const CURRENT_ROOT_STATE_KEY = "paths.workspaces-current";
 export const PREVIOUS_DIRS_STATE_KEY = "paths.workspaces-previous";
+export const ADOPTIONS_CONVERTED_STATE_KEY = "paths.workspaces-adoptions-converted";
 
 /** A list of paths, or undefined when the value is not one. */
 function validatePathList(value: unknown): readonly string[] | undefined {
@@ -64,7 +75,7 @@ function validatePathList(value: unknown): readonly string[] | undefined {
 }
 
 const ACTION_MIGRATE = "migrate";
-const ACTION_ADOPT = "adopt";
+const ACTION_USE_AS_IS = "use-as-is";
 const ACTION_CONTINUE = "continue";
 const ACTION_RETRY = "retry";
 const ACTION_QUIT = "quit";
@@ -74,8 +85,7 @@ export interface WorkspacesRootModuleDeps {
   readonly stateService: StateService;
   readonly pathProvider: Pick<PathProvider, "dataPath" | "bundlePath">;
   readonly fs: MigrationDeps["fs"] & Pick<FileSystemBoundary, "realpath">;
-  readonly gitClient: MigrationDeps["gitClient"];
-  readonly adopt: MigrationDeps["adopt"];
+  readonly gitClient: MigrationDeps["gitClient"] & ConvertAdoptionsDeps["gitClient"];
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
   /** Owners of path-keyed state; read when a migration runs (they are built later). */
@@ -118,9 +128,9 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
   const configuredRoot = config.register(WORKSPACES_ROOT_KEY, {
     default: null,
     description:
-      "Folder for workspaces (git worktrees) and cloned repositories, e.g. a Windows Dev Drive. " +
-      "Empty = the app data folder. Changing it asks at the next start whether to move " +
-      "cloned repositories there",
+      "Folder for new workspaces (git worktrees) and cloned repositories, e.g. a Windows Dev " +
+      "Drive. Empty = the app data folder. Changing it asks at the next start whether to move " +
+      "cloned repositories there; existing workspaces stay where they are",
     applies: "restart",
     ...folder,
     parse: (raw: string) => acceptable(folder.parse(raw)),
@@ -148,6 +158,13 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
       },
       validate: validatePathList,
     }),
+  });
+
+  const adoptionsConverted = stateService.register(ADOPTIONS_CONVERTED_STATE_KEY, {
+    default: false,
+    description:
+      "Whether the external tags earlier migrations wrote were turned into previous workspaces directories",
+    ...storeBoolean(),
   });
 
   const rootFrom = (value: string | null): Path => (value === null ? dataRoot : new Path(value));
@@ -232,29 +249,33 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
         {
           type: "text",
           content:
-            "Migrate moves cloned repositories to the new folder. Existing workspaces stay " +
-            "where they are and keep working; new workspaces are created in the new folder.",
+            `Migrate moves your cloned repositories to ${to.toNative()}. Existing workspaces ` +
+            `stay in ${from.toNative()} and remain in the sidebar, with their agent ` +
+            "conversations and editor state. New workspaces are created in the new folder.",
         },
-        empty
-          ? {
-              type: "text",
-              content:
-                "Agent conversations and editor state of existing workspaces are unaffected.",
-            }
-          : {
-              type: "text",
-              content: "Migrate needs an empty folder, and this one is not.",
-              style: "warning",
-            },
+        ...(empty
+          ? []
+          : [
+              {
+                type: "text" as const,
+                content: "Migrate needs an empty folder, and this one is not.",
+                style: "warning" as const,
+              },
+            ]),
         {
           type: "text",
           content:
-            "Use as is switches to the new folder without moving anything: workspaces in the " +
-            "old folder stay on disk but are no longer listed.",
+            "Use as is switches to the new folder and moves nothing. Everything in the old " +
+            "folder stays on disk, but its workspaces are no longer listed.",
+        },
+        {
+          type: "text",
+          content: "Either way, settings, logs and downloaded tools stay in the app data folder.",
+          style: "subtitle",
         },
         buttons([
           { id: ACTION_MIGRATE, label: "Migrate", primary: true, disabled: !empty },
-          { id: ACTION_ADOPT, label: "Use as is" },
+          { id: ACTION_USE_AS_IS, label: "Use as is" },
           { id: ACTION_QUIT, label: "Quit" },
         ]),
       ],
@@ -323,14 +344,42 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     await currentRoot.set(target.equals(dataRoot) ? null : target.toNative());
   }
 
-  /** Record the directories a migration left behind, then switch to `to`. */
-  async function commitMigration(to: Path, left: readonly Path[]): Promise<void> {
+  /** Add workspaces directories to the recorded previous ones. */
+  async function recordPreviousDirs(dirs: readonly Path[]): Promise<void> {
     const known = previousDirs.get().map((dir) => new Path(dir));
-    const added = left.filter((dir) => !known.some((other) => other.equals(dir)));
+    const added = dirs.filter((dir) => !known.some((other) => other.equals(dir)));
     if (added.length > 0) {
       await previousDirs.set([...previousDirs.get(), ...added.map((dir) => dir.toString())]);
     }
+  }
+
+  /** Record the directories a migration left behind, then switch to `to`. */
+  async function commitMigration(to: Path, left: readonly Path[]): Promise<void> {
+    await recordPreviousDirs(left);
     await useRoot(to);
+  }
+
+  /** Turn the external tags earlier migrations wrote into recorded directories, once. */
+  async function convertAdoptions(): Promise<void> {
+    if (adoptionsConverted.get()) return;
+    try {
+      const stored = await loadAllProjects(fs, {
+        projectsDir,
+        remotesDir: root.remotesDir().toString(),
+      });
+      const converted = await convertMigrationAdoptions(
+        { gitClient: deps.gitClient, logger },
+        stored.map(({ config: project }) => new Path(project.path)),
+        recordPreviousDirs
+      );
+      if (converted.length > 0) {
+        logger.info("Converted migration adoptions", { count: converted.length });
+      }
+      await adoptionsConverted.set(true);
+    } catch (error) {
+      // The tags still keep those worktrees; the next start tries again.
+      logger.warn("Could not convert migration adoptions", { error: getErrorMessage(error) });
+    }
   }
 
   function report(result: MigrationReport, to: Path): void {
@@ -401,7 +450,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
         handle.update(choiceConfig(from, to, await isEmpty(to)));
         const choice = await nextAction(handle);
         if (choice === ACTION_QUIT) await quit();
-        if (choice === ACTION_ADOPT) {
+        if (choice === ACTION_USE_AS_IS) {
           await useRoot(to);
           return;
         }
@@ -419,7 +468,6 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
             {
               fs,
               gitClient: deps.gitClient,
-              adopt: deps.adopt,
               projectsDir,
               screenshotsDir: pathProvider.dataPath("screenshots"),
               moveListeners: deps.moveListeners(),
@@ -451,6 +499,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
       [APP_START_OPERATION_ID]: {
         migrations: {
           handler: async (): Promise<void> => {
+            await convertAdoptions();
             await settle();
           },
         },
