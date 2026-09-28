@@ -120,6 +120,8 @@ interface SetupOptions {
   readonly trustAnswer?: { action: string; unchecked?: string[] };
   /** Seeds the pre-plugin `auto-workspace.sources` setting. */
   readonly legacySources?: string;
+  /** The platform the module runs on (default linux). */
+  readonly platform?: NodeJS.Platform;
   /** Seeds `auto-workspaces` tracking entries. */
   readonly tracking?: Record<string, unknown>;
   /** Old hook files in the worktree's `.codehydra/hooks`. */
@@ -246,8 +248,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   const outcomes = options?.outcomes ?? {};
   const processRunner = createMockProcessRunner({
-    onSpawn: (_command, args, _cwd, env) => {
-      const scriptFile = new Path(args.at(-1)!);
+    onSpawn: (command, args, _cwd, env) => {
+      // cmd gets the script as its (quoted) command, every other shell as its last argument.
+      const scriptFile = new Path(args.at(-1) ?? command.replace(/^"|"$/g, ""));
       const entry = fileSystem.$.entries.get(scriptFile.toString());
       const body = entry?.type === "file" ? String(entry.content).trim() : "";
       ran.push(body);
@@ -418,7 +421,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       return () => {};
     },
     registry: () => registry,
-    platform: "linux",
+    platform: options?.platform ?? "linux",
     env: { PATH: "/usr/bin" },
   });
   dispatcher.registerModule(module);
@@ -1097,6 +1100,26 @@ describe("automations", () => {
     expect(setup.notifications.map((n) => n.title)).toContain(
       "Auto-workspace sources are now a plugin"
     );
+  });
+
+  it("moves a Windows source's cmd into a batch file the automation pipes", async () => {
+    // The runner writes cmd's `@echo off` prelude ahead of the body.
+    const script =
+      '@echo off\r\n"%CH_PLUGIN_DIR%\\sources\\gh.cmd" | ch plugin render "%CH_PLUGIN_DIR%\\templates\\gh.yaml"';
+    const setup = createTestSetup({
+      platform: "win32",
+      legacySources: 'name: gh\ncmd: fetch ^(a^) %20 %PATH%\ntemplate:\n  name: "ws-{{ id }}"',
+      outcomes: { [script]: { stdout: "[]" } },
+    });
+
+    await setup.startApp();
+
+    expect(
+      await setup.fileSystem.readFile(
+        new Path(LOCAL_PLUGINS, "auto-workspaces", "sources", "gh.cmd")
+      )
+    ).toBe("@echo off\r\nfetch ^(a^) %%20 %PATH%\r\n");
+    expect(setup.ran).toEqual([script]);
   });
 });
 

@@ -987,9 +987,13 @@ into `~/.codehydra/plugins/auto-workspaces/`: each source becomes an automation
 that pipes its `cmd` through `ch plugin render` and a template in `templates/`,
 rewritten to the item fields above (`git` → `project`, `focus` → `stealFocus`,
 the nested `agent` → `agent`/`agentName`/`permissionMode`/`model`, `mode:
-events` → `event: true`). What the sources already created stays tracked, and
-the setting is cleared. A template field with no counterpart is named in the
-notification.
+events` → `event: true`). On Windows each `cmd` goes into a batch file of its
+own in `sources/`, which the automation pipes — piping the command line itself
+would make cmd.exe parse it twice and strip its `^` escapes. A batch file reads
+`%` differently from the command line the setting ran, so every `%` that is not
+part of a set variable (`%20` in a URL) is written as `%%`. What the sources
+already created stays tracked, and the setting is cleared. A template field
+with no counterpart is named in the notification.
 
 ### Repository hooks from before plugins
 

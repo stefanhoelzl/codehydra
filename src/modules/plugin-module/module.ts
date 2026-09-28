@@ -135,6 +135,7 @@ import { parseTemplate, renderInput, type TemplateObject } from "./template-rend
 import { createAutomations, type AutomationSource } from "./automations";
 import {
   convertLegacySources,
+  LEGACY_SOURCES_DIR,
   LEGACY_SOURCES_PLUGIN,
   LEGACY_TEMPLATES_DIR,
 } from "./legacy-sources";
@@ -1094,13 +1095,19 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         exists = false;
       }
       if (!exists) {
-        const converted = convertLegacySources(raw, platform);
-        // The templates first and the manifest last: the manifest is what says
-        // the move happened, so a move cut short is redone on the next start.
+        const converted = convertLegacySources(raw, platform, env);
+        // The templates and sources first and the manifest last: the manifest
+        // is what says the move happened, so a move cut short is redone on the
+        // next start.
         const templatesDir = new Path(pluginDir, LEGACY_TEMPLATES_DIR);
         await deps.fileSystem.mkdir(templatesDir);
         for (const [file, text] of Object.entries(converted.templates)) {
           await deps.fileSystem.writeFile(new Path(templatesDir, file), text);
+        }
+        const sourcesDir = new Path(pluginDir, LEGACY_SOURCES_DIR);
+        for (const [file, text] of Object.entries(converted.sources)) {
+          await deps.fileSystem.mkdir(sourcesDir);
+          await deps.fileSystem.writeFile(new Path(sourcesDir, file), text);
         }
         await deps.fileSystem.writeFile(manifestPath, converted.manifest);
         await automations.renameTracking((key) => {
