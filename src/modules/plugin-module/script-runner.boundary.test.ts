@@ -181,11 +181,8 @@ describe.runIf(isWindows)("cmd", () => {
     const run = await runner.run(request("cmd", script, { pluginDir: new Path(pluginDir) }));
 
     expect(run.result.exitCode).toBe(0);
-    expect(run.result.stdout.split(/\r?\n/).map((line) => line.trim())).toEqual([
-      "a(b),c%20",
-      "x",
-      "",
-    ]);
+    // `^&` is a literal `&` to echo, as it was to the old `cmd /c`.
+    expect(run.result.stdout.trim()).toBe("a(b),c%20 & echo x");
   });
 });
 
