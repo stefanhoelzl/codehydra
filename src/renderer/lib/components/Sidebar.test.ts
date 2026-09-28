@@ -1367,6 +1367,43 @@ describe("Sidebar component", () => {
     });
   });
 
+  describe("hibernate button", () => {
+    it("emits hibernate-workspace without switching to the row", async () => {
+      const onSwitchWorkspace = vi.fn();
+      const ws = makeUiWorkspaceRow("ws1");
+      const project = makeUiProjectRow([ws]);
+      render(Sidebar, { props: { ...defaultProps, projects: [project], onSwitchWorkspace } });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Hibernate workspace" }));
+
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "hibernate-workspace", key: ws.key });
+      expect(onSwitchWorkspace).not.toHaveBeenCalled();
+    });
+
+    it("sits in the label cell, before the remove button", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
+      const { container } = render(Sidebar, { props: { ...defaultProps, projects: [project] } });
+
+      const buttons = [...container.querySelectorAll(".workspace-label-cell .action-btn")];
+      expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Hibernate workspace",
+        "Remove workspace",
+      ]);
+    });
+
+    it.each([
+      ["hibernated", { hibernated: true }],
+      ["creating", { status: "creating" }],
+      ["deleting", { status: "deleting" }],
+      ["delete-failed", { status: "delete-failed" }],
+    ] as const)("is absent on a %s workspace", (_label, overrides) => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1", overrides)]);
+      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
+
+      expect(screen.queryByLabelText("Hibernate workspace")).not.toBeInTheDocument();
+    });
+  });
+
   describe("deletion indicator", () => {
     it("shows spinner when workspace is deleting (expanded)", async () => {
       const ws = makeUiWorkspaceRow("ws1", { status: "deleting" });

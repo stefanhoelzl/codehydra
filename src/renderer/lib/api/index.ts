@@ -8,9 +8,9 @@
  * ui:event.
  *
  * All renderer→main gestures are fire-and-forget ui:events (emitEvent) —
- * switch-workspace / wake-workspace / remove-workspace / close-project carry
- * the opaque snapshot identity and main owns resolution + dispatch. There are
- * no renderer→main command invokes left.
+ * switch-workspace / wake-workspace / hibernate-workspace / remove-workspace /
+ * close-project carry the opaque snapshot identity and main owns resolution +
+ * dispatch. There are no renderer→main command invokes left.
  */
 
 import type { UiEvent } from "@shared/ui-event";

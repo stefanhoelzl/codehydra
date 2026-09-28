@@ -306,6 +306,10 @@
   function handleWakeWorkspace(key: string): void {
     api.emitEvent({ kind: "wake-workspace", key });
   }
+
+  function handleHibernateWorkspace(key: string): void {
+    api.emitEvent({ kind: "hibernate-workspace", key });
+  }
 </script>
 
 <!--
@@ -509,10 +513,24 @@
                         </span>
                       {/if}
                     </button>
+                    {#if status === "ready" && !hibernated}
+                      <button
+                        type="button"
+                        class="action-btn hover-action hibernate-btn"
+                        aria-label="Hibernate workspace"
+                        title="Hibernate workspace"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          handleHibernateWorkspace(workspace.key);
+                        }}
+                      >
+                        <Icon name="debug-pause" size={14} />
+                      </button>
+                    {/if}
                     {#if status === "ready"}
                       <button
                         type="button"
-                        class="action-btn remove-btn"
+                        class="action-btn hover-action remove-btn"
                         id={`remove-ws-${workspace.key}`}
                         aria-label="Remove workspace"
                         title="Remove workspace"
@@ -1047,12 +1065,12 @@
     outline-offset: -1px;
   }
 
-  .workspace-item .remove-btn {
+  .workspace-item .hover-action {
     opacity: 0;
   }
 
-  .workspace-item:hover .remove-btn,
-  .workspace-item:focus-within .remove-btn {
+  .workspace-item:hover .hover-action,
+  .workspace-item:focus-within .hover-action {
     opacity: 0.7;
   }
 

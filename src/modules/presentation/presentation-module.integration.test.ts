@@ -1515,6 +1515,41 @@ describe("PresentationModule - ui:event routing", () => {
     });
   });
 
+  it("hibernate-workspace resolves the key and dispatches a hibernate", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    emitUiEvent(deps, {
+      kind: "hibernate-workspace",
+      key: `${PROJECT_ID}/main`,
+    });
+
+    expect(dispatched).toEqual([
+      { type: "workspace:hibernate", payload: { workspacePath: workspace.path } },
+    ]);
+  });
+
+  it("drops hibernate-workspace for a stale key with a warning", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    emitUiEvent(deps, {
+      kind: "hibernate-workspace",
+      key: `${PROJECT_ID}/vanished`,
+    });
+
+    expect(dispatched).toHaveLength(0);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).toHaveBeenCalledWith("Dropped hibernate-workspace for unknown key", {
+      key: `${PROJECT_ID}/vanished`,
+    });
+  });
+
   it("close-project resolves the projectId and dispatches an interactive close", async () => {
     const deps = createDeps();
     const dispatched = recordDispatches(deps);

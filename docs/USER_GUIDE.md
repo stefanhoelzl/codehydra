@@ -189,9 +189,10 @@ is easy to spot. Turn this off with `auto-tag.new`.
 ### Switching, hibernating and waking
 
 - **Switch** — click a row, or in shortcut mode use the arrows or a number.
-- **Hibernate** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active
-  workspace (or `ch ws hibernate`). Any workspace can hibernate, busy or not;
-  hibernating the active one moves you to another.
+- **Hibernate** — hover a ready row and click its pause icon, or press
+  <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> on the active workspace (or
+  `ch ws hibernate`). Any workspace can hibernate, busy or not, without a
+  confirmation; hibernating the active one moves you to another.
 - **Wake** — select it and click its screenshot, click the pause icon on its
   row, or press <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>H</kbd> again. Selecting a
   hibernated workspace never wakes it by itself.

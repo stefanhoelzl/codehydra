@@ -16,11 +16,11 @@
  * All gesture events are load-bearing: the presenter resolves their identity
  * (the opaque workspace `key` / `projectId`) against its model and dispatches
  * the matching intent. `remove-workspace` and `close-project` run their
- * confirmation dialog main-side (`interactive: true`); `switch-workspace` and
- * `wake-workspace` dispatch directly. Identity fields are presenter-minted and
- * merely echoed back from the UiState snapshot — the renderer never generates
- * identifiers itself. (Hibernate and open-project have no renderer gesture:
- * the `h` shortcut and the creation panel drive them entirely main-side.)
+ * confirmation dialog main-side (`interactive: true`); `switch-workspace`,
+ * `wake-workspace` and `hibernate-workspace` dispatch directly. Identity fields
+ * are presenter-minted and merely echoed back from the UiState snapshot — the
+ * renderer never generates identifiers itself. (Open-project has no renderer
+ * gesture: the creation panel drives it entirely main-side.)
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
  */
@@ -41,6 +41,9 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("switch-workspace"), key: z.string().nullable() }),
   // Wake a hibernated workspace (status-cell / overlay click).
   z.object({ kind: z.literal("wake-workspace"), key: z.string() }),
+  // Hibernate a workspace (sidebar row hover button). No confirmation, like
+  // the Alt+X H shortcut.
+  z.object({ kind: z.literal("hibernate-workspace"), key: z.string() }),
   // Requests the remove flow (confirmation dialog opens main-side).
   z.object({ kind: z.literal("remove-workspace"), key: z.string() }),
   // projectId is backend-minted and merely echoed back by the renderer.

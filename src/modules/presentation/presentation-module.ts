@@ -1532,6 +1532,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       });
       return;
     }
+    if (event.kind === "hibernate-workspace") {
+      const found = findByKey(event.key);
+      if (!found || found.workspace.path === null) {
+        logger.warn("Dropped hibernate-workspace for unknown key", { key: event.key });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_HIBERNATE_WORKSPACE,
+        payload: { workspacePath: found.workspace.path },
+      });
+      return;
+    }
     if (event.kind === "hover") {
       hoverRegion = event.region === "sidebar" ? "sidebar" : null;
       scheduleUpdate();
