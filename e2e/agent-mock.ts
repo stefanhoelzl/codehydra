@@ -19,7 +19,7 @@
  */
 import { getTextContent, LLMock, type ChatCompletionRequest } from "@copilotkit/aimock";
 import { test } from "@playwright/test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "./env.ts";
@@ -157,6 +157,16 @@ export function useAgentMock(): AgentMockHandle {
   // for, field by field, so a miss names the gate it failed.
   test.afterEach(() => {
     if (test.info().status === test.info().expectedStatus) return;
+    // A Claude that read its config half-written backs it up as `.corrupted` and
+    // writes its own copy back, dropping trust it had not seen: the next agent
+    // then parks on the trust prompt, never starting a session.
+    const backups = join(configDir, "backups");
+    const corrupted = existsSync(backups)
+      ? readdirSync(backups).filter((name) => name.includes(".corrupted."))
+      : [];
+    if (corrupted.length > 0) {
+      console.log(`[agent-mock] Claude found its config corrupted: ${corrupted.join(", ")}`);
+    }
     if (seen.length === 0) {
       console.log("[agent-mock] the agent never called the mock at all");
       return;
@@ -293,8 +303,14 @@ function pathSpellings(path: string): readonly string[] {
  * bypass-permissions warning, and trusting exactly `trusted`.
  */
 function writeClaudeConfig(configDir: string, trusted: readonly string[]): void {
+  // Written aside and renamed into place. A running agent re-reads this file
+  // before each of its own writes; one that catches a plain write half-done
+  // backs it up as corrupted and writes its own copy back, losing the trust just
+  // added, and the next agent parks on the trust prompt with no one to answer.
+  const target = join(configDir, ".claude.json");
+  const staged = `${target}.e2e-tmp`;
   writeFileSync(
-    join(configDir, ".claude.json"),
+    staged,
     JSON.stringify({
       hasCompletedOnboarding: true,
       theme: "dark",
@@ -309,6 +325,18 @@ function writeClaudeConfig(configDir: string, trusted: readonly string[]): void 
       ),
     })
   );
+  // Windows refuses to replace a file another process has open for a moment
+  // (EPERM/EBUSY) — the agent reads this one often. Retry briefly.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(staged, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 20 || (code !== "EPERM" && code !== "EBUSY")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
 }
 
 /** The tool name the fixtures for `agent` expect the agent to advertise. */
