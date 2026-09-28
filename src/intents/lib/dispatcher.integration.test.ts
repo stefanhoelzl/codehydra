@@ -830,6 +830,44 @@ describe("Dispatcher", () => {
       expect(childDispatchLog).toBeDefined();
       expect((childDispatchLog!.context as Record<string, unknown>).causation).toBe("test:parent");
     });
+
+    it("starts a root under withOrigin, not a child of the dispatch that scheduled it", async () => {
+      // A poller armed during app:start fires long after it: its dispatches are
+      // not app:start's.
+      const logger = createMockLogger();
+      const dispatcher = createDispatcher({ logger });
+      const capturedCausation: (readonly string[])[] = [];
+      dispatcher.registerOperation(
+        defineOp("test:child", {
+          id: "child-op",
+          execute: async (ctx) => {
+            capturedCausation.push(ctx.causation);
+          },
+        })
+      );
+      let fired: Promise<unknown> = Promise.resolve();
+      dispatcher.registerOperation(
+        defineOp("test:parent", {
+          id: "parent-op",
+          execute: async () => {
+            fired = new Promise((resolve) => {
+              setTimeout(() => {
+                resolve(
+                  dispatcher.withOrigin({ origin: "auto-workspace" }, () =>
+                    dispatcher.dispatch({ type: "test:child", payload: {} })
+                  )
+                );
+              }, 0);
+            });
+          },
+        })
+      );
+
+      await dispatcher.dispatch({ type: "test:parent", payload: {} });
+      await fired;
+
+      expect(capturedCausation).toEqual([["test:child"]]);
+    });
   });
 
   describe("log scope", () => {
