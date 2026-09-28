@@ -8,6 +8,8 @@
     idleWorkspaceCount?: number;
     /** Whether hibernated workspaces are currently hidden (drives the T hint label). */
     hideHibernated?: boolean;
+    /** Whether the sidebar is docked (drives the P hint label). */
+    sidebarDocked?: boolean;
   }
 
   let {
@@ -18,6 +20,7 @@
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
     hideHibernated = false,
+    sidebarDocked = false,
   }: Props = $props();
 
   // When there's no active workspace (e.g. the New workspace view is the
@@ -96,6 +99,13 @@
   >
     <vscode-badge>T</vscode-badge>
     {hideHibernated ? "Show hibernated" : "Hide hibernated"}
+  </span>
+  <span
+    class="shortcut-hint"
+    aria-label={sidebarDocked ? "P key to undock the sidebar" : "P key to dock the sidebar"}
+  >
+    <vscode-badge>P</vscode-badge>
+    {sidebarDocked ? "Undock" : "Dock"}
   </span>
   <span class="shortcut-hint" aria-label="S key to open settings">
     <vscode-badge>S</vscode-badge> Settings

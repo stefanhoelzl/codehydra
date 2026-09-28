@@ -36,6 +36,15 @@ export function clampSidebarWidthMin(width: number): number {
 export type SidebarLabelScroll = "always" | "hover" | "off";
 
 /**
+ * How the sidebar shares the window with the workspace (config
+ * `sidebar.mode`). `overlay` = a collapsed strip that expands over the
+ * workspace; `docked` = always expanded, the workspace shrinks to the space
+ * beside it.
+ */
+export const SIDEBAR_MODES = ["overlay", "docked"] as const;
+export type SidebarMode = (typeof SIDEBAR_MODES)[number];
+
+/**
  * An open dialog session, render-ready. The presenter owns the registry (via
  * its internal DialogManager) and folds it into the snapshot; the renderer
  * renders each declaratively and echoes the opaque `id` back in dialog ui:events.
@@ -172,6 +181,8 @@ export interface UiState {
      * toggle's label/icon; the presenter has already filtered the rows.
      */
     readonly hideHibernated: boolean;
+    /** How the sidebar shares the window with the workspace (config `sidebar.mode`). */
+    readonly mode: SidebarMode;
   };
   /**
    * Mounted workspace iframes: key → IDE server URL. Every workspace with a
@@ -193,8 +204,9 @@ export interface UiState {
   readonly mode: UIMode;
   /**
    * True only while the presenter is capturing the active workspace's
-   * hibernation screenshot. Forces the sidebar to its collapsed resting state
-   * (overriding `mode`) so it is not baked into the screenshot; the existing
+   * hibernation screenshot. Forces an overlay sidebar to its collapsed resting
+   * state (overriding `mode`) so it is not baked into the screenshot (a docked
+   * sidebar never covers the workspace, so it stays put); the existing
    * `.sidebar:not(.expanded)` rule makes that collapse instant. Main-owned,
    * set by the hibernate `prepare-capture` hook and always cleared by
    * `cleanup-capture` (runs in the operation's finally).

@@ -137,7 +137,9 @@ import { uiEventSchema } from "../../shared/ui-event";
 import {
   clampSidebarWidthMin,
   compareDisplayNames,
+  SIDEBAR_MODES,
   type SidebarLabelScroll,
+  type SidebarMode,
   type UiDeletionProgress,
   type UiMainView,
   type UiNotification,
@@ -540,6 +542,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       ...storeEnum(LABEL_SCROLL_VALUES),
     }
   );
+
+  // Whether the sidebar overlays the workspace (collapsed strip, expands on
+  // hover) or is docked beside it (always expanded, the workspace shrinks).
+  // Read at snapshot-build time; the header button (set-sidebar-mode ui:event)
+  // and Alt+X+P write it.
+  const sidebarModeConfig = deps.configService.register<SidebarMode>("sidebar.mode", {
+    default: "overlay",
+    description:
+      "Sidebar layout: overlay (expands over the workspace) | docked (always expanded, the workspace shrinks)",
+    applies: "live",
+    ...storeEnum(SIDEBAR_MODES),
+  });
 
   // Read at snapshot-build time like labelScroll, so flipping it re-pushes
   // ui:state and the very next chime is suppressed — no restart, and the
@@ -1356,6 +1370,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         projects: projectRows,
         width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
         hideHibernated,
+        mode: sidebarModeConfig.get(),
       },
       frames,
       main,
@@ -1559,6 +1574,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     if (event.kind === "toggle-hide-hibernated") {
       handleToggleHideHibernated();
+      return;
+    }
+    if (event.kind === "set-sidebar-mode") {
+      setSidebarMode(event.mode);
       return;
     }
     if (event.kind === "resize-sidebar") {
@@ -1799,6 +1818,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     scheduleUpdate();
   }
 
+  /**
+   * Write `sidebar.mode` and re-push. Driven by the sidebar header button
+   * (ui:event) and, as a toggle, by the Alt+X+P shortcut. `set()` updates the
+   * effective value before it persists, so the next snapshot carries the new
+   * mode even if the write to config.json fails (logged, not surfaced).
+   */
+  function setSidebarMode(mode: SidebarMode): void {
+    void sidebarModeConfig.set(mode).catch((error: unknown) => {
+      logger.warn("Failed to persist sidebar mode", { error: getErrorMessage(error) });
+    });
+    scheduleUpdate();
+  }
+
   /** Run the navigation action for a normalized shortcut key. */
   function runShortcutKey(key: string): void {
     switch (key) {
@@ -1825,6 +1857,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         break;
       case "t":
         handleToggleHideHibernated();
+        break;
+      case "p":
+        setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked");
         break;
       default:
         if (/^[0-9]$/.test(key)) handleJump(key as JumpKey);

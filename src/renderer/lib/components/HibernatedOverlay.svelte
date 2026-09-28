@@ -41,7 +41,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    left: var(--ch-sidebar-minimized-width, 20px);
+    left: var(--ch-workspace-left, var(--ch-sidebar-minimized-width, 20px));
     background: var(--ch-surface-0, var(--ch-background));
     display: flex;
     align-items: center;

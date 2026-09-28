@@ -90,6 +90,7 @@ describe("Sidebar component", () => {
     onOpenSettings: vi.fn(),
     onOpenHelp: vi.fn(),
     onToggleHideHibernated: vi.fn(),
+    onSetSidebarMode: vi.fn(),
   };
 
   beforeEach(() => {
@@ -135,13 +136,29 @@ describe("Sidebar component", () => {
       expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
     });
 
-    it("orders the header buttons eye, gear, help", () => {
+    it("orders the header buttons dock, eye, gear, help", () => {
       const { container } = render(Sidebar, { props: defaultProps });
 
       const labels = [...container.querySelectorAll(".header-action")].map((button) =>
         button.getAttribute("aria-label")
       );
-      expect(labels).toEqual(["Hide hibernated workspaces", "Settings", "Help"]);
+      expect(labels).toEqual(["Dock sidebar", "Hide hibernated workspaces", "Settings", "Help"]);
+    });
+
+    it("docks an overlay sidebar and undocks a docked one", async () => {
+      const onSetSidebarMode = vi.fn();
+      const { rerender } = render(Sidebar, {
+        props: { ...defaultProps, sidebarMode: "overlay", onSetSidebarMode },
+      });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Dock sidebar" }));
+      expect(onSetSidebarMode).toHaveBeenLastCalledWith("docked");
+
+      await rerender({ sidebarMode: "docked" });
+      const undock = screen.getByRole("button", { name: "Undock sidebar" });
+      expect(undock).toHaveAttribute("aria-pressed", "true");
+      await fireEvent.click(undock);
+      expect(onSetSidebarMode).toHaveBeenLastCalledWith("overlay");
     });
 
     it("hibernated toggle calls onToggleHideHibernated and reflects the current state", async () => {
@@ -851,6 +868,47 @@ describe("Sidebar component", () => {
         props: { ...propsWithWorkspaces(), mode: "shortcut", capturing: true },
       });
       expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+    });
+
+    it("stays expanded when docked, in workspace mode and while capturing", () => {
+      // Docked never covers the workspace, so neither the resting mode nor the
+      // hibernation capture collapses it.
+      for (const capturing of [false, true]) {
+        const { container, unmount } = render(Sidebar, {
+          props: { ...propsWithWorkspaces(), mode: "workspace", sidebarMode: "docked", capturing },
+        });
+        const sidebar = container.querySelector(".sidebar");
+        expect(sidebar).toHaveClass("expanded");
+        expect(sidebar).toHaveClass("docked");
+        unmount();
+      }
+    });
+
+    it("emits no hover event for a pointer resting on a docked sidebar", async () => {
+      const { container } = render(Sidebar, {
+        props: { ...propsWithWorkspaces(), sidebarMode: "docked" },
+      });
+
+      await hoverExpand(container.querySelector(".sidebar")!);
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+
+      expect(hoverEvents()).toEqual([]);
+    });
+
+    it("still releases a hover left over from before docking", async () => {
+      const { container, rerender } = render(Sidebar, { props: propsWithWorkspaces() });
+      const sidebar = container.querySelector(".sidebar")!;
+      await hoverExpand(sidebar);
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
+
+      await rerender({ mode: "hover", sidebarMode: "docked" });
+      await fireEvent.mouseLeave(sidebar, { clientX: 400 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+
+      expect(hoverEvents()).toEqual([
+        { kind: "hover", region: "sidebar" },
+        { kind: "hover", region: null },
+      ]);
     });
 
     it("expands again once capturing clears", () => {

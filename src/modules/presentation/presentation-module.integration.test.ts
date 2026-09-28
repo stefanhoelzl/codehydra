@@ -412,7 +412,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     // blank `main: starting` base with the boot-splash system dialog on top.
     expect(snapshots(deps)).toEqual([
       {
-        sidebar: { projects: [], width: SIDEBAR_DEFAULT_WIDTH, hideHibernated: false },
+        sidebar: {
+          projects: [],
+          width: SIDEBAR_DEFAULT_WIDTH,
+          hideHibernated: false,
+          mode: "overlay",
+        },
         frames: {},
         main: { kind: "starting" },
         theme: "dark",
@@ -440,7 +445,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     await startModule(deps);
 
     expect(lastSnapshot(deps)).toEqual({
-      sidebar: { projects: [], width: SIDEBAR_DEFAULT_WIDTH, hideHibernated: false },
+      sidebar: {
+        projects: [],
+        width: SIDEBAR_DEFAULT_WIDTH,
+        hideHibernated: false,
+        mode: "overlay",
+      },
       frames: {},
       main: { kind: "creation" },
       theme: "dark",
@@ -496,6 +506,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         ],
         width: SIDEBAR_DEFAULT_WIDTH,
         hideHibernated: false,
+        mode: "overlay",
       },
       frames: { [`${PROJECT_ID}/main`]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
@@ -1238,6 +1249,31 @@ describe("PresentationModule - sidebar resize", () => {
 
     expect(deps.sidebarWidthConfig.get()).toBe(SIDEBAR_MIN_WIDTH);
     expect(lastSnapshot(deps).sidebar.width).toBe(SIDEBAR_MIN_WIDTH);
+  });
+
+  it("ships sidebar.mode in the snapshot's sidebar region", async () => {
+    const deps = createDeps();
+    await deps.configService.set("sidebar.mode", "docked");
+    await startModule(deps);
+
+    expect(lastSnapshot(deps).sidebar.mode).toBe("docked");
+  });
+
+  it("persists a set-sidebar-mode event and echoes it in the next snapshot", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+    expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
+
+    emitUiEvent(deps, { kind: "set-sidebar-mode", mode: "docked" });
+    await flush();
+
+    expect(deps.configService.getEffective()["sidebar.mode"]).toBe("docked");
+    expect(lastSnapshot(deps).sidebar.mode).toBe("docked");
+
+    emitUiEvent(deps, { kind: "set-sidebar-mode", mode: "overlay" });
+    await flush();
+
+    expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
   it("toggle-hide-hibernated flips the flag and omits hibernated rows", async () => {
@@ -2462,6 +2498,20 @@ describe("PresentationModule - shortcut navigation", () => {
     expect(dispatched).toEqual([
       { type: "workspace:wake", payload: { workspacePath: awake.path, source: "ui-ipc" } },
     ]);
+  });
+
+  it("p toggles sidebar.mode between overlay and docked", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+
+    await key(module, "p");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.mode).toBe("docked");
+    expect(deps.configService.getEffective()["sidebar.mode"]).toBe("docked");
+
+    await key(module, "p");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.mode).toBe("overlay");
   });
 
   it("t toggles hide-hibernated (hibernated rows leave/return to the snapshot)", async () => {

@@ -44,6 +44,7 @@ describe("shortcuts type guards", () => {
         "delete",
         "h",
         "t",
+        "p",
         "0",
         "1",
         "2",

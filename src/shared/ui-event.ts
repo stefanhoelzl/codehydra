@@ -26,6 +26,7 @@
  */
 
 import { z } from "zod/v4";
+import { SIDEBAR_MODES } from "./ui-state";
 
 const logContextSchema = z.record(
   z.string(),
@@ -55,6 +56,10 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // edge. Fired once on drag release; the presenter clamps (>= min) and writes
   // it to the `sidebar.width` config key, then echoes it back in the snapshot.
   z.object({ kind: z.literal("resize-sidebar"), width: z.number().int().positive() }),
+  // Dock or undock the sidebar (header button). The presenter writes the
+  // `sidebar.mode` config key and echoes it back in the snapshot. The Alt+X+P
+  // shortcut toggles the same key via the shortcut-key domain event.
+  z.object({ kind: z.literal("set-sidebar-mode"), mode: z.enum(SIDEBAR_MODES) }),
   z.object({
     kind: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),
