@@ -29,7 +29,7 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
-import { storeFolder, storeString } from "../../boundaries/platform/store-definition";
+import { storeCustom, storeFolder, storeString } from "../../boundaries/platform/store-definition";
 import type { DialogConfig, DialogSection, ProgressItem } from "../../shared/dialog-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
@@ -54,6 +54,14 @@ import {
 
 export const WORKSPACES_ROOT_KEY = "paths.workspaces";
 export const CURRENT_ROOT_STATE_KEY = "paths.workspaces-current";
+export const PREVIOUS_DIRS_STATE_KEY = "paths.workspaces-previous";
+
+/** A list of paths, or undefined when the value is not one. */
+function validatePathList(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? (value as string[])
+    : undefined;
+}
 
 const ACTION_MIGRATE = "migrate";
 const ACTION_ADOPT = "adopt";
@@ -126,9 +134,28 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     ...storeString({ nullable: true }),
   });
 
+  const previousDirs = stateService.register(PREVIOUS_DIRS_STATE_KEY, {
+    default: [] as readonly string[],
+    description:
+      "Workspaces directories a migration left under earlier roots; worktrees there stay workspaces",
+    ...storeCustom<readonly string[]>({
+      parse: (raw) => {
+        try {
+          return validatePathList(JSON.parse(raw));
+        } catch {
+          return undefined;
+        }
+      },
+      validate: validatePathList,
+    }),
+  });
+
   const rootFrom = (value: string | null): Path => (value === null ? dataRoot : new Path(value));
   let heading = "The workspaces folder changed";
-  const root = createWorkspacesRoot(() => rootFrom(currentRoot.get()));
+  const root = createWorkspacesRoot(
+    () => rootFrom(currentRoot.get()),
+    () => previousDirs.get().map((dir) => new Path(dir))
+  );
 
   // ---------------------------------------------------------------------------
   // Checks on the new folder
@@ -296,13 +323,18 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     await currentRoot.set(target.equals(dataRoot) ? null : target.toNative());
   }
 
+  /** Record the directories a migration left behind, then switch to `to`. */
+  async function commitMigration(to: Path, left: readonly Path[]): Promise<void> {
+    const known = previousDirs.get().map((dir) => new Path(dir));
+    const added = left.filter((dir) => !known.some((other) => other.equals(dir)));
+    if (added.length > 0) {
+      await previousDirs.set([...previousDirs.get(), ...added.map((dir) => dir.toString())]);
+    }
+    await useRoot(to);
+  }
+
   function report(result: MigrationReport, to: Path): void {
     const lines: string[] = [];
-    if (result.notKept.length > 0) {
-      lines.push(
-        `Not kept as workspaces (detached HEAD, still on disk): ${result.notKept.join(", ")}`
-      );
-    }
     if (result.leftovers.length > 0) {
       lines.push(`Old clones that could not be deleted: ${result.leftovers.join(", ")}`);
     }
@@ -391,7 +423,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
               projectsDir,
               screenshotsDir: pathProvider.dataPath("screenshots"),
               moveListeners: deps.moveListeners(),
-              commit: () => useRoot(to),
+              commit: (left) => commitMigration(to, left),
               logger,
             },
             from,

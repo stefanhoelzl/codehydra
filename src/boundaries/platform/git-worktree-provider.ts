@@ -33,7 +33,20 @@ import { Path } from "../../utils/path/path";
  */
 interface ProjectRegistration {
   readonly workspacesDir: Path;
+  /** Workspaces directories from before a workspaces-root migration; still CodeHydra's own. */
+  readonly previousWorkspacesDirs: readonly Path[];
   cleanupInProgress: boolean;
+}
+
+/** Whether a worktree lies in a directory CodeHydra created it in, now or before a migration. */
+function isOwnWorktree(
+  registration: Pick<ProjectRegistration, "workspacesDir" | "previousWorkspacesDirs">,
+  worktreePath: Path
+): boolean {
+  return (
+    worktreePath.isChildOf(registration.workspacesDir) ||
+    registration.previousWorkspacesDirs.some((dir) => worktreePath.isChildOf(dir))
+  );
 }
 
 /**
@@ -142,10 +155,17 @@ export class GitWorktreeProvider {
    *
    * @param projectRoot Absolute path to the git repository
    * @param workspacesDir Directory where worktrees are created
+   * @param previousWorkspacesDirs Workspaces directories left behind by a
+   *   workspaces-root migration: worktrees there stay managed, on any branch
    */
-  registerProject(projectRoot: Path, workspacesDir: Path): void {
+  registerProject(
+    projectRoot: Path,
+    workspacesDir: Path,
+    previousWorkspacesDirs: readonly Path[] = []
+  ): void {
     this.projectRegistry.set(projectRoot.toString(), {
       workspacesDir,
+      previousWorkspacesDirs,
       cleanupInProgress: false,
     });
   }
@@ -279,7 +299,8 @@ export class GitWorktreeProvider {
    * Discover the workspaces CodeHydra manages for a project.
    *
    * A worktree is managed when CodeHydra created it (it lives under the project's
-   * `workspacesDir`) or when the user adopted it through the add-project picker (its
+   * `workspacesDir`, or under one the project had before a workspaces-root
+   * migration, whatever branch is checked out there) or when the user adopted it through the add-project picker (its
    * branch carries the external tag). Every other worktree of the repository is
    * skipped: agents (Claude's `isolation: "worktree"`, for one) create worktrees of
    * the same repo as scratch space, and those must not surface as workspaces.
@@ -321,7 +342,7 @@ export class GitWorktreeProvider {
         ? { ...(branchMetadata.get(wt.branch) ?? {}) }
         : {};
 
-      const own = wt.path.isChildOf(registration.workspacesDir);
+      const own = isOwnWorktree(registration, wt.path);
       if (!own && metadata[EXTERNAL_TAG_METADATA_KEY] === undefined) {
         this.logger
           .scoped({ path: wt.path.toString() })
@@ -355,10 +376,12 @@ export class GitWorktreeProvider {
    *
    * @param projectRoot Root of the git repository
    * @param workspacesDir Directory CodeHydra creates this project's worktrees in
+   * @param previousWorkspacesDirs Its directories from before a workspaces-root migration
    */
   async listUnmanagedWorktrees(
     projectRoot: Path,
-    workspacesDir: Path
+    workspacesDir: Path,
+    previousWorkspacesDirs: readonly Path[] = []
   ): Promise<readonly UnmanagedWorktree[]> {
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
@@ -374,7 +397,7 @@ export class GitWorktreeProvider {
     const unmanaged: UnmanagedWorktree[] = [];
     for (const wt of worktrees) {
       if (wt.isMain || wt.prunable) continue;
-      if (wt.path.isChildOf(workspacesDir)) continue;
+      if (isOwnWorktree({ workspacesDir, previousWorkspacesDirs }, wt.path)) continue;
 
       const metadata = wt.branch ? (branchMetadata.get(wt.branch) ?? {}) : {};
       if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) continue;
@@ -747,7 +770,7 @@ export class GitWorktreeProvider {
     // skip the branch work entirely rather than delete something we only inferred.
     const registration = this.projectRegistry.get(projectRoot.toString());
     const derivedBranch =
-      registration && workspacePath.isChildOf(registration.workspacesDir)
+      registration && isOwnWorktree(registration, workspacePath)
         ? unsanitizeWorkspaceName(workspacePath.basename)
         : "";
     const branchName = worktree?.branch ?? derivedBranch;

@@ -103,7 +103,7 @@ import { toDiscoveredWorkspaces } from "../utils/workspace-conversion";
  */
 export function createGitWorktreeWorkspaceModule(
   gitWorktreeProvider: GitWorktreeProvider,
-  workspacesRoot: Pick<WorkspacesRoot, "workspacesDir">,
+  workspacesRoot: Pick<WorkspacesRoot, "workspacesDir" | "previousWorkspacesDirs">,
   logger: Logger,
   ui: Pick<UiPresenter, "dialog">,
   dispatcher: Pick<Dispatcher, "dispatch">
@@ -447,7 +447,8 @@ export function createGitWorktreeWorkspaceModule(
             try {
               unmanaged = await gitWorktreeProvider.listUnmanagedWorktrees(
                 projectPathObj,
-                workspacesDir
+                workspacesDir,
+                workspacesRoot.previousWorkspacesDirs()
               );
             } catch (error: unknown) {
               // Not a repository yet (the git-init prompt may not have run), or git
@@ -519,7 +520,11 @@ export function createGitWorktreeWorkspaceModule(
               };
             }
 
-            gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
+            gitWorktreeProvider.registerProject(
+              projectPathObj,
+              workspacesDir,
+              workspacesRoot.previousWorkspacesDirs()
+            );
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
             workspaces.set(key, [...discovered]);
