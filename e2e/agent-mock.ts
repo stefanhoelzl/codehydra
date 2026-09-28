@@ -19,7 +19,15 @@
  */
 import { getTextContent, LLMock, type ChatCompletionRequest } from "@copilotkit/aimock";
 import { test } from "@playwright/test";
-import { existsSync, mkdtempSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "./env.ts";
@@ -155,8 +163,13 @@ export function useAgentMock(): AgentMockHandle {
   // A failing turn is otherwise mute: the assertions can see the sidebar and the
   // app's log, but not the conversation. Print what the mock was actually asked
   // for, field by field, so a miss names the gate it failed.
-  test.afterEach(() => {
+  test.afterEach(async () => {
     if (test.info().status === test.info().expectedStatus) return;
+    // Evidence, not a verdict: failing to collect it must not replace the
+    // failure it is evidence for.
+    await attachClaudeState(configDir).catch((error: unknown) => {
+      console.log(`[agent-mock] could not attach Claude's state: ${String(error)}`);
+    });
     // A Claude that read its config half-written backs it up as `.corrupted` and
     // writes its own copy back, dropping trust it had not seen: the next agent
     // then parks on the trust prompt, never starting a session.
@@ -261,6 +274,9 @@ function agentEnv(agent: Agent, url: string, configDir: string): Record<string, 
 
   // Trust is added per workspace by `trustWorkspace`, once its path is known.
   writeClaudeConfig(configDir, []);
+  // Created up front: Claude takes a directory that does not exist yet for the
+  // name of one log file, and every session would append to it.
+  mkdirSync(join(configDir, DEBUG_LOGS));
 
   return {
     ANTHROPIC_BASE_URL: url,
@@ -277,7 +293,45 @@ function agentEnv(agent: Agent, url: string, configDir: string): Record<string, 
     DISABLE_AUTOUPDATER: "1",
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
+    // A debug log per session, attached when a test fails: an agent that never
+    // starts a session is otherwise silent, and its log names the last startup
+    // step it reached. `DEBUG` is what turns Claude's debug mode on; the
+    // directory alone writes nothing.
+    DEBUG: "1",
+    CLAUDE_CODE_DEBUG_LOGS_DIR: join(configDir, DEBUG_LOGS),
   };
+}
+
+/** Where each Claude session writes its debug log, inside the config dir. */
+const DEBUG_LOGS = "debug-logs";
+
+/**
+ * Attach what the config dir says about every Claude that ran from it: each
+ * session's debug log, the config itself, and a listing of the rest (`backups/`
+ * holds `.corrupted` copies, `ide/` the lockfiles of any IDE extension it found).
+ */
+async function attachClaudeState(configDir: string): Promise<void> {
+  if (!configDir || !existsSync(configDir)) return;
+  const info = test.info();
+  const logs = join(configDir, DEBUG_LOGS);
+  if (existsSync(logs)) {
+    for (const name of readdirSync(logs).filter((entry) => entry.endsWith(".txt"))) {
+      await info.attach(`claude-debug-${name}`, {
+        path: join(logs, name),
+        contentType: "text/plain",
+      });
+    }
+  }
+  const config = join(configDir, ".claude.json");
+  if (existsSync(config)) {
+    await info.attach("claude-config.json", { path: config, contentType: "application/json" });
+  }
+  const listing = info.outputPath("claude-config-dir.txt");
+  writeFileSync(
+    listing,
+    readdirSync(configDir, { recursive: true, encoding: "utf-8" }).sort().join("\n")
+  );
+  await info.attach("claude-config-dir.txt", { path: listing, contentType: "text/plain" });
 }
 
 /**
