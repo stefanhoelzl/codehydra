@@ -3,8 +3,9 @@
  *
  * Only managed clones move. Worktrees stay where they are — copying them would
  * cost every agent its conversation, every editor its state and every worktree
- * its ignored files — and are adopted in place, so they stay workspaces while
- * new ones are created under the new root.
+ * its ignored files — and stay workspaces: their directories are recorded as
+ * previous workspaces directories, where a worktree counts as CodeHydra's own on
+ * any branch, like one under the current root. New worktrees go under the new root.
  *
  * Order, with the switch as the commit point:
  *
@@ -12,16 +13,13 @@
  *   2. clones    copy each managed clone to <to>/remotes
  *   3. repair    `git worktree repair` from each copy — its worktrees' `.git`
  *                files name the old clone and git fails inside them otherwise
- *   4. adopt     tag every worktree under the old root as external
- *   5. switch    record the new root, and the workspaces directories left under
- *                the old one (worktrees there stay workspaces on any branch, where
- *                the tag holds only while its branch is checked out); rewrite
- *                path-keyed state; move screenshots
- *   6. cleanup   delete the old clones
+ *   4. switch    record the new root, and the workspaces directories left under
+ *                the old one; rewrite path-keyed state; move screenshots
+ *   5. cleanup   delete the old clones
  *
  * A failure before the switch undoes what ran (copies deleted, repairs pointed
- * back, adoption tags removed) and the old root stays in use. After it, failures
- * are reported, never undone: the data is already where the app now looks.
+ * back) and the old root stays in use. After it, failures are reported, never
+ * undone: the data is already where the app now looks.
  */
 
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
@@ -46,17 +44,12 @@ import {
   type ProjectMoveListener,
 } from "./workspaces-root";
 
-/** Branch config key of the external (adopted) tag. */
-const EXTERNAL_TAG_CONFIG_KEY = "codehydra.tags.external";
-
 export interface MigrationDeps {
   readonly fs: Pick<
     FileSystemBoundary,
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "copyTree" | "rename"
   >;
-  readonly gitClient: Pick<IGitClient, "listWorktrees" | "repairWorktrees" | "unsetBranchConfig">;
-  /** Adopt a worktree outside its project's workspaces directory (writes the external tag). */
-  readonly adopt: (projectRoot: Path, worktreePath: Path, branch: string) => Promise<unknown>;
+  readonly gitClient: Pick<IGitClient, "listWorktrees" | "repairWorktrees">;
   /** Directory of project records (stays in the data root). */
   readonly projectsDir: string;
   /** Directory of hibernation screenshots, one subdirectory per project id. */
@@ -81,8 +74,7 @@ export interface MigrationReport {
 const STEP_LABELS = {
   records: "Prepare project records",
   clones: "Copy cloned repositories",
-  repair: "Reconnect their worktrees",
-  adopt: "Keep existing workspaces where they are",
+  repair: "Reconnect existing workspaces to the moved repositories",
   switch: "Switch to the new folder",
   cleanup: "Remove the old clones",
 } as const;
@@ -117,11 +109,6 @@ interface ManagedProject {
   readonly url: string;
   readonly from: Path;
   readonly to: Path;
-}
-
-interface Adopted {
-  readonly projectRoot: Path;
-  readonly branch: string;
 }
 
 /**
@@ -169,14 +156,8 @@ export async function migrateWorkspacesRoot(
 
   const copied: ManagedProject[] = [];
   const repaired: { project: ManagedProject; worktrees: Path[] }[] = [];
-  const adopted: Adopted[] = [];
 
   const undo = async (): Promise<void> => {
-    for (const { projectRoot, branch } of adopted) {
-      await attempt(logger, "remove adoption tag", () =>
-        gitClient.unsetBranchConfig(projectRoot, branch, EXTERNAL_TAG_CONFIG_KEY)
-      );
-    }
     for (const { project, worktrees } of repaired) {
       await attempt(logger, "point worktrees back at the old clone", () =>
         gitClient.repairWorktrees(project.from, worktrees)
@@ -215,8 +196,9 @@ export async function migrateWorkspacesRoot(
     }
     progress.set("repair", "done");
 
-    // 4. adopt ---------------------------------------------------------------
-    progress.set("adopt", "running");
+    // 4. switch (commit point) -----------------------------------------------
+    progress.set("switch", "running");
+    // The workspaces directories that still hold worktrees stay CodeHydra's own.
     const left: Path[] = [];
     const roots = [
       ...local.map((path) => ({ root: path, oldPath: path })),
@@ -224,24 +206,17 @@ export async function migrateWorkspacesRoot(
     ];
     for (const { root, oldPath } of roots) {
       const oldWorkspacesDir = workspacesDirUnder(from, oldPath);
-      for (const wt of await gitClient.listWorktrees(root)) {
-        if (wt.isMain || wt.prunable || !wt.path.isChildOf(oldWorkspacesDir)) continue;
-        if (!left.some((dir) => dir.equals(oldWorkspacesDir))) left.push(oldWorkspacesDir);
-        // A detached HEAD has no branch to tag; the recorded directory keeps it.
-        if (wt.branch === null) continue;
-        await deps.adopt(root, wt.path, wt.branch);
-        adopted.push({ projectRoot: root, branch: wt.branch });
-      }
+      const worktrees = await gitClient.listWorktrees(root);
+      const holds = worktrees.some(
+        (wt) => !wt.isMain && !wt.prunable && wt.path.isChildOf(oldWorkspacesDir)
+      );
+      if (holds) left.push(oldWorkspacesDir);
     }
-    progress.set("adopt", "done");
-
-    // 5. switch (commit point) -----------------------------------------------
-    progress.set("switch", "running");
     await deps.commit(left);
     const warnings = await afterSwitch(deps, managed);
     progress.set("switch", "done");
 
-    // 6. cleanup -------------------------------------------------------------
+    // 5. cleanup -------------------------------------------------------------
     progress.set("cleanup", "running");
     const leftovers: string[] = [];
     for (const project of managed) {

@@ -790,8 +790,6 @@ const workspacesRootModule = createWorkspacesRootModule({
   pathProvider,
   fs: fileSystemLayer,
   gitClient,
-  adopt: (projectRoot, worktreePath, branch) =>
-    gitWorktreeProvider.adoptWorktree(projectRoot, worktreePath, branch),
   ui: presentationModule,
   dispatcher,
   // Built further down; read only when a migration runs.

@@ -36,7 +36,12 @@ import { testPath } from "../../shared/test-fixtures";
 import type { Entry } from "../../boundaries/platform/filesystem.state-mock";
 import { Path } from "../../utils/path/path";
 import { generateProjectId } from "../local-project-module";
-import { createWorkspacesRootModule, CURRENT_ROOT_STATE_KEY, WORKSPACES_ROOT_KEY } from "./module";
+import {
+  ADOPTIONS_CONVERTED_STATE_KEY,
+  createWorkspacesRootModule,
+  CURRENT_ROOT_STATE_KEY,
+  WORKSPACES_ROOT_KEY,
+} from "./module";
 import { workspacesDirUnder, type ProjectMove } from "./workspaces-root";
 
 const DATA = testPath("/data");
@@ -58,6 +63,11 @@ interface SetupOptions {
   readonly legacyDataRoot?: Path;
   /** Seed the clone under the data root (default true). */
   readonly dataClone?: boolean;
+  /** More worktrees of the local project, and its branches' config. */
+  readonly localWorktrees?: readonly { name: string; path: string; branch: string | null }[];
+  readonly localBranchConfigs?: Record<string, Record<string, string>>;
+  /** Initial state.json values besides the root in use. */
+  readonly state?: Record<string, unknown>;
 }
 
 /** The entries plus a directory entry for every ancestor, as a real tree has. */
@@ -102,12 +112,18 @@ function setup(options: SetupOptions = {}) {
   const gitClient = createMockGitClient({
     repositories: {
       [LOCAL.toString()]: {
-        branches: ["main", "feat"],
+        branches: [
+          "main",
+          "feat",
+          ...(options.localWorktrees ?? []).flatMap((wt) => wt.branch ?? []),
+        ],
         currentBranch: "main",
         worktrees: [
           { name: "feat", path: LOCAL_WT.toString(), branch: "feat" },
           { name: "scratch", path: LOCAL_DETACHED.toString(), branch: null },
+          ...(options.localWorktrees ?? []),
         ],
+        ...(options.localBranchConfigs && { branchConfigs: options.localBranchConfigs }),
       },
       [OLD_CLONE.toString()]: { branches: ["main", "fix"], currentBranch: "main", worktrees },
       [NEW_CLONE.toString()]: { branches: ["main", "fix"], currentBranch: "main", worktrees },
@@ -116,12 +132,13 @@ function setup(options: SetupOptions = {}) {
   const repair = vi.spyOn(gitClient, "repairWorktrees");
   if (options.failRepair) repair.mockRejectedValue(new Error("repair failed"));
 
-  const adopt = vi.fn(async () => undefined);
   const moves: ProjectMove[][] = [];
   const dialogs = createMockDialogManager();
   const notifications = createMockNotificationManager();
   const dispatch = vi.spyOn(notifications.dispatcher, "dispatch");
-  const state = createMockState({ values: { [CURRENT_ROOT_STATE_KEY]: options.current ?? null } });
+  const state = createMockState({
+    values: { [CURRENT_ROOT_STATE_KEY]: options.current ?? null, ...options.state },
+  });
   const config = createMockConfig();
 
   const { module, root } = createWorkspacesRootModule({
@@ -133,7 +150,6 @@ function setup(options: SetupOptions = {}) {
     }),
     fs,
     gitClient,
-    adopt,
     ui: dialogs.ui,
     dispatcher: notifications.dispatcher,
     moveListeners: () => [
@@ -155,7 +171,6 @@ function setup(options: SetupOptions = {}) {
     fs,
     gitClient,
     repair,
-    adopt,
     moves,
     dialogs,
     notifications,
@@ -202,6 +217,15 @@ async function waitForButton(dialogs: ReturnType<typeof createMockDialogManager>
 
 function exists(fs: ReturnType<typeof createFileSystemMock>, path: Path): boolean {
   return fs.$.entries.has(path.toString());
+}
+
+/** Branches of a repository carrying the external tag. */
+async function externalTags(
+  gitClient: ReturnType<typeof createMockGitClient>,
+  repo: Path
+): Promise<string[]> {
+  const entries = await gitClient.getGitConfig(repo, { regex: "\\.codehydra\\.tags\\.external$" });
+  return [...entries.keys()];
 }
 
 describe("WorkspacesRootModule", () => {
@@ -256,10 +280,9 @@ describe("WorkspacesRootModule", () => {
       expect(exists(s.fs, OLD_CLONE)).toBe(false);
       // Its worktrees were reconnected to the copy.
       expect(s.repair).toHaveBeenCalledWith(NEW_CLONE, [CLONE_WT]);
-      // Existing worktrees stay where they are, adopted; a detached one has no branch to tag.
-      expect(s.adopt).toHaveBeenCalledWith(LOCAL, LOCAL_WT, "feat");
-      expect(s.adopt).toHaveBeenCalledWith(NEW_CLONE, CLONE_WT, "fix");
-      expect(s.adopt).toHaveBeenCalledTimes(2);
+      // Existing worktrees stay where they are, and are not tagged as external.
+      expect(await externalTags(s.gitClient, LOCAL)).toEqual([]);
+      expect(await externalTags(s.gitClient, NEW_CLONE)).toEqual([]);
       // The new root is in use.
       expect(s.root.current().equals(NEW_ROOT)).toBe(true);
       // Path-keyed state and screenshots follow the clone.
@@ -288,20 +311,20 @@ describe("WorkspacesRootModule", () => {
       });
       const done = s.migrations();
       expect((await waitForButton(s.dialogs, "migrate")).disabled).toBe(true);
-      await press(s.dialogs, "adopt");
+      await press(s.dialogs, "use-as-is");
       await done;
     });
 
     it("uses the folder as is: switches, moves nothing", async () => {
       const s = setup({ configured: NEW_ROOT.toNative() });
       const done = s.migrations();
-      await press(s.dialogs, "adopt");
+      await press(s.dialogs, "use-as-is");
       await done;
 
       expect(s.root.current().equals(NEW_ROOT)).toBe(true);
       expect(exists(s.fs, new Path(OLD_CLONE, ".git", "HEAD"))).toBe(true);
-      expect(s.adopt).not.toHaveBeenCalled();
       expect(s.repair).not.toHaveBeenCalled();
+      expect(s.root.previousWorkspacesDirs()).toEqual([]);
     });
 
     it("quits without returning", async () => {
@@ -338,9 +361,9 @@ describe("WorkspacesRootModule", () => {
       await press(s.dialogs, "migrate");
       await waitForButton(s.dialogs, "retry");
 
-      // The partial copy is gone, nothing was adopted, the old clone is intact.
+      // The partial copy is gone, nothing was recorded, the old clone is intact.
       expect(exists(s.fs, NEW_CLONE)).toBe(false);
-      expect(s.adopt).not.toHaveBeenCalled();
+      expect(s.root.previousWorkspacesDirs()).toEqual([]);
       expect(exists(s.fs, new Path(OLD_CLONE, ".git", "HEAD"))).toBe(true);
 
       await press(s.dialogs, "continue");
@@ -359,7 +382,7 @@ describe("WorkspacesRootModule", () => {
         },
       });
       const done = s.migrations();
-      await press(s.dialogs, "adopt");
+      await press(s.dialogs, "use-as-is");
       await done;
 
       // Worktrees created under the root must lie inside it once git names them.
@@ -388,7 +411,7 @@ describe("WorkspacesRootModule", () => {
       });
       // The setting was cleared: the data root is wanted again.
       const done = s.migrations();
-      await press(s.dialogs, "adopt");
+      await press(s.dialogs, "use-as-is");
       await done;
 
       expect(s.root.current().equals(DATA)).toBe(true);
@@ -424,7 +447,7 @@ describe("WorkspacesRootModule", () => {
       it("asks when the user set a workspaces folder", async () => {
         const s = moved({ configured: testPath("/elsewhere").toNative() });
         const done = s.migrations();
-        await press(s.dialogs, "adopt");
+        await press(s.dialogs, "use-as-is");
         await done;
 
         expect(s.root.current().equals(testPath("/elsewhere"))).toBe(true);
@@ -434,9 +457,59 @@ describe("WorkspacesRootModule", () => {
         const s = moved({ dataClone: true });
         const done = s.migrations();
         expect((await waitForButton(s.dialogs, "migrate")).disabled).toBe(true);
-        await press(s.dialogs, "adopt");
+        await press(s.dialogs, "use-as-is");
         await done;
       });
+    });
+  });
+
+  describe("adoptions an earlier migration wrote", () => {
+    // A worktree an old migration left under the Roaming data root, tagged external.
+    const ROAMING = testPath("/roaming");
+    const OLD_DIR = new Path(ROAMING, "projects", "app-1234abcd", "workspaces");
+    const MIGRATED = new Path(OLD_DIR, "twin");
+    // One the user adopted from the add-project picker.
+    const HANDMADE = testPath("/code/app-extra");
+    const TAG = { "codehydra.tags.external": '{"color":"#8b949e"}' };
+
+    const tagged = (options: SetupOptions = {}) =>
+      setup({
+        localWorktrees: [
+          // Its agent has since checked out another branch: the tag sits on "twin".
+          { name: "twin", path: MIGRATED.toString(), branch: "twin" },
+          { name: "app-extra", path: HANDMADE.toString(), branch: "extra" },
+        ],
+        localBranchConfigs: { twin: TAG, extra: TAG },
+        ...options,
+      });
+
+    it("records their directory and removes their tag", async () => {
+      const s = tagged();
+      await s.migrations();
+
+      expect(s.root.previousWorkspacesDirs().map((dir) => dir.toString())).toEqual([
+        OLD_DIR.toString(),
+      ]);
+      // The user's own adoption is not a migration's: it keeps its tag.
+      expect(await externalTags(s.gitClient, LOCAL)).toEqual([
+        "branch.extra.codehydra.tags.external",
+      ]);
+      expect(s.dialogs.handles).toHaveLength(0);
+    });
+
+    it("converts once", async () => {
+      const s = tagged({ state: { [ADOPTIONS_CONVERTED_STATE_KEY]: true } });
+      await s.migrations();
+
+      expect(s.root.previousWorkspacesDirs()).toEqual([]);
+      expect(await externalTags(s.gitClient, LOCAL)).toHaveLength(2);
+    });
+
+    it("marks the conversion done when there is nothing to convert", async () => {
+      const s = setup();
+      await s.migrations();
+
+      expect(s.state.getEffective()[ADOPTIONS_CONVERTED_STATE_KEY]).toBe(true);
     });
   });
 });
