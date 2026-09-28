@@ -255,6 +255,8 @@ export interface IDispatcher {
    * Run `fn` so every dispatch it starts carries `options` (a dispatch's own
    * options still win). For an entry point whose dispatches are spread over
    * code it does not own — the plugin adapter invoking registry entries.
+   * An entry point starts roots: `fn` leaves whatever dispatch it runs in, so a
+   * timer armed during app:start does not file an hour of polls under it.
    * Lines `fn` logs before dispatching get no scope.
    */
   withOrigin<T>(options: DispatchOptions, fn: () => T): T;
@@ -382,7 +384,12 @@ export class Dispatcher implements IDispatcher {
   }
 
   withOrigin<T>(options: DispatchOptions, fn: () => T): T {
-    return this.origins.run(options, fn);
+    return this.frames.exit(() =>
+      this.logScope.run(
+        () => ({}),
+        () => this.origins.run(options, fn)
+      )
+    );
   }
 
   /**
