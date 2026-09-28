@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -120,6 +121,7 @@ export function useAgentMock(): AgentMockHandle {
   let server: LLMock;
   let configDir: string;
   let seen: SeenRequest[] = [];
+  let history: ConfigHistory | undefined;
 
   test.beforeAll(async () => {
     const agent = test.info().project.name as Agent;
@@ -146,6 +148,7 @@ export function useAgentMock(): AgentMockHandle {
     const url = await server.start();
 
     const dir = configDir;
+    if (agent === "claude") history = watchClaudeConfig(dir);
     const trusted: string[] = [];
     handle = {
       url,
@@ -154,6 +157,7 @@ export function useAgentMock(): AgentMockHandle {
       trustWorkspace: (workspacePath) => {
         if (agent !== "claude") return;
         trusted.push(...pathSpellings(workspacePath));
+        history?.note(`test writes trust for ${projectNames(trusted)}`);
         writeClaudeConfig(dir, trusted);
       },
       seenRequests: () => seen,
@@ -167,7 +171,7 @@ export function useAgentMock(): AgentMockHandle {
     if (test.info().status === test.info().expectedStatus) return;
     // Evidence, not a verdict: failing to collect it must not replace the
     // failure it is evidence for.
-    await attachClaudeState(configDir).catch((error: unknown) => {
+    await attachClaudeState(configDir, history).catch((error: unknown) => {
       console.log(`[agent-mock] could not attach Claude's state: ${String(error)}`);
     });
     // A Claude that read its config half-written backs it up as `.corrupted` and
@@ -203,6 +207,7 @@ export function useAgentMock(): AgentMockHandle {
   });
 
   test.afterAll(async () => {
+    history?.stop();
     await server?.stop().catch(() => {});
     if (!configDir) return;
     try {
@@ -302,6 +307,66 @@ function agentEnv(agent: Agent, url: string, configDir: string): Record<string, 
   };
 }
 
+/** Every version of `.claude.json` seen while the suite ran, one line each. */
+interface ConfigHistory {
+  /** Record something the suite did, between the versions it caused. */
+  note(message: string): void;
+  lines(): readonly string[];
+  stop(): void;
+}
+
+/**
+ * Poll `.claude.json` and log each change: which workspaces it trusts, and how
+ * many times Claude has started from it. Several agents rewrite this file while
+ * the suite adds trust to it, and an agent that finds its workspace untrusted
+ * waits on a prompt nobody answers — this says whose write dropped the trust.
+ */
+function watchClaudeConfig(configDir: string): ConfigHistory {
+  const target = join(configDir, ".claude.json");
+  const lines: string[] = [];
+  const log = (message: string): void => {
+    lines.push(`${new Date().toISOString()} ${message}`);
+  };
+  let last = "";
+  const poll = (): void => {
+    let text: string;
+    try {
+      text = readFileSync(target, "utf-8");
+    } catch (error) {
+      text = `<unreadable: ${(error as NodeJS.ErrnoException).code}>`;
+    }
+    if (text === last) return;
+    last = text;
+    try {
+      const config = JSON.parse(text) as { projects?: object; numStartups?: number };
+      log(
+        `config: trusts ${projectNames(Object.keys(config.projects ?? {}))}, ` +
+          `numStartups=${config.numStartups ?? "-"}, ${text.length} bytes`
+      );
+    } catch {
+      log(`config: not JSON (${text.length} bytes): ${JSON.stringify(text.slice(0, 80))}`);
+    }
+  };
+  const timer = setInterval(poll, 50);
+  return {
+    note: (message) => {
+      poll();
+      log(message);
+    },
+    lines: () => {
+      poll();
+      return lines;
+    },
+    stop: () => clearInterval(timer),
+  };
+}
+
+/** The distinct directory names among project keys, in any spelling. */
+function projectNames(paths: readonly string[]): string {
+  const names = new Set(paths.map((path) => path.split(/[\\/]/).at(-1) ?? path));
+  return `[${[...names].join(", ")}]`;
+}
+
 /** Where each Claude session writes its debug log, inside the config dir. */
 const DEBUG_LOGS = "debug-logs";
 
@@ -310,9 +375,14 @@ const DEBUG_LOGS = "debug-logs";
  * session's debug log, the config itself, and a listing of the rest (`backups/`
  * holds `.corrupted` copies, `ide/` the lockfiles of any IDE extension it found).
  */
-async function attachClaudeState(configDir: string): Promise<void> {
+async function attachClaudeState(configDir: string, history?: ConfigHistory): Promise<void> {
   if (!configDir || !existsSync(configDir)) return;
   const info = test.info();
+  if (history) {
+    const path = info.outputPath("claude-config-history.txt");
+    writeFileSync(path, history.lines().join("\n"));
+    await info.attach("claude-config-history.txt", { path, contentType: "text/plain" });
+  }
   const logs = join(configDir, DEBUG_LOGS);
   if (existsSync(logs)) {
     for (const name of readdirSync(logs).filter((entry) => entry.endsWith(".txt"))) {
