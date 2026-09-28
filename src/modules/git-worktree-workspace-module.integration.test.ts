@@ -708,6 +708,23 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       expect(provider.cleanupOrphanedWorkspaces).toHaveBeenCalledWith(testPath("/projects/my-app"));
     });
 
+    it("keeps a known workspace resolvable when re-opening the project no longer discovers it", async () => {
+      // An automation naming a project by URL re-runs project:open on an open
+      // project; discover ran again and skipped a worktree the app still holds.
+      const { dispatcher, provider } = setup;
+      const projectPath = projPath("/projects/my-app");
+      const kept = makeWorkspace("feature-1", projectPath);
+      const skipped = makeWorkspace("feature-2", projectPath);
+      provider.discover.mockResolvedValue([kept, skipped]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      provider.discover.mockResolvedValue([kept]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      const result = await dispatchResolveWorkspace(dispatcher, wsPath(skipped.path.toString()));
+      expect(result.projectPath).toBe(projectPath);
+    });
+
     it("caches the default base from discover and surfaces it via list-workspaces", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = projPath("/projects/my-app");
@@ -1718,12 +1735,23 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       };
       await dispatchDeleteWorkspace(dispatcher, deleteIntent);
 
-      // Re-discover — git no longer lists the workspace, but a new one exists
+      // A second workspace opens meanwhile
       const ws2 = makeWorkspace("feature-2", projPath(projectPath));
-      provider.discover.mockResolvedValue([ws2]);
-      await dispatchOpenProject(dispatcher, projPath(projectPath));
+      await dispatchCreateWorkspace(dispatcher, {
+        type: "workspace:open",
+        payload: {
+          workspaceName: ws2.name,
+          projectPath,
+          existingWorkspace: {
+            path: wsPath(ws2.path.toString()),
+            name: ws2.name,
+            branch: ws2.branch,
+            metadata: ws2.metadata,
+          },
+        },
+      });
 
-      // list-workspaces should include both: feature-2 from git + feature-1 from deletionPending
+      // list-workspaces should include both: feature-2 from state + feature-1 from deletionPending
       const listResult = await dispatchListWorkspaces(dispatcher);
       const entry = listResult.entries!.find((e) => e.projectPath === projectPath);
       const names = entry!.workspaces.map((w) => w.name);

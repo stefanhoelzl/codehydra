@@ -502,8 +502,24 @@ export function createGitWorktreeWorkspaceModule(
             const projectPathObj = new Path(projectPath);
             const workspacesDir = workspacesRoot.workspacesDir(projectPathObj);
 
-            gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
             const key = projectKey(projectPathObj.toString());
+
+            // Already open: report the list the app holds rather than re-read git.
+            // project:open runs again for an open project (an automation naming it
+            // by URL), and a fresh discover can skip a worktree the sidebar, agent
+            // and views still hold, leaving a workspace nothing can resolve.
+            const known = workspaces.get(key);
+            if (known !== undefined) {
+              const defaultBaseBranch = projectDefaults.get(key);
+              return {
+                result: {
+                  workspaces: toDiscoveredWorkspaces(known),
+                  ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+                },
+              };
+            }
+
+            gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
             workspaces.set(key, [...discovered]);
