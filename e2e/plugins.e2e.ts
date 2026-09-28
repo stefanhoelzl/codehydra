@@ -712,10 +712,12 @@ test("a repository with old hooks is offered Migrate, which writes a plugin", as
       .find((path) => existsSync(path));
     expect(worktree).toBeDefined();
     const manifest = join(worktree!, ".codehydra", "plugins", "hooks.yaml");
-    await expect.poll(() => existsSync(manifest), { timeout: 30_000 }).toBe(true);
-    expect(readFileSync(manifest, "utf8")).toContain(
-      "$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created"
-    );
+    // Poll the content, not the file: an exclusive write creates it empty first.
+    await expect
+      .poll(() => (existsSync(manifest) ? readFileSync(manifest, "utf8") : ""), {
+        timeout: 30_000,
+      })
+      .toContain("$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created");
   } finally {
     await legacy.cleanup();
   }
