@@ -101,10 +101,11 @@ The sidebar lists your projects and their workspaces, sorted by name.
   the New workspace form is showing, and whenever there are no workspaces.
 - **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
   window); the width is saved as `sidebar.width`.
-- The header has **?** (this guide) and the **gear** (settings), when expanded.
-- **Hide hibernated / Show hibernated** at the bottom (or <kbd>Alt</kbd>+<kbd>X</kbd>,
-  <kbd>T</kbd>) hides sleeping workspaces; a project with hidden rows shows how
-  many. The choice is remembered.
+- The header has, when expanded, the **eye**, the **gear** (settings) and
+  **?** (this guide). Hover any sidebar icon for what it does.
+- The **eye** (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd>) hides sleeping
+  workspaces; it shows a closed eye while they are hidden, and a project with
+  hidden rows shows how many. The choice is remembered.
 - Notifications (clone progress, failures, updates) stack at the bottom of the
   sidebar, newest on top; repeats merge into one card with a count. The stack
   takes at most 30% of the sidebar's height and scrolls beyond that.

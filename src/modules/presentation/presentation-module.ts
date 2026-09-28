@@ -552,7 +552,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   });
 
   // Whether hibernated workspaces are hidden from the sidebar. A user-toggled
-  // runtime preference (bottom toggle / Alt+X+T), so it lives in state.json, not
+  // runtime preference (sidebar header eye / Alt+X+T), so it lives in state.json, not
   // config. Read at snapshot-build time and when navigating, so flipping it
   // re-pushes ui:state; the presenter both filters the rows and ships the flag.
   const hideHibernatedState = deps.stateService.register("sidebar.hide-hibernated", {
