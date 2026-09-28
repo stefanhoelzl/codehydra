@@ -607,10 +607,14 @@ export async function removeWorkspace(ui: Page, name: string): Promise<void> {
 }
 
 /** Wait for a workspace iframe to attach and become the active target. */
-export async function waitForWorkspaceFrame(driver: AppDriver, name: string): Promise<void> {
+export async function waitForWorkspaceFrame(
+  driver: AppDriver,
+  name: string,
+  timeout = 120_000
+): Promise<void> {
   await expect
     .poll(async () => (await driver.findTarget("workspace").catch(() => null))?.frame.url() ?? "", {
-      timeout: 120_000,
+      timeout,
     })
     .toContain(`${name}.code-workspace`);
 }

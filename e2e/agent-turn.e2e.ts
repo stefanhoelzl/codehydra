@@ -33,6 +33,7 @@ import {
   type LogEntry,
   useApp,
   waitForConnectionDetails,
+  waitForWorkspaceFrame,
   workspaceRow,
   workspacesDir,
 } from "./fixtures";
@@ -63,6 +64,31 @@ test.afterAll(async () => {
 // order, and the app's launch environment is built from the mock's port.
 const mock = useAgentMock();
 const app = useApp({ env: () => mock().env });
+
+// What each agent terminal shows when a test fails. An agent stuck before its
+// session starts — on a prompt nobody answers — reports nothing to the app or the
+// mock, so its screen is the only witness. Only the active workspace's frame is
+// rendered, hence the switch.
+test.afterEach(async () => {
+  const info = test.info();
+  if (info.status === info.expectedStatus) return;
+  for (const name of [WORKSPACE_NAME, MESSAGE_WORKSPACE_NAME]) {
+    const switched = await chAsync(["ws", "switch", name]);
+    if (switched.status !== 0) continue;
+    try {
+      await waitForWorkspaceFrame(app(), name, 30_000);
+      // The frame attaches before the terminal repaints.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // A file, not a body: CI uploads the output directory, and a body only
+      // reaches the HTML report, which it does not.
+      const path = info.outputPath(`screen-${name}.png`);
+      await app().uiPage().screenshot({ path });
+      await info.attach(`screen-${name}.png`, { path, contentType: "image/png" });
+    } catch (error) {
+      console.log(`[agent-turn] no screenshot of ${name}: ${String(error)}`);
+    }
+  }
+});
 
 /**
  * The workspace's title as CodeHydra stores it: `codehydra.title` on the
