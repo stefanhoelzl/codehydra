@@ -798,12 +798,13 @@ When the active workspace is being deleted, the Del shortcut hint is hidden in t
 - Status updates in real-time
 
 **Status indicators:**
-| Status | Indicator | Meaning |
-|---------|----------------|--------------------------------------------|
-| None | (no indicator) | No OpenCode running in this workspace |
-| Idle | 🟢 | Agent waiting for user input (includes waiting for permission) |
-| Busy | 🔴 | Agent actively processing |
-| Mixed | 🟡 | Multiple sessions: some idle, some busy |
+
+| Status | Indicator      | Meaning                                                        |
+| ------ | -------------- | -------------------------------------------------------------- |
+| None   | (no indicator) | No OpenCode running in this workspace                          |
+| Idle   | 🟢             | Agent waiting for user input (includes waiting for permission) |
+| Busy   | 🔴             | Agent actively processing                                      |
+| Mixed  | 🟡             | Multiple sessions: some idle, some busy                        |
 
 > **Note**: When an agent requests permission (e.g., to run a shell command), it displays as "idle" (green) because it's waiting for user action. The agent cannot proceed until the user responds to the permission request.
 

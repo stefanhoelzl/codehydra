@@ -10,8 +10,7 @@
  * Discriminated union pattern for type-safe error handling.
  */
 export type Result<T, E> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: E };
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
 
 /**
  * Creates a successful result.

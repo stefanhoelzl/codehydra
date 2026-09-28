@@ -621,8 +621,7 @@ describe("Form component", () => {
     async function submittedValue(): Promise<string | undefined> {
       await fireEvent.click(screen.getByText("Confirm"));
       const call = mockSendDialogEvent.mock.calls.at(-1)?.[0] as
-        | { data?: Record<string, string> }
-        | undefined;
+        { data?: Record<string, string> } | undefined;
       return call?.data?.["keep"];
     }
 

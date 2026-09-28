@@ -13,21 +13,23 @@ reviewers: [review-ui, review-arch, review-senior, review-docs]
 - **Solution**: Systematically replace native HTML elements with vscode-elements web components, unify duplicated CSS, update documentation to mandate vscode-elements usage, and enhance the review-ui agent to enforce this standard.
 
 - **Risks**:
-  | Risk | Mitigation |
-  |------|------------|
-  | vscode-elements styling conflicts with --ch-_ variables | Test in isolation first; inject --vscode-_ fallbacks at :root for standalone mode |
-  | BranchDropdown custom features lost | Keep custom implementation; vscode-single-select doesn't support filtering/grouping |
-  | Breaking existing functionality | TDD approach: write tests for current behavior before migrating |
-  | Web component event handling in Svelte | Use Svelte's `on:event` syntax for custom events (e.g., `on:vsc-input`) |
-  | vscode-toolbar may conflict with hover-reveal | Research toolbar CSS behavior; may need custom CSS override |
-  | vscode-badge has no built-in dimmed state | Use custom CSS for dimmed badges (documented exception) |
+
+  | Risk                                                    | Mitigation                                                                          |
+  | ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+  | vscode-elements styling conflicts with --ch-_ variables | Test in isolation first; inject --vscode-_ fallbacks at :root for standalone mode   |
+  | BranchDropdown custom features lost                     | Keep custom implementation; vscode-single-select doesn't support filtering/grouping |
+  | Breaking existing functionality                         | TDD approach: write tests for current behavior before migrating                     |
+  | Web component event handling in Svelte                  | Use Svelte's `on:event` syntax for custom events (e.g., `on:vsc-input`)             |
+  | vscode-toolbar may conflict with hover-reveal           | Research toolbar CSS behavior; may need custom CSS override                         |
+  | vscode-badge has no built-in dimmed state               | Use custom CSS for dimmed badges (documented exception)                             |
 
 - **Alternatives Considered**:
-  | Alternative | Rejected Because |
-  |-------------|------------------|
+
+  | Alternative                      | Rejected Because                                              |
+  | -------------------------------- | ------------------------------------------------------------- |
   | Remove @vscode-elements entirely | Violates declared tech stack; loses native VS Code appearance |
-  | Partial adoption (buttons only) | Inconsistent; doesn't address duplication |
-  | vscode-elements-lite (CSS-only) | Less semantic; doesn't provide full component behavior |
+  | Partial adoption (buttons only)  | Inconsistent; doesn't address duplication                     |
+  | vscode-elements-lite (CSS-only)  | Less semantic; doesn't provide full component behavior        |
 
 - **Rollback Criteria**: If vscode-elements causes visual regressions in code-server context, or if testing reveals fundamental incompatibility with Svelte 5, pause and reassess approach.
 

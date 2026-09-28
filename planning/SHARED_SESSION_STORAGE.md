@@ -13,11 +13,12 @@ reviewers: []
 - **Solution**: Change from per-workspace Electron session partitions to a single shared global session. Currently each workspace uses `persist:<projectDirName>/<workspaceName>` as its partition. The change uses `persist:codehydra-global` for all workspaces, causing all browser-based storage (IndexedDB, localStorage, cookies) to be shared.
 
 - **Risks**:
-  | Risk | Likelihood | Impact | Mitigation |
-  |------|------------|--------|------------|
-  | VS Code workspace state leaks between workspaces | Medium | Low | VS Code uses folder path for workspace-specific state; shared session affects browser storage not VS Code's workspace state model |
-  | Extension workspace-specific data shared unexpectedly | Low | Low | Most extensions use `workspaceState` API (file-based) not browser storage for per-workspace data |
-  | Existing workspace sessions not migrated | High | Medium | Accept data loss on first run after update. **Data lost includes**: VS Code globalState (extension settings, API keys), cookies (authentication tokens), localStorage (cached data). Document in release notes with migration guidance. |
+
+  | Risk                                                  | Likelihood | Impact | Mitigation                                                                                                                                                                                                                              |
+  | ----------------------------------------------------- | ---------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | VS Code workspace state leaks between workspaces      | Medium     | Low    | VS Code uses folder path for workspace-specific state; shared session affects browser storage not VS Code's workspace state model                                                                                                       |
+  | Extension workspace-specific data shared unexpectedly | Low        | Low    | Most extensions use `workspaceState` API (file-based) not browser storage for per-workspace data                                                                                                                                        |
+  | Existing workspace sessions not migrated              | High       | Medium | Accept data loss on first run after update. **Data lost includes**: VS Code globalState (extension settings, API keys), cookies (authentication tokens), localStorage (cached data). Document in release notes with migration guidance. |
 
 - **Alternatives Considered**:
   1. **Storage sync mechanism**: Implement IPC-based sync between sessions for globalState/secrets only. Rejected: High complexity, potential race conditions, modifying code-server not possible.

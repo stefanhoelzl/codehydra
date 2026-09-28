@@ -125,18 +125,18 @@ Each group below will have its own detailed implementation plan created separate
 - [x] **Step 2.A: OS Process Management**
   - External entity: `execa`, `pidtree`
   - Modules:
-    | Module | File |
-    |--------|------|
-    | `spawnProcess` | `src/services/platform/process.ts` |
-    | `ExecaProcessRunner` | `src/services/platform/process.ts` |
-    | `PidtreeProvider` | `src/services/opencode/process-tree.ts` |
+    | Module               | File                                    |
+    | -------------------- | --------------------------------------- |
+    | `spawnProcess`       | `src/services/platform/process.ts`      |
+    | `ExecaProcessRunner` | `src/services/platform/process.ts`      |
+    | `PidtreeProvider`    | `src/services/opencode/process-tree.ts` |
   - Test file: `src/services/platform/process.boundary.test.ts`, `src/services/opencode/process-tree.boundary.test.ts`
 
 - [x] **Step 2.B: OS Networking**
   - External entity: `net` module, `systeminformation`
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module                              | File                               |
+    | ----------------------------------- | ---------------------------------- |
     | `PortManager (DefaultNetworkLayer)` | `src/services/platform/network.ts` |
   - Test file: `src/services/platform/network.boundary.test.ts`
   - Note: PortManager is part of the unified DefaultNetworkLayer (see plan NETWORK_BOUNDARY_TESTS.md)
@@ -144,18 +144,18 @@ Each group below will have its own detailed implementation plan created separate
 - [x] **Step 2.C: HTTP**
   - External entity: `fetch`, `EventSource`
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module                             | File                               |
+    | ---------------------------------- | ---------------------------------- |
     | `HttpClient (DefaultNetworkLayer)` | `src/services/platform/network.ts` |
-    | `SseClient (DefaultNetworkLayer)` | `src/services/platform/network.ts` |
+    | `SseClient (DefaultNetworkLayer)`  | `src/services/platform/network.ts` |
   - Test file: `src/services/platform/network.boundary.test.ts`
   - Note: HttpClient, SseClient, and PortManager are tested together since DefaultNetworkLayer is a unified module implementing all three interfaces
 
 - [x] **Step 2.D: Filesystem**
   - External entity: `fs/promises`
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module                   | File                                  |
+    | ------------------------ | ------------------------------------- |
     | `DefaultFileSystemLayer` | `src/services/platform/filesystem.ts` |
   - Test file: `src/services/platform/filesystem.boundary.test.ts`
   - Note: FileSystemLayer abstraction created; ProjectStore uses it via DI
@@ -163,8 +163,8 @@ Each group below will have its own detailed implementation plan created separate
 - [x] **Step 2.E: Git**
   - External entity: Git CLI via `simple-git`
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module            | File                                    |
+    | ----------------- | --------------------------------------- |
     | `SimpleGitClient` | `src/services/git/simple-git-client.ts` |
   - Action: Renamed existing `simple-git-client.integration.test.ts` → `simple-git-client.boundary.test.ts`
   - Note: Tests already exist and test against real git repos
@@ -172,8 +172,8 @@ Each group below will have its own detailed implementation plan created separate
 - [x] **Step 2.F: code-server Binary**
   - External entity: `code-server` binary + HTTP health endpoint
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module              | File                                              |
+    | ------------------- | ------------------------------------------------- |
     | `CodeServerManager` | `src/services/code-server/code-server-manager.ts` |
   - Test file: `src/services/code-server/code-server-manager.boundary.test.ts`
   - Prerequisite: `code-server` devDependency available
@@ -181,8 +181,8 @@ Each group below will have its own detailed implementation plan created separate
 - [x] **Step 2.G: OpenCode**
   - External entity: `opencode serve` HTTP API + SSE
   - Modules:
-    | Module | File |
-    |--------|------|
+    | Module           | File                                       |
+    | ---------------- | ------------------------------------------ |
     | `OpenCodeClient` | `src/services/opencode/opencode-client.ts` |
   - Test file: `src/services/opencode/opencode-client.boundary.test.ts`
   - Prerequisite: `opencode-ai` devDependency available

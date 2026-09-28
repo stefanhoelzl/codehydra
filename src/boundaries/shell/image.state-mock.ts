@@ -258,7 +258,7 @@ interface ImageBoundaryMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends ImageBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends ImageBoundaryMatchers {}
 }
 
 export const imageBoundaryMatchers: MatcherImplementationsFor<

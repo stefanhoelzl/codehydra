@@ -809,7 +809,7 @@ interface FileSystemMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends FileSystemMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends FileSystemMatchers {}
 }
 
 export const fileSystemMatchers: MatcherImplementationsFor<

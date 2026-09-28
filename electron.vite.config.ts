@@ -57,10 +57,10 @@ export default defineConfig({
       codehydraDefaults({ external: ["bufferutil", "utf-8-validate", "original-fs"] }),
       viteStaticCopy({
         targets: [
-          { src: "dist/extensions/*", dest: "assets/extensions" },
-          { src: "resources/scripts/*", dest: "assets/scripts" },
-          { src: "resources/bin/*", dest: "assets/bin" },
-          { src: "dist/bin/*", dest: "assets/bin" },
+          { src: "dist/extensions/*", dest: "assets/extensions", rename: { stripBase: true } },
+          { src: "resources/scripts/*", dest: "assets/scripts", rename: { stripBase: true } },
+          { src: "resources/bin/*", dest: "assets/bin", rename: { stripBase: true } },
+          { src: "dist/bin/*", dest: "assets/bin", rename: { stripBase: true } },
         ],
         // electron-vite 5 builds the main process as "ssr" environment;
         // vite-plugin-static-copy defaults to "client" and skips otherwise.

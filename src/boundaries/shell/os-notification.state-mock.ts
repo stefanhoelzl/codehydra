@@ -211,7 +211,7 @@ export interface OsNotificationBoundaryMatchers {
 
 // Extend vitest's assertion interface
 declare module "vitest" {
-  interface Assertion<T> extends OsNotificationBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends OsNotificationBoundaryMatchers {}
 }
 
 export const osNotificationBoundaryMatchers: MatcherImplementationsFor<

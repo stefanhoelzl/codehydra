@@ -15,20 +15,21 @@ reviewers: [review-electron, review-arch, review-typescript, review-testing, rev
 - **Solution**: Use z-order swapping to control which WebContentsView receives events. In normal state, workspace views are on top (can receive events in content area). When a dialog opens, move the UI layer to the top so the dialog overlay can cover the entire window.
 
 - **Risks**:
-  | Risk | Likelihood | Impact | Mitigation |
-  |------|------------|--------|------------|
-  | Visual flicker during z-order change | Low | Low | Electron handles reordering atomically |
-  | Race condition if dialog opens/closes rapidly | Low | Low | Operation is idempotent (see Design Decisions) |
-  | Focus issues after z-order change | Medium | Medium | Focus managed by existing Dialog component |
-  | Window destroyed during z-order change | Low | Low | Add try-catch with `isDestroyed()` check |
+
+  | Risk                                          | Likelihood | Impact | Mitigation                                     |
+  | --------------------------------------------- | ---------- | ------ | ---------------------------------------------- |
+  | Visual flicker during z-order change          | Low        | Low    | Electron handles reordering atomically         |
+  | Race condition if dialog opens/closes rapidly | Low        | Low    | Operation is idempotent (see Design Decisions) |
+  | Focus issues after z-order change             | Medium     | Medium | Focus managed by existing Dialog component     |
+  | Window destroyed during z-order change        | Low        | Low    | Add try-catch with `isDestroyed()` check       |
 
 - **Alternatives Considered**:
-  | Alternative | Why Rejected |
-  |-------------|--------------|
+  | Alternative                                     | Why Rejected                                                                           |
+  | ----------------------------------------------- | -------------------------------------------------------------------------------------- |
   | CSS `pointer-events: none` on transparent areas | Doesn't work - CSS only affects DOM within a single WebContentsView, not between views |
-  | Separate overlay WebContentsView for dialogs | More complex, need to manage separate view lifecycle and HTML |
-  | `setIgnoreMouseEvents` API | Window-level only, can't apply to partial areas |
-  | Resize UI bounds when dialog opens | More complex than z-order swap, same IPC requirements |
+  | Separate overlay WebContentsView for dialogs    | More complex, need to manage separate view lifecycle and HTML                          |
+  | `setIgnoreMouseEvents` API                      | Window-level only, can't apply to partial areas                                        |
+  | Resize UI bounds when dialog opens              | More complex than z-order swap, same IPC requirements                                  |
 
 ## Design Decisions
 

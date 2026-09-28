@@ -110,19 +110,19 @@ Minimal placeholder UI - just proves the Electron + Svelte pipeline works.
     }
     ```
   - Add npm scripts:
-    | Script | Command |
-    |--------|---------|
-    | dev | `electron-vite dev` |
-    | build | `electron-vite build` |
-    | preview | `electron-vite preview` |
-    | test | `vitest run` |
-    | test:watch | `vitest` |
-    | lint | `eslint . --max-warnings 0` |
-    | lint:fix | `eslint . --fix` |
-    | format | `prettier --write .` |
-    | format:check | `prettier --check .` |
-    | check | `svelte-check --tsconfig ./tsconfig.web.json --fail-on-warnings` |
-    | validate | `pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build` |
+    | Script       | Command                                                                   |
+    | ------------ | ------------------------------------------------------------------------- |
+    | dev          | `electron-vite dev`                                                       |
+    | build        | `electron-vite build`                                                     |
+    | preview      | `electron-vite preview`                                                   |
+    | test         | `vitest run`                                                              |
+    | test:watch   | `vitest`                                                                  |
+    | lint         | `eslint . --max-warnings 0`                                               |
+    | lint:fix     | `eslint . --fix`                                                          |
+    | format       | `prettier --write .`                                                      |
+    | format:check | `prettier --check .`                                                      |
+    | check        | `svelte-check --tsconfig ./tsconfig.web.json --fail-on-warnings`          |
+    | validate     | `pnpm format:check && pnpm lint && pnpm check && pnpm test && pnpm build` |
   - Files: `package.json`
   - Test: `package.json` exists with correct structure
 

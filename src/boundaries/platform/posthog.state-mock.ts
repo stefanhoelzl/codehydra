@@ -194,7 +194,7 @@ interface PostHogBoundaryMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends PostHogBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends PostHogBoundaryMatchers {}
 }
 
 export const postHogBoundaryMatchers: MatcherImplementationsFor<

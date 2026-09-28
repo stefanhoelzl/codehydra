@@ -15,21 +15,22 @@ reviewers: [review-docs, review-typescript, review-electron, review-testing, rev
 - **Solution**: Implement the Svelte 5 frontend with @vscode-elements, including sidebar, dialogs, and stores that communicate via the existing IPC contract.
 
 - **Risks**:
-  | Risk | Likelihood | Impact | Mitigation |
-  |------|------------|--------|------------|
-  | @vscode-elements compatibility with Svelte 5 | Medium | Medium | Test early; if issues found, use native HTML elements with CSS variables |
-  | Store reactivity with IPC events | Low | Medium | Use Svelte 5 runes pattern, test thoroughly |
-  | CSS variable availability | Low | Low | Provide fallback values for all VS Code variables |
-  | Breaking API change (electronAPI → api) | Certain | Low | Coordinated update of preload, types, and tests in single implementation step |
+
+  | Risk                                         | Likelihood | Impact | Mitigation                                                                    |
+  | -------------------------------------------- | ---------- | ------ | ----------------------------------------------------------------------------- |
+  | @vscode-elements compatibility with Svelte 5 | Medium     | Medium | Test early; if issues found, use native HTML elements with CSS variables      |
+  | Store reactivity with IPC events             | Low        | Medium | Use Svelte 5 runes pattern, test thoroughly                                   |
+  | CSS variable availability                    | Low        | Low    | Provide fallback values for all VS Code variables                             |
+  | Breaking API change (electronAPI → api)      | Certain    | Low    | Coordinated update of preload, types, and tests in single implementation step |
 
 - **Alternatives Considered**:
-  | Alternative | Why Rejected |
-  |-------------|--------------|
-  | Port Tauri components directly | Tauri version has iframe management we don't need; cleaner to adapt |
-  | Use different UI library | @vscode-elements provides consistent VS Code look; already in dependencies |
-  | Single monolithic component | Harder to test and maintain; component separation is cleaner |
+  | Alternative                     | Why Rejected                                                                                    |
+  | ------------------------------- | ----------------------------------------------------------------------------------------------- |
+  | Port Tauri components directly  | Tauri version has iframe management we don't need; cleaner to adapt                             |
+  | Use different UI library        | @vscode-elements provides consistent VS Code look; already in dependencies                      |
+  | Single monolithic component     | Harder to test and maintain; component separation is cleaner                                    |
   | Keep generic `invoke()` pattern | Individual functions provide better discoverability, cleaner call sites, and JSDoc per function |
-  | Keep `window.electronAPI` name | Shorter `window.api` is cleaner; breaking change is acceptable in early development |
+  | Keep `window.electronAPI` name  | Shorter `window.api` is cleaner; breaking change is acceptable in early development             |
 
 ## Architecture
 

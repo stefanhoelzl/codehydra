@@ -351,8 +351,7 @@ describe("workspace:hibernate", () => {
     );
 
     const metadataChanged = recorder.events.find((e) => e.type === EVENT_METADATA_CHANGED) as
-      | MetadataChangedEvent
-      | undefined;
+      MetadataChangedEvent | undefined;
     expect(metadataChanged?.payload.key).toBe(HIBERNATED_METADATA_KEY);
     expect(metadataChanged?.payload.value).toBe("true");
   });

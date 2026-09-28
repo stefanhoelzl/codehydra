@@ -17,7 +17,17 @@ import { assertWindowsX64 } from "../../utils/binary-download";
 import type { IdeServer, ServeArgsInput, RemoteCliInvocation } from "./types";
 import { folderUrl, workspaceUrl } from "./url-scheme";
 
-/** Current VSCodium version to download (reh-web build; VS Code <major.minor>.<build>). */
+/**
+ * Current VSCodium version to download (reh-web build; VS Code <major.minor>.<build>).
+ *
+ * Held at 1.126 (bundled Node 24.15.0): Node 24.16.0–24.20.x carries a libuv
+ * regression that aborts the process on Windows when a watched directory is
+ * spelled with an 8.3 short name (`C:\Users\RUNNER~1\…`) — `Assertion failed:
+ * !_wcsnicmp(filename, dir, dirlen), file src\win\fs-event.c` — taking the
+ * extension host and every agent terminal with it. 1.135.06055 bundles 24.18.1.
+ * Fixed in Node 24.21.0 (libuv/libuv#5152); bump once a VSCodium release bundles
+ * that or later (check with `<bundle>/node --version`).
+ */
 export const VSCODIUM_VERSION = "1.126.04524";
 
 /** Bundle-relative directory holding the webview shell (index/fake html + service worker). */

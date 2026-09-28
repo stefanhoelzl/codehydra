@@ -39,8 +39,7 @@ interface ExtensionsManifestValidationFailure {
 }
 
 type ExtensionsManifestValidationResult =
-  | ExtensionsManifestValidationSuccess
-  | ExtensionsManifestValidationFailure;
+  ExtensionsManifestValidationSuccess | ExtensionsManifestValidationFailure;
 
 function validateExtensionsManifest(value: unknown): ExtensionsManifestValidationResult {
   if (!Array.isArray(value)) {

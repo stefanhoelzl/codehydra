@@ -286,14 +286,14 @@ The `executeCommand` method follows the existing `IWorkspaceApi` pattern - it **
 - [x] **Step 13: Update AGENTS.md with MCP server tools table**
   - Add new "## MCP Server" section after "Plugin API" section
   - Include table listing all available MCP tools:
-    | Tool | Description |
-    |------|-------------|
-    | `workspace_get_status` | Get workspace status (dirty flag, agent status) |
-    | `workspace_get_metadata` | Get all workspace metadata |
-    | `workspace_set_metadata` | Set or delete a metadata key |
-    | `workspace_get_opencode_port` | Get OpenCode server port |
-    | `workspace_execute_command` | Execute a VS Code command |
-    | `workspace_delete` | Delete the workspace |
+    | Tool                          | Description                                     |
+    | ----------------------------- | ----------------------------------------------- |
+    | `workspace_get_status`        | Get workspace status (dirty flag, agent status) |
+    | `workspace_get_metadata`      | Get all workspace metadata                      |
+    | `workspace_set_metadata`      | Set or delete a metadata key                    |
+    | `workspace_get_opencode_port` | Get OpenCode server port                        |
+    | `workspace_execute_command`   | Execute a VS Code command                       |
+    | `workspace_delete`            | Delete the workspace                            |
   - Note that MCP tools mirror Public API workspace methods
   - Files: `AGENTS.md`
   - Test criteria: AI agents can reference available MCP tools

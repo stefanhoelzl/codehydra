@@ -985,7 +985,11 @@ interface FileSystemMatchers {
 
 // 4. Vitest augmentation
 declare module "vitest" {
-  interface Assertion<T> extends MatchersFor<T, MockFileSystemBoundary, FileSystemMatchers> {}
+  interface Matchers<R extends void | Promise<void>, T> extends MatchersFor<
+    T,
+    MockFileSystemBoundary,
+    FileSystemMatchers
+  > {}
 }
 
 // 5. Matcher implementations (type-safe via MatcherImplementationsFor)

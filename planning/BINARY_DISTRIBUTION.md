@@ -524,10 +524,7 @@ export const BINARY_CONFIGS = {
 import { ServiceError } from "../errors.js";
 
 export type BinaryDownloadErrorCode =
-  | "NETWORK_ERROR"
-  | "EXTRACTION_FAILED"
-  | "UNSUPPORTED_PLATFORM"
-  | "INVALID_VERSION";
+  "NETWORK_ERROR" | "EXTRACTION_FAILED" | "UNSUPPORTED_PLATFORM" | "INVALID_VERSION";
 
 export class BinaryDownloadError extends ServiceError {
   readonly type = "binary-download" as const;

@@ -246,8 +246,9 @@ Implementation requirements:
 | error state displays error message          | API failure handling          | `BranchDropdown.test.ts` |
 
 **Integration test** (`BranchDropdown.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
+
+| Test Case                                       | Description                       |
+| ----------------------------------------------- | --------------------------------- |
 | BranchDropdown + FilterableDropdown integration | Async load → filter → select flow |
 
 **2c. Refactor BranchDropdown**:
@@ -385,62 +386,67 @@ Implementation requirements:
 ### Unit Tests (vitest)
 
 **FilterableDropdown** (`FilterableDropdown.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
-| renders all options | Shows all provided options |
-| filters options using callback | Typing filters list |
-| empty filter shows all options | Complete list when empty |
-| debounces filter input | 200ms delay |
-| Arrow Down/Up navigation | Keyboard nav works |
-| Arrow navigation skips headers | Headers not navigable |
-| Enter selects highlighted | Keyboard selection |
-| Tab selects highlighted | Tab commits selection |
-| Tab selects exact match | No navigation case |
-| Escape closes dropdown | No selection |
-| calls onSelect with value | Correct callback |
-| disabled prevents interaction | No open/keyboard |
-| correct ARIA attributes | Accessibility |
-| position recalculates on resize | Fixed positioning |
-| optionSnippet renders custom | Snippet works |
+
+| Test Case                       | Description                |
+| ------------------------------- | -------------------------- |
+| renders all options             | Shows all provided options |
+| filters options using callback  | Typing filters list        |
+| empty filter shows all options  | Complete list when empty   |
+| debounces filter input          | 200ms delay                |
+| Arrow Down/Up navigation        | Keyboard nav works         |
+| Arrow navigation skips headers  | Headers not navigable      |
+| Enter selects highlighted       | Keyboard selection         |
+| Tab selects highlighted         | Tab commits selection      |
+| Tab selects exact match         | No navigation case         |
+| Escape closes dropdown          | No selection               |
+| calls onSelect with value       | Correct callback           |
+| disabled prevents interaction   | No open/keyboard           |
+| correct ARIA attributes         | Accessibility              |
+| position recalculates on resize | Fixed positioning          |
+| optionSnippet renders custom    | Snippet works              |
 
 **BranchDropdown** (`BranchDropdown.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
-| transforms to DropdownOption[] | Data structure |
-| adds Local/Remote headers | Grouping |
-| headers non-interactive | Visual distinction |
-| async loading state | Before dropdown |
-| error state | API failure |
-| integration with FilterableDropdown | Full flow |
+
+| Test Case                           | Description        |
+| ----------------------------------- | ------------------ |
+| transforms to DropdownOption[]      | Data structure     |
+| adds Local/Remote headers           | Grouping           |
+| headers non-interactive             | Visual distinction |
+| async loading state                 | Before dropdown    |
+| error state                         | API failure        |
+| integration with FilterableDropdown | Full flow          |
 
 **ProjectDropdown** (`ProjectDropdown.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
-| renders all projects | From store |
-| displays name, returns path | Value mapping |
-| filters by name | Filtering works |
-| keyboard navigation | Arrow/Enter |
-| handles long names | No layout break |
+
+| Test Case                   | Description     |
+| --------------------------- | --------------- |
+| renders all projects        | From store      |
+| displays name, returns path | Value mapping   |
+| filters by name             | Filtering works |
+| keyboard navigation         | Arrow/Enter     |
+| handles long names          | No layout break |
 
 **CreateWorkspaceDialog** (`CreateWorkspaceDialog.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
-| project dropdown above name | DOM order |
-| defaults to prop project | Initial selection |
-| name has initial focus | Not project dropdown |
-| submits with selected project | Form submission |
-| validates against selected project | Duplicate check |
-| respects focus trap | Tab cycling |
-| clears branch on project change | Reset behavior |
-| re-validates name on project change | If touched |
-| sequential project changes work | Multiple changes |
+
+| Test Case                           | Description          |
+| ----------------------------------- | -------------------- |
+| project dropdown above name         | DOM order            |
+| defaults to prop project            | Initial selection    |
+| name has initial focus              | Not project dropdown |
+| submits with selected project       | Form submission      |
+| validates against selected project  | Duplicate check      |
+| respects focus trap                 | Tab cycling          |
+| clears branch on project change     | Reset behavior       |
+| re-validates name on project change | If touched           |
+| sequential project changes work     | Multiple changes     |
 
 **Dialog Store** (`dialogs.svelte.test.ts`):
-| Test Case | Description |
-| --------- | ----------- |
-| uses provided defaultProjectPath | Explicit param |
-| uses activeProject when no param | Fallback |
-| uses first project when no active | Last resort |
+
+| Test Case                         | Description    |
+| --------------------------------- | -------------- |
+| uses provided defaultProjectPath  | Explicit param |
+| uses activeProject when no param  | Fallback       |
+| uses first project when no active | Last resort    |
 
 ### Integration Tests
 

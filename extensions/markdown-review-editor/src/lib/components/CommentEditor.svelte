@@ -468,8 +468,7 @@
 				onfocus={handleFocus}
 				onblur={handleBlur}
 				placeholder={isReply ? 'Add a reply...' : 'Add a comment...'}
-				rows="1"
-			></textarea>
+				rows="1"></textarea>
 		</div>
 	</div>
 

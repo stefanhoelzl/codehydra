@@ -531,7 +531,7 @@ interface WindowBoundaryMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends WindowBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends WindowBoundaryMatchers {}
 }
 
 export const windowBoundaryMatchers: MatcherImplementationsFor<

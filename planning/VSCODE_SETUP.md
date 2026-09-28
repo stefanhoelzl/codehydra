@@ -23,21 +23,22 @@ reviewers:
 - **Execution Flow**: Setup runs ONCE on application first launch, BEFORE code-server starts. If `.setup-completed` marker doesn't exist (or version mismatch), block UI with setup screen until complete.
 
 - **Risks**:
-  | Risk | Mitigation |
-  |------|------------|
-  | Network failure during extension install | Show error with Retry + Quit buttons, retry on button click or next launch |
-  | code-server CLI not found | Verify binary exists before setup, fail fast with clear error via `dialog.showErrorBox()` |
-  | Partial setup (crash mid-setup) | No `.setup-completed` marker = full retry; each step is idempotent |
-  | Permission errors (EACCES) | Catch and show user-friendly error message |
-  | Disk full (ENOSPC) | Catch and show user-friendly error message |
+
+  | Risk                                     | Mitigation                                                                                |
+  | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+  | Network failure during extension install | Show error with Retry + Quit buttons, retry on button click or next launch                |
+  | code-server CLI not found                | Verify binary exists before setup, fail fast with clear error via `dialog.showErrorBox()` |
+  | Partial setup (crash mid-setup)          | No `.setup-completed` marker = full retry; each step is idempotent                        |
+  | Permission errors (EACCES)               | Catch and show user-friendly error message                                                |
+  | Disk full (ENOSPC)                       | Catch and show user-friendly error message                                                |
 
 - **Alternatives Considered**:
-  | Alternative | Why Rejected |
-  |-------------|--------------|
-  | Bundle extensions in repo | Adds large binaries to git, version management issues |
-  | Setup in background | User might interact with unconfigured code-server |
-  | Use .setup-failed marker | Simpler to just check for .setup-completed presence |
-  | Separate setup window | More complex; reusing main window with different content is simpler |
+  | Alternative               | Why Rejected                                                        |
+  | ------------------------- | ------------------------------------------------------------------- |
+  | Bundle extensions in repo | Adds large binaries to git, version management issues               |
+  | Setup in background       | User might interact with unconfigured code-server                   |
+  | Use .setup-failed marker  | Simpler to just check for .setup-completed presence                 |
+  | Separate setup window     | More complex; reusing main window with different content is simpler |
 
 ## Architecture
 
@@ -882,9 +883,7 @@ startServices()                          ← Single place for all app services
   - **State management** using discriminated union (clearer than boolean flags):
     ```typescript
     type AppMode =
-      | { type: "initializing" }
-      | { type: "setup"; setupState: SetupState }
-      | { type: "ready" };
+      { type: "initializing" } | { type: "setup"; setupState: SetupState } | { type: "ready" };
     let appMode = $state<AppMode>({ type: "initializing" });
     ```
   - **Semantic HTML**: App.svelte owns `<main>` with dynamic aria-label:

@@ -353,7 +353,7 @@ interface SessionBoundaryMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends SessionBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends SessionBoundaryMatchers {}
 }
 
 export const sessionBoundaryMatchers: MatcherImplementationsFor<

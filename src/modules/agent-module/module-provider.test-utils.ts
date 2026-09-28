@@ -59,8 +59,7 @@ export function createMockServerManager(
   extras: Record<string, unknown> = {}
 ): ServerManagerTriggers & Record<string, unknown> {
   let startedHandler:
-    | ((workspacePath: string, port: number, pendingPrompt?: unknown) => void)
-    | null = null;
+    ((workspacePath: string, port: number, pendingPrompt?: unknown) => void) | null = null;
   let stoppedHandler: ((workspacePath: string, isRestart: boolean) => void) | null = null;
 
   return {

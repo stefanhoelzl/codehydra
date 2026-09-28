@@ -258,7 +258,7 @@ export interface AppBoundaryMatchers {
 
 // Extend vitest's assertion interface
 declare module "vitest" {
-  interface Assertion<T> extends AppBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends AppBoundaryMatchers {}
 }
 
 /**

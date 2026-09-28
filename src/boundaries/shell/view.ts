@@ -25,12 +25,7 @@ export interface WindowOpenDetails {
   readonly url: string;
   readonly frameName: string;
   readonly disposition:
-    | "default"
-    | "foreground-tab"
-    | "background-tab"
-    | "new-window"
-    | "save-to-disk"
-    | "other";
+    "default" | "foreground-tab" | "background-tab" | "new-window" | "save-to-disk" | "other";
 }
 
 /**

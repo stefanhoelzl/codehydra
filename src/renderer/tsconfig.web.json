@@ -5,10 +5,9 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "rootDir": "..",
     "outDir": "../../out",
-    "baseUrl": "../..",
     "paths": {
-      "$lib/*": ["src/renderer/lib/*"],
-      "@shared/*": ["src/shared/*"]
+      "$lib/*": ["./lib/*"],
+      "@shared/*": ["../shared/*"]
     }
   },
   "include": [

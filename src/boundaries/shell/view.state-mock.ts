@@ -492,7 +492,7 @@ interface ViewBoundaryMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends ViewBoundaryMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends ViewBoundaryMatchers {}
 }
 
 export const viewBoundaryMatchers: MatcherImplementationsFor<

@@ -585,7 +585,8 @@ interface SpawnedProcessMatchers {
 // Matchers are added unconditionally (standard pattern for testing libraries)
 // Runtime checks ensure correct usage
 declare module "vitest" {
-  interface Assertion<T> extends ProcessRunnerMatchers, SpawnedProcessMatchers {}
+  interface Matchers<R extends void | Promise<void>, T>
+    extends ProcessRunnerMatchers, SpawnedProcessMatchers {}
 }
 
 /**

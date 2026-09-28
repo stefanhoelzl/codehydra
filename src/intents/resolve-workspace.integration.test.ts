@@ -77,14 +77,12 @@ function resolveIntent(workspacePath: WorkspacePath): ResolveWorkspaceIntent {
 describe("ResolveWorkspaceOperation Integration", () => {
   describe("success", () => {
     it("resolves workspacePath to projectPath + workspaceName (#1)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectPath: PROJECT_PATH,
-            workspaceName: WORKSPACE_NAME,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectPath: PROJECT_PATH,
+          workspaceName: WORKSPACE_NAME,
+        },
+      }));
 
       const result = await dispatcher.dispatch(resolveIntent(WORKSPACE_PATH));
 
@@ -102,15 +100,13 @@ describe("ResolveWorkspaceOperation Integration", () => {
     });
 
     it("returns the metadata when a handler provides it", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectPath: PROJECT_PATH,
-            workspaceName: WORKSPACE_NAME,
-            metadata: { title: "Fix login bug", hibernated: "true" },
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectPath: PROJECT_PATH,
+          workspaceName: WORKSPACE_NAME,
+          metadata: { title: "Fix login bug", hibernated: "true" },
+        },
+      }));
 
       const result = await dispatcher.dispatch(resolveIntent(WORKSPACE_PATH));
 
@@ -118,15 +114,13 @@ describe("ResolveWorkspaceOperation Integration", () => {
     });
 
     it("returns the branch when a handler provides it", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectPath: PROJECT_PATH,
-            workspaceName: WORKSPACE_NAME,
-            branch: "feature-x",
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectPath: PROJECT_PATH,
+          workspaceName: WORKSPACE_NAME,
+          branch: "feature-x",
+        },
+      }));
 
       const result = await dispatcher.dispatch(resolveIntent(WORKSPACE_PATH));
 
@@ -136,13 +130,11 @@ describe("ResolveWorkspaceOperation Integration", () => {
 
   describe("failure", () => {
     it("throws when no handler returns projectPath (#2)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            workspaceName: WORKSPACE_NAME,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          workspaceName: WORKSPACE_NAME,
+        },
+      }));
 
       await expect(dispatcher.dispatch(resolveIntent(WORKSPACE_PATH))).rejects.toThrow(
         `Workspace not found: ${WORKSPACE_PATH}`
@@ -150,13 +142,11 @@ describe("ResolveWorkspaceOperation Integration", () => {
     });
 
     it("throws when no handler returns workspaceName (#3)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectPath: PROJECT_PATH,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectPath: PROJECT_PATH,
+        },
+      }));
 
       await expect(dispatcher.dispatch(resolveIntent(WORKSPACE_PATH))).rejects.toThrow(
         `Workspace not found: ${WORKSPACE_PATH}`

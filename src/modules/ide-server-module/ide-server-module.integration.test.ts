@@ -75,6 +75,7 @@ import type {
 } from "../../intents/delete-workspace";
 import { createIdeServerModule, type IdeServerModuleDeps } from "./ide-server-module";
 import { applyBundlePatches } from "./bundle-patches";
+import { VSCODIUM_VERSION } from "./vscodium";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../../intents/app-start";
 import type { DirEntry } from "../../boundaries/platform/filesystem";
@@ -603,7 +604,7 @@ describe("IdeServerModule", () => {
       expect(deps.fileSystemLayer.readFileBuffer).toHaveBeenCalledWith(
         new Path(
           testPath(
-            "/bundles/vscodium/1.126.04524/out/vs/workbench/contrib/webview/browser/pre/service-worker.js"
+            `/bundles/vscodium/${VSCODIUM_VERSION}/out/vs/workbench/contrib/webview/browser/pre/service-worker.js`
           ).toNative()
         )
       );

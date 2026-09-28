@@ -73,8 +73,7 @@ export interface HookOutput<T = unknown> {
  * never in the handler's `HookContext`, so the data-only-context invariant holds.
  */
 export type HookHandlerReturn<T = unknown, Y = unknown> =
-  | Promise<HookOutput<T> | void>
-  | AsyncGenerator<Y, HookOutput<T> | void, void>;
+  Promise<HookOutput<T> | void> | AsyncGenerator<Y, HookOutput<T> | void, void>;
 
 /**
  * A handler registered for a hook point.

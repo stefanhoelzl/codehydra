@@ -184,7 +184,7 @@ interface ArchiveExtractorMatchers {
 
 // Module augmentation for vitest
 declare module "vitest" {
-  interface Assertion<T> extends ArchiveExtractorMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends ArchiveExtractorMatchers {}
 }
 
 /** Matcher implementations. */

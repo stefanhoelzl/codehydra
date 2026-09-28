@@ -87,6 +87,46 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("ambient environment", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    // The app inherits the user's environment, and editor terminals add git's own
+    // variables to it. simple-git guards these: unless allowed, it refuses to run
+    // a command whose env carries one (which made every repository look like a
+    // non-repo) or strips it (which ignores the user's git setup).
+    it("runs git with editor, askpass and ssh variables in the environment", async () => {
+      vi.stubEnv("EDITOR", "vi");
+      vi.stubEnv("GIT_EDITOR", "vi");
+      vi.stubEnv("GIT_SEQUENCE_EDITOR", "vi");
+      vi.stubEnv("GIT_ASKPASS", "/bin/true");
+      vi.stubEnv("GIT_SSH_COMMAND", "ssh");
+
+      expect(await client.isRepositoryRoot(repoPath)).toBe(true);
+      expect(await client.listBranches(repoPath)).not.toHaveLength(0);
+    });
+
+    it("passes the user's git variables through to git", async () => {
+      const home = await createTempDir();
+      try {
+        const globalConfig = nodePath.join(home.path, "gitconfig");
+        await fs.writeFile(globalConfig, "[codehydra]\n\tfromfile = global\n");
+        vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+        vi.stubEnv("GIT_CONFIG_COUNT", "1");
+        vi.stubEnv("GIT_CONFIG_KEY_0", "codehydra.fromenv");
+        vi.stubEnv("GIT_CONFIG_VALUE_0", "injected");
+
+        const config = await client.getGitConfig(repoPath, { regex: "^codehydra\\." });
+
+        expect(config.get("codehydra.fromfile")).toBe("global");
+        expect(config.get("codehydra.fromenv")).toBe("injected");
+      } finally {
+        await home.cleanup();
+      }
+    });
+  });
+
   describe("listWorktrees", () => {
     it("lists main worktree", async () => {
       const worktrees = await client.listWorktrees(repoPath);
