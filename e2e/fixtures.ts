@@ -477,8 +477,13 @@ export function resetToColdStart(): void {
  * auto-hover doesn't help, because the ancestor is what clips them.
  */
 export async function expandSidebar(ui: Page): Promise<void> {
-  await ui.locator("nav.sidebar").dispatchEvent("mouseenter");
-  await expect(ui.getByRole("button", { name: "Settings" })).toBeVisible();
+  // Re-sent until it takes: an enter that lands just after a collapse fired, but
+  // before the collapsed state reached the renderer, is not eligible to expand,
+  // and a synthetic enter brings no mousemove to arm it again.
+  await expect(async () => {
+    await ui.locator("nav.sidebar").dispatchEvent("mouseenter");
+    await expect(ui.getByRole("button", { name: "Settings" })).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
 }
 
 export async function collapseSidebar(ui: Page): Promise<void> {
