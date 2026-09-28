@@ -293,6 +293,43 @@ describe("GitWorktreeProvider integration", () => {
       ]);
     });
 
+    it("keeps a worktree left in a pre-migration workspaces dir, on any branch", async () => {
+      // A workspaces-root migration leaves worktrees where they were; their agent
+      // later checks out a temporary branch the adoption tag is not on.
+      const oldWorkspacesDir = testPath("/old-root/projects/repo-1234/workspaces");
+      const client = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature/login", "tmp/squash"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature%login",
+                path: "/old-root/projects/repo-1234/workspaces/feature%login",
+                branch: "tmp/squash",
+              },
+              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+            ],
+            branchConfigs: {
+              "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
+            },
+          },
+        },
+      });
+      const provider = new GitWorktreeProvider(client, mockFs, worktreeLogger);
+      await provider.validateRepository(PROJECT_ROOT);
+      provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR, [oldWorkspacesDir]);
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+
+      expect(discovered.map((w) => w.path.toString())).toEqual([
+        new Path(oldWorkspacesDir, "feature%login").toString(),
+      ]);
+      expect(
+        await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR, [oldWorkspacesDir])
+      ).toEqual([expect.objectContaining({ name: "wt-8fa2" })]);
+    });
+
     it("refuses to adopt a detached worktree — there is no branch to mark", async () => {
       const provider = await createProvider(
         PROJECT_ROOT,

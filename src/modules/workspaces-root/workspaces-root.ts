@@ -23,6 +23,11 @@ export interface WorkspacesRoot {
   remotesDir(): Path;
   /** Where a project's new worktrees are created. */
   workspacesDir(projectPath: string | Path): Path;
+  /**
+   * Workspaces directories a migration left under earlier roots, of every
+   * project. Worktrees in them are still CodeHydra's own.
+   */
+  previousWorkspacesDirs(): readonly Path[];
 }
 
 /** A project whose path changed: a managed project's clone moved to a new root. */
@@ -55,11 +60,16 @@ export function remotesDirUnder(root: Path): Path {
 
 /**
  * @param current Returns the root in use; read on every call.
+ * @param previous Returns the workspaces directories left under earlier roots.
  */
-export function createWorkspacesRoot(current: () => Path): WorkspacesRoot {
+export function createWorkspacesRoot(
+  current: () => Path,
+  previous: () => readonly Path[] = () => []
+): WorkspacesRoot {
   return {
     current,
     remotesDir: () => remotesDirUnder(current()),
     workspacesDir: (projectPath) => workspacesDirUnder(current(), projectPath),
+    previousWorkspacesDirs: previous,
   };
 }

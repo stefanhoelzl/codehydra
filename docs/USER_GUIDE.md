@@ -150,7 +150,9 @@ Open a project from the New workspace form (**Open project folder** or
   with an initial commit).
 - A repository that already has worktrees CodeHydra does not manage asks which
   to **adopt**; worktrees on a detached HEAD cannot be adopted. An adopted
-  workspace is named after its branch, like every other workspace.
+  workspace is named after its branch, like every other workspace. The
+  adoption is stored on that branch: with another branch checked out in the
+  worktree, it is not listed after the next start until the branch is back.
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
   `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
   background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
@@ -390,7 +392,8 @@ already there:
 
 - **Migrate** moves cloned repositories to the new folder. Existing workspaces
   stay where they are and keep working (agent conversations and editor state
-  included); new workspaces are created in the new folder. Offered only when
+  included), whatever branch is later checked out in them; new workspaces are
+  created in the new folder. Offered only when
   the new folder is empty. If a step fails, the migration is undone and you can
   retry, continue with the current folder, or quit.
 - **Use as is** switches to the new folder without moving anything. Workspaces
@@ -399,8 +402,7 @@ already there:
 
 A folder that cannot be used — inside a project, or not writable — offers only
 **Continue with current folder** and **Quit**, and the question comes back at
-the next start until the setting is changed. A migrated workspace on a detached
-HEAD cannot be kept (it stays on disk) and is named in a notification.
+the next start until the setting is changed.
 
 ## Plugins
 

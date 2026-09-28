@@ -256,7 +256,7 @@ describe("WorkspacesRootModule", () => {
       expect(exists(s.fs, OLD_CLONE)).toBe(false);
       // Its worktrees were reconnected to the copy.
       expect(s.repair).toHaveBeenCalledWith(NEW_CLONE, [CLONE_WT]);
-      // Existing worktrees stay where they are, adopted; a detached one cannot be.
+      // Existing worktrees stay where they are, adopted; a detached one has no branch to tag.
       expect(s.adopt).toHaveBeenCalledWith(LOCAL, LOCAL_WT, "feat");
       expect(s.adopt).toHaveBeenCalledWith(NEW_CLONE, CLONE_WT, "fix");
       expect(s.adopt).toHaveBeenCalledTimes(2);
@@ -270,9 +270,14 @@ describe("WorkspacesRootModule", () => {
           new Path(DATA, "screenshots", generateProjectId(NEW_CLONE.toString()), "fix.png")
         )
       ).toBe(true);
-      // The detached worktree is reported, not silently dropped.
+      // Their directories are recorded, so every worktree there — the detached
+      // one, or one whose agent checks out another branch — stays a workspace.
+      expect(s.root.previousWorkspacesDirs().map((dir) => dir.toString())).toEqual([
+        workspacesDirUnder(DATA, LOCAL).toString(),
+        workspacesDirUnder(DATA, OLD_CLONE).toString(),
+      ]);
       await s.notifications.settle();
-      expect(s.notifications.lastNotification?.opened.message).toContain(LOCAL_DETACHED.toString());
+      expect(s.notifications.lastNotification).toBeNull();
       expect(s.dialogs.lastHandle!.closed).toBe(true);
     });
 

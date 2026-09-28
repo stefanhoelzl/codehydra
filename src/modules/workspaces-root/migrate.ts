@@ -13,7 +13,10 @@
  *   3. repair    `git worktree repair` from each copy — its worktrees' `.git`
  *                files name the old clone and git fails inside them otherwise
  *   4. adopt     tag every worktree under the old root as external
- *   5. switch    record the new root; rewrite path-keyed state; move screenshots
+ *   5. switch    record the new root, and the workspaces directories left under
+ *                the old one (worktrees there stay workspaces on any branch, where
+ *                the tag holds only while its branch is checked out); rewrite
+ *                path-keyed state; move screenshots
  *   6. cleanup   delete the old clones
  *
  * A failure before the switch undoes what ran (copies deleted, repairs pointed
@@ -60,14 +63,15 @@ export interface MigrationDeps {
   readonly screenshotsDir: Path;
   /** Owners of path-keyed state, told about moved projects after the switch. */
   readonly moveListeners: readonly ProjectMoveListener[];
-  /** Record the new root as the one in use. The commit point. */
-  readonly commit: () => Promise<void>;
+  /**
+   * Record the new root as the one in use, and the workspaces directories with
+   * worktrees left under the old one. The commit point.
+   */
+  readonly commit: (previousWorkspacesDirs: readonly Path[]) => Promise<void>;
   readonly logger: Logger;
 }
 
 export interface MigrationReport {
-  /** Worktrees under the old root that could not be kept (detached HEAD: no branch to tag). */
-  readonly notKept: readonly string[];
   /** Old clones that could not be deleted. */
   readonly leftovers: readonly string[];
   /** Steps after the switch that failed (state rewrites, screenshots). */
@@ -213,7 +217,7 @@ export async function migrateWorkspacesRoot(
 
     // 4. adopt ---------------------------------------------------------------
     progress.set("adopt", "running");
-    const notKept: string[] = [];
+    const left: Path[] = [];
     const roots = [
       ...local.map((path) => ({ root: path, oldPath: path })),
       ...managed.map((project) => ({ root: project.to, oldPath: project.from })),
@@ -222,10 +226,9 @@ export async function migrateWorkspacesRoot(
       const oldWorkspacesDir = workspacesDirUnder(from, oldPath);
       for (const wt of await gitClient.listWorktrees(root)) {
         if (wt.isMain || wt.prunable || !wt.path.isChildOf(oldWorkspacesDir)) continue;
-        if (wt.branch === null) {
-          notKept.push(wt.path.toString());
-          continue;
-        }
+        if (!left.some((dir) => dir.equals(oldWorkspacesDir))) left.push(oldWorkspacesDir);
+        // A detached HEAD has no branch to tag; the recorded directory keeps it.
+        if (wt.branch === null) continue;
         await deps.adopt(root, wt.path, wt.branch);
         adopted.push({ projectRoot: root, branch: wt.branch });
       }
@@ -234,7 +237,7 @@ export async function migrateWorkspacesRoot(
 
     // 5. switch (commit point) -----------------------------------------------
     progress.set("switch", "running");
-    await deps.commit();
+    await deps.commit(left);
     const warnings = await afterSwitch(deps, managed);
     progress.set("switch", "done");
 
@@ -253,7 +256,7 @@ export async function migrateWorkspacesRoot(
     }
     progress.set("cleanup", leftovers.length === 0 ? "done" : "error");
 
-    return { notKept, leftovers, warnings };
+    return { leftovers, warnings };
   } catch (error) {
     await undo();
     throw error;
