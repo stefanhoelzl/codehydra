@@ -19,6 +19,8 @@
 import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { projectDirName } from "../src/boundaries/platform/paths";
+import { Path } from "../src/utils/path/path";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
 import {
   AGENT_PROMPT,
@@ -30,6 +32,7 @@ import {
 import { chAsync, json } from "./ch.ts";
 import {
   appLogEntries,
+  DATA_ROOT,
   type LogEntry,
   useApp,
   waitForConnectionDetails,
@@ -60,9 +63,26 @@ test.afterAll(async () => {
   await repo?.cleanup();
 });
 
-// Order matters: both register `beforeAll`, Playwright runs them in registration
-// order, and the app's launch environment is built from the mock's port.
-const mock = useAgentMock();
+/**
+ * `<dataRoot>/projects/<id>/workspaces` as the app will name it for the test
+ * repository — known before the project is opened, so Claude's trust can be
+ * written before any Claude runs.
+ *
+ * The same derivation as `workspacesRoot()` in the app (`paths.workspaces` is
+ * unset in the suite, so the root is the data root). The first test asserts it
+ * against the directory the app actually creates.
+ */
+function plannedWorkspacesDir(): string {
+  return join(DATA_ROOT, "projects", projectDirName(new Path(repo.path).toString()), "workspaces");
+}
+
+// Order matters: all three register `beforeAll`, Playwright runs them in
+// registration order — the repository above names the workspaces the mock
+// trusts, and the app's launch environment is built from the mock's port.
+const mock = useAgentMock({
+  trustedWorkspaces: () =>
+    [WORKSPACE_NAME, MESSAGE_WORKSPACE_NAME].map((name) => join(plannedWorkspacesDir(), name)),
+});
 const app = useApp({ env: () => mock().env });
 
 // What each agent terminal shows when a test fails. An agent stuck before its
@@ -141,14 +161,16 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
   // report the app as not running.
   await waitForConnectionDetails();
 
-  // Open the project first, for one reason: Claude refuses to work in a folder
-  // it has not been told to trust, and the acceptance is keyed by the exact
-  // workspace directory — which only exists once the project does. Creating the
-  // workspace in the same breath would launch the agent onto a trust prompt
-  // nobody is there to answer.
+  // Open the project first, for one reason: Claude's trust was written for the
+  // workspace directories the app was expected to create, keyed by exact path.
+  // Checked here, before any agent launches: a mismatch would otherwise show up
+  // as an agent parked on a trust prompt nobody is there to answer.
   expect(json(await chAsync(["project", "open", repo.path]))).toBeTruthy();
-  const workspacePath = join(await resolvedWorkspacesDir(), WORKSPACE_NAME);
-  mock().trustWorkspace(workspacePath);
+  expect(
+    await resolvedWorkspacesDir(),
+    "the app named the workspaces directory differently from plannedWorkspacesDir(), " +
+      "so Claude is trusted for the wrong paths"
+  ).toBe(plannedWorkspacesDir());
 
   // Created through the CLI rather than the panel: that is the path a caller
   // (or another agent) actually uses to hand a new workspace a prompt, and it
@@ -247,8 +269,6 @@ test("a message from outside reaches the running agent, and --wake brings a clos
   // default permission mode: a session that bypasses permission prompts holds
   // a message from outside for its user's approval, which the turn workspace
   // above runs in. A message that needs no tool never meets a permission prompt.
-  const workspacePath = join(await resolvedWorkspacesDir(), MESSAGE_WORKSPACE_NAME);
-  mock().trustWorkspace(workspacePath);
   const created = await chAsync([
     "ws",
     "create",

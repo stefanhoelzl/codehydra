@@ -19,16 +19,7 @@
  */
 import { getTextContent, LLMock, type ChatCompletionRequest } from "@copilotkit/aimock";
 import { test } from "@playwright/test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "./env.ts";
@@ -83,19 +74,6 @@ export interface AgentMock {
   /** The server itself — `getRequests()` is the first stop when a spec fails. */
   readonly server: LLMock;
   /**
-   * Pre-accept Claude's folder-trust dialog for `workspacePath` — in addition
-   * to every workspace trusted before it.
-   *
-   * Claude asks "is this a project you trust?" before it will do anything, and
-   * in an agent terminal nobody is there to answer — it just sits on the prompt
-   * until the workspace is torn down. The acceptance is keyed by **exact**
-   * directory (a parent entry does not cover its children) and lives in
-   * `.claude.json`, so the path has to be known before the agent launches.
-   *
-   * A no-op for OpenCode, which has no such dialog.
-   */
-  trustWorkspace(workspacePath: string): void;
-  /**
    * Every request the mock was asked to serve, summarised.
    *
    * NOT read from the journal: that truncates a body over 64KB, and an agent's
@@ -110,13 +88,34 @@ export interface AgentMockHandle {
   (): AgentMock;
 }
 
+export interface AgentMockOptions {
+  /**
+   * Every workspace directory the spec will launch Claude in, to pre-accept
+   * Claude's folder-trust dialog for.
+   *
+   * Claude asks "is this a project you trust?" before it will do anything, and
+   * in an agent terminal nobody is there to answer — it just sits on the prompt
+   * until the workspace is torn down. The acceptance is keyed by **exact**
+   * directory (a parent entry does not cover its children) and lives in
+   * `.claude.json`.
+   *
+   * Read once, before the app launches: the config is written while no Claude
+   * runs from it. Written later, it races the running agents, which rewrite the
+   * same file under a lock of their own — a write of theirs already in flight
+   * lands on top and drops the trust just added.
+   *
+   * Ignored for OpenCode, which has no such dialog.
+   */
+  trustedWorkspaces?: () => readonly string[];
+}
+
 /**
  * Start a mock LLM for the agent this Playwright project exercises.
  *
  * Call this BEFORE `useApp()`: both register `beforeAll` hooks, Playwright runs
  * them in registration order, and `launchApp` needs the mock's port.
  */
-export function useAgentMock(): AgentMockHandle {
+export function useAgentMock(options: AgentMockOptions = {}): AgentMockHandle {
   let handle: AgentMock;
   let server: LLMock;
   let configDir: string;
@@ -147,21 +146,14 @@ export function useAgentMock(): AgentMockHandle {
     });
     const url = await server.start();
 
-    const dir = configDir;
-    if (agent === "claude") history = watchClaudeConfig(dir);
-    const trusted: string[] = [];
+    const trusted = (options.trustedWorkspaces?.() ?? []).flatMap(pathSpellings);
     handle = {
       url,
-      env: agentEnv(agent, url, dir),
+      env: agentEnv(agent, url, configDir, trusted),
       server,
-      trustWorkspace: (workspacePath) => {
-        if (agent !== "claude") return;
-        trusted.push(...pathSpellings(workspacePath));
-        history?.note(`test writes trust for ${projectNames(trusted)}`);
-        writeClaudeConfig(dir, trusted);
-      },
       seenRequests: () => seen,
     };
+    if (agent === "claude") history = watchClaudeConfig(configDir);
   });
 
   // A failing turn is otherwise mute: the assertions can see the sidebar and the
@@ -250,7 +242,12 @@ function summarize(request: ChatCompletionRequest): SeenRequest {
 }
 
 /** Everything the agent needs to run offline against `url`. */
-function agentEnv(agent: Agent, url: string, configDir: string): Record<string, string> {
+function agentEnv(
+  agent: Agent,
+  url: string,
+  configDir: string,
+  trusted: readonly string[]
+): Record<string, string> {
   if (agent === "opencode") {
     // OpenCode resolves config as: global -> OPENCODE_CONFIG -> project file ->
     // .opencode -> OPENCODE_CONFIG_CONTENT (the app's, which wins). The app sets
@@ -277,11 +274,7 @@ function agentEnv(agent: Agent, url: string, configDir: string): Record<string, 
     return { OPENCODE_CONFIG: configPath };
   }
 
-  // Trust is added per workspace by `trustWorkspace`, once its path is known.
-  writeClaudeConfig(configDir, []);
-  // Created up front: Claude takes a directory that does not exist yet for the
-  // name of one log file, and every session would append to it.
-  mkdirSync(join(configDir, DEBUG_LOGS));
+  writeClaudeConfig(configDir, trusted);
 
   return {
     ANTHROPIC_BASE_URL: url,
@@ -298,28 +291,20 @@ function agentEnv(agent: Agent, url: string, configDir: string): Record<string, 
     DISABLE_AUTOUPDATER: "1",
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
-    // A debug log per session, attached when a test fails: an agent that never
-    // starts a session is otherwise silent, and its log names the last startup
-    // step it reached. `DEBUG` is what turns Claude's debug mode on; the
-    // directory alone writes nothing.
-    DEBUG: "1",
-    CLAUDE_CODE_DEBUG_LOGS_DIR: join(configDir, DEBUG_LOGS),
   };
 }
 
 /** Every version of `.claude.json` seen while the suite ran, one line each. */
 interface ConfigHistory {
-  /** Record something the suite did, between the versions it caused. */
-  note(message: string): void;
   lines(): readonly string[];
   stop(): void;
 }
 
 /**
  * Poll `.claude.json` and log each change: which workspaces it trusts, and how
- * many times Claude has started from it. Several agents rewrite this file while
- * the suite adds trust to it, and an agent that finds its workspace untrusted
- * waits on a prompt nobody answers — this says whose write dropped the trust.
+ * many times Claude has started from it. Every agent of the run rewrites this
+ * file, and one that finds its workspace untrusted waits on a prompt nobody
+ * answers — this says when the trust went missing.
  */
 function watchClaudeConfig(configDir: string): ConfigHistory {
   const target = join(configDir, ".claude.json");
@@ -349,10 +334,6 @@ function watchClaudeConfig(configDir: string): ConfigHistory {
   };
   const timer = setInterval(poll, 50);
   return {
-    note: (message) => {
-      poll();
-      log(message);
-    },
     lines: () => {
       poll();
       return lines;
@@ -367,13 +348,11 @@ function projectNames(paths: readonly string[]): string {
   return `[${[...names].join(", ")}]`;
 }
 
-/** Where each Claude session writes its debug log, inside the config dir. */
-const DEBUG_LOGS = "debug-logs";
-
 /**
- * Attach what the config dir says about every Claude that ran from it: each
- * session's debug log, the config itself, and a listing of the rest (`backups/`
- * holds `.corrupted` copies, `ide/` the lockfiles of any IDE extension it found).
+ * Attach what the config dir says about every Claude that ran from it: the
+ * history of the config, the config itself, and a listing of the rest
+ * (`backups/` holds `.corrupted` copies, `ide/` the lockfiles of any IDE
+ * extension it found).
  */
 async function attachClaudeState(configDir: string, history?: ConfigHistory): Promise<void> {
   if (!configDir || !existsSync(configDir)) return;
@@ -382,15 +361,6 @@ async function attachClaudeState(configDir: string, history?: ConfigHistory): Pr
     const path = info.outputPath("claude-config-history.txt");
     writeFileSync(path, history.lines().join("\n"));
     await info.attach("claude-config-history.txt", { path, contentType: "text/plain" });
-  }
-  const logs = join(configDir, DEBUG_LOGS);
-  if (existsSync(logs)) {
-    for (const name of readdirSync(logs).filter((entry) => entry.endsWith(".txt"))) {
-      await info.attach(`claude-debug-${name}`, {
-        path: join(logs, name),
-        contentType: "text/plain",
-      });
-    }
   }
   const config = join(configDir, ".claude.json");
   if (existsSync(config)) {
@@ -424,17 +394,12 @@ function pathSpellings(path: string): readonly string[] {
 
 /**
  * Write the Claude config for this run: past first-run onboarding, past the
- * bypass-permissions warning, and trusting exactly `trusted`.
+ * bypass-permissions warning, and trusting exactly `trusted`. Once, before any
+ * Claude runs from it — see `AgentMockOptions.trustedWorkspaces`.
  */
 function writeClaudeConfig(configDir: string, trusted: readonly string[]): void {
-  // Written aside and renamed into place. A running agent re-reads this file
-  // before each of its own writes; one that catches a plain write half-done
-  // backs it up as corrupted and writes its own copy back, losing the trust just
-  // added, and the next agent parks on the trust prompt with no one to answer.
-  const target = join(configDir, ".claude.json");
-  const staged = `${target}.e2e-tmp`;
   writeFileSync(
-    staged,
+    join(configDir, ".claude.json"),
     JSON.stringify({
       hasCompletedOnboarding: true,
       theme: "dark",
@@ -449,18 +414,6 @@ function writeClaudeConfig(configDir: string, trusted: readonly string[]): void 
       ),
     })
   );
-  // Windows refuses to replace a file another process has open for a moment
-  // (EPERM/EBUSY) — the agent reads this one often. Retry briefly.
-  for (let attempt = 1; ; attempt++) {
-    try {
-      renameSync(staged, target);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (attempt >= 20 || (code !== "EPERM" && code !== "EBUSY")) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-    }
-  }
 }
 
 /** The tool name the fixtures for `agent` expect the agent to advertise. */
