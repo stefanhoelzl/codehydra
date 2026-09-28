@@ -28,6 +28,7 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
       ],
       width: 250,
       hideHibernated: false,
+      mode: "overlay",
     },
     frames: {},
     main: { kind: "creation" },

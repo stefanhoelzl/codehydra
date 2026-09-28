@@ -99,10 +99,18 @@ The sidebar lists your projects and their workspaces, sorted by name.
 - **Collapsed**, it is a strip of status icons. It expands when you rest the
   pointer at the left edge of the window, in shortcut mode, while a dialog or
   the New workspace form is showing, and whenever there are no workspaces.
+- **Docked**, it stays expanded beside the workspace, which shrinks to the
+  rest of the window instead of being covered. Toggle it with the dock button
+  in the header (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>P</kbd>); the choice is
+  saved as `sidebar.mode` (`overlay`, the default, or `docked`). Docked, resting
+  the pointer on the sidebar is not a hover: a workspace an agent opens in the
+  background takes the view as it would with the sidebar collapsed.
 - **Resize** it by dragging its right edge (at least 250 px, at most 75% of the
-  window); the width is saved as `sidebar.width`.
-- The header has, when expanded, the **eye**, the **gear** (settings) and
-  **?** (this guide). Hover any sidebar icon for what it does.
+  window); the width is saved as `sidebar.width`. Docked, the workspace
+  follows the drag.
+- The header has, when expanded, the **dock** button, the **eye**, the
+  **gear** (settings) and **?** (this guide). Hover any sidebar icon for what
+  it does.
 - The **eye** (or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>T</kbd>) hides sleeping
   workspaces; it shows a closed eye while they are hidden, and a project with
   hidden rows shows how many. The choice is remembered.
@@ -257,6 +265,7 @@ holding <kbd>Alt</kbd> while you press:
 | <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the active workspace                                         |
 | <kbd>H</kbd>                             | Hibernate / wake the active workspace                               |
 | <kbd>T</kbd>                             | Hide / show hibernated workspaces                                   |
+| <kbd>P</kbd>                             | Dock / undock the sidebar                                           |
 | <kbd>S</kbd>                             | Open settings                                                       |
 | <kbd>B</kbd>                             | Report a bug (also works while a dialog is open)                    |
 | <kbd>Escape</kbd>                        | Leave shortcut mode                                                 |

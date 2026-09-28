@@ -25,7 +25,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api";
-  import type { UiState } from "@shared/ui-state";
+  import type { SidebarMode, UiState } from "@shared/ui-state";
   import { AgentNotificationService, createChimePlayer } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
 
@@ -189,6 +189,22 @@
     api.emitEvent({ kind: "open-help" });
   }
 
+  // Dock / undock the sidebar (header button). Main writes `sidebar.mode` and
+  // re-pushes; Alt+X+P toggles the same key main-side.
+  function handleSetSidebarMode(sidebarMode: SidebarMode): void {
+    api.emitEvent({ kind: "set-sidebar-mode", mode: sidebarMode });
+  }
+
+  // Width the sidebar renders at (reported by Sidebar, live mid-drag). Docked,
+  // the workspace area starts at its right edge: frames, the hibernated
+  // overlay and the panels read --ch-workspace-left. Unset in overlay mode,
+  // where they fall back to the collapsed gutter (frames) or the full window
+  // (panels).
+  let sidebarRenderedWidth = $state(0);
+  const workspaceAreaStyle = $derived(
+    ui.sidebar.mode === "docked" ? `--ch-workspace-left: ${sidebarRenderedWidth}px` : undefined
+  );
+
   // Toggle hiding of hibernated workspaces (bottom sidebar toggle / Alt+X+T).
   // Main flips the persisted `sidebar.hide-hibernated` state and re-pushes.
   function handleToggleHideHibernated(): void {
@@ -196,11 +212,14 @@
   }
 </script>
 
-<div class="main-view">
+<div class="main-view" style={workspaceAreaStyle}>
   <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
   <Sidebar
     projects={projectRows}
     sidebarWidth={ui.sidebar.width}
+    onRenderedWidthChange={(width) => (sidebarRenderedWidth = width)}
+    sidebarMode={ui.sidebar.mode}
+    onSetSidebarMode={handleSetSidebarMode}
     notifications={ui.notifications}
     {mode}
     labelScroll={ui.labelScroll}
@@ -225,6 +244,7 @@
     activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
     hideHibernated={ui.sidebar.hideHibernated}
+    sidebarDocked={ui.sidebar.mode === "docked"}
   />
 
   <!-- Creation panel ("modeless"): the backend creation module's always-alive

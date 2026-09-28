@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import * as api from "$lib/api";
-  import type { SidebarLabelScroll, UiNotification, UiProjectRow } from "@shared/ui-state";
+  import type {
+    SidebarLabelScroll,
+    SidebarMode,
+    UiNotification,
+    UiProjectRow,
+  } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import ScrollingLabel from "./ScrollingLabel.svelte";
@@ -24,6 +29,16 @@
     projects: readonly UiProjectRow[];
     /** Persisted expanded-sidebar width (px) from the snapshot. */
     sidebarWidth: number;
+    /**
+     * Reports the width (px) the expanded sidebar renders at — the persisted
+     * width clamped to the window, or the live width mid-drag — whenever it
+     * changes, so a docked sidebar's workspace area follows the drag.
+     */
+    onRenderedWidthChange?: (width: number) => void;
+    /** Overlay (expands over the workspace) or docked (always expanded). */
+    sidebarMode?: SidebarMode;
+    /** Dock / undock the sidebar (header button). */
+    onSetSidebarMode: (mode: SidebarMode) => void;
     /** Open sidebar notifications from the snapshot. */
     notifications: readonly UiNotification[];
     /** The single UI mode from the snapshot (main-owned). */
@@ -32,8 +47,9 @@
     labelScroll?: SidebarLabelScroll;
     shortcutModeActive?: boolean;
     /**
-     * True while main is capturing the hibernation screenshot: force the
-     * sidebar collapsed (overriding mode) so it is not baked into the shot.
+     * True while main is capturing the hibernation screenshot: force an
+     * overlay sidebar collapsed (overriding mode) so it is not baked into the
+     * shot. A docked sidebar never covers the workspace, so it ignores this.
      */
     capturing?: boolean;
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
@@ -57,6 +73,9 @@
   let {
     projects,
     sidebarWidth,
+    onRenderedWidthChange,
+    sidebarMode = "overlay",
+    onSetSidebarMode,
     notifications,
     mode = "workspace",
     labelScroll = "hover",
@@ -119,13 +138,17 @@
   // `hover` label-scroll mode can animate only that row's overflowing lines.
   let hoveredRowKey = $state<string | null>(null);
 
-  // Sidebar is expanded when:
+  const docked = $derived(sidebarMode === "docked");
+
+  // Sidebar is expanded when it is docked (always), or when:
   // - the snapshot mode is anything but "workspace" (hover, shortcut, dialog —
   //   the creation panel maps to hover), OR
   // - there are no workspaces (so user can open a project)
-  // ...unless main is capturing the hibernation screenshot, which forces the
-  // sidebar collapsed so it is not baked into the shot.
-  const isExpanded = $derived(!capturing && (mode !== "workspace" || totalWorkspaces === 0));
+  // ...unless main is capturing the hibernation screenshot, which forces an
+  // overlay sidebar collapsed so it is not baked into the shot.
+  const isExpanded = $derived(
+    docked || (!capturing && (mode !== "workspace" || totalWorkspaces === 0))
+  );
 
   // Hover may only initiate expansion when nothing else forces the UI on top
   // (i.e. the snapshot mode is "workspace"); otherwise the sidebar expanding
@@ -149,6 +172,10 @@
 
   function maybeArmExpansion(clientX: number): void {
     if (isHovering) return;
+    // Docked, the sidebar is already expanded: the pointer over it is not a
+    // hover (so background opens still take the view, as in "workspace" mode).
+    // A hover left over from before docking still collapses on leave.
+    if (docked) return;
     if (!hoverExpansionEligible) {
       logger.debug("sidebar hover: not eligible", { clientX });
       return;
@@ -252,6 +279,10 @@
 
   const effectiveWidth = $derived(clampWidth(liveWidth ?? sidebarWidth));
 
+  $effect(() => {
+    onRenderedWidthChange?.(effectiveWidth);
+  });
+
   // Drop the local override once the snapshot's width prop changes — i.e. it
   // has caught up to (or overridden) the drag result — so there is no flash
   // back to the old width while the resize round-trips. `dragging` is read via
@@ -291,7 +322,7 @@
     // If the cursor came to rest past the sidebar's new right edge — over the
     // workspace, not the drawer — release the hover so it can collapse. The
     // mouseleave suppressed during the drag would otherwise latch it open.
-    if (event.clientX > finalWidth) {
+    if (!docked && event.clientX > finalWidth) {
       isHovering = false;
       api.emitEvent({ kind: "hover", region: null });
     }
@@ -324,6 +355,7 @@
   class:expanded={isExpanded || dragging}
   class:ch-sidebar-expanded={isExpanded || dragging}
   class:dragging
+  class:docked
   style="--ch-sidebar-width: {effectiveWidth}px"
   aria-label="Projects"
   onmouseenter={handleMouseEnter}
@@ -339,6 +371,18 @@
         ? "Show hibernated workspaces"
         : "Hide hibernated workspaces"}
       <div class="header-actions">
+        <!-- Dock / undock the sidebar. The icon reflects the current state
+             (filled = docked); the tooltip states the action. Mirrors Alt+X+P. -->
+        <button
+          type="button"
+          class="header-action"
+          aria-label={docked ? "Undock sidebar" : "Dock sidebar"}
+          aria-pressed={docked}
+          title={docked ? "Undock sidebar" : "Dock sidebar"}
+          onclick={() => onSetSidebarMode(docked ? "overlay" : "docked")}
+        >
+          <Icon name={docked ? "layout-sidebar-left" : "layout-sidebar-left-off"} size={14} />
+        </button>
         <!-- Hide/show hibernated workspaces. The icon reflects the current
              state (eye = shown, eye-closed = hidden, like the per-project
              count); the tooltip states the action. Mirrors Alt+X+T. -->
@@ -659,6 +703,13 @@
     box-shadow: var(--ch-shadow);
   }
 
+  /* Docked it sits beside the workspace rather than over it: no drop shadow,
+     just an edge. */
+  .sidebar.docked {
+    box-shadow: none;
+    border-right: 1px solid var(--ch-border);
+  }
+
   /* While dragging the width follows the cursor every frame; the transition
      would only add lag. */
   .sidebar.dragging {
@@ -732,7 +783,7 @@
     opacity: 1;
   }
 
-  /* Hide-hibernated, gear and help buttons in the (expanded) PROJECTS header. */
+  /* Dock, hide-hibernated, gear and help buttons in the (expanded) PROJECTS header. */
   .header-actions {
     display: inline-flex;
     align-items: center;

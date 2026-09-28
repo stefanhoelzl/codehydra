@@ -123,6 +123,15 @@ describe("ShortcutOverlay component", () => {
 
       expect(screen.getByText(/1-0/)).toBeInTheDocument();
     });
+
+    it("labels the P hint with the dock action the key would take", () => {
+      const { unmount } = render(ShortcutOverlay, { props: { active: true } });
+      expect(screen.getByLabelText("P key to dock the sidebar")).toHaveTextContent("Dock");
+      unmount();
+
+      render(ShortcutOverlay, { props: { active: true, sidebarDocked: true } });
+      expect(screen.getByLabelText("P key to undock the sidebar")).toHaveTextContent("Undock");
+    });
   });
 
   describe("styling", () => {

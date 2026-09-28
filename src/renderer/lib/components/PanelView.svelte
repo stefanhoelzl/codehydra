@@ -75,6 +75,8 @@
   .panel-view {
     position: absolute;
     inset: 0;
+    /* Docked sidebar: center in the workspace area beside it (see MainView). */
+    left: var(--ch-workspace-left, 0);
     display: flex;
     align-items: center;
     justify-content: center;

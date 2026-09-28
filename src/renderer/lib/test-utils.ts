@@ -50,7 +50,7 @@ export function makeUiState(
   overrides?: Partial<UiState>
 ): UiState {
   return {
-    sidebar: { projects, width: 250, hideHibernated: false },
+    sidebar: { projects, width: 250, hideHibernated: false, mode: "overlay" },
     frames: {},
     main: { kind: "creation" },
     theme: "dark",

@@ -433,7 +433,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    left: var(--ch-sidebar-minimized-width, 20px);
+    left: var(--ch-workspace-left, var(--ch-sidebar-minimized-width, 20px));
     pointer-events: none;
   }
 

@@ -173,6 +173,43 @@ describe("MainView component", () => {
     });
   });
 
+  describe("docked sidebar", () => {
+    function workspaceLeft(container: HTMLElement): string {
+      const view = container.querySelector<HTMLElement>(".main-view")!;
+      return view.style.getPropertyValue("--ch-workspace-left");
+    }
+
+    it("starts the workspace area at the docked sidebar's right edge", async () => {
+      const { container } = renderMainView();
+
+      await pushState(
+        makeUiState([PROJECT], {
+          sidebar: { projects: [PROJECT], width: 320, hideHibernated: false, mode: "docked" },
+        })
+      );
+
+      await waitFor(() => expect(workspaceLeft(container)).toBe("320px"));
+    });
+
+    it("leaves the workspace area at the collapsed gutter in overlay mode", async () => {
+      const { container } = renderMainView();
+
+      await pushState(makeUiState([PROJECT]));
+
+      await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
+      expect(workspaceLeft(container)).toBe("");
+    });
+
+    it("the dock button emits the set-sidebar-mode ui:event", async () => {
+      renderMainView();
+      await pushState(makeUiState([]));
+
+      await fireEvent.click(screen.getByRole("button", { name: "Dock sidebar" }));
+
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "set-sidebar-mode", mode: "docked" });
+    });
+  });
+
   describe("actions", () => {
     it("clicking a workspace emits the switch-workspace ui:event without eager local state", async () => {
       renderMainView();
