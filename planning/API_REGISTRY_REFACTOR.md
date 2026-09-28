@@ -240,11 +240,7 @@ export type MethodPath = keyof MethodRegistry;
  */
 export type LifecyclePath = "lifecycle.getState" | "lifecycle.setup" | "lifecycle.quit";
 export type ProjectPath =
-  | "projects.open"
-  | "projects.close"
-  | "projects.list"
-  | "projects.get"
-  | "projects.fetchBases";
+  "projects.open" | "projects.close" | "projects.list" | "projects.get" | "projects.fetchBases";
 export type WorkspacePath =
   | "workspaces.create"
   | "workspaces.remove"
@@ -255,10 +251,7 @@ export type WorkspacePath =
   | "workspaces.setMetadata"
   | "workspaces.getMetadata";
 export type UiPath =
-  | "ui.selectFolder"
-  | "ui.getActiveWorkspace"
-  | "ui.switchWorkspace"
-  | "ui.setMode";
+  "ui.selectFolder" | "ui.getActiveWorkspace" | "ui.switchWorkspace" | "ui.setMode";
 
 /**
  * Get the handler signature for a method path.
@@ -898,8 +891,7 @@ export interface LifecycleModuleDeps {
 
 export class LifecycleModule implements IApiModule {
   private cachedPreflightResult:
-    | import("../../../services/vscode-setup/types").PreflightResult
-    | null = null;
+    import("../../../services/vscode-setup/types").PreflightResult | null = null;
 
   constructor(
     private readonly api: IApiRegistry,

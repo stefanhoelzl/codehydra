@@ -30,10 +30,7 @@ export { getErrorMessage } from "../error-utils";
  * Error codes for binary download operations.
  */
 export type BinaryDownloadErrorCode =
-  | "NETWORK_ERROR"
-  | "EXTRACTION_FAILED"
-  | "UNSUPPORTED_PLATFORM"
-  | "INVALID_VERSION";
+  "NETWORK_ERROR" | "EXTRACTION_FAILED" | "UNSUPPORTED_PLATFORM" | "INVALID_VERSION";
 
 /**
  * Error codes for archive extraction operations.

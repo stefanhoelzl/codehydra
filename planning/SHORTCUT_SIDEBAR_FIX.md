@@ -138,12 +138,12 @@ No visual changes. This is a behavioral fix only.
 
 - [x] **Step 6: Update ARCHITECTURE.md documentation**
   - Add `"hover"` mode to the UI Mode System section mode table:
-    | Mode | UI Z-Order | Focus | Description |
-    |------|------------|-------|-------------|
-    | `workspace` | Behind | Workspace view | Normal editing mode |
-    | `shortcut` | On top | UI layer | Shortcut overlay visible |
-    | `dialog` | On top | Dialog (no-op) | Modal dialog open (blocks Alt+X) |
-    | `hover` | On top | No change | Sidebar expanded on hover (allows Alt+X) |
+    | Mode        | UI Z-Order | Focus          | Description                              |
+    | ----------- | ---------- | -------------- | ---------------------------------------- |
+    | `workspace` | Behind     | Workspace view | Normal editing mode                      |
+    | `shortcut`  | On top     | UI layer       | Shortcut overlay visible                 |
+    | `dialog`    | On top     | Dialog (no-op) | Modal dialog open (blocks Alt+X)         |
+    | `hover`     | On top     | No change      | Sidebar expanded on hover (allows Alt+X) |
   - Add mode transitions:
     - Sidebar hover starts → `workspace → hover`
     - Sidebar hover stops → `hover → workspace`

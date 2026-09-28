@@ -128,14 +128,12 @@ function buildDialog(repoName: string, plugins: readonly string[]): DialogConfig
         `"${repoName}" ships CodeHydra plugins. Running them executes scripts from the ` +
         `repository on your machine.`,
     },
-    ...plugins.map(
-      (name): DialogSection => ({
-        type: "checkbox",
-        id: `${FIELD_PREFIX}${name}`,
-        label: name,
-        value: true,
-      })
-    ),
+    ...plugins.map((name): DialogSection => ({
+      type: "checkbox",
+      id: `${FIELD_PREFIX}${name}`,
+      label: name,
+      value: true,
+    })),
     {
       type: "group",
       // Declaration order is tab order; `reverse` puts the primary on the right

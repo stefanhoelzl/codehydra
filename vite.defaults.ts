@@ -93,6 +93,11 @@ export function codehydraDefaults(options: CodehydraDefaultsOptions = {}): ViteP
                 if (log.code === "THIS_IS_UNDEFINED" && log.message?.includes("node_modules")) {
                   return;
                 }
+                // Allow misplaced `@__PURE__` comments in deps (e.g. zod's regexes): Rollup only
+                // drops the comment, so the cost is a missed tree-shake, never wrong code
+                if (log.code === "INVALID_ANNOTATION" && log.message?.includes("node_modules")) {
+                  return;
+                }
                 throw new Error(`Rollup warning: ${log.message}`);
               }
               handler(level, log);

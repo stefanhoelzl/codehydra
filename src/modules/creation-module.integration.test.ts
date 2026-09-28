@@ -1003,8 +1003,7 @@ describe("CreationModule", () => {
       // Cloning with no progress yet: indeterminate running item.
       const progressSection = (): Record<string, unknown> | undefined =>
         clone.config.sections.find((sec) => sec.type === "progress") as unknown as
-          | Record<string, unknown>
-          | undefined;
+          Record<string, unknown> | undefined;
       expect(progressSection()).toBeDefined();
       expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
         status: "running",

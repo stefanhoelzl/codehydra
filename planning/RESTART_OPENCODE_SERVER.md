@@ -194,18 +194,18 @@ restartServer(path)
 - [x] **Step 8: Update documentation**
   - **docs/API.md**:
     - Add to Private API `workspaces` table:
-      | Method | Signature | Description |
-      |--------|-----------|-------------|
+      | Method                  | Signature                                       | Description                              |
+      | ----------------------- | ----------------------------------------------- | ---------------------------------------- |
       | `restartOpencodeServer` | `(projectId, workspaceName) => Promise<number>` | Restart OpenCode server, preserving port |
     - Add to Public API `workspace` namespace table:
-      | Method | Signature | Description |
-      |--------|-----------|-------------|
+      | Method                  | Signature               | Description                           |
+      | ----------------------- | ----------------------- | ------------------------------------- |
       | `restartOpencodeServer` | `() => Promise<number>` | Restart OpenCode server, returns port |
     - Add usage example in Public API section
   - **AGENTS.md**:
     - Add to MCP Server tools table:
-      | Tool | Description |
-      |------|-------------|
+      | Tool                                | Description                                           |
+      | ----------------------------------- | ----------------------------------------------------- |
       | `workspace_restart_opencode_server` | Restart the OpenCode server for the current workspace |
   - Files affected:
     - `docs/API.md`

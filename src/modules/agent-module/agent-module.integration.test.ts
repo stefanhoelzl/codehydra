@@ -100,8 +100,7 @@ import type { WorkspacePath } from "../../intents/contract";
 
 /** Captured onStatusChange callback from the mock provider */
 let capturedStatusCallback:
-  | ((workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void)
-  | null = null;
+  ((workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void) | null = null;
 
 function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): AgentModuleProvider {
   capturedStatusCallback = null;

@@ -413,9 +413,8 @@ export interface GetWorkspaceStatusRequest {
 const getWorkspaceStatusRequestSchema = z
   .object({ refresh: z.boolean().optional() })
   .nullish()
-  .transform(
-    (value): GetWorkspaceStatusRequest =>
-      value?.refresh === undefined ? {} : { refresh: value.refresh }
+  .transform((value): GetWorkspaceStatusRequest =>
+    value?.refresh === undefined ? {} : { refresh: value.refresh }
   );
 
 /**

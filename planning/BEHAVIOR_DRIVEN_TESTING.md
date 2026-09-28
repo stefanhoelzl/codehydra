@@ -410,13 +410,7 @@ export const normalizePath = (p: string): string => path.normalize(p);
 
 /** Valid filesystem error codes for type-safe error simulation */
 export type FileSystemErrorCode =
-  | "ENOENT"
-  | "EACCES"
-  | "EEXIST"
-  | "ENOTDIR"
-  | "EISDIR"
-  | "ENOTEMPTY"
-  | "EIO";
+  "ENOENT" | "EACCES" | "EEXIST" | "ENOTDIR" | "EISDIR" | "ENOTEMPTY" | "EIO";
 ```
 
 Each mock extends this with specific setup methods only when the public API isn't sufficient.

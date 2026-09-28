@@ -125,8 +125,7 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
         handler: async (event: DomainEvent): Promise<void> => {
           // Payload is null when the user deselects (creation panel becomes the view).
           const payload = (event as WorkspaceSwitchedEvent).payload as
-            | WorkspaceSwitchedEvent["payload"]
-            | null;
+            WorkspaceSwitchedEvent["payload"] | null;
           if (payload === null) return;
           if (!tagged.has(payload.path)) return;
 

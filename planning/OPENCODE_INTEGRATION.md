@@ -20,21 +20,22 @@ reviewers:
 - **Solution**: Integrate OpenCode agent status monitoring by discovering running OpenCode instances, connecting to their SSE streams, and displaying status indicators in the sidebar.
 
 - **Risks**:
-  | Risk | Mitigation |
-  |------|------------|
-  | Port scanning performance | Filter by process ancestry, cache non-OpenCode ports |
-  | SSE connection failures | Auto-reconnect with exponential backoff (1s, 2s, 4s... max 30s) |
-  | Multiple OpenCode instances per workspace | Support N instances (N >= 0) per workspace |
-  | Code-server not running | Skip scanning when PID is null |
-  | Race conditions in scan loop | Prevent overlapping scans with mutex flag |
-  | Memory leaks | IDisposable pattern for all resources |
+
+  | Risk                                      | Mitigation                                                      |
+  | ----------------------------------------- | --------------------------------------------------------------- |
+  | Port scanning performance                 | Filter by process ancestry, cache non-OpenCode ports            |
+  | SSE connection failures                   | Auto-reconnect with exponential backoff (1s, 2s, 4s... max 30s) |
+  | Multiple OpenCode instances per workspace | Support N instances (N >= 0) per workspace                      |
+  | Code-server not running                   | Skip scanning when PID is null                                  |
+  | Race conditions in scan loop              | Prevent overlapping scans with mutex flag                       |
+  | Memory leaks                              | IDisposable pattern for all resources                           |
 
 - **Alternatives Considered**:
-  | Alternative | Why Rejected |
-  |-------------|--------------|
-  | Poll HTTP endpoint instead of SSE | Higher latency, more network overhead |
-  | Scan all ports without ancestry filter | Too noisy, probes unrelated processes |
-  | Use file-based IPC | More complex, SSE already available |
+  | Alternative                            | Why Rejected                           |
+  | -------------------------------------- | -------------------------------------- |
+  | Poll HTTP endpoint instead of SSE      | Higher latency, more network overhead  |
+  | Scan all ports without ancestry filter | Too noisy, probes unrelated processes  |
+  | Use file-based IPC                     | More complex, SSE already available    |
   | Singleton pattern for DiscoveryService | Violates testability and DI principles |
 
 ## Architecture

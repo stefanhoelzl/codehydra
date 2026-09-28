@@ -779,7 +779,7 @@ interface GitClientMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends GitClientMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends GitClientMatchers {}
 }
 
 export const gitClientMatchers: MatcherImplementationsFor<MockGitClient, GitClientMatchers> = {

@@ -112,8 +112,7 @@
       }}
       oninput={(e) => {
         onInput(e.currentTarget.value);
-      }}
-    ></textarea>
+      }}></textarea>
   {:else}
     <div class="input-row" class:masked={section.masked}>
       <vscode-textfield

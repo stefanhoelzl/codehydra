@@ -20,8 +20,8 @@
     "build": "vite build"
   },
   "dependencies": {
-    "color-name": "^2.1.0",
-    "socket.io-client": "^4.8.3"
+    "color-name": "^2.1.1",
+    "socket.io-client": "^4.8.4"
   },
   "contributes": {
     "commands": [

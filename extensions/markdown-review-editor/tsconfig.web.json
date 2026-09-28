@@ -4,9 +4,9 @@
 		"module": "ESNext",
 		"moduleResolution": "bundler",
 		"lib": ["ES2020", "DOM", "DOM.Iterable"],
-		"baseUrl": ".",
+		"types": ["node", "vscode", "vite/client"],
 		"paths": {
-			"$lib/*": ["src/lib/*"]
+			"$lib/*": ["./src/lib/*"]
 		},
 		"noUncheckedIndexedAccess": false,
 		"noUnusedLocals": false,

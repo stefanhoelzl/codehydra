@@ -77,14 +77,12 @@ function resolveIntent(projectPath: ProjectPath): ResolveProjectIntent {
 describe("ResolveProjectOperation Integration", () => {
   describe("success", () => {
     it("resolves projectPath to projectId + projectName (#1)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectId: PROJECT_ID,
-            projectName: PROJECT_NAME,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectId: PROJECT_ID,
+          projectName: PROJECT_NAME,
+        },
+      }));
 
       const result = await dispatcher.dispatch(resolveIntent(PROJECT_PATH));
 
@@ -95,13 +93,11 @@ describe("ResolveProjectOperation Integration", () => {
     });
 
     it("defaults projectName to empty string when not provided (#3)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectId: PROJECT_ID,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectId: PROJECT_ID,
+        },
+      }));
 
       const result = await dispatcher.dispatch(resolveIntent(PROJECT_PATH));
 
@@ -114,13 +110,11 @@ describe("ResolveProjectOperation Integration", () => {
 
   describe("failure", () => {
     it("throws when no handler returns projectId (#2)", async () => {
-      const { dispatcher } = createTestSetup(
-        async (): Promise<HookOutput<ResolveHookResult>> => ({
-          result: {
-            projectName: PROJECT_NAME,
-          },
-        })
-      );
+      const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
+        result: {
+          projectName: PROJECT_NAME,
+        },
+      }));
 
       await expect(dispatcher.dispatch(resolveIntent(PROJECT_PATH))).rejects.toThrow(
         `Project not found for path: ${PROJECT_PATH}`

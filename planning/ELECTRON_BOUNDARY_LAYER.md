@@ -782,16 +782,16 @@ export function createBehavioralViewLayer(): ViewLayer & { _getState(): ViewLaye
 
 - [x] **Step 6.2: Update AGENTS.md**
   - Add to External System Access Rules table:
-    | External System | Required Interface | Forbidden Direct Access |
-    |-----------------|-------------------|------------------------|
-    | Electron Window | `WindowLayer` | `BaseWindow` directly |
-    | Electron View | `ViewLayer` | `WebContentsView` directly |
-    | Electron Session | `SessionLayer` | `session` directly |
-    | Electron IPC | `IpcLayer` | `ipcMain` directly |
-    | Electron Dialog | `DialogLayer` | `dialog` directly |
-    | Electron Image | `ImageLayer` | `nativeImage` directly |
-    | Electron App | `AppLayer` | `app` directly |
-    | Electron Menu | `MenuLayer` | `Menu` directly |
+    | External System  | Required Interface | Forbidden Direct Access    |
+    | ---------------- | ------------------ | -------------------------- |
+    | Electron Window  | `WindowLayer`      | `BaseWindow` directly      |
+    | Electron View    | `ViewLayer`        | `WebContentsView` directly |
+    | Electron Session | `SessionLayer`     | `session` directly         |
+    | Electron IPC     | `IpcLayer`         | `ipcMain` directly         |
+    | Electron Dialog  | `DialogLayer`      | `dialog` directly          |
+    | Electron Image   | `ImageLayer`       | `nativeImage` directly     |
+    | Electron App     | `AppLayer`         | `app` directly             |
+    | Electron Menu    | `MenuLayer`        | `Menu` directly            |
   - Update Project Structure to document `src/services/shell/` as established pattern for visual container abstractions
   - Files: `AGENTS.md`
 

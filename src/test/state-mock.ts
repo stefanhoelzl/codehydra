@@ -201,7 +201,7 @@ interface MockWithStateMatchers {
 declare module "vitest" {
   // Base matchers are added unconditionally (standard pattern for testing libraries)
   // Runtime checks ensure correct usage
-  interface Assertion<T> extends MockWithStateMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends MockWithStateMatchers {}
 }
 
 export const mockWithStateMatchers: MatcherImplementationsFor<

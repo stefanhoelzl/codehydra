@@ -1992,8 +1992,7 @@ describe("Add-project worktree picker", () => {
     payload: Record<string, unknown>
   ): Promise<{ canceled?: boolean } | undefined> {
     return (await dispatcher.dispatch({ type: INTENT_OPEN_PROJECT, payload } as Intent)) as
-      | { canceled?: boolean }
-      | undefined;
+      { canceled?: boolean } | undefined;
   }
 
   /**

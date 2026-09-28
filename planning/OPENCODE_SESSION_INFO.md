@@ -428,10 +428,7 @@ Test behavior through high-level entry points with behavioral mocks.
 
 ```typescript
 const mockClient = createMockOpenCodeClient({
-  listSessions: async () =>
-    ok([
-      /* configured sessions */
-    ]),
+  listSessions: async () => ok([/* configured sessions */]),
   createSession: async () =>
     ok({ id: "new-session-id", directory: "/path", time: { created: "...", updated: "..." } }),
   connect: async () => {},

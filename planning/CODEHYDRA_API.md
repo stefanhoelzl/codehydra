@@ -13,21 +13,22 @@ reviewers: [review-arch, review-typescript, review-testing, review-docs, review-
 - **Solution**: Define a `ICodeHydraApi` interface that abstracts all CodeHydra operations. Create a single implementation (`CodeHydraApiImpl`) in `src/main/api/` that wraps existing services. Refactor IPC handlers to become thin adapters over this API.
 
 - **Risks**:
-  | Risk | Mitigation |
-  |------|------------|
-  | Breaking existing UI | Incremental migration, comprehensive tests |
-  | ID generation collisions | Use project name + path hash (same as app-data) |
-  | Performance regression | API layer is thin, minimal overhead |
-  | Event delivery timing | Maintain same event flow, just route through API |
+
+  | Risk                     | Mitigation                                       |
+  | ------------------------ | ------------------------------------------------ |
+  | Breaking existing UI     | Incremental migration, comprehensive tests       |
+  | ID generation collisions | Use project name + path hash (same as app-data)  |
+  | Performance regression   | API layer is thin, minimal overhead              |
+  | Event delivery timing    | Maintain same event flow, just route through API |
 
 - **Alternatives Considered**:
-  | Alternative | Why Rejected |
-  |-------------|--------------|
-  | Keep IPC-only approach | Can't reuse for MCP/CLI without duplication |
-  | Generate OpenAPI spec | Overkill for internal API, TypeScript interfaces sufficient |
-  | Use tRPC | Adds complexity, not needed for Electron IPC |
-  | Bidirectional ID↔Path Map | Overkill for <10 projects, iteration is simpler |
-  | Split CoreApi/UiApi | Single implementation simpler; UI methods are thin wrappers |
+  | Alternative               | Why Rejected                                                |
+  | ------------------------- | ----------------------------------------------------------- |
+  | Keep IPC-only approach    | Can't reuse for MCP/CLI without duplication                 |
+  | Generate OpenAPI spec     | Overkill for internal API, TypeScript interfaces sufficient |
+  | Use tRPC                  | Adds complexity, not needed for Electron IPC                |
+  | Bidirectional ID↔Path Map | Overkill for <10 projects, iteration is simpler             |
+  | Split CoreApi/UiApi       | Single implementation simpler; UI methods are thin wrappers |
 
 ## Architecture
 
@@ -103,11 +104,12 @@ function resolveProject(projectId: ProjectId): string | undefined {
 ```
 
 **Test vectors for determinism:**
-| Input Path | Expected ID |
-|------------|-------------|
-| `/home/user/projects/my-app` | `my-app-<hash8>` |
+
+| Input Path                    | Expected ID                         |
+| ----------------------------- | ----------------------------------- |
+| `/home/user/projects/my-app`  | `my-app-<hash8>`                    |
 | `/home/user/projects/my-app/` | `my-app-<hash8>` (same, normalized) |
-| `/home/user/Projects/My App` | `My-App-<hash8>` (spaces→dashes) |
+| `/home/user/Projects/My App`  | `My-App-<hash8>` (spaces→dashes)    |
 
 ### Event Flow (Simplified)
 
@@ -360,11 +362,11 @@ const coreApi = createCoreApi(appState, workspaceProviders);
   - Add channels for new events (`project:bases-updated`)
   - Keep old channels (both active during migration)
   - Add validation rules table:
-    | Field | Rule |
-    |-------|------|
-    | `ProjectId` | Non-empty, matches `^[a-zA-Z0-9-]+-[a-f0-9]{8}$` |
-    | `WorkspaceName` | 1-100 chars, matches `^[a-zA-Z0-9][-_.\/a-zA-Z0-9]*$` |
-    | `path` (selectFolder) | Absolute path, no `..` segments |
+    | Field                 | Rule                                                  |
+    | --------------------- | ----------------------------------------------------- |
+    | `ProjectId`           | Non-empty, matches `^[a-zA-Z0-9-]+-[a-f0-9]{8}$`      |
+    | `WorkspaceName`       | 1-100 chars, matches `^[a-zA-Z0-9][-_.\/a-zA-Z0-9]*$` |
+    | `path` (selectFolder) | Absolute path, no `..` segments                       |
   - Files: `src/shared/ipc.ts`
   - Test criteria: New channels defined, types correct
 

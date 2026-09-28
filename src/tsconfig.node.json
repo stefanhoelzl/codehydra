@@ -3,9 +3,8 @@
   "compilerOptions": {
     "composite": true,
     "outDir": "../out",
-    "baseUrl": "..",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["./shared/*"]
     },
     "types": ["node"]
   },

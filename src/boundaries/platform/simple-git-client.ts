@@ -2,12 +2,52 @@
  * SimpleGitClient implementation using the simple-git library.
  */
 
-import simpleGit, { type SimpleGit, type SimpleGitOptions } from "simple-git";
+import { simpleGit, type SimpleGit, type SimpleGitOptions } from "simple-git";
+import { vulnerabilityCheck } from "@simple-git/argv-parser";
 import { GitError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./git-types";
 import type { Logger } from "./logging";
 import { Path } from "../../utils/path/path";
+
+/**
+ * The environment every git call runs with, and the simple-git options that let
+ * it through.
+ *
+ * GIT_OPTIONAL_LOCKS=0 suppresses only *optional* locks — the ones git takes as a
+ * side-effect optimization, e.g. `git status` grabbing index.lock to rewrite the
+ * index it didn't need to. Write operations (add/commit/branch/worktree) still
+ * take their *required* locks and behave normally, so this is safe to apply
+ * uniformly. The win is that our status checks stop contending with the embedded
+ * editor's watcher/refresh for index.lock while an agent is writing. This mirrors
+ * VS Code's own git extension.
+ *
+ * Everything else is the environment the app was launched with, passed through
+ * unchanged. simple-git 4 guards git's own variables (every `GIT_*`, plus
+ * `EDITOR`, `PAGER`, `SSH_ASKPASS`, …): an ambient one is stripped and an
+ * explicit one rejects the call, and some (`GIT_SSH_COMMAND`, `GIT_ASKPASS`,
+ * `GIT_CONFIG_GLOBAL`, …) additionally need their `unsafe` category enabled. That
+ * guards against untrusted input; this is the user's own environment, and
+ * stripping it would ignore their SSH command, askpass and relocated gitconfig —
+ * a clone that works in their terminal would fail here. So every key present is
+ * allowed, and exactly the categories simple-git's own checker reports for this
+ * environment are enabled — the argument checks stay on for every other
+ * category.
+ */
+function gitEnvironment(): {
+  env: Record<string, string>;
+  allowEnvironment: readonly string[];
+  unsafe: NonNullable<SimpleGitOptions["unsafe"]>;
+} {
+  const env: Record<string, string> = { GIT_OPTIONAL_LOCKS: "0" };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && key !== "GIT_OPTIONAL_LOCKS") env[key] = value;
+  }
+  const unsafe = Object.fromEntries(
+    vulnerabilityCheck([], env).map((vulnerability) => [vulnerability.category, true])
+  );
+  return { env, allowEnvironment: Object.keys(env), unsafe };
+}
 
 /**
  * Implementation of IGitClient using the simple-git library.
@@ -24,25 +64,19 @@ export class SimpleGitClient implements IGitClient {
    * Accepts Path and converts to native format for simple-git.
    */
   private getGit(basePath: Path): SimpleGit {
+    const { env, ...guard } = gitEnvironment();
     const options: Partial<SimpleGitOptions> = {
+      ...guard,
       baseDir: basePath.toNative(),
       binary: "git",
       maxConcurrentProcesses: 6,
       trimmed: true,
       config: process.platform === "win32" ? ["core.longpaths=true"] : [],
     };
-    // GIT_OPTIONAL_LOCKS=0 suppresses only *optional* locks — the ones git takes
-    // as a side-effect optimization, e.g. `git status` grabbing index.lock to
-    // rewrite the index it didn't need to. Write operations (add/commit/branch/
-    // worktree) still take their *required* locks and behave normally, so this is
-    // safe to apply uniformly here. The win is that our status checks stop
-    // contending with the embedded editor's watcher/refresh for index.lock while
-    // an agent is writing. This mirrors VS Code's own git extension.
-    //
-    // process.env must be spread in: simple-git passes `env` straight to
-    // child_process.spawn, which *replaces* (not merges) the child environment,
-    // so a bare { GIT_OPTIONAL_LOCKS } would drop PATH/HOME and break git.
-    return simpleGit(options).env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" });
+    // The whole environment, not just the additions: simple-git passes `env`
+    // straight to child_process.spawn, which *replaces* (not merges) the child
+    // environment, so a bare { GIT_OPTIONAL_LOCKS } would drop PATH/HOME.
+    return simpleGit(options).env(env);
   }
 
   /**
@@ -461,13 +495,17 @@ export class SimpleGitClient implements IGitClient {
       // Create git instance at the parent directory to run clone command
       // allowUnsafePack is required because simple-git 3.32+ false-positives
       // on Windows paths (drive letter matches its -u regex check)
-      const options: Partial<SimpleGitOptions> = { unsafe: { allowUnsafePack: true } };
+      const { env, allowEnvironment, unsafe } = gitEnvironment();
+      const options: Partial<SimpleGitOptions> = {
+        allowEnvironment,
+        unsafe: { ...unsafe, allowUnsafePack: true },
+      };
       if (onProgress) {
         options.progress = (data) => {
           onProgress({ stage: data.stage, progress: data.progress });
         };
       }
-      const git = simpleGit(options);
+      const git = simpleGit(options).env(env);
       await git.clone(url, targetPath.toNative(), ["--bare"]);
 
       // Set up remote tracking for the bare clone

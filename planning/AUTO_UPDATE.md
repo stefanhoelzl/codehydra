@@ -17,11 +17,12 @@ reviewers: []
   - Update applies automatically on next app quit (electron-updater default behavior)
 
 - **Risks**:
-  | Risk | Mitigation |
-  |------|------------|
-  | Update fails mid-download | electron-updater handles resume |
-  | Code signing issues | Test on all platforms; document in RELEASE.md |
-  | electron-updater errors | Log errors, don't crash - updates are non-critical |
+
+  | Risk                      | Mitigation                                         |
+  | ------------------------- | -------------------------------------------------- |
+  | Update fails mid-download | electron-updater handles resume                    |
+  | Code signing issues       | Test on all platforms; document in RELEASE.md      |
+  | electron-updater errors   | Log errors, don't crash - updates are non-critical |
 
 - **Alternatives Considered**:
   - **Full abstraction (UpdaterLayer + UpdaterService)**: Over-engineered for simple feature; electron-updater is a singleton with Electron-specific lifecycle integration that cannot be meaningfully abstracted

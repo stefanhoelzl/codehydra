@@ -592,7 +592,7 @@ interface SdkClientMatchers {
 
 // Module augmentation for vitest
 declare module "vitest" {
-  interface Assertion<T> extends SdkClientMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends SdkClientMatchers {}
 }
 
 /** Matcher implementations. */

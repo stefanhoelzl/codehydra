@@ -295,7 +295,7 @@ interface HttpClientMatchers {
 // Matchers are added unconditionally (standard pattern for testing libraries)
 // Runtime checks ensure correct usage - matchers check if received has `$` property
 declare module "vitest" {
-  interface Assertion<T> extends HttpClientMatchers {}
+  interface Matchers<R extends void | Promise<void>, T> extends HttpClientMatchers {}
 }
 
 /** Matcher implementations. */
