@@ -20,11 +20,11 @@ export type Unsubscribe = () => void;
 export interface Api {
   // ============ API (api: prefixed channels) ============
   // Renderer→main gestures are NOT invokes: the renderer emits ui:events
-  // (switch-workspace / wake-workspace / remove-workspace / close-project /
-  // setup-quit) carrying opaque identity, and main owns resolution,
-  // confirmation dialogs, and dispatch. (Project open + hibernate have no
-  // renderer gesture — the creation panel and the `h` shortcut drive them
-  // entirely main-side.) There are no request/response invoke commands.
+  // (switch-workspace / wake-workspace / hibernate-workspace / remove-workspace /
+  // close-project / setup-quit) carrying opaque identity, and main owns
+  // resolution, confirmation dialogs, and dispatch. (Project open has no
+  // renderer gesture — the creation panel drives it entirely main-side.)
+  // There are no request/response invoke commands.
 
   /**
    * Emit a UI event to the main process (api:ui:event channel).

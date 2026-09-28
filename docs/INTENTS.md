@@ -441,12 +441,13 @@ There are no per-feature IPC channels. The renderer emits fire-and-forget
 matching intent — with `interactive: true` for flows that may park on a
 confirmation dialog:
 
-| `ui:event` kind    | Intent Type        | Operation                |
-| ------------------ | ------------------ | ------------------------ |
-| `switch-workspace` | `workspace:switch` | SwitchWorkspaceOperation |
-| `remove-workspace` | `workspace:delete` | DeleteWorkspaceOperation |
-| `close-project`    | `project:close`    | CloseProjectOperation    |
-| `wake-workspace`   | `workspace:wake`   | WakeWorkspaceOperation   |
+| `ui:event` kind       | Intent Type           | Operation                   |
+| --------------------- | --------------------- | --------------------------- |
+| `switch-workspace`    | `workspace:switch`    | SwitchWorkspaceOperation    |
+| `remove-workspace`    | `workspace:delete`    | DeleteWorkspaceOperation    |
+| `close-project`       | `project:close`       | CloseProjectOperation       |
+| `wake-workspace`      | `workspace:wake`      | WakeWorkspaceOperation      |
+| `hibernate-workspace` | `workspace:hibernate` | HibernateWorkspaceOperation |
 
 Creation-form submit (`workspace:open`) and the startup gestures
 (`agent-selected` / `setup-retry` / `setup-quit`) are routed by their owning
