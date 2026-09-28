@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "yaml";
-import { convertLegacySources, parseSources } from "./legacy-sources";
+import { convertLegacySources, escapeBatchPercents, parseSources } from "./legacy-sources";
 import { parseManifest } from "./manifest";
 
 const GH = `name: github
@@ -113,7 +113,8 @@ describe("convertLegacySources", () => {
   it("pipes each source's cmd, grouped, through ch plugin render and its template", () => {
     const converted = convertLegacySources(
       `name: gh prs\nmode: events\ncmd: |\n  gh pr list \\\n    --json number\ntemplate:\n  name: "pr-{{ number }}"\n---\nname: jira\ncmd: ./jira\ntemplate:\n  name: "{{ key }}"`,
-      "linux"
+      "linux",
+      {}
     );
 
     const [doc] = parseManifest(converted.manifest);
@@ -151,7 +152,8 @@ describe("convertLegacySources", () => {
         '  metadata: { title: "PR {{ number }}", tags: { review: { color: "#4b6de8" } }, ci: { run: "{{ run }}" } }',
         "  shiny: yes",
       ].join("\n"),
-      "linux"
+      "linux",
+      {}
     );
 
     expect(parse(converted.templates["gh.yaml"]!)).toEqual({
@@ -175,22 +177,62 @@ describe("convertLegacySources", () => {
     expect(converted.dropped).toEqual([{ source: "gh", field: "shiny" }]);
   });
 
-  it("keeps a Windows command line in cmd, on Windows only", () => {
-    const converted = convertLegacySources(`name: a\ncmd: dir\ntemplate:\n  name: x`, "win32");
+  it("keeps a Windows command line in cmd, on Windows only, in a batch file of its own", () => {
+    const converted = convertLegacySources(
+      `name: a\ncmd: |\n  gh api "x?reporter^(login^)" ^& more\n  echo done\ntemplate:\n  name: x`,
+      "win32",
+      {}
+    );
 
     const manifest = parse(converted.manifest) as { automations: Record<string, string> };
     expect(manifest).toMatchObject({ shell: "cmd", platform: "windows" });
+    // Piping a `( … )` block would re-parse the cmd in a second cmd.exe and
+    // strip its `^` escapes; only the batch file's path is on the pipe line.
     expect(manifest.automations["a"]).toBe(
-      '(\r\ndir\r\n) | ch plugin render "%CH_PLUGIN_DIR%\\templates\\a.yaml"'
+      '"%CH_PLUGIN_DIR%\\sources\\a.cmd" | ch plugin render "%CH_PLUGIN_DIR%\\templates\\a.yaml"'
     );
+    expect(converted.sources).toEqual({
+      "a.cmd": '@echo off\r\ngh api "x?reporter^(login^)" ^& more\r\necho done\r\n',
+    });
+  });
+
+  it("writes no batch files for a POSIX cmd", () => {
+    expect(
+      convertLegacySources(`name: a\ncmd: x\ntemplate:\n  name: x`, "linux", {}).sources
+    ).toEqual({});
   });
 
   it("gives colliding names distinct automations", () => {
     const converted = convertLegacySources(
       `name: a b\ncmd: x\ntemplate:\n  name: x\n---\nname: a-b\ncmd: y\ntemplate:\n  name: y`,
-      "linux"
+      "linux",
+      {}
     );
 
     expect([...converted.renames.values()]).toEqual(["a-b", "a-b-2"]);
+  });
+});
+
+describe("escapeBatchPercents", () => {
+  const env = { Path: "C:\\bin", USERPROFILE: "C:\\Users\\me" };
+
+  it("keeps a variable that is set, in any case and with a substring or substitution", () => {
+    expect(escapeBatchPercents("%PATH% %userprofile:~0,2% %Path:a=b%", env)).toBe(
+      "%PATH% %userprofile:~0,2% %Path:a=b%"
+    );
+  });
+
+  it("doubles every other percent sign, as a command line kept it", () => {
+    expect(escapeBatchPercents("q=a%20b%3A 100% %UNSET% %~dp0", env)).toBe(
+      "q=a%%20b%%3A 100%% %%UNSET%% %%~dp0"
+    );
+  });
+
+  it("lets the closing sign of a name that is not set open a variable", () => {
+    expect(escapeBatchPercents("%20%PATH%", env)).toBe("%%20%PATH%");
+  });
+
+  it("never pairs signs across lines", () => {
+    expect(escapeBatchPercents("a%\nPATH%", env)).toBe("a%%\nPATH%%");
   });
 });

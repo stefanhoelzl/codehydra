@@ -172,6 +172,8 @@ export interface ConvertedSources {
   readonly manifest: string;
   /** Template files the manifest's scripts render through: file name → text. */
   readonly templates: Readonly<Record<string, string>>;
+  /** Batch files holding the Windows sources' cmds: file name → text. */
+  readonly sources: Readonly<Record<string, string>>;
   /** Old source name → automation name, for moving tracking state along. */
   readonly renames: ReadonlyMap<string, string>;
   /** Sources that could not be read and were left out. */
@@ -182,6 +184,9 @@ export interface ConvertedSources {
 
 /** Where a migrated source's template is written, inside the plugin's folder. */
 export const LEGACY_TEMPLATES_DIR = "templates";
+
+/** Where a migrated Windows source's cmd is written, inside the plugin's folder. */
+export const LEGACY_SOURCES_DIR = "sources";
 
 /** An automation name for an old source name: letters, digits, `-` and `_`. */
 function automationName(name: string, taken: ReadonlySet<string>): string {
@@ -286,6 +291,41 @@ function flattenLegacyMetadata(metadata: TemplateObject): Record<string, Templat
 }
 
 /**
+ * A `cmd.exe` command line, rewritten so a batch file runs it the same.
+ *
+ * The old setting ran its cmd as `cmd /c <cmd>`, and a command line treats
+ * `%` differently from a batch file: `%NAME%` expands in both, but a command
+ * line keeps every other `%` as it is, while a batch file reads `%2` as an
+ * argument and drops a lone `%` — so `?q=a%20b` would become `?q=a0b`. The
+ * command line's rule is applied here, against the variables set now: a
+ * `%NAME%` (or `%NAME:…%`) naming one is kept, every other `%` is doubled,
+ * which a batch file reads back as one.
+ */
+export function escapeBatchPercents(line: string, env: NodeJS.ProcessEnv): string {
+  const defined = new Set(Object.keys(env).map((key) => key.toUpperCase()));
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    const char = line[i]!;
+    if (char !== "%") {
+      out += char;
+      i++;
+      continue;
+    }
+    const end = line.indexOf("%", i + 1);
+    const name = end === -1 ? "" : line.slice(i + 1, end).split(":")[0]!;
+    if (name !== "" && !/[\r\n]/.test(name) && defined.has(name.toUpperCase())) {
+      out += line.slice(i, end + 1);
+      i = end + 1;
+    } else {
+      out += "%%";
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
  * Turn the old setting into a plugin: one automation per source, each running
  * the source's `cmd` piped through `ch plugin render` and the source's
  * template, rewritten to the create-item shape.
@@ -293,15 +333,23 @@ function flattenLegacyMetadata(metadata: TemplateObject): Record<string, Templat
  * A source's `cmd` ran through the platform shell — `sh` on Linux and macOS,
  * `cmd.exe` on Windows — so the automation keeps that: `bash` for a POSIX
  * line (which also runs on Windows, through Git Bash), `cmd` pinned to Windows
- * for a Windows one. The cmd is grouped, so one with several lines or its own
- * pipes reaches the render as a whole.
+ * for a Windows one. A POSIX cmd is grouped, so one with several lines or its
+ * own pipes reaches the render as a whole. A Windows cmd goes into a batch file
+ * of its own instead: cmd.exe runs the left side of a pipe in a second cmd.exe
+ * that parses the text again, which would strip the cmd's `^` escapes a second
+ * time, while a batch file it calls is read once.
  */
-export function convertLegacySources(raw: string, platform: NodeJS.Platform): ConvertedSources {
+export function convertLegacySources(
+  raw: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv
+): ConvertedSources {
   const { sources, errors } = parseSources(raw);
   const windows = platform === "win32";
   const renames = new Map<string, string>();
   const automations: Record<string, string> = {};
   const templates: Record<string, string> = {};
+  const batches: Record<string, string> = {};
   const dropped: { source: string; field: string }[] = [];
   for (const source of sources) {
     const name = automationName(source.name, new Set(renames.values()));
@@ -314,9 +362,18 @@ export function convertLegacySources(raw: string, platform: NodeJS.Platform): Co
       { lineWidth: 0 }
     );
     const cmd = source.cmd.replace(/\s+$/, "");
-    automations[name] = windows
-      ? `(\r\n${cmd}\r\n) | ch plugin render "%CH_PLUGIN_DIR%\\${LEGACY_TEMPLATES_DIR}\\${file}"`
-      : `{\n${cmd}\n} | ch plugin render "$CH_PLUGIN_DIR/${LEGACY_TEMPLATES_DIR}/${file}"`;
+    if (windows) {
+      const batch = `${name}.cmd`;
+      // Without `@echo off` cmd echoes every line into the output the render reads.
+      batches[batch] =
+        `@echo off\r\n${escapeBatchPercents(cmd, env).replace(/\r?\n/g, "\r\n")}\r\n`;
+      automations[name] =
+        `"%CH_PLUGIN_DIR%\\${LEGACY_SOURCES_DIR}\\${batch}" | ` +
+        `ch plugin render "%CH_PLUGIN_DIR%\\${LEGACY_TEMPLATES_DIR}\\${file}"`;
+    } else {
+      automations[name] =
+        `{\n${cmd}\n} | ch plugin render "$CH_PLUGIN_DIR/${LEGACY_TEMPLATES_DIR}/${file}"`;
+    }
   }
 
   const document = {
@@ -327,6 +384,7 @@ export function convertLegacySources(raw: string, platform: NodeJS.Platform): Co
   return {
     manifest: stringify(document, { lineWidth: 0 }),
     templates,
+    sources: batches,
     renames,
     errors,
     dropped,
