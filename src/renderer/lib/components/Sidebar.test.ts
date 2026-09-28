@@ -134,6 +134,88 @@ describe("Sidebar component", () => {
       await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
       expect(defaultProps.onOpenSettings).toHaveBeenCalledTimes(1);
     });
+
+    it("orders the header buttons eye, gear, help", () => {
+      const { container } = render(Sidebar, { props: defaultProps });
+
+      const labels = [...container.querySelectorAll(".header-action")].map((button) =>
+        button.getAttribute("aria-label")
+      );
+      expect(labels).toEqual(["Hide hibernated workspaces", "Settings", "Help"]);
+    });
+
+    it("hibernated toggle calls onToggleHideHibernated and reflects the current state", async () => {
+      const onToggleHideHibernated = vi.fn();
+
+      // Showing: open eye, tooltip offers to hide.
+      const { unmount } = render(Sidebar, {
+        props: { ...defaultProps, hideHibernated: false, onToggleHideHibernated },
+      });
+      const hideButton = screen.getByRole("button", { name: "Hide hibernated workspaces" });
+      expect(hideButton).toHaveAttribute("title", "Hide hibernated workspaces");
+      expect(hideButton).toHaveAttribute("aria-pressed", "false");
+      await fireEvent.click(hideButton);
+      expect(onToggleHideHibernated).toHaveBeenCalledWith();
+      unmount();
+
+      // Hidden: closed eye, tooltip offers to show.
+      render(Sidebar, {
+        props: { ...defaultProps, hideHibernated: true, onToggleHideHibernated },
+      });
+      const showButton = screen.getByRole("button", { name: "Show hibernated workspaces" });
+      expect(showButton).toHaveAttribute("title", "Show hibernated workspaces");
+      expect(showButton).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("hides the hibernated toggle while collapsed", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
+
+      const { container } = render(Sidebar, { props: { ...defaultProps, projects: [project] } });
+
+      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      expect(screen.queryByRole("button", { name: /hibernated workspaces/i })).toBeNull();
+    });
+  });
+
+  describe("icon tooltips", () => {
+    it("titles the new-workspace, close-project and remove-workspace icons", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("feature-1")]);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project], mode: "hover" as const },
+      });
+
+      expect(container.querySelector(".new-workspace-icon")).toHaveAttribute(
+        "title",
+        "New workspace"
+      );
+      expect(screen.getByRole("button", { name: "Close project" })).toHaveAttribute(
+        "title",
+        "Close project"
+      );
+      expect(screen.getByRole("button", { name: "Remove workspace" })).toHaveAttribute(
+        "title",
+        "Remove workspace"
+      );
+    });
+
+    it("titles the hibernated and deletion-failed status icons", () => {
+      const project = makeUiProjectRow([
+        makeUiWorkspaceRow("sleeping", { hibernated: true }),
+        makeUiWorkspaceRow("broken", { status: "delete-failed" }),
+      ]);
+
+      render(Sidebar, { props: { ...defaultProps, projects: [project] } });
+
+      expect(screen.getByRole("img", { name: "Hibernated" })).toHaveAttribute(
+        "title",
+        "Hibernated - click to wake"
+      );
+      expect(screen.getByRole("img", { name: "Deletion failed" })).toHaveAttribute(
+        "title",
+        "Deletion failed"
+      );
+    });
   });
 
   describe("hidden hibernated count", () => {
@@ -291,28 +373,6 @@ describe("Sidebar component", () => {
       await fireEvent.click(newWorkspaceButton);
 
       expect(onOpenNewWorkspace).toHaveBeenCalledWith();
-    });
-
-    it("bottom toggle calls onToggleHideHibernated and reflects the current state", async () => {
-      const onToggleHideHibernated = vi.fn();
-
-      // Showing: label offers to hide.
-      const { unmount } = render(Sidebar, {
-        props: { ...defaultProps, hideHibernated: false, onToggleHideHibernated },
-      });
-      const hideButton = screen.getByRole("button", { name: /hide hibernated workspaces/i });
-      await fireEvent.click(hideButton);
-      expect(onToggleHideHibernated).toHaveBeenCalledWith();
-      unmount();
-
-      // Hidden: label offers to show.
-      render(Sidebar, {
-        props: { ...defaultProps, hideHibernated: true, onToggleHideHibernated },
-      });
-      expect(screen.getByRole("button", { name: /show hibernated workspaces/i })).toHaveAttribute(
-        "aria-pressed",
-        "true"
-      );
     });
 
     it("[x] on project calls closeProject", async () => {
