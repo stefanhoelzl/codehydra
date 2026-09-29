@@ -88,10 +88,7 @@ import type { AgentInfo } from "./shared/ipc";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
 import { SetMetadataOperation } from "./intents/set-metadata";
 import { GetMetadataOperation } from "./intents/get-metadata";
-import {
-  GetWorkspaceStatusOperation,
-  INTENT_GET_WORKSPACE_STATUS,
-} from "./intents/get-workspace-status";
+import { GetWorkspaceStatusOperation } from "./intents/get-workspace-status";
 import { GetAgentSessionOperation } from "./intents/get-agent-session";
 import { RestartAgentOperation } from "./intents/restart-agent";
 import { SendAgentMessageOperation } from "./intents/send-agent-message";
@@ -137,14 +134,8 @@ import {
   EVENT_PROJECT_CLOSE_FAILED,
   type CloseProjectPayload,
 } from "./intents/close-project";
-import { SwitchWorkspaceOperation, EVENT_WORKSPACE_SWITCHED } from "./intents/switch-workspace";
-import type { WorkspaceSwitchedEvent } from "./intents/switch-workspace";
-import type { GetWorkspaceStatusIntent } from "./intents/get-workspace-status";
-import {
-  UpdateAgentStatusOperation,
-  EVENT_AGENT_STATUS_UPDATED,
-} from "./intents/update-agent-status";
-import type { AgentStatusUpdatedEvent } from "./intents/update-agent-status";
+import { SwitchWorkspaceOperation } from "./intents/switch-workspace";
+import { UpdateAgentStatusOperation } from "./intents/update-agent-status";
 import { ShortcutKeyOperation } from "./intents/shortcut-key";
 import { SetShortcutActiveOperation } from "./intents/set-shortcut-active";
 import { SubmitBugReportOperation } from "./intents/submit-bug-report";
@@ -152,7 +143,7 @@ import { VscodeShowMessageOperation } from "./intents/vscode-show-message";
 import { ShowNotificationOperation } from "./intents/show-notification";
 import { CloseNotificationOperation } from "./intents/close-notification";
 import { VscodeModalChangedOperation } from "./intents/vscode-modal-changed";
-import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
+import { VscodeCommandOperation } from "./intents/vscode-command";
 import { ResolveWorkspaceOperation } from "./intents/resolve-workspace";
 import { ResolveProjectOperation } from "./intents/resolve-project";
 // Modules
@@ -170,6 +161,7 @@ import { createWorkspaceLogModule } from "./modules/workspace-log-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
+import { createTerminalFocusModule } from "./modules/terminal-focus-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
 import { createPostHogBoundary } from "./boundaries/platform/posthog";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
@@ -1022,79 +1014,10 @@ dispatcher.registerOperation(new CloseNotificationOperation());
 dispatcher.registerOperation(new VscodeModalChangedOperation());
 dispatcher.registerOperation(new VscodeCommandOperation());
 
-// Initial terminal focus for a workspace, fired exactly once per session
-// per workspace (tracked in firstFocused). After the first focus, the
-// in-frame focus tracker (installed by view-manager via the boundary's
-// installChildFrameScript) preserves wherever the user left off (search
-// input, editor, terminal, file explorer, etc.) across subsequent switches.
-//
-// Triggers:
-//   1. agent:status-updated → "idle" for the active workspace (most common
-//      path: agent boots, becomes idle while its workspace is on screen).
-//   2. workspace:switched to a workspace not yet initially-focused, when
-//      its current status is idle (covers auto-switch after delete and
-//      switch-to-already-idle-workspace cases).
-//
-// Dispatches workbench.action.terminal.focus via sidekick, then refreshes
-// OS window focus and the in-window focus chain so keystrokes reach xterm.
-const firstFocused = new Set<string>();
-
-const focusTerminal = (workspacePath: string): void => {
-  // Ask before dispatching. This fires on the first idle status, which can beat
-  // the workspace's extension connecting — most visibly right after a wake, or
-  // on a relaunch that rediscovers workspaces — and can also arrive after it has
-  // gone, since the switch-driven trigger below awaits a status query and a
-  // deletion tears the extension host down while that is in flight. Dispatching
-  // regardless still "works" (the catch below is exactly for that), but the
-  // intent rejects and the dispatcher logs the rejection at error level, so a
-  // routine ordering shows up in the log, and in every bug report, as a fault.
-  // The retry on the next trigger is what actually focuses the terminal either way.
-  //
-  // `isConnected`, not `isReady`: a listening server says nothing about *this*
-  // workspace, so the server-level check let exactly the torn-down case through.
-  if (!apiServerModule.isConnected(workspacePath)) return;
-
-  void dispatcher
-    .dispatch({
-      type: INTENT_VSCODE_COMMAND,
-      payload: {
-        workspacePath,
-        command: "workbench.action.terminal.focus",
-      },
-    })
-    .then(() => {
-      firstFocused.add(workspacePath);
-      viewManager.focus();
-    })
-    .catch(() => {
-      /* sidekick not connected yet; will retry on next trigger */
-    });
-};
-
-dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {
-  const payload = (event as AgentStatusUpdatedEvent).payload;
-  if (firstFocused.has(payload.workspace.path)) return;
-  if (payload.status.status !== "idle") return;
-  if (!payload.workspace.active) return;
-  focusTerminal(payload.workspace.path);
-});
-
-dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
-  const payload = (event as WorkspaceSwitchedEvent).payload;
-  if (!payload) return;
-  const path = payload.path;
-  if (firstFocused.has(path)) return;
-  void dispatcher
-    .dispatch<GetWorkspaceStatusIntent>({
-      type: INTENT_GET_WORKSPACE_STATUS,
-      payload: { workspacePath: path },
-    })
-    .then((status) => {
-      if (status.agent.type === "idle") focusTerminal(path);
-    })
-    .catch(() => {
-      /* status query failed; agent-idle event will handle it later */
-    });
+const terminalFocusModule = createTerminalFocusModule({
+  dispatcher,
+  isConnected: (workspacePath) => apiServerModule.isConnected(workspacePath),
+  viewManager,
 });
 
 const hibernationScreenshotModule = createHibernationScreenshotModule({
@@ -1120,6 +1043,9 @@ dispatcher.registerModule(apiServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);
+// Ahead of the agent modules, so its vscode:modal-changed handler records a modal
+// before they re-report the status that modal forces.
+dispatcher.registerModule(terminalFocusModule);
 // A repository's open hooks run at their own hook points ("provision",
 // "prepare"), which precede the agents' "setup" — so the tree is set up and its
 // environment known before an agent server starts, whatever the order here.

@@ -1,0 +1,161 @@
+/**
+ * TerminalFocusModule - Initial terminal focus for a workspace.
+ *
+ * Fires exactly once per workspace (until it is deleted): after the first
+ * focus, the in-frame focus tracker (installed by view-manager via the
+ * boundary's installChildFrameScript) preserves wherever the user left off
+ * (search input, editor, terminal, file explorer, etc.) across switches.
+ *
+ * Triggers:
+ * - agent:status-updated → "idle" for the active workspace (most common path:
+ *   agent boots, becomes idle while its workspace is on screen).
+ * - workspace:switched to a workspace not yet focused whose current status is
+ *   idle (covers auto-switch after delete and switch-to-already-idle cases).
+ *
+ * Dispatches workbench.action.terminal.focus via the sidekick, then refreshes
+ * OS window focus and the in-window focus chain so keystrokes reach xterm.
+ *
+ * Hooks:
+ * - vscode:modal-changed → "modal": tracks which workspaces have a modal open.
+ *   While one is, the agent provider reports the workspace "idle" whatever the
+ *   agent is doing, so that idle says nothing about the agent terminal: it can
+ *   arrive before the sidekick has created it (the Migrate offer for old hooks
+ *   is raised the moment the sidekick connects). A terminal.focus sent then
+ *   makes VS Code create a terminal of its own, racing the sidekick's, and can
+ *   hang until the command times out. Focusing behind a modal is wrong anyway,
+ *   so nothing is sent while one is open; closing it re-reports the real status,
+ *   which triggers the focus if the agent is idle. The edge is recorded long
+ *   before that re-report lands (it is dispatched unawaited and resolves the
+ *   workspace first); registering this module ahead of the agent modules makes
+ *   the order certain rather than likely.
+ *
+ * Subscribes to:
+ * - workspace:deleted: forgets the workspace (also runtime teardown on
+ *   project:close, so a reopened project focuses its terminals again).
+ */
+
+import type { IntentModule } from "../intents/lib/module";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import type { DomainEvent } from "../intents/lib/types";
+import type { HookContext } from "../intents/lib/operation";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
+import type { ModalHookInput } from "../intents/vscode-modal-changed";
+import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../intents/vscode-modal-changed";
+import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
+import type { VscodeCommandIntent } from "../intents/vscode-command";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
+import type { WorkspacePath } from "../intents/contract";
+
+// =============================================================================
+// Dependency Interface
+// =============================================================================
+
+export interface TerminalFocusModuleDeps {
+  readonly dispatcher: Pick<Dispatcher, "dispatch">;
+  /** Whether the workspace's sidekick has a live socket (ApiServerModuleHandle.isConnected). */
+  readonly isConnected: (workspacePath: string) => boolean;
+  readonly viewManager: { focus(): void };
+}
+
+// =============================================================================
+// Factory
+// =============================================================================
+
+export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): IntentModule {
+  const focused = new Set<WorkspacePath>();
+  /** Focus commands sent and not yet answered, so a burst of idle reports sends one. */
+  const inFlight = new Set<WorkspacePath>();
+  const modalOpen = new Set<WorkspacePath>();
+
+  function focusTerminal(workspacePath: WorkspacePath): void {
+    if (focused.has(workspacePath) || inFlight.has(workspacePath)) return;
+    if (modalOpen.has(workspacePath)) return;
+    // Ask before dispatching. This fires on the first idle status, which can beat
+    // the workspace's extension connecting — most visibly right after a wake, or
+    // on a relaunch that rediscovers workspaces — and can also arrive after it has
+    // gone, since the switch-driven trigger awaits a status query and a deletion
+    // tears the extension host down while that is in flight. Dispatching
+    // regardless still "works" (the catch below is exactly for that), but the
+    // intent rejects and the dispatcher logs the rejection at error level, so a
+    // routine ordering shows up in the log, and in every bug report, as a fault.
+    // The retry on the next trigger is what actually focuses the terminal either way.
+    //
+    // `isConnected`, not `isReady`: a listening server says nothing about *this*
+    // workspace, so the server-level check let exactly the torn-down case through.
+    if (!deps.isConnected(workspacePath)) return;
+
+    inFlight.add(workspacePath);
+    void deps.dispatcher
+      .dispatch<VscodeCommandIntent>({
+        type: INTENT_VSCODE_COMMAND,
+        payload: { workspacePath, command: "workbench.action.terminal.focus" },
+      })
+      .then(() => {
+        focused.add(workspacePath);
+        deps.viewManager.focus();
+      })
+      .catch(() => {
+        /* sidekick not connected yet; will retry on next trigger */
+      })
+      .finally(() => {
+        inFlight.delete(workspacePath);
+      });
+  }
+
+  return {
+    name: "terminal-focus",
+    hooks: {
+      [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
+        modal: {
+          handler: async (ctx: HookContext): Promise<void> => {
+            const { workspacePath, open } = ctx as ModalHookInput;
+            if (open) modalOpen.add(workspacePath);
+            else modalOpen.delete(workspacePath);
+          },
+        },
+      },
+    },
+    events: {
+      [EVENT_AGENT_STATUS_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
+          if (status.status !== "idle") return;
+          if (!workspace.active) return;
+          focusTerminal(workspace.path);
+        },
+      },
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
+          if (!payload) return;
+          const path = payload.path;
+          if (focused.has(path)) return;
+          void deps.dispatcher
+            .dispatch<GetWorkspaceStatusIntent>({
+              type: INTENT_GET_WORKSPACE_STATUS,
+              payload: { workspacePath: path },
+            })
+            .then((status) => {
+              if (status.agent.type === "idle") focusTerminal(path);
+            })
+            .catch(() => {
+              /* status query failed; agent-idle event will handle it later */
+            });
+        },
+      },
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+          focused.delete(workspacePath);
+          modalOpen.delete(workspacePath);
+        },
+      },
+    },
+  };
+}
