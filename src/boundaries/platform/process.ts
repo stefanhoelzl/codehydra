@@ -86,6 +86,15 @@ export interface ProcessResult {
   /** Signal name if process was killed (e.g., 'SIGTERM', 'SIGKILL') */
   readonly signal?: string;
   /**
+   * Node's error code when the process could not be started at all (e.g.
+   * 'ENOENT', 'EACCES'); `stderr` then carries Node's message, for display only.
+   * Branch on this, never on `stderr`: that text is not a contract.
+   *
+   * Unset on Windows for a missing command: cross-spawn runs it through
+   * cmd.exe, which starts fine and reports the failure as an exit code.
+   */
+  readonly spawnError?: string;
+  /**
    * True if process is still running after wait(timeout) returned.
    * Caller should decide whether to kill() or continue waiting.
    */
@@ -655,15 +664,17 @@ class ExecaSpawnedProcess implements SpawnedProcess {
         stdout: "",
         stderr: err.message,
         exitCode: null,
+        ...(typeof err.code === "string" && { spawnError: err.code }),
       };
     }
   }
 
   private convertResult(result: Awaited<ExecaSubprocess>): ProcessResult {
-    // Cast to get access to 'failed' and 'originalMessage' properties
+    // Cast to get access to 'failed', 'originalMessage' and 'code' properties
     const execaResult = result as typeof result & {
       failed?: boolean;
       originalMessage?: string;
+      code?: string;
     };
 
     // For spawn errors (ENOENT, EACCES), execa sets failed=true and puts
@@ -673,10 +684,18 @@ class ExecaSpawnedProcess implements SpawnedProcess {
       stderr = execaResult.originalMessage;
     }
 
+    // A spawn failure never started the process, so it has no exit code: only
+    // then is execa's `code` (the errno) a spawn error rather than, say, a
+    // timeout's ETIMEDOUT.
+    const exitCode = execaResult.exitCode ?? null;
+    const spawnError =
+      execaResult.failed && exitCode === null && !execaResult.signal ? execaResult.code : undefined;
+
     const processResult: ProcessResult = {
       stdout: typeof execaResult.stdout === "string" ? execaResult.stdout : "",
       stderr,
-      exitCode: execaResult.exitCode ?? null,
+      exitCode,
+      ...(spawnError !== undefined && { spawnError }),
     };
     // Only include signal if it's defined (exactOptionalPropertyTypes compatibility)
     if (execaResult.signal) {

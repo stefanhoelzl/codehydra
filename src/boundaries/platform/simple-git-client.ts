@@ -2,7 +2,12 @@
  * SimpleGitClient implementation using the simple-git library.
  */
 
-import { simpleGit, type SimpleGit, type SimpleGitOptions } from "simple-git";
+import {
+  simpleGit,
+  GitError as SimpleGitError,
+  type SimpleGit,
+  type SimpleGitOptions,
+} from "simple-git";
 import { vulnerabilityCheck } from "@simple-git/argv-parser";
 import { GitError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
@@ -50,6 +55,46 @@ function gitEnvironment(): {
 }
 
 /**
+ * A git command that exited non-zero, with its exit code.
+ *
+ * Private to this boundary: callers of `IGitClient` only ever see `GitError`.
+ * It exists so the methods here can branch on git's documented exit codes
+ * (`git config` exits 1 for an unset key, 5 for nothing to unset) instead of
+ * git's wording, which is localized.
+ */
+class GitExitError extends SimpleGitError {
+  constructor(
+    message: string,
+    readonly exitCode: number
+  ) {
+    // simple-git's own error type: anything else it re-wraps, losing `exitCode`.
+    super(undefined, message);
+    this.name = "GitExitError";
+  }
+}
+
+/**
+ * simple-git `errors` handler: every non-zero exit rejects.
+ *
+ * simple-git's default treats a non-zero exit as success when stderr is empty,
+ * which is exactly how `git config` reports "not set" (exit 1, 5) — the result
+ * was indistinguishable from an empty value. A spawn failure (`error` already
+ * set) passes through unchanged. The message is stdout + stderr, as with the
+ * default handler.
+ */
+const rejectEveryFailedExit: NonNullable<SimpleGitOptions["errors"]> = (error, result) => {
+  if (error !== undefined || result.exitCode === 0) return error;
+  const output = Buffer.concat([...result.stdOut, ...result.stdErr])
+    .toString("utf-8")
+    .trim();
+  return new GitExitError(output || `git exited with code ${result.exitCode}`, result.exitCode);
+};
+
+function exitCodeOf(error: unknown): number | undefined {
+  return error instanceof GitExitError ? error.exitCode : undefined;
+}
+
+/**
  * Implementation of IGitClient using the simple-git library.
  * Wraps simple-git calls and maps errors to GitError.
  *
@@ -75,6 +120,7 @@ export class SimpleGitClient implements IGitClient {
       maxConcurrentProcesses: 6,
       trimmed: true,
       config: process.platform === "win32" ? ["core.longpaths=true"] : [],
+      errors: rejectEveryFailedExit,
     };
     // The whole environment, not just the additions: simple-git passes `env`
     // straight to child_process.spawn, which *replaces* (not merges) the child
@@ -114,33 +160,6 @@ export class SimpleGitClient implements IGitClient {
     return result;
   }
 
-  /**
-   * Check if path is inside a git repository.
-   * Used internally for pre-validation in config operations.
-   *
-   * `false` only when git says so. Any other failure (git could not read the
-   * config, …) throws with git's own message: both callers fail either way, and
-   * reporting it as "Not a git repository" hid what actually went wrong.
-   */
-  private async isInsideRepository(repoPath: Path): Promise<boolean> {
-    try {
-      const git = this.getGit(repoPath);
-      const result = await git.checkIsRepo();
-      if (result) {
-        return true;
-      }
-      // checkIsRepo() uses --is-inside-work-tree which returns false for bare repos.
-      // Fall back to isRepositoryRoot which handles bare repos correctly.
-      return await this.isRepositoryRoot(repoPath);
-    } catch (error: unknown) {
-      const errMsg = getErrorMessage(error);
-      this.logger
-        .scoped({ path: repoPath.toString() })
-        .warn("Repository check failed", { error: errMsg });
-      throw new GitError(`Failed to check repository: ${errMsg}`);
-    }
-  }
-
   async isRepositoryRoot(repoPath: Path): Promise<boolean> {
     try {
       const git = this.getGit(repoPath);
@@ -175,8 +194,8 @@ export class SimpleGitClient implements IGitClient {
         return isRoot;
       }
 
-      // For non-bare repos, first verify we're inside a git repo
-      const isRepo = await git.checkIsRepo();
+      // For non-bare repos, first verify we're inside a work tree ("false" inside .git)
+      const isRepo = (await git.revparse(["--is-inside-work-tree"])).trim() === "true";
       if (!isRepo) {
         this.logger
           .scoped({ path: repoPath.toString() })
@@ -459,17 +478,11 @@ export class SimpleGitClient implements IGitClient {
     repoPath: Path,
     options: { key: string } | { regex: string }
   ): Promise<ReadonlyMap<string, string>> {
-    // First, verify it's a git repository (handles bare repos correctly)
-    const isRepo = await this.isInsideRepository(repoPath);
-    if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
-    }
-
     const result = new Map<string, string>();
     const args =
       "key" in options
-        ? ["config", "--get", options.key]
-        : ["config", "--get-regexp", options.regex];
+        ? ["config", "--local", "--get", options.key]
+        : ["config", "--local", "--get-regexp", options.regex];
 
     try {
       const git = this.getGit(repoPath);
@@ -493,8 +506,10 @@ export class SimpleGitClient implements IGitClient {
       }
       return result;
     } catch (error: unknown) {
-      // Exit code 1 means no match / key unset - return empty map
-      if (error instanceof Error && error.message.includes("exit code 1")) {
+      // Exit code 1 means no match / key unset - return empty map. `--local`
+      // makes a path outside any repository fail (exit 128) instead of falling
+      // back to the global config.
+      if (exitCodeOf(error) === 1) {
         return result;
       }
       const errMsg = getErrorMessage(error);
@@ -514,19 +529,14 @@ export class SimpleGitClient implements IGitClient {
 
   async unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void> {
     return this.serializeConfigWrite(async () => {
-      // First, verify it's a git repository
-      const isRepo = await this.isInsideRepository(repoPath);
-      if (!isRepo) {
-        throw new GitError(`Not a git repository: ${repoPath.toString()}`);
-      }
-
       try {
         const git = this.getGit(repoPath);
         const configKey = `branch.${branch}.${key}`;
-        await git.raw(["config", "--unset", configKey]);
+        await git.raw(["config", "--local", "--unset", configKey]);
       } catch (error: unknown) {
-        // Exit code 5 means key doesn't exist - that's OK for unset
-        if (error instanceof Error && error.message.includes("exit code 5")) {
+        // Exit code 5 means key doesn't exist - that's OK for unset. Outside a
+        // repository `--local` exits 128, which throws below.
+        if (exitCodeOf(error) === 5) {
           return;
         }
         const errMsg = getErrorMessage(error);
@@ -545,6 +555,7 @@ export class SimpleGitClient implements IGitClient {
       const options: Partial<SimpleGitOptions> = {
         allowEnvironment,
         unsafe: { ...unsafe, allowUnsafePack: true },
+        errors: rejectEveryFailedExit,
       };
       if (onProgress) {
         options.progress = (data) => {

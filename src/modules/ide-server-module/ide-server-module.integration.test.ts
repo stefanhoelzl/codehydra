@@ -1166,6 +1166,36 @@ describe("IdeServerModule", () => {
         })
       );
     });
+
+    it("reports a spawn failure as the IDE server failing to run, whatever its stderr says", async () => {
+      const deps = createMockDeps({
+        processRunner: createMockProcessRunner({
+          onSpawn: () => ({
+            pid: undefined,
+            exitCode: null,
+            spawnError: "ENOENT",
+            stderr: "Datei oder Verzeichnis nicht gefunden",
+          }),
+        }),
+      });
+      const { dispatcher } = createTestSetup(deps);
+      const installPlan: ExtensionInstallEntry[] = [
+        { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
+      ];
+      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
+      dispatcher.registerOperation(op);
+
+      await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
+        SetupError
+      );
+      expect(op.frames).toContainEqual(
+        expect.objectContaining({
+          id: "setup",
+          status: "failed",
+          error: expect.stringContaining("Failed to run IDE server"),
+        })
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------

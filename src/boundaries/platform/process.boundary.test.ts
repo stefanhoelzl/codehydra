@@ -779,7 +779,7 @@ describe("ExecaProcessRunner", () => {
         const result = await proc.wait();
 
         expect(result.exitCode).toBeNull();
-        expect(result.stderr).toContain("ENOENT");
+        expect(result.spawnError).toBe("ENOENT");
         expect(proc.pid).toBeUndefined();
       },
       TEST_TIMEOUT
@@ -800,7 +800,7 @@ describe("ExecaProcessRunner", () => {
           const result = await proc.wait();
 
           expect(result.exitCode).toBeNull();
-          expect(result.stderr.toLowerCase()).toMatch(/eacces|permission/);
+          expect(result.spawnError).toBe("EACCES");
         } finally {
           await rm(tempDir, { recursive: true, force: true });
         }

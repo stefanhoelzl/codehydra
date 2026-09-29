@@ -623,15 +623,24 @@ export class OpenCodeClient implements IDisposable {
 
   /**
    * Map SDK errors to OpenCodeError.
+   *
+   * Classified by fetch's structured fields, never the message: a refused
+   * connection rejects with `cause.code` "ECONNREFUSED", an AbortSignal timeout
+   * with name "TimeoutError". The original message is kept either way.
    */
   private mapSdkError(error: unknown): OpenCodeError {
     if (error instanceof Error) {
-      const message = error.message.toLowerCase();
-      if (message.includes("timeout")) {
-        return new OpenCodeError("Request timeout", "TIMEOUT");
+      if (error.name === "TimeoutError") {
+        return new OpenCodeError(error.message, "TIMEOUT");
       }
-      if (message.includes("econnrefused") || message.includes("connection refused")) {
-        return new OpenCodeError("Connection refused", "CONNECTION_REFUSED");
+      const cause: unknown = error.cause;
+      if (
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "ECONNREFUSED"
+      ) {
+        return new OpenCodeError(error.message, "CONNECTION_REFUSED");
       }
       return new OpenCodeError(error.message, "REQUEST_FAILED");
     }

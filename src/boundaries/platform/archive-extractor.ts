@@ -20,19 +20,56 @@ import { Path } from "../../utils/path/path.js";
  */
 export type ExtractProgressCallback = (processed: number, total: number) => void;
 
+/** The `code` a thrown value carries (Node errno, tar's `TAR_*`, zlib's `Z_*`), if any. */
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
 /**
- * Map an extraction failure to an ArchiveError, distinguishing OS permission
- * errors (EACCES/EPERM) from generic failures. Shared by both extractors.
+ * Map an extraction failure to an ArchiveError. Shared by both extractors.
+ *
+ * Classified by the error's `code`, never its message: a message embeds the
+ * archive path, and a path containing "TAR" once turned a missing file into a
+ * corrupt archive. OS permission errors (EACCES/EPERM) are PERMISSION_DENIED.
+ * `isFormatError` decides what the extractor's own library reports as a
+ * damaged archive.
  */
-function mapExtractionFailure(error: unknown, archivePath: string, destPath: string): ArchiveError {
+function mapExtractionFailure(
+  error: unknown,
+  archivePath: string,
+  destPath: string,
+  isFormatError: (code: string | undefined) => boolean
+): ArchiveError {
   const message = getErrorMessage(error);
-  if (message.includes("EACCES") || message.includes("EPERM")) {
+  const code = errorCode(error);
+  if (code === "EACCES" || code === "EPERM") {
     return new ArchiveError(
       `Permission denied extracting to ${destPath}: ${message}`,
       "PERMISSION_DENIED"
     );
   }
+  if (isFormatError(code)) {
+    return new ArchiveError(
+      `Invalid or corrupt archive at ${archivePath}: ${message}`,
+      "INVALID_ARCHIVE"
+    );
+  }
   return new ArchiveError(`Failed to extract ${archivePath}: ${message}`, "EXTRACTION_FAILED");
+}
+
+/** tar reports a malformed archive as `TAR_*`, its gunzip as zlib's `Z_*`. */
+function isTarFormatError(code: string | undefined): boolean {
+  return code !== undefined && (code.startsWith("TAR_") || code.startsWith("Z_"));
+}
+
+/**
+ * yauzl raises a malformed zip as a plain Error with no `code`, and we inflate
+ * entries with zlib (`Z_*`); every other code came from the filesystem
+ * (ENOENT, EISDIR, …).
+ */
+function isZipFormatError(code: string | undefined): boolean {
+  return code === undefined || code.startsWith("Z_");
 }
 
 /**
@@ -76,18 +113,7 @@ export class TarExtractor implements ArchiveExtractor {
       });
       await pipeline(fs.createReadStream(archivePath), counter, tar.extract({ cwd: destPath }));
     } catch (error) {
-      const message = getErrorMessage(error);
-      if (
-        message.includes("TAR") ||
-        message.includes("zlib") ||
-        message.includes("unexpected end")
-      ) {
-        throw new ArchiveError(
-          `Invalid or corrupt archive at ${archivePath}: ${message}`,
-          "INVALID_ARCHIVE"
-        );
-      }
-      throw mapExtractionFailure(error, archivePath, destPath);
+      throw mapExtractionFailure(error, archivePath, destPath, isTarFormatError);
     }
   }
 }
@@ -109,7 +135,7 @@ export class ZipExtractor implements ArchiveExtractor {
       if (error instanceof ArchiveError) {
         throw error;
       }
-      throw mapExtractionFailure(error, archivePath, destPath);
+      throw mapExtractionFailure(error, archivePath, destPath, isZipFormatError);
     }
   }
 
@@ -121,21 +147,7 @@ export class ZipExtractor implements ArchiveExtractor {
     return new Promise((resolve, reject) => {
       yauzl.open(archivePath, { lazyEntries: true }, (err, zipfile) => {
         if (err) {
-          if (err.message.includes("end of central directory")) {
-            reject(
-              new ArchiveError(
-                `Invalid or corrupt zip archive at ${archivePath}: ${err.message}`,
-                "INVALID_ARCHIVE"
-              )
-            );
-          } else {
-            reject(
-              new ArchiveError(
-                `Failed to open zip archive at ${archivePath}: ${err.message}`,
-                "EXTRACTION_FAILED"
-              )
-            );
-          }
+          reject(err);
           return;
         }
 
@@ -202,11 +214,7 @@ export class ZipExtractor implements ArchiveExtractor {
         });
 
         zipfile.on("end", () => resolve());
-        zipfile.on("error", (err) => {
-          reject(
-            new ArchiveError(`Error reading zip archive: ${err.message}`, "EXTRACTION_FAILED")
-          );
-        });
+        zipfile.on("error", reject);
       });
     });
   }
@@ -272,12 +280,7 @@ async function writeEntry(
   const raw = await new Promise<Buffer>((resolve, reject) => {
     const onStream: Parameters<typeof zipfile.openReadStream>[1] = (err, readStream) => {
       if (err) {
-        reject(
-          new ArchiveError(
-            `Failed to read entry ${entry.fileName}: ${err.message}`,
-            "EXTRACTION_FAILED"
-          )
-        );
+        reject(err);
         return;
       }
       collect(readStream).then(resolve, reject);

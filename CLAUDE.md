@@ -76,6 +76,10 @@ path1.equals(path2); // equals() for comparison
 
 **Rules**: Services receive `Path` objects. IPC uses strings. Convert at IPC boundary.
 
+### Error Classification
+
+**NEVER branch on error text** (`message`, `stderr`, `stdout`): it is localized, unstable and embeds paths. Use `error.code`, an exit code, `ProcessResult.spawnError`, `name` or `instanceof`; with no code, probe or treat all failures alike. Text is for display only. Enforced by `no-restricted-syntax` in `eslint.config.js`; see docs/PATTERNS.md (Error Classification).
+
 ### Network
 
 **ALWAYS use `127.0.0.1`** instead of `localhost` for local connections.

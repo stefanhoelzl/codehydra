@@ -1078,7 +1078,7 @@ const runner = createMockProcessRunner({
     if (command.includes("codium-server")) {
       return { pid: 12345, exitCode: 0 };
     }
-    return { pid: undefined, stderr: "spawn ENOENT" }; // Spawn failure
+    return { pid: undefined, exitCode: null, spawnError: "ENOENT", stderr: "spawn ENOENT" }; // Spawn failure
   },
 });
 

@@ -194,6 +194,16 @@ describe("TarExtractor (boundary)", () => {
       errorCode: "EXTRACTION_FAILED",
     });
   });
+
+  it("classifies by error code, not by words in the archive path", async () => {
+    // The error message embeds the path; a random mkdtemp suffix once spelled "TAR".
+    const trapDir = path.join(tempDir, "TAR-zlib-EPERM-unexpected end");
+    const missingPath = path.join(trapDir, "nonexistent.tar.gz");
+
+    await expect(
+      new TarExtractor().extract(missingPath, new Path(path.join(trapDir, "extracted")))
+    ).rejects.toMatchObject({ errorCode: "EXTRACTION_FAILED" });
+  });
 });
 
 describe("ZipExtractor (boundary)", () => {
@@ -253,23 +263,15 @@ describe("ZipExtractor (boundary)", () => {
     expect(updates.map((u) => u.processed)).toEqual([1, 2, 3]);
   });
 
-  it("throws ArchiveError for corrupt zip file", async () => {
+  it("throws INVALID_ARCHIVE for corrupt zip file", async () => {
     // Write garbage to the archive file
     await fs.writeFile(archivePath, "not a valid zip file");
 
     const extractor = new ZipExtractor();
 
-    // Generic garbage file may trigger EXTRACTION_FAILED (file doesn't look like a zip at all)
-    // or INVALID_ARCHIVE (for files that look like zips but are structurally corrupt)
-    let caughtError: ArchiveError | undefined;
-    try {
-      await extractor.extract(archivePath, new Path(destDir));
-    } catch (e) {
-      caughtError = e as ArchiveError;
-    }
-
-    expect(caughtError).toBeInstanceOf(ArchiveError);
-    expect(["INVALID_ARCHIVE", "EXTRACTION_FAILED"]).toContain(caughtError!.errorCode);
+    await expect(extractor.extract(archivePath, new Path(destDir))).rejects.toMatchObject({
+      errorCode: "INVALID_ARCHIVE",
+    });
   });
 
   it("throws EXTRACTION_FAILED for nonexistent archive path", async () => {
@@ -280,6 +282,15 @@ describe("ZipExtractor (boundary)", () => {
     await expect(extractor.extract(missingPath, new Path(destDir))).rejects.toMatchObject({
       errorCode: "EXTRACTION_FAILED",
     });
+  });
+
+  it("classifies by error code, not by words in the archive path", async () => {
+    const trapDir = path.join(tempDir, "EPERM-end of central directory");
+    const missingPath = path.join(trapDir, "nonexistent.zip");
+
+    await expect(
+      new ZipExtractor().extract(missingPath, new Path(path.join(trapDir, "extracted")))
+    ).rejects.toMatchObject({ errorCode: "EXTRACTION_FAILED" });
   });
 });
 

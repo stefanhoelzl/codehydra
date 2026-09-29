@@ -146,17 +146,23 @@ describe("SimpleGitClient", () => {
     it("passes the user's git variables through to git", async () => {
       const home = await createTempDir();
       try {
+        // Observed through `init.defaultBranch`: getGitConfig reads only the
+        // repository's own (--local) config, so it cannot see either source.
         const globalConfig = nodePath.join(home.path, "gitconfig");
-        await fs.writeFile(globalConfig, "[codehydra]\n\tfromfile = global\n");
+        await fs.writeFile(globalConfig, "[init]\n\tdefaultBranch = fromglobal\n");
         vi.stubEnv("GIT_CONFIG_GLOBAL", globalConfig);
+        const fromFile = new Path(home.path, "from-file");
+        await fs.mkdir(fromFile.toNative());
+        await client.init(fromFile);
+        expect(await client.getDefaultBranch(fromFile)).toBe("fromglobal");
+
         vi.stubEnv("GIT_CONFIG_COUNT", "1");
-        vi.stubEnv("GIT_CONFIG_KEY_0", "codehydra.fromenv");
-        vi.stubEnv("GIT_CONFIG_VALUE_0", "injected");
-
-        const config = await client.getGitConfig(repoPath, { regex: "^codehydra\\." });
-
-        expect(config.get("codehydra.fromfile")).toBe("global");
-        expect(config.get("codehydra.fromenv")).toBe("injected");
+        vi.stubEnv("GIT_CONFIG_KEY_0", "init.defaultBranch");
+        vi.stubEnv("GIT_CONFIG_VALUE_0", "fromenv");
+        const fromEnv = new Path(home.path, "from-env");
+        await fs.mkdir(fromEnv.toNative());
+        await client.init(fromEnv);
+        expect(await client.getDefaultBranch(fromEnv)).toBe("fromenv");
       } finally {
         await home.cleanup();
       }
@@ -677,6 +683,17 @@ describe("SimpleGitClient", () => {
       expect(configs.get("branch.main.codehydra.equation")).toBe("x=y+z");
     });
 
+    it("throws GitError outside a repository instead of reading the global config", async () => {
+      const tempDir = await createTempDir();
+      try {
+        await expect(
+          client.getGitConfig(new Path(tempDir.path), { regex: "^branch\\." })
+        ).rejects.toThrow(GitError);
+      } finally {
+        await tempDir.cleanup();
+      }
+    });
+
     it("only returns entries matching the regex", async () => {
       await client.setBranchConfig(repoPath, "main", "codehydra.base", "develop");
       await client.setBranchConfig(repoPath, "main", "other.key", "value");
@@ -755,10 +772,20 @@ describe("SimpleGitClient", () => {
       // A repository git refuses to read: its config does not parse.
       await fs.writeFile(nodePath.join(repoPath.toNative(), ".git", "config"), "[broken\n");
 
-      const unset = client.unsetBranchConfig(repoPath, "main", "codehydra.note");
+      await expect(client.unsetBranchConfig(repoPath, "main", "codehydra.note")).rejects.toThrow(
+        GitError
+      );
+    });
 
-      await expect(unset).rejects.toThrow(GitError);
-      await expect(unset).rejects.toThrow(/Failed to check repository: .*bad config/);
+    it("throws GitError outside a repository instead of touching the global config", async () => {
+      const tempDir = await createTempDir();
+      try {
+        await expect(
+          client.unsetBranchConfig(new Path(tempDir.path), "main", "codehydra.note")
+        ).rejects.toThrow(GitError);
+      } finally {
+        await tempDir.cleanup();
+      }
     });
   });
 
