@@ -20,6 +20,7 @@ import {
   useApp,
   workspaceRow,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const app = useApp();
@@ -53,9 +54,14 @@ test("open a folder, create a workspace, and VSCodium loads in its worktree", as
   // The worktree exists on disk, alongside the .code-workspace file the IDE opens.
   // Poll: the sidebar row can render before git has finished writing the worktree.
   const dir = workspacesDir();
-  await expect.poll(() => existsSync(join(dir, "solo")), { timeout: 60_000 }).toBe(true);
   await expect
-    .poll(() => existsSync(join(dir, "solo.code-workspace")), { timeout: 60_000 })
+    .poll(() => existsSync(join(dir, "solo")), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
+  await expect
+    .poll(() => existsSync(join(dir, "solo.code-workspace")), {
+      intervals: POLL_INTERVALS,
+      timeout: 60_000,
+    })
     .toBe(true);
 
   // --- The IDE actually mounted ---

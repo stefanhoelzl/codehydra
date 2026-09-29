@@ -23,6 +23,7 @@ import {
   waitForConnectionDetails,
   waitForWorkspaceFrame,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const app = useApp();
@@ -63,7 +64,9 @@ test("renders a file:// page with its stylesheet and scripts", async () => {
   await createWorkspace(app(), "local-page");
   await waitForWorkspaceFrame(app(), "local-page");
   const workspace = join(workspacesDir(), "local-page");
-  await expect.poll(() => existsSync(workspace), { timeout: 60_000 }).toBe(true);
+  await expect
+    .poll(() => existsSync(workspace), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
   // Editor commands go through the workspace's sidekick extension, which
   // connects some time after the frame shows; before that they fail.
   await expect
@@ -72,7 +75,7 @@ test("renders a file:// page with its stylesheet and scripts", async () => {
         appLogEntries().some(
           (e) => e.message === "Client connected" && e.scope?.["ws"] === "local-page"
         ),
-      { timeout: 120_000 }
+      { intervals: POLL_INTERVALS, timeout: 120_000 }
     )
     .toBe(true);
 
@@ -89,7 +92,7 @@ test("renders a file:// page with its stylesheet and scripts", async () => {
             module: document.body.dataset.module ?? null,
           }))
           .catch(() => null) ?? null,
-      { timeout: 60_000 }
+      { intervals: POLL_INTERVALS, timeout: 60_000 }
     )
     .toEqual({ title: "local page ü", color: "rgb(255, 0, 0)", module: "ran" });
 });
@@ -110,7 +113,7 @@ test("lists a directory without an index.html", async () => {
             )
           )
           .catch(() => null) ?? null,
-      { timeout: 60_000 }
+      { intervals: POLL_INTERVALS, timeout: 60_000 }
     )
     .toContain("notes.txt");
 
@@ -118,6 +121,8 @@ test("lists a directory without an index.html", async () => {
   await frame.click("text=notes.txt");
   // Mid-navigation the old document is gone and evaluate throws; poll past it.
   await expect
-    .poll(() => frame.evaluate(() => document.body.innerText.trim()).catch(() => null))
+    .poll(() => frame.evaluate(() => document.body.innerText.trim()).catch(() => null), {
+      intervals: POLL_INTERVALS,
+    })
     .toBe("notes");
 });

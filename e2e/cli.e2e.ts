@@ -27,6 +27,7 @@ import {
   useApp,
   waitForConnectionDetails,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const isWindows = process.platform === "win32";
@@ -105,7 +106,9 @@ test.describe("ch CLI", () => {
     // Poll: the sidebar row can render before git has finished writing the
     // worktree, so the directory is not there the instant creation "completes".
     const workspace = join(workspacesDir(), "cli-target");
-    await expect.poll(() => existsSync(workspace), { timeout: 60_000 }).toBe(true);
+    await expect
+      .poll(() => existsSync(workspace), { intervals: POLL_INTERVALS, timeout: 60_000 })
+      .toBe(true);
 
     // Run from a subdirectory: resolution matches the deepest workspace
     // containing the path, not the worktree root exactly.
@@ -200,7 +203,9 @@ test.describe("ch lock", () => {
     }
     if (!existsSync(join(workspacesDir(), name))) await createWorkspace(app(), name);
     const path = join(workspacesDir(), name);
-    await expect.poll(() => existsSync(path), { timeout: 60_000 }).toBe(true);
+    await expect
+      .poll(() => existsSync(path), { intervals: POLL_INTERVALS, timeout: 60_000 })
+      .toBe(true);
     return path;
   };
 
@@ -223,7 +228,9 @@ test.describe("ch lock", () => {
 
     // A real waiter, queued behind the holder, granted on release.
     const waiting = chAsync(["lock", "take", "device"], other);
-    await expect.poll(() => locks()[0]?.waiting, { timeout: 15_000 }).toBe("lock-other");
+    await expect
+      .poll(() => locks()[0]?.waiting, { intervals: POLL_INTERVALS, timeout: 15_000 })
+      .toBe("lock-other");
     expect(locks()).toMatchObject([{ name: "device", holder: "cli-target" }]);
 
     expect(json(ch(["lock", "release", "device"], holder))).toEqual({ released: ["device"] });
@@ -242,10 +249,14 @@ test.describe("ch lock", () => {
     json(ch(["lock", "take", "device", "tag check"], holder));
 
     const tags = () => json(ch(["ws", "tag", "ls"], holder)) as { name: string; label?: string }[];
-    await expect.poll(() => tags().find((tag) => tag.name === "lock")?.label).toBe("🔒 device");
+    await expect
+      .poll(() => tags().find((tag) => tag.name === "lock")?.label, { intervals: POLL_INTERVALS })
+      .toBe("🔒 device");
 
     json(ch(["lock", "release", "device"], holder));
-    await expect.poll(() => tags().some((tag) => tag.name === "lock")).toBe(false);
+    await expect
+      .poll(() => tags().some((tag) => tag.name === "lock"), { intervals: POLL_INTERVALS })
+      .toBe(false);
   });
 
   test("runs a command under the lock and exits with its status", () => {
@@ -263,12 +274,14 @@ test.describe("ch lock", () => {
     const hold = chSpawn(["lock", "run", "device", "long session"], holder);
     const closed = new Promise((resolve) => hold.on("close", resolve));
 
-    await expect.poll(() => locks()[0]?.holder, { timeout: 15_000 }).toBe("cli-target");
+    await expect
+      .poll(() => locks()[0]?.holder, { intervals: POLL_INTERVALS, timeout: 15_000 })
+      .toBe("cli-target");
 
     hold.kill();
     await closed;
 
-    await expect.poll(() => locks(), { timeout: 15_000 }).toEqual([]);
+    await expect.poll(() => locks(), { intervals: POLL_INTERVALS, timeout: 15_000 }).toEqual([]);
   });
 
   test("lists its commands in help, but not the plumbing `ch lock run` rides on", () => {

@@ -39,6 +39,7 @@ import {
   waitForWorkspaceFrame,
   workspaceRow,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 import type { Agent } from "./env.ts";
 
@@ -146,7 +147,7 @@ async function resolvedWorkspacesDir(): Promise<string> {
           return false;
         }
       },
-      { timeout: 60_000 }
+      { intervals: POLL_INTERVALS, timeout: 60_000 }
     )
     .toBe(true);
   return dir;
@@ -204,6 +205,7 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
   // transport problem cannot be mistaken for the agent not having acted.
   await expect
     .poll(() => readWorkspaceTitle(), {
+      intervals: POLL_INTERVALS,
       timeout: TURN_TIMEOUT_MS,
       message:
         "the agent never set the title — its MCP call to CodeHydra did not land " +
@@ -314,6 +316,7 @@ test("a message from outside reaches the running agent, and --wake brings a clos
   expect(sent.status, `ch ws agent message failed: ${sent.stderr}`).toBe(0);
   await expect
     .poll(() => delivered(first), {
+      intervals: POLL_INTERVALS,
       timeout: TURN_TIMEOUT_MS,
       message: "the message never reached the model (the mock's diagnostic above has the requests)",
     })
@@ -331,7 +334,11 @@ test("a message from outside reaches the running agent, and --wake brings a clos
         const status = await chAsync(["ws", "status", "--workspace", MESSAGE_WORKSPACE_NAME]);
         return (json(status) as { agent: { type: string } }).agent.type;
       },
-      { timeout: 60_000, message: "the agent never reported its terminal closed" }
+      {
+        intervals: POLL_INTERVALS,
+        timeout: 60_000,
+        message: "the agent never reported its terminal closed",
+      }
     )
     .toBe("none");
 
@@ -359,6 +366,7 @@ test("a message from outside reaches the running agent, and --wake brings a clos
   expect(woken.status, `ch ws agent message --wake failed: ${woken.stderr}`).toBe(0);
   await expect
     .poll(() => delivered(second), {
+      intervals: POLL_INTERVALS,
       timeout: TURN_TIMEOUT_MS,
       message: "the message never reached the reopened agent",
     })
