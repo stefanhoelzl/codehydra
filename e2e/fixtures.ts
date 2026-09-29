@@ -557,8 +557,22 @@ export async function createWorkspace(driver: AppDriver, name: string): Promise<
   const ui = driver.uiPage();
   const panel = ui.getByRole("region", { name: "New workspace" });
   if (!(await panel.isVisible())) {
+    // THROWAWAY instrumentation: where do the click's pointer events land?
+    const record = `(() => { window.__ev = []; for (const t of ["pointermove","pointerdown","pointerup","click","mouseover"]) window.addEventListener(t, (e) => window.__ev.push(performance.now().toFixed(0) + " " + t + "@" + Math.round(e.clientX) + "," + Math.round(e.clientY) + ":" + (e.target && e.target.tagName)), true); return true; })()`;
+    await ui.evaluate(record);
+    const ws = await driver.findTarget("workspace").catch(() => null);
+    await ws?.frame.evaluate(record).catch(() => null);
     await expandSidebar(ui);
     await ui.getByRole("button", { name: "New workspace" }).click();
+    const opened = await panel
+      .waitFor({ state: "visible", timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+    const uiEv = await ui.evaluate("window.__ev").catch((e: unknown) => String(e));
+    const wsEv = await ws?.frame.evaluate("window.__ev").catch((e: unknown) => String(e));
+    const top = await ui.evaluate(() => { const el = document.elementFromPoint(125, 61); return el ? el.tagName + "." + el.className : "none"; });
+    console.log(`REPRO ${name}: opened=${opened} top=${top} ui=${JSON.stringify(uiEv)} ws=${JSON.stringify(wsEv)} wsUrl=${ws?.frame.url().slice(0, 50)}`);
+    if (!opened) await ui.screenshot({ path: test.info().outputPath("miss.png") });
     await expect(panel).toBeVisible();
     await collapseSidebar(ui);
   }

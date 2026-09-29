@@ -210,9 +210,15 @@ jobs:
 
       - name: Run e2e
         if: matrix.name != 'linux'
-        env:
-          REPRO_N: "10"
-        run: pnpm test:e2e e2e/zz-repro.e2e.ts --repeat-each 4
+        run: |
+          pnpm test:e2e e2e/download-binaries.e2e.ts
+          fails=0
+          for i in $(seq 1 12); do
+            echo "=== loop $i"
+            pnpm test:e2e --no-deps --project=opencode e2e/cli.e2e.ts || { fails=$((fails+1)); cp -r e2e/.output "$RUNNER_TEMP/ch-e2e/logs/output-$i" || true; }
+          done
+          echo "FAILS: $fails/12"
+          test $fails -eq 0
 
       - name: Upload failure artifacts
         if: always()
