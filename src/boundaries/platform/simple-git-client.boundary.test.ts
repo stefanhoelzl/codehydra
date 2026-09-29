@@ -15,6 +15,7 @@ import {
 } from "../../utils/testing/test-utils";
 import { promises as fs } from "fs";
 import nodePath from "path";
+import { execFileSync } from "node:child_process";
 import { simpleGit } from "simple-git";
 import { SILENT_LOGGER } from "./logging";
 import { parseBranchConfigs } from "./git-worktree-provider";
@@ -35,6 +36,41 @@ async function readBranchConfig(
   const fullKey = `branch.${branch}.${key}`;
   const map = await client.getGitConfig(repoPath, { key: fullKey });
   return map.get(fullKey) ?? null;
+}
+
+/**
+ * A `git` that wraps the real one and reports config writes running at once.
+ *
+ * Every config write (`git config` without a read flag, `git branch`) claims
+ * `<dir>/active` with an atomic mkdir, holds it for 100ms, and releases it. A
+ * write that finds it already claimed appends to `<dir>/overlaps`; each write
+ * appends to `<dir>/writes`. The hold is what makes an overlap certain rather
+ * than lucky — the real `git config` takes under a millisecond.
+ *
+ * A shell script, so POSIX only: on Windows, spawn resolves `git` to git.exe and
+ * never finds it.
+ */
+async function writeGitShim(dir: string): Promise<void> {
+  const realGit = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf-8" }).trim();
+  const script = `#!/bin/sh
+write=
+case " $* " in
+  *" config "*) case " $* " in *" --get"*) ;; *) write=1 ;; esac ;;
+  *" branch "*) write=1 ;;
+esac
+if [ -n "$write" ]; then
+  echo "$*" >> "${dir}/writes"
+  claimed=
+  if mkdir "${dir}/active" 2>/dev/null; then claimed=1; else echo "$*" >> "${dir}/overlaps"; fi
+  sleep 0.1
+  "${realGit}" "$@"
+  status=$?
+  if [ -n "$claimed" ]; then rmdir "${dir}/active"; fi
+  exit $status
+fi
+exec "${realGit}" "$@"
+`;
+  await fs.writeFile(nodePath.join(dir, "git"), script, { mode: 0o755 });
 }
 
 describe("SimpleGitClient", () => {
@@ -714,6 +750,59 @@ describe("SimpleGitClient", () => {
         await tempDir.cleanup();
       }
     });
+
+    it("reports git's own error, not 'Not a git repository', when git cannot read the repo", async () => {
+      // A repository git refuses to read: its config does not parse.
+      await fs.writeFile(nodePath.join(repoPath.toNative(), ".git", "config"), "[broken\n");
+
+      const unset = client.unsetBranchConfig(repoPath, "main", "codehydra.note");
+
+      await expect(unset).rejects.toThrow(GitError);
+      await expect(unset).rejects.toThrow(/Failed to check repository: .*bad config/);
+    });
+  });
+
+  describe("concurrent config writes", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    // `git config` fails at once when another write holds .git/config.lock, and
+    // a lock handoff retags two workspaces of one repository at the same time.
+    // A real collision is too rare to wait for (the write takes under a
+    // millisecond), so a wrapping `git` stretches each write and reports overlaps.
+    it.skipIf(process.platform === "win32")(
+      "never runs two config writes at the same time",
+      async () => {
+        const shim = await createTempDir();
+        try {
+          await writeGitShim(shim.path);
+          vi.stubEnv("PATH", `${shim.path}${nodePath.delimiter}${process.env.PATH ?? ""}`);
+
+          const keys = Array.from({ length: 4 }, (_, i) => `codehydra.k${i}`);
+          await Promise.all([
+            ...keys.map((key) => client.setBranchConfig(repoPath, "main", key, "v")),
+            client.unsetBranchConfig(repoPath, "main", "codehydra.absent"),
+            client.createBranch(repoPath, "shimmed", "main"),
+          ]);
+          await client.deleteBranch(repoPath, "shimmed");
+
+          const writes = await fs.readFile(nodePath.join(shim.path, "writes"), "utf-8");
+          expect(writes.trim().split("\n")).toHaveLength(keys.length + 3);
+          const overlaps = await fs
+            .readFile(nodePath.join(shim.path, "overlaps"), "utf-8")
+            .catch(() => "");
+          expect(overlaps, "config writes that ran while another was running").toBe("");
+
+          const config = await client.getGitConfig(repoPath, {
+            regex: "^branch\\.main\\.codehydra\\.",
+          });
+          expect([...config.keys()].sort()).toEqual(keys.map((key) => `branch.main.${key}`).sort());
+        } finally {
+          await shim.cleanup();
+        }
+      }
+    );
   });
 
   describe("getGitConfig and setBranchConfig", () => {
