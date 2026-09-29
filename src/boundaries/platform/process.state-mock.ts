@@ -358,11 +358,19 @@ class MockProcessRunnerImpl implements MockProcessRunner {
 
     // Determine wait result
     const waitResult: ProcessResult = {
-      exitCode: config?.exitCode ?? this.defaultResult.exitCode,
+      // `in`, not `??`: an explicit `exitCode: null` (killed, never started) must survive
+      exitCode:
+        config !== null &&
+        config !== undefined &&
+        "exitCode" in config &&
+        config.exitCode !== undefined
+          ? config.exitCode
+          : this.defaultResult.exitCode,
       stdout: config?.stdout ?? this.defaultResult.stdout,
       stderr: config?.stderr ?? this.defaultResult.stderr,
       ...(config?.signal !== undefined && { signal: config.signal }),
       ...(config?.running !== undefined && { running: config.running }),
+      ...(config?.spawnError !== undefined && { spawnError: config.spawnError }),
     };
 
     // Determine kill result
@@ -407,6 +415,8 @@ export interface SpawnConfig {
   signal?: string;
   /** True if process is still running after wait(timeout). Used for timeout simulation. */
   running?: boolean;
+  /** Node's errno when the spawn itself failed (e.g. "ENOENT"); see ProcessResult.spawnError. */
+  spawnError?: string;
   /** Result for kill(). Default: { success: true, reason: "SIGTERM" } */
   killResult?: KillResult;
   /**

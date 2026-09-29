@@ -197,7 +197,11 @@ describe("OpenCodeClient", () => {
 
     it("returns error on timeout", async () => {
       mockSdk = createSdkClientMock({
-        sessionStatusError: new Error("Request timeout"),
+        // What fetch rejects with when an AbortSignal.timeout() fires
+        sessionStatusError: new DOMException(
+          "The operation was aborted due to timeout",
+          "TimeoutError"
+        ),
       });
       mockFactory = createSdkFactoryMock(mockSdk);
 
@@ -207,6 +211,40 @@ describe("OpenCodeClient", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.code).toBe("TIMEOUT");
+      }
+    });
+
+    it("returns CONNECTION_REFUSED from fetch's error cause", async () => {
+      const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8080"), {
+        code: "ECONNREFUSED",
+      });
+      mockSdk = createSdkClientMock({
+        sessionStatusError: new TypeError("fetch failed", { cause }),
+      });
+      mockFactory = createSdkFactoryMock(mockSdk);
+
+      client = createClient(8080);
+      const result = await client.getStatus();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("CONNECTION_REFUSED");
+        expect(result.error.message).toBe("fetch failed");
+      }
+    });
+
+    it("does not classify by words in the message", async () => {
+      mockSdk = createSdkClientMock({
+        sessionStatusError: new Error("session timeout: ECONNREFUSED connection refused"),
+      });
+      mockFactory = createSdkFactoryMock(mockSdk);
+
+      client = createClient(8080);
+      const result = await client.getStatus();
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("REQUEST_FAILED");
       }
     });
   });

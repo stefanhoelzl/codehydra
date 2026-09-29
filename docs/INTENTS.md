@@ -905,13 +905,14 @@ if (result.running) {
 
 **ProcessResult Fields:**
 
-| Field      | Type             | Description                                         |
-| ---------- | ---------------- | --------------------------------------------------- |
-| `exitCode` | `number \| null` | Exit code (null if killed/timeout/spawn error)      |
-| `signal`   | `string?`        | Signal name if killed (e.g., "SIGTERM")             |
-| `running`  | `boolean?`       | True if still running after wait(timeout)           |
-| `stdout`   | `string`         | Captured stdout                                     |
-| `stderr`   | `string`         | Captured stderr (includes spawn errors like ENOENT) |
+| Field        | Type             | Description                                                                                         |
+| ------------ | ---------------- | --------------------------------------------------------------------------------------------------- |
+| `exitCode`   | `number \| null` | Exit code (null if killed/timeout/spawn error)                                                      |
+| `signal`     | `string?`        | Signal name if killed (e.g., "SIGTERM")                                                             |
+| `running`    | `boolean?`       | True if still running after wait(timeout)                                                           |
+| `stdout`     | `string`         | Captured stdout                                                                                     |
+| `stderr`     | `string`         | Captured stderr (includes spawn errors like ENOENT)                                                 |
+| `spawnError` | `string?`        | Node's errno when the process never started (`ENOENT`, `EACCES`). Branch on this, never on `stderr` |
 
 **Platform-specific kill behavior:**
 

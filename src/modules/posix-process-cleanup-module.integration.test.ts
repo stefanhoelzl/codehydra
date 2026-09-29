@@ -2,7 +2,7 @@
 /**
  * Integration tests for PosixProcessCleanupModule.
  *
- * Tests verify: lsof output parsing, kill invocation, and module release hook behavior
+ * Tests verify: lsof output parsing, termination via ProcessRunner.kill, and module release hook behavior
  * through mocked ProcessRunner (runs on all platforms).
  *
  * Paths here stay POSIX on purpose — unlike the rest of the integration suite,
@@ -242,41 +242,29 @@ describe("detectCwdProcesses", () => {
 // =============================================================================
 
 describe("killPosixProcesses", () => {
-  it("runs kill -TERM with correct PID args", async () => {
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ exitCode: 0 }),
-    });
+  it("terminates every PID through ProcessRunner.kill, spawning nothing", async () => {
+    const runner = createMockProcessRunner();
 
-    await killPosixProcesses(runner, [1234, 5678]);
+    await expect(killPosixProcesses(runner, [1234, 5678])).resolves.toEqual([]);
 
-    expect(runner).toHaveSpawned([{ command: "kill", args: ["-TERM", "1234", "5678"] }]);
+    expect(runner.$.killedPids).toEqual([1234, 5678]);
+    expect(() => runner.$.spawned(0)).toThrow();
   });
 
-  it("throws on non-zero exit code with real error", async () => {
+  it("returns the PIDs that survived", async () => {
     const runner = createMockProcessRunner({
-      onSpawn: () => ({ exitCode: 1, stderr: "kill: (1234): Operation not permitted" }),
+      onKill: (pid) => (pid === 5678 ? { success: false } : undefined),
     });
 
-    await expect(killPosixProcesses(runner, [1234])).rejects.toThrow("kill -TERM failed");
-  });
-
-  it("treats 'No such process' as success", async () => {
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({
-        exitCode: 1,
-        stderr: "kill: (1234): No such process\nkill: (5678): No such process\n",
-      }),
-    });
-
-    await expect(killPosixProcesses(runner, [1234, 5678])).resolves.toBeUndefined();
+    await expect(killPosixProcesses(runner, [1234, 5678])).resolves.toEqual([5678]);
   });
 
   it("does nothing when pids array is empty", async () => {
     const runner = createMockProcessRunner();
 
-    await killPosixProcesses(runner, []);
+    await expect(killPosixProcesses(runner, [])).resolves.toEqual([]);
 
-    expect(() => runner.$.spawned(0)).toThrow();
+    expect(runner.$.killedPids).toEqual([]);
   });
 });
 
@@ -316,10 +304,8 @@ describe("PosixProcessCleanupModule Integration", () => {
       const detectProc = runner.$.spawned(0);
       expect(detectProc.$.command).toBe("lsof");
 
-      // Verify kill was called
-      const killProc = runner.$.spawned(1);
-      expect(killProc.$.command).toBe("kill");
-      expect(killProc.$.args).toEqual(["-TERM", "1234"]);
+      // Verify the detected process was terminated
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("still kills CWD-blocking processes when force=true", async () => {
@@ -334,7 +320,7 @@ describe("PosixProcessCleanupModule Integration", () => {
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
       expect(runner.$.spawned(0).$.command).toBe("lsof");
-      expect(runner.$.spawned(1).$.args).toEqual(["-TERM", "1234"]);
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("swallows errors from detection", async () => {
@@ -349,20 +335,10 @@ describe("PosixProcessCleanupModule Integration", () => {
       expect(result).toEqual({});
     });
 
-    it("swallows errors from kill", async () => {
-      let callIndex = 0;
+    it("does not fail when a process survives the kill", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => {
-          callIndex++;
-          if (callIndex === 1) {
-            return {
-              stdout: "p1234\ncbash\nn/workspaces/feature-1\n",
-              exitCode: 0,
-            };
-          }
-          // Kill fails
-          return { exitCode: 1, stderr: "Operation not permitted" };
-        },
+        onSpawn: () => ({ stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }),
+        onKill: () => ({ success: false }),
       });
 
       const dispatcher = createReleaseSetup(runner);
@@ -382,7 +358,7 @@ describe("PosixProcessCleanupModule Integration", () => {
 
       // Only detection was spawned, no kill
       expect(runner.$.spawned(0).$.command).toBe("lsof");
-      expect(() => runner.$.spawned(1)).toThrow();
+      expect(runner.$.killedPids).toEqual([]);
     });
   });
 
@@ -441,8 +417,7 @@ describe("PosixProcessCleanupModule Integration", () => {
       await dispatcher.dispatch(makeHibernateIntent());
 
       expect(runner.$.spawned(0).$.command).toBe("lsof");
-      expect(runner.$.spawned(1).$.command).toBe("kill");
-      expect(runner.$.spawned(1).$.args).toEqual(["-TERM", "1234"]);
+      expect(runner.$.killedPids).toEqual([1234]);
     });
 
     it("swallows errors from detection during hibernation", async () => {

@@ -2,8 +2,8 @@
  * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion or hibernation.
  *
  * Hooks:
- * - delete-workspace → release: Use lsof to find CWD matches, kill with SIGTERM (best-effort)
- * - hibernate-workspace → release: Same CWD scan + SIGTERM, runs after shutdown (best-effort)
+ * - delete-workspace → release: Use lsof to find CWD matches, terminate them (best-effort)
+ * - hibernate-workspace → release: Same CWD scan + terminate, runs after shutdown (best-effort)
  *
  * Detection uses `lsof -a -d cwd +c 0 -Fpnc +D <path>` for machine-parseable output
  * scoped to the workspace directory tree. The -a flag ANDs the -d and +D selections
@@ -116,30 +116,28 @@ export async function detectCwdProcesses(
 }
 
 /**
- * Kill a list of PIDs with SIGTERM via `kill`.
+ * Terminate a list of PIDs and wait until they are gone.
+ *
+ * Goes through `ProcessRunner.kill` (SIGTERM → wait → SIGKILL → wait, children
+ * included) rather than spawning `kill`: that tool exits 1 both for a process
+ * that already exited and for one we may not signal, and tells them apart only
+ * in localized stderr. `ProcessRunner.kill` works from `process.kill`'s error
+ * codes and reports whether each process actually died.
+ *
+ * @returns the PIDs still running afterwards
  * Exported for testing.
  */
 export async function killPosixProcesses(
   processRunner: ProcessRunner,
   pids: readonly number[]
-): Promise<void> {
-  if (pids.length === 0) return;
-
-  const args = ["-TERM", ...pids.map(String)];
-  const proc = processRunner.run("kill", args);
-  const result = await proc.wait(KILL_TIMEOUT_MS);
-
-  if (result.exitCode !== 0 && result.exitCode !== null) {
-    const stderrLines = result.stderr.split("\n").filter((l) => l.trim() !== "");
-    const allNoSuchProcess =
-      stderrLines.length > 0 && stderrLines.every((l) => l.includes("No such process"));
-
-    if (allNoSuchProcess) {
-      return;
-    }
-
-    throw new Error(`kill -TERM failed: exit ${result.exitCode} — ${result.stderr}`);
-  }
+): Promise<number[]> {
+  const outcomes = await Promise.all(
+    pids.map(async (pid) => ({
+      pid,
+      result: await processRunner.kill(pid, KILL_TIMEOUT_MS, KILL_TIMEOUT_MS),
+    }))
+  );
+  return outcomes.filter((o) => !o.result.success).map((o) => o.pid);
 }
 
 interface PosixProcessCleanupModuleDeps {
@@ -191,10 +189,17 @@ async function runCwdReleaseKill(
         .info(`Killing CWD-blocking processes before ${phase}`, {
           pids: detected.map((p) => p.pid).join(","),
         });
-      await killPosixProcesses(
+      const survivors = await killPosixProcesses(
         deps.processRunner,
         detected.map((p) => p.pid)
       );
+      if (survivors.length > 0) {
+        deps.logger
+          .scoped({ path: workspacePath })
+          .warn(`CWD-blocking processes survived ${phase} cleanup`, {
+            pids: survivors.join(","),
+          });
+      }
     }
   } catch {
     // Non-fatal: detection/kill failure shouldn't block the operation

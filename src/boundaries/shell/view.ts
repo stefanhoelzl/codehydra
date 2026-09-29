@@ -386,6 +386,9 @@ function toUncaughtExceptionDetails(
   cdp: CdpExceptionDetails | undefined
 ): UncaughtExceptionDetails {
   const text = cdp?.text ?? "Uncaught";
+  // The one place CodeHydra reads an error's text (docs/PATTERNS.md, Error
+  // Classification): ExceptionDetails has no field marking a rejection, and
+  // `text` is V8's fixed "Uncaught" / "Uncaught (in promise)", never localized.
   const isPromiseRejection = text.includes("(in promise)");
   const description = cdp?.exception?.description ?? "";
   const firstLine = description.split("\n", 1)[0] ?? "";

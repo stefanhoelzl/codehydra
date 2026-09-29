@@ -8,6 +8,7 @@
 - [CSS Theming Patterns](#css-theming-patterns)
 - [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns) - See [INTENTS.md](INTENTS.md)
+- [Error Classification](#error-classification)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration) - See [AGENTS.md](AGENTS.md)
 - [API Server Interface](#api-server-interface)
@@ -544,6 +545,38 @@ Service layer patterns including platform abstractions (FileSystemBoundary, Netw
 ---
 
 <!-- Service layer content moved to INTENTS.md -->
+
+---
+
+## Error Classification
+
+**Branch on an error's code, never on its text.** A message, stderr or stdout is for display
+(logs, notifications). Its wording is localized (git, procps `kill`), changes between library
+versions, and embeds whatever the error is about: a temp path whose random suffix spelled
+`TAR` once made a missing file read as a corrupt archive.
+
+| Need to know                  | Use                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| Which filesystem/OS error     | `error.code` (`ENOENT`, `EACCES`, `EPERM`, …)                                     |
+| A process never started       | `ProcessResult.spawnError` (Node's errno), not `stderr`                           |
+| How git failed                | Its exit code (`git config`: 1 = unset, 5 = nothing to unset), via `GitExitError` |
+| A malformed tar / gzip        | `error.code` `TAR_*` / `Z_*`                                                      |
+| A refused / timed-out `fetch` | `error.cause.code === "ECONNREFUSED"`, `error.name === "TimeoutError"`            |
+| Whether a foreign PID died    | `ProcessRunner.kill(pid, …)` (works from `process.kill` codes), not `kill` output |
+| One of our own errors         | `instanceof` / the error's `code` field                                           |
+
+When no code tells the cases apart, find one another way: a probe, an API that returns codes,
+or a command whose exit code answers the question. If there is none, treat every failure the
+same. Forcing `LC_ALL=C` is not a fix: the text is still not a contract.
+
+`no-restricted-syntax` in `eslint.config.js` rejects the common shapes in production code
+(`err.message.includes(…)`, `result.stderr.startsWith(…)`, `getErrorMessage(e).includes(…)`,
+`/…/.test(err.message)`). Tests may still assert on messages CodeHydra itself writes, but
+never on Node's, the OS's or a library's.
+
+The one exception is `toUncaughtExceptionDetails` in `src/boundaries/shell/view.ts`. CDP's
+`ExceptionDetails` has no field for a promise rejection, and `text` is V8's fixed
+`Uncaught (in promise)`, which is never localized.
 
 ---
 

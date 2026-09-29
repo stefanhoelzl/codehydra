@@ -480,21 +480,11 @@ describe("DefaultNetworkLayer boundary tests", () => {
             await httpClient.fetch(`http://127.0.0.1:${unusedPort}/test`, { timeout: 1000 });
             expect.fail("Expected fetch to throw");
           } catch (error) {
-            // On Node.js, connection refused errors are wrapped in TypeError with "fetch failed"
-            // The actual ECONNREFUSED is in error.cause
+            // Node's fetch wraps the socket error: the errno is on `cause.code`
+            // (what OpenCodeClient.mapSdkError classifies by), never read the message
             expect(error).toBeInstanceOf(Error);
             const err = error as Error & { cause?: Error & { code?: string } };
-
-            // Either the message contains "fetch failed" (Node.js native fetch)
-            // or it contains ECONNREFUSED directly
-            const message = err.message.toLowerCase();
-            const causeCode = err.cause?.code?.toLowerCase();
-
-            expect(
-              message.includes("fetch failed") ||
-                message.includes("econnrefused") ||
-                causeCode === "econnrefused"
-            ).toBe(true);
+            expect(err.cause?.code).toBe("ECONNREFUSED");
           }
         },
         TEST_TIMEOUT_MS

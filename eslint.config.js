@@ -60,6 +60,64 @@ const NO_EVENT_ASSERTION_IN_EMIT = {
     "`emit({…} as XEvent)` asserts the payload instead of checking it. Drop the assertion (emit is typed to the events this operation declares) or use `satisfies XEvent`.",
 };
 
+// ---------------------------------------------------------------------------
+// Error classification: branch on codes, never on text.
+//
+// An error's message (and a process's stderr/stdout) is for display. Its wording is localized
+// (git, procps), changes between library versions, and embeds whatever it is about — a
+// temp path spelling "TAR" once made a missing file read as a corrupt archive. Classify by the
+// structured signal instead: `error.code`, an exit code, `ProcessResult.spawnError`, `name`,
+// `instanceof`. See docs/PATTERNS.md (Error Classification). Production code only: tests may
+// assert on the messages CodeHydra itself writes.
+// ---------------------------------------------------------------------------
+
+const TEXT_MATCH_METHOD = "/^(includes|startsWith|endsWith|match|matchAll|search|indexOf)$/";
+const ERROR_TEXT_PROPERTY = "/^(message|stderr|stdout)$/";
+const ERROR_TEXT_MESSAGE =
+  "Do not classify an error by its text (message/stderr/stdout): it is localized, unstable and embeds paths. Branch on error.code, an exit code, ProcessResult.spawnError, name or instanceof. See docs/PATTERNS.md (Error Classification).";
+
+const NO_ERROR_TEXT_MATCH = [
+  // err.message.includes("…"), result.stderr.startsWith("…")
+  {
+    selector: `CallExpression[callee.property.name=${TEXT_MATCH_METHOD}][callee.object.property.name=${ERROR_TEXT_PROPERTY}]`,
+    message: ERROR_TEXT_MESSAGE,
+  },
+  // err.message.toLowerCase().includes("…")
+  {
+    selector: `CallExpression[callee.property.name=${TEXT_MATCH_METHOD}][callee.object.callee.object.property.name=${ERROR_TEXT_PROPERTY}]`,
+    message: ERROR_TEXT_MESSAGE,
+  },
+  // const message = getErrorMessage(err); message.includes("…")
+  {
+    selector: `CallExpression[callee.property.name=${TEXT_MATCH_METHOD}][callee.object.name=/^(message|msg|errMsg|errorMessage|stderr|stdout)$/]`,
+    message: ERROR_TEXT_MESSAGE,
+  },
+  // getErrorMessage(err).includes("…")
+  {
+    selector: `CallExpression[callee.property.name=${TEXT_MATCH_METHOD}][callee.object.callee.name='getErrorMessage']`,
+    message: ERROR_TEXT_MESSAGE,
+  },
+  // /…/.test(err.message)
+  {
+    selector: `CallExpression[callee.property.name='test'][arguments.0.property.name=${ERROR_TEXT_PROPERTY}]`,
+    message: ERROR_TEXT_MESSAGE,
+  },
+];
+
+const PRODUCTION_SOURCES = [
+  "src/**/*.ts",
+  "src/**/*.svelte",
+  "extensions/*/src/**/*.ts",
+  "extensions/*/src/**/*.svelte",
+];
+const TEST_SOURCES = [
+  "**/*.test.ts",
+  "**/*test-utils.ts",
+  "**/*.state-mock.ts",
+  "**/state-mock.ts",
+  "src/test/**",
+];
+
 // Files where a dynamic import() is load-bearing and cannot be hoisted:
 // - vite.config.ts: `await import("vite")` inside a plugin hook (importing vite
 //   at module scope would be circular).
@@ -101,6 +159,18 @@ export default tseslint.config(
     files: DYNAMIC_IMPORT_ALLOWED,
     rules: {
       "no-restricted-syntax": ["error", NO_INLINE_TYPE_IMPORT],
+    },
+  },
+  {
+    files: PRODUCTION_SOURCES,
+    ignores: TEST_SOURCES,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_DYNAMIC_IMPORT,
+        NO_INLINE_TYPE_IMPORT,
+        ...NO_ERROR_TEXT_MATCH,
+      ],
     },
   },
   {
@@ -190,6 +260,22 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    files: ["src/intents/**/*.ts"],
+    ignores: TEST_SOURCES,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_DYNAMIC_IMPORT,
+        NO_INLINE_TYPE_IMPORT,
+        NO_ZOD_INSTANCEOF,
+        NO_BARE_ZOD_CUSTOM,
+        NO_INTENT_ASSERTION_IN_DISPATCH,
+        NO_EVENT_ASSERTION_IN_EMIT,
+        ...NO_ERROR_TEXT_MATCH,
+      ],
+    },
+  },
   // The dispatch/emit assertion bans apply everywhere intents are dispatched, not just inside
   // the intent system — modules are where most dispatch sites live.
   {
@@ -202,6 +288,22 @@ export default tseslint.config(
         NO_INLINE_TYPE_IMPORT,
         NO_INTENT_ASSERTION_IN_DISPATCH,
         NO_EVENT_ASSERTION_IN_EMIT,
+      ],
+    },
+  },
+  // The same, plus the error-text ban, for the production files among them (the block above
+  // also covers boundary-test-utils and state mocks, which may read test runners' messages).
+  {
+    files: ["src/modules/**/*.ts", "src/main.ts"],
+    ignores: TEST_SOURCES,
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        NO_DYNAMIC_IMPORT,
+        NO_INLINE_TYPE_IMPORT,
+        NO_INTENT_ASSERTION_IN_DISPATCH,
+        NO_EVENT_ASSERTION_IN_EMIT,
+        ...NO_ERROR_TEXT_MATCH,
       ],
     },
   },

@@ -1249,8 +1249,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
                 const result = await proc.wait();
                 if (result.exitCode !== 0) {
                   throw new Error(
-                    result.stderr.includes("ENOENT") || result.stderr.includes("spawn")
-                      ? `Failed to run IDE server: ${result.stderr || "Binary not found"}`
+                    result.spawnError !== undefined
+                      ? `Failed to run IDE server: ${result.stderr || result.spawnError}`
                       : `Failed to install extension: ${entry.id}`
                   );
                 }
