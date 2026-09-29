@@ -57,6 +57,9 @@ function gitEnvironment(): {
  * Internally converts to native format when calling simple-git.
  */
 export class SimpleGitClient implements IGitClient {
+  /** Tail of the config-write queue; see `serializeConfigWrite`. */
+  private configWrites: Promise<void> = Promise.resolve();
+
   constructor(private readonly logger: Logger) {}
 
   /**
@@ -92,8 +95,32 @@ export class SimpleGitClient implements IGitClient {
   }
 
   /**
+   * Run a write to the repository's config after every write queued before it.
+   *
+   * `git config` rewrites `.git/config` through `.git/config.lock` and fails at
+   * once, without retrying, when another write holds that lock ("could not lock
+   * config file"). CodeHydra issues such writes concurrently — a lock handoff
+   * retags two workspaces at the same time, and every worktree of a repository
+   * shares its one config — so all of them take turns here. One queue for the
+   * whole client rather than one per repository: a worktree path and its
+   * repository's path name the same config, and these writes take milliseconds.
+   */
+  private serializeConfigWrite<T>(write: () => Promise<T>): Promise<T> {
+    const result = this.configWrites.then(write);
+    this.configWrites = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  /**
    * Check if path is inside a git repository.
    * Used internally for pre-validation in config operations.
+   *
+   * `false` only when git says so. Any other failure (git could not read the
+   * config, …) throws with git's own message: both callers fail either way, and
+   * reporting it as "Not a git repository" hid what actually went wrong.
    */
   private async isInsideRepository(repoPath: Path): Promise<boolean> {
     try {
@@ -105,8 +132,12 @@ export class SimpleGitClient implements IGitClient {
       // checkIsRepo() uses --is-inside-work-tree which returns false for bare repos.
       // Fall back to isRepositoryRoot which handles bare repos correctly.
       return await this.isRepositoryRoot(repoPath);
-    } catch {
-      return false;
+    } catch (error: unknown) {
+      const errMsg = getErrorMessage(error);
+      this.logger
+        .scoped({ path: repoPath.toString() })
+        .warn("Repository check failed", { error: errMsg });
+      throw new GitError(`Failed to check repository: ${errMsg}`);
     }
   }
 
@@ -121,11 +152,16 @@ export class SimpleGitClient implements IGitClient {
       try {
         const isBareResult = await git.revparse(["--is-bare-repository"]);
         isBare = isBareResult.trim() === "true";
-      } catch {
-        // revparse fails for non-git directories - this is expected, return false
-        this.logger
-          .scoped({ path: repoPath.toString() })
-          .debug("IsRepositoryRoot", { result: false, reason: "not a repo (revparse failed)" });
+      } catch (error: unknown) {
+        // revparse fails for non-git directories - this is expected, return false.
+        // Not narrowed to git's "not a git repository": that message is localized,
+        // and a non-English git would then fail every non-repo check. Git's own
+        // words go in the log line, so a failure of any other kind is visible.
+        this.logger.scoped({ path: repoPath.toString() }).debug("IsRepositoryRoot", {
+          result: false,
+          reason: "not a repo (revparse failed)",
+          error: getErrorMessage(error),
+        });
         return false;
       }
 
@@ -307,19 +343,25 @@ export class SimpleGitClient implements IGitClient {
     startPoint: string,
     options?: { track?: boolean }
   ): Promise<void> {
-    return this.wrapGitOperation(async () => {
-      const git = this.getGit(repoPath);
-      const args = options?.track ? [name, "--track", startPoint] : [name, startPoint];
-      await git.branch(args);
-    }, `Failed to create branch ${name}`);
+    // A config write: --track records the upstream as branch.<name>.remote/merge.
+    return this.serializeConfigWrite(() =>
+      this.wrapGitOperation(async () => {
+        const git = this.getGit(repoPath);
+        const args = options?.track ? [name, "--track", startPoint] : [name, startPoint];
+        await git.branch(args);
+      }, `Failed to create branch ${name}`)
+    );
   }
 
   async deleteBranch(repoPath: Path, name: string): Promise<void> {
-    await this.wrapGitOperation(async () => {
-      const git = this.getGit(repoPath);
-      // Use -D to force delete (handles unmerged branches)
-      await git.branch(["-D", name]);
-    }, `Failed to delete branch ${name}`);
+    // A config write: deleting a branch removes its branch.<name> section.
+    await this.serializeConfigWrite(() =>
+      this.wrapGitOperation(async () => {
+        const git = this.getGit(repoPath);
+        // Use -D to force delete (handles unmerged branches)
+        await git.branch(["-D", name]);
+      }, `Failed to delete branch ${name}`)
+    );
     this.logger.scoped({ path: repoPath.toString() }).debug("DeleteBranch", { branch: name });
   }
 
@@ -461,32 +503,36 @@ export class SimpleGitClient implements IGitClient {
   }
 
   async setBranchConfig(repoPath: Path, branch: string, key: string, value: string): Promise<void> {
-    return this.wrapGitOperation(async () => {
-      const git = this.getGit(repoPath);
-      const configKey = `branch.${branch}.${key}`;
-      await git.raw(["config", configKey, value]);
-    }, `Failed to set branch config branch.${branch}.${key}`);
+    return this.serializeConfigWrite(() =>
+      this.wrapGitOperation(async () => {
+        const git = this.getGit(repoPath);
+        const configKey = `branch.${branch}.${key}`;
+        await git.raw(["config", configKey, value]);
+      }, `Failed to set branch config branch.${branch}.${key}`)
+    );
   }
 
   async unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void> {
-    // First, verify it's a git repository
-    const isRepo = await this.isInsideRepository(repoPath);
-    if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
-    }
-
-    try {
-      const git = this.getGit(repoPath);
-      const configKey = `branch.${branch}.${key}`;
-      await git.raw(["config", "--unset", configKey]);
-    } catch (error: unknown) {
-      // Exit code 5 means key doesn't exist - that's OK for unset
-      if (error instanceof Error && error.message.includes("exit code 5")) {
-        return;
+    return this.serializeConfigWrite(async () => {
+      // First, verify it's a git repository
+      const isRepo = await this.isInsideRepository(repoPath);
+      if (!isRepo) {
+        throw new GitError(`Not a git repository: ${repoPath.toString()}`);
       }
-      const errMsg = getErrorMessage(error);
-      throw new GitError(`Failed to unset branch config: ${errMsg}`);
-    }
+
+      try {
+        const git = this.getGit(repoPath);
+        const configKey = `branch.${branch}.${key}`;
+        await git.raw(["config", "--unset", configKey]);
+      } catch (error: unknown) {
+        // Exit code 5 means key doesn't exist - that's OK for unset
+        if (error instanceof Error && error.message.includes("exit code 5")) {
+          return;
+        }
+        const errMsg = getErrorMessage(error);
+        throw new GitError(`Failed to unset branch config: ${errMsg}`);
+      }
+    });
   }
 
   async clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void> {

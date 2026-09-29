@@ -5,7 +5,7 @@
  * (`pnpm -s appctrl`) exposes to agents, so what you debug interactively is what CI runs.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 // Explicit .ts extension so `scripts/record-demo.ts` can import these fixtures
 // under bare node (which requires extensions in relative ESM specifiers).
@@ -187,6 +187,27 @@ export function failFastOnSetupError(driver: AppDriver): {
       if (timer) clearTimeout(timer);
     },
   };
+}
+
+/**
+ * Copy every app log written so far into the run's output directory
+ * (`<outputDir>/app-logs/`), which the CI failure artifact uploads.
+ *
+ * The app keeps only its 20 newest logs and prunes the rest at each start, and
+ * the suite launches it far more often than that — so by the time an artifact is
+ * uploaded, the launch that failed has usually been pruned. Called after each
+ * spec's app stops, before the next launch can prune anything. Plugin run logs
+ * live in `logs/plugins/`, prune themselves per entry, and are uploaded from the
+ * data root directly.
+ */
+function preserveAppLogs(): void {
+  const logsDir = join(DATA_ROOT, "logs");
+  if (!existsSync(logsDir)) return;
+  const target = join(test.info().project.outputDir, "app-logs");
+  mkdirSync(target, { recursive: true });
+  for (const file of readdirSync(logsDir).filter((f) => f.endsWith(".log"))) {
+    copyFileSync(join(logsDir, file), join(target, file));
+  }
 }
 
 /** The app's fatal setup error from its JSONL log, or null. */
@@ -412,6 +433,7 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
 
   test.afterAll(async () => {
     await driver?.stop();
+    preserveAppLogs();
 
     // After stop, so the shutdown path is covered too. Every spec gets this for
     // free: an error logged behind the IPC boundary fails it even when every
