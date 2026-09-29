@@ -427,7 +427,7 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
     // The warm projects are named after the agent they exercise.
     const agent = options.agent ?? (test.info().project.name as Agent);
     // Warm start: keep config.json (agent choice), bundles, and installed VSIXes.
-    resetDataState({ keepConfig: true });
+    await resetDataState({ keepConfig: true });
     await launchApp(driver, { ...options, agent });
   });
 
@@ -485,8 +485,8 @@ export async function waitForConnectionDetails(timeoutMs = 60_000): Promise<void
 }
 
 /** Cold start: an empty root, nothing downloaded or configured yet. */
-export function resetToColdStart(): void {
-  resetRoot();
+export async function resetToColdStart(): Promise<void> {
+  await resetRoot();
 }
 
 /**

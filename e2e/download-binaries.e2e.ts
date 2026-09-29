@@ -56,7 +56,7 @@ function downloadedVersions(name: string, executable: string): string[] {
 }
 
 test("--download-binaries fetches every binary, and the app starts on it", async () => {
-  resetToColdStart();
+  await resetToColdStart();
 
   const { code, output } = await runDownloadBinaries();
   expect(code, output).toBe(0);

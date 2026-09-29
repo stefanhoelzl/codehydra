@@ -13,7 +13,8 @@
  * project, so a mistyped value must fail loudly rather than delete a home directory.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { createServer } from "node:net";
@@ -96,10 +97,23 @@ function assertDisposable(path: string): void {
   }
 }
 
+/**
+ * Delete a tree, riding out Windows' transient locks.
+ *
+ * Async on purpose: `rmSync` is native since Node 24 and treats Windows'
+ * "Permission denied" (a sharing violation — a process just leaving a
+ * directory it had as its cwd) as final, so its `maxRetries` never applies to
+ * the case it exists for. `fs.promises.rm` retries it (as EBUSY/EPERM), and its
+ * error names the entry that refused, not the root.
+ */
+function removeTree(path: string): Promise<void> {
+  return rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+}
+
 /** Full wipe of the root. Cold start only. Guarded. */
-export function resetRoot(): void {
+export async function resetRoot(): Promise<void> {
   assertDisposable(ROOT_DIR);
-  rmSync(ROOT_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  await removeTree(ROOT_DIR);
   mkdirSync(ROOT_DIR, { recursive: true });
 }
 
@@ -110,19 +124,14 @@ export function resetRoot(): void {
  * `keepConfig: true` preserves the home's config.json (the agent choice), so warm
  * specs skip the wizard.
  */
-export function resetDataState(options: { keepConfig: boolean }): void {
+export async function resetDataState(options: { keepConfig: boolean }): Promise<void> {
   // Plugins go with every reset: a spec that installs one must not leave it
   // running scripts in the next spec's workspaces.
   const entries = ["projects", "state.json", join("vscode", "user-data"), join("home", "plugins")];
   if (!options.keepConfig) entries.push("home");
 
   for (const entry of entries) {
-    rmSync(join(DATA_ROOT, entry), {
-      recursive: true,
-      force: true,
-      maxRetries: 5,
-      retryDelay: 200,
-    });
+    await removeTree(join(DATA_ROOT, entry));
   }
 }
 

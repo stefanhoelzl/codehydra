@@ -90,7 +90,7 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
     // Not optional, even though this spec creates nothing: without it the app
     // inherits the previous spec's project list, whose temp repos are gone by
     // now, and `project:open` logs an error that fails the fixture's teardown.
-    resetDataState({ keepConfig: true });
+    await resetDataState({ keepConfig: true });
 
     // Without the offer, the app dies on a native "Startup Failed" box and
     // never shows a UI — launchApp would then wait out its whole 120s and the

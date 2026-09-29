@@ -69,7 +69,7 @@ function logFiles(): string[] {
 
 test.beforeAll(async () => {
   // Warm start, same as every other warm spec: keep config.json, bundles, VSIXes.
-  resetDataState({ keepConfig: true });
+  await resetDataState({ keepConfig: true });
   seedStaleData();
 
   // Seeded *before* launch, so the app sees it the way a real upgrade would.
