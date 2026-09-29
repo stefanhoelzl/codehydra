@@ -489,6 +489,21 @@ export function resetToColdStart(): void {
   resetRoot();
 }
 
+/**
+ * Probe schedule for every `expect.poll` in the suite; the last interval repeats.
+ *
+ * Playwright's default ([100, 250, 500, 1000], then every second) notices a
+ * condition up to a second after it holds. Profiled, most multi-second waits
+ * ended exactly on one of those ticks, so each paid ~0.5s for nothing. Every
+ * callback here is a file check, a `ch` call or a CDP frame lookup — cheap
+ * enough to run four times a second.
+ *
+ * Locator assertions (`toBeVisible`, `toBeHidden`) have that same schedule
+ * hard-coded, so a long wait on a locator uses `locator.waitFor()` instead,
+ * which probes at least every 500ms.
+ */
+export const POLL_INTERVALS = [100, 250];
+
 // =============================================================================
 // UI helpers
 // =============================================================================
@@ -624,7 +639,7 @@ export async function removeWorkspace(ui: Page, name: string): Promise<void> {
     }
   }
 
-  await expect(workspaceRow(ui, name)).toBeHidden({ timeout: 60_000 });
+  await workspaceRow(ui, name).waitFor({ state: "hidden", timeout: 60_000 });
   await collapseSidebar(ui);
 }
 
@@ -636,6 +651,7 @@ export async function waitForWorkspaceFrame(
 ): Promise<void> {
   await expect
     .poll(async () => (await driver.findTarget("workspace").catch(() => null))?.frame.url() ?? "", {
+      intervals: POLL_INTERVALS,
       timeout,
     })
     .toContain(`${name}.code-workspace`);

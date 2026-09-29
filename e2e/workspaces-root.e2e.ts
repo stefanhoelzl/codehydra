@@ -19,6 +19,7 @@ import {
   useApp,
   workspaceRow,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const app = useApp();
@@ -64,13 +65,15 @@ test("migrating keeps existing workspaces in place and creates new ones in the n
   await migrate.click();
 
   // The existing workspace is still there, where it was.
-  await expect(workspaceRow(ui, "alpha")).toBeVisible({ timeout: 120_000 });
+  await workspaceRow(ui, "alpha").waitFor({ timeout: 120_000 });
   expect(existsSync(oldAlpha)).toBe(true);
 
   // A new one goes to the new root.
   await createWorkspace(app(), "beta");
   const projects = join(newRoot, "projects");
-  await expect.poll(() => existsSync(projects), { timeout: 60_000 }).toBe(true);
+  await expect
+    .poll(() => existsSync(projects), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
   const [projectDir] = readdirSync(projects);
   expect(existsSync(join(projects, projectDir!, "workspaces", "beta"))).toBe(true);
 
@@ -78,7 +81,7 @@ test("migrating keeps existing workspaces in place and creates new ones in the n
   await app().stop();
   await launchApp(app(), { agent: currentAgent(), extraArgs: rootFlag() });
   const restarted = app().uiPage();
-  await expect(workspaceRow(restarted, "alpha")).toBeVisible({ timeout: 120_000 });
+  await workspaceRow(restarted, "alpha").waitFor({ timeout: 120_000 });
   await expect(workspaceRow(restarted, "beta")).toBeVisible();
   await expect(restarted.getByText("The workspaces folder changed")).toHaveCount(0);
 });

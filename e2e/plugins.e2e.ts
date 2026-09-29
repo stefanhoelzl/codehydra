@@ -56,12 +56,16 @@ import {
   waitForWorkspaceFrame,
   workspaceRow,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const isWindows = process.platform === "win32";
 
-/** Seconds between automation polls. The floor is 1; 2 keeps the log readable. */
-const POLL_SECONDS = 2;
+/**
+ * Seconds between automation polls: the floor. Every automation test waits for
+ * the next poll to land, half an interval on average.
+ */
+const POLL_SECONDS = 1;
 /** Generous: a poll has to land, then a worktree, IDE server and agent come up. */
 const CREATE_TIMEOUT = 180_000;
 
@@ -406,7 +410,9 @@ test("the repository's title wins, and a tag set with ch in a hook shows", async
   // on-workspace-opened is fire-and-forget: it lands after the open returned.
   await expect(row.getByText("via-ch", { exact: true })).toBeVisible({ timeout: 60_000 });
   // Local plugins run first, so the tag can show before the repository's plugin has run.
-  await expect.poll(() => marker("alpha", MARK.event), { timeout: 60_000 }).toBe(true);
+  await expect
+    .poll(() => marker("alpha", MARK.event), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
   await collapseSidebar(ui);
 });
 
@@ -473,9 +479,12 @@ test("the deletion gate refuses, and Dismiss force-deletes past it", async () =>
   await expect(panel.getByText(REFUSAL)).toBeVisible();
   await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
 
-  await expect(workspaceRow(ui, "alpha")).toBeHidden({ timeout: 120_000 });
+  await workspaceRow(ui, "alpha").waitFor({ state: "hidden", timeout: 120_000 });
   await expect
-    .poll(() => existsSync(join(workspacesDir(), "alpha")), { timeout: 60_000 })
+    .poll(() => existsSync(join(workspacesDir(), "alpha")), {
+      intervals: POLL_INTERVALS,
+      timeout: 60_000,
+    })
     .toBe(false);
 });
 
@@ -488,7 +497,7 @@ test("Cancel on the loading panel stops a setup hook that never finishes", async
   const running = ui.getByText("Running after-worktree-created (workspace:setup)", {
     exact: true,
   });
-  await expect(running).toBeVisible({ timeout: 120_000 });
+  await running.waitFor({ timeout: 120_000 });
   await clickUntil(ui.getByRole("button", { name: "Cancel", exact: true }), () =>
     expect(running).toBeHidden({ timeout: 10_000 })
   );
@@ -512,7 +521,12 @@ test("Cancel on the deletion panel stops a gate that never finishes, and fails i
   writeFileSync(join(worktree, ".codehydra", "plugins", "setup.yaml"), HANGING_GATE);
   await removeViaSidebar(ui, "gamma");
 
-  await expect.poll(() => existsSync(join(worktree, MARK.gate)), { timeout: 60_000 }).toBe(true);
+  await expect
+    .poll(() => existsSync(join(worktree, MARK.gate)), {
+      intervals: POLL_INTERVALS,
+      timeout: 60_000,
+    })
+    .toBe(true);
 
   await expandSidebar(ui);
   await workspaceRow(ui, "gamma").click();
@@ -529,7 +543,7 @@ test("Cancel on the deletion panel stops a gate that never finishes, and fails i
   expect(existsSync(worktree)).toBe(true);
 
   await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
-  await expect(workspaceRow(ui, "gamma")).toBeHidden({ timeout: 120_000 });
+  await workspaceRow(ui, "gamma").waitFor({ state: "hidden", timeout: 120_000 });
 });
 
 // =============================================================================
@@ -542,12 +556,15 @@ test("a workspaces automation creates a worktree and records it", async () => {
 
   writeArmed(wsArmed, [trackedItem("1", "tracked-1")]);
 
-  await expect(workspaceRow(ui, "tracked-1")).toBeVisible({ timeout: CREATE_TIMEOUT });
+  await workspaceRow(ui, "tracked-1").waitFor({ timeout: CREATE_TIMEOUT });
   await expect
-    .poll(() => existsSync(join(workspacesDir(), "tracked-1")), { timeout: CREATE_TIMEOUT })
+    .poll(() => existsSync(join(workspacesDir(), "tracked-1")), {
+      intervals: POLL_INTERVALS,
+      timeout: CREATE_TIMEOUT,
+    })
     .toBe(true);
   await expect
-    .poll(() => Object.keys(trackedEntries()), { timeout: 30_000 })
+    .poll(() => Object.keys(trackedEntries()), { intervals: POLL_INTERVALS, timeout: 30_000 })
     .toContain("automations/tracked/1");
 });
 
@@ -562,7 +579,7 @@ test("the tracked item disappearing keeps the entry while the workspace is there
             entry.message === "Keeping automation entry (workspace still exists)" &&
             entry.context?.["key"] === "automations/tracked/1"
         ).length,
-      { timeout: 30_000 }
+      { intervals: POLL_INTERVALS, timeout: 30_000 }
     )
     .toBeGreaterThan(0);
   expect(Object.keys(trackedEntries())).toContain("automations/tracked/1");
@@ -574,7 +591,7 @@ test("an events automation creates on the first event, and a repeat refreshes it
   const ui = app().uiPage();
 
   writeArmed(evArmed, [eventItem("ev-42", "review_requested")]);
-  await expect(workspaceRow(ui, "ev-42")).toBeVisible({ timeout: CREATE_TIMEOUT });
+  await workspaceRow(ui, "ev-42").waitFor({ timeout: CREATE_TIMEOUT });
   await waitForWorkspaceFrame(app(), "ev-42"); // focus: true — it takes the view
 
   await expandSidebar(ui);
@@ -582,7 +599,7 @@ test("an events automation creates on the first event, and a repeat refreshes it
   await expect(sidebarText(ui, "nudge")).toBeVisible();
 
   writeArmed(evArmed, [eventItem("ev-42", "commented")]);
-  await expect(sidebarText(ui, "Event commented")).toBeVisible({ timeout: 60_000 });
+  await sidebarText(ui, "Event commented").waitFor({ timeout: 60_000 });
   await expect(workspaceRow(ui, "ev-42")).toHaveCount(1);
   await collapseSidebar(ui);
 
@@ -600,11 +617,13 @@ test("an event wakes the hibernated workspace it matches", async () => {
   await app().stop();
   await launchApp(app(), { agent: test.info().project.name as Agent, extraArgs: launchFlags() });
   const ui = app().uiPage();
-  await expect(hibernatedRow(ui, "ev-42")).toBeVisible({ timeout: CREATE_TIMEOUT });
+  await hibernatedRow(ui, "ev-42").waitFor({ timeout: CREATE_TIMEOUT });
 
   writeArmed(evArmed, [eventItem("ev-42", "nudged")]);
 
-  await expect.poll(() => hibernatedFlag("ev-42"), { timeout: CREATE_TIMEOUT }).toBe("");
+  await expect
+    .poll(() => hibernatedFlag("ev-42"), { intervals: POLL_INTERVALS, timeout: CREATE_TIMEOUT })
+    .toBe("");
   await waitForWorkspaceFrame(app(), "ev-42");
   await expandSidebar(ui);
   await expect(sidebarText(ui, "Event nudged")).toBeVisible({ timeout: 60_000 });
@@ -619,9 +638,7 @@ test("an automation runs another action for each item", async () => {
     { action: "notification.show", title: "From an automation", type: "warning" },
   ]);
 
-  await expect(ui.getByRole("status", { name: /^From an automation/ })).toBeVisible({
-    timeout: 60_000,
-  });
+  await ui.getByRole("status", { name: /^From an automation/ }).waitFor({ timeout: 60_000 });
   await collapseSidebar(ui);
 });
 
@@ -631,7 +648,7 @@ test("an automation pipes its raw items through ch plugin render", async () => {
 
   writeArmed(renderArmed, [{ n: 7 }]);
 
-  await expect(ui.getByRole("status", { name: /^Rendered 7/ })).toBeVisible({ timeout: 60_000 });
+  await ui.getByRole("status", { name: /^Rendered 7/ }).waitFor({ timeout: 60_000 });
   await collapseSidebar(ui);
 });
 
@@ -645,7 +662,7 @@ test("an item the action does not accept is refused and reported", async () => {
         (json(ch(["plugin", "errors"])) as { entry: string; message: string }[]).find(
           (row) => row.entry === "automations.notify"
         )?.message ?? "",
-      { timeout: 60_000 }
+      { intervals: POLL_INTERVALS, timeout: 60_000 }
     )
     .toMatch(/item 0: notification\.show: unknown field typo/);
 });
@@ -665,7 +682,7 @@ test("a failing automation is reported with its run log, never its output", asyn
         failing = rows.find((row) => row.entry === "automations.failing");
         return failing?.message;
       },
-      { timeout: 60_000 }
+      { intervals: POLL_INTERVALS, timeout: 60_000 }
     )
     .toBe("exit 3");
 
@@ -702,7 +719,12 @@ test("a repository with old hooks is offered Migrate, which writes a plugin", as
     // while the editor starts.
     const migrate = async () =>
       (await app().findTarget("workspace")).frame.getByRole("button", { name: "Migrate" });
-    await expect.poll(async () => (await migrate()).isVisible(), { timeout: 120_000 }).toBe(true);
+    await expect
+      .poll(async () => (await migrate()).isVisible(), {
+        intervals: POLL_INTERVALS,
+        timeout: 120_000,
+      })
+      .toBe(true);
     await (await migrate()).click();
 
     // Two projects are open now, so find this worktree by name.
@@ -715,6 +737,7 @@ test("a repository with old hooks is offered Migrate, which writes a plugin", as
     // Poll the content, not the file: an exclusive write creates it empty first.
     await expect
       .poll(() => (existsSync(manifest) ? readFileSync(manifest, "utf8") : ""), {
+        intervals: POLL_INTERVALS,
         timeout: 30_000,
       })
       .toContain("$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created");

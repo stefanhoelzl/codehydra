@@ -21,7 +21,7 @@ import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_ROOT, resetDataState, type Agent } from "./env";
-import { launchApp, useApp } from "./fixtures";
+import { launchApp, useApp, POLL_INTERVALS } from "./fixtures";
 
 /** Matches the sweep's own limit: `{ kind: "keepRecent", path: "logs", keep: 20 }`. */
 const LOG_KEEP = 20;
@@ -83,17 +83,24 @@ test("retires directories and files nothing uses any more", async () => {
   // The sweep is fire-and-forget, so poll rather than assume it finished by the
   // time the UI came up — not blocking startup is the point of the design.
   await expect
-    .poll(() => existsSync(join(DATA_ROOT, "code-server")), { timeout: 30_000 })
+    .poll(() => existsSync(join(DATA_ROOT, "code-server")), {
+      intervals: POLL_INTERVALS,
+      timeout: 30_000,
+    })
     .toBe(false);
 
   await expect
-    .poll(() => existsSync(join(DATA_ROOT, "claude", "configs")), { timeout: 30_000 })
+    .poll(() => existsSync(join(DATA_ROOT, "claude", "configs")), {
+      intervals: POLL_INTERVALS,
+      timeout: 30_000,
+    })
     .toBe(false);
 });
 
 test("prunes screenshot directories whose project is gone, and keeps the rest", async () => {
   await expect
     .poll(() => existsSync(join(DATA_ROOT, "screenshots", "ghost-project-deadbeef")), {
+      intervals: POLL_INTERVALS,
       timeout: 30_000,
     })
     .toBe(false);
@@ -108,7 +115,9 @@ test("prunes screenshot directories whose project is gone, and keeps the rest", 
 test("caps the log directory and keeps this launch's own log", async () => {
   // Exactly the limit: we seeded more than that, and this launch's own file is
   // newer than every seeded one, so the cut lands in a known place.
-  await expect.poll(() => logFiles().length, { timeout: 30_000 }).toBe(LOG_KEEP);
+  await expect
+    .poll(() => logFiles().length, { intervals: POLL_INTERVALS, timeout: 30_000 })
+    .toBe(LOG_KEEP);
 
   const remaining = logFiles();
 

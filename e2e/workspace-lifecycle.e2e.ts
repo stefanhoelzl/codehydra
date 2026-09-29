@@ -14,6 +14,7 @@ import {
   useApp,
   workspaceRow,
   workspacesDir,
+  POLL_INTERVALS,
 } from "./fixtures";
 
 const app = useApp();
@@ -42,8 +43,12 @@ test("two workspaces coexist, each with its own worktree", async () => {
   await expect(workspaceRow(ui, "beta")).toBeVisible();
 
   const dir = workspacesDir();
-  await expect.poll(() => existsSync(join(dir, "alpha")), { timeout: 60_000 }).toBe(true);
-  await expect.poll(() => existsSync(join(dir, "beta")), { timeout: 60_000 }).toBe(true);
+  await expect
+    .poll(() => existsSync(join(dir, "alpha")), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
+  await expect
+    .poll(() => existsSync(join(dir, "beta")), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(true);
 });
 
 test("switching workspaces swaps the active iframe", async () => {
@@ -52,12 +57,16 @@ test("switching workspaces swaps the active iframe", async () => {
 
   // `beta` was created last, so it becomes the active one — but activation lands
   // after the sidebar row does, so poll rather than assume.
-  await expect.poll(activeUrl, { timeout: 60_000 }).toContain("beta.code-workspace");
+  await expect
+    .poll(activeUrl, { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toContain("beta.code-workspace");
 
   await expandSidebar(ui);
   await workspaceRow(ui, "alpha").click();
 
-  await expect.poll(activeUrl, { timeout: 60_000 }).toContain("alpha.code-workspace");
+  await expect
+    .poll(activeUrl, { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toContain("alpha.code-workspace");
 });
 
 test("removing a workspace deletes its git worktree", async () => {
@@ -67,7 +76,9 @@ test("removing a workspace deletes its git worktree", async () => {
   await removeWorkspace(ui, "beta");
 
   await expect(workspaceRow(ui, "alpha")).toBeVisible();
-  await expect.poll(() => existsSync(join(dir, "beta")), { timeout: 60_000 }).toBe(false);
+  await expect
+    .poll(() => existsSync(join(dir, "beta")), { intervals: POLL_INTERVALS, timeout: 60_000 })
+    .toBe(false);
   expect(existsSync(join(dir, "beta.code-workspace"))).toBe(false);
   // The survivor is untouched.
   expect(existsSync(join(dir, "alpha"))).toBe(true);
