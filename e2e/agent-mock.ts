@@ -19,7 +19,15 @@
  */
 import { getTextContent, LLMock, type ChatCompletionRequest } from "@copilotkit/aimock";
 import { test } from "@playwright/test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Agent } from "./env.ts";
@@ -124,7 +132,12 @@ export function useAgentMock(options: AgentMockOptions = {}): AgentMockHandle {
 
   test.beforeAll(async () => {
     const agent = test.info().project.name as Agent;
-    configDir = mkdtempSync(join(tmpdir(), "ch-e2e-agent-"));
+    // The long form: Windows runners' temp dir is an 8.3 short path
+    // (C:\Users\RUNNER~1\...), and this becomes CLAUDE_CONFIG_DIR, which the
+    // Claude extension watches from inside the IDE server. libuv before 1.53.0
+    // aborts the whole server on the first event in a short-path watched
+    // directory (libuv#5010). Only `.native` expands short names.
+    configDir = realpathSync.native(mkdtempSync(join(tmpdir(), "ch-e2e-agent-")));
 
     // port 0: the suite already picks a free port for the IDE server rather than
     // colliding with a developer's running instance, and a mock is no different.
