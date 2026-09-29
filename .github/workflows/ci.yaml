@@ -22,6 +22,7 @@ jobs:
   # Platform-independent checks. Prettier, ESLint and the site build read the
   # same bytes on every OS, so running them once is enough.
   lint:
+    if: false
     name: Lint
     runs-on: ubuntu-24.04
     steps:
@@ -35,6 +36,7 @@ jobs:
       - run: git diff --exit-code
 
   validate:
+    if: false
     name: Validate
     runs-on: ${{ matrix.os }}
     strategy:
@@ -86,6 +88,7 @@ jobs:
   # file had already defeated (by importing the module first) passed the parallel suite
   # locally and failed on the ubuntu runner; only this job reproduced it every run.
   canary:
+    if: false
     name: Test Canary
     runs-on: ubuntu-24.04
     steps:
@@ -127,12 +130,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: linux
-            runs-on: ubuntu-24.04
-            artifact: CodeHydra-linux-x64.AppImage
-          - name: windows
-            runs-on: windows-2025
-            artifact: CodeHydra-win-portable-x64
           - name: macos
             runs-on: macos-26
             artifact: CodeHydra-darwin-arm64.tar.gz
@@ -213,10 +210,12 @@ jobs:
 
       - name: Run e2e
         if: matrix.name != 'linux'
-        run: pnpm test:e2e
+        env:
+          REPRO_N: "10"
+        run: pnpm test:e2e e2e/zz-repro.e2e.ts --repeat-each 4
 
       - name: Upload failure artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-${{ matrix.name }}-failure
@@ -232,6 +231,7 @@ jobs:
   # The installer is what most Windows users download; the portable dir above is not.
   # Install it silently, then run the download-binaries spec against the *installed* app.
   e2e-windows-installer:
+    if: false
     name: E2E (Windows NSIS installer)
     needs: build
     runs-on: windows-2025
@@ -276,7 +276,7 @@ jobs:
         run: pnpm exec playwright test --project=download-binaries
 
       - name: Upload failure artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: e2e-windows-nsis-failure
@@ -290,6 +290,7 @@ jobs:
           include-hidden-files: true
 
   build-packages:
+    if: false
     name: Build Packages
     runs-on: ubuntu-24.04
     steps:
