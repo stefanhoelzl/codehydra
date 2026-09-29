@@ -264,12 +264,53 @@ const SIMPLE_BROWSER_LOCAL_FILES: TextPatch = {
   whenMissing: "file:// URLs stay blank in Simple Browser",
 };
 
+/**
+ * Open a terminal's xterm only into a container that is in the DOM.
+ *
+ * A terminal loads xterm.js lazily, and `TerminalInstance._createXterm` ends by
+ * opening it into the terminal's container if the instance believes it is
+ * visible:
+ *
+ *     this._pathService.userHome().then(…),this._isVisible&&this._open(),i}
+ *
+ * `_open()` throws ("A container element needs to be set with `attachToElement`
+ * and be part of the DOM before calling `_open`") when that container is gone,
+ * and `_isVisible` can be stale. When another editor replaces an editor terminal
+ * in its group, `EditorPanes.doHideActiveEditorPane` calls the pane's
+ * `clearInput()` before `setVisible(false)`; `TerminalEditor.clearInput` detaches
+ * the instance and forgets its input, so the `setVisible(false)` that follows
+ * never reaches the instance. If the xterm.js import is still in flight at that
+ * point, it resolves into `_open()` with no container and throws — rejecting
+ * `_xtermReadyPromise` for good. Every `focusWhenReady()` awaits that promise,
+ * so `workbench.action.terminal.focus` on that terminal fails from then on.
+ *
+ * CodeHydra hits this with the agent terminal, an editor terminal: an agent or
+ * a spec opening Simple Browser (`ch ws browser`) while the workspace starts
+ * replaces the terminal editor inside that window, and the first-idle terminal
+ * focus (`src/main.ts`) then fails with the error above — on slow machines,
+ * where the import takes long enough.
+ *
+ * Skipping the open when the container is not connected is safe: the instance
+ * opens itself when it is shown again (`attachToElement` + `setVisible(true)`,
+ * both of which call `_open()` once xterm exists).
+ */
+const TERMINAL_OPEN_DETACHED: TextPatch = {
+  id: "terminal-open-detached",
+  file: "out/vs/code/browser/workbench/workbench.js",
+  find: /(\{this\._userHome=[\w$]+\.fsPath\}\),)this\._isVisible&&this\._open\(\),/g,
+  replace: (userHome) => `${userHome}this._isVisible&&this._container?.isConnected&&this._open(),`,
+  applied: /this\._isVisible&&this\._container\?\.isConnected&&this\._open\(\)/,
+  whenMissing:
+    "an agent terminal hidden while it starts can no longer be focused (workbench.action.terminal.focus fails)",
+};
+
 /** Every patch. */
 const TEXT_PATCHES: readonly TextPatch[] = [
   OSC52_CLIPBOARD,
   SECRET_STORAGE_PERSISTENCE,
   WATCHER_IGNORE_SEPARATORS,
   SIMPLE_BROWSER_LOCAL_FILES,
+  TERMINAL_OPEN_DETACHED,
 ];
 
 // =============================================================================

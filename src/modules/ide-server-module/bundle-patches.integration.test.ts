@@ -38,8 +38,13 @@ const REAL_SECRET_WIRING =
   "urlCallbackProvider:new rdo(t.callbackRoute)," +
   "secretStorageProvider:t.remoteAuthority&&!i?void 0:new Qns(n)})})();";
 
-/** The workbench as shipped, carrying both of its patch targets. */
-const REAL_WORKBENCH = REAL_WIRING + REAL_SECRET_WIRING;
+/** The tail of `TerminalInstance._createXterm`, as shipped. */
+const REAL_CREATE_XTERM_TAIL =
+  "this._pathService.userHome().then(r=>{this._userHome=r.fsPath}),this._isVisible&&this._open(),i}" +
+  "_refreshShellIntegrationInfoStatus(e){";
+
+/** The workbench as shipped, carrying every one of its patch targets. */
+const REAL_WORKBENCH = REAL_WIRING + REAL_SECRET_WIRING + REAL_CREATE_XTERM_TAIL;
 
 /** The normalizeOptions loop the watcher patch anchors on, as shipped. */
 const REAL_WRAPPER_LOOP =
@@ -178,6 +183,46 @@ describe("secret storage persistence patch", () => {
       await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, "secretStorageProvider:new Qns(n)");
+    }
+  });
+});
+
+// =============================================================================
+// The terminal-open-detached patch, through the registry
+// =============================================================================
+
+describe("terminal open-detached patch", () => {
+  it("opens xterm after the import only into a container still in the DOM", async () => {
+    const fsLayer = bundle();
+
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+
+    // Unpatched, a terminal hidden while xterm.js loads throws from _open() and
+    // rejects its ready promise, so every later terminal focus fails.
+    expect(fsLayer).toHaveFileContaining(
+      WORKBENCH,
+      "{this._userHome=r.fsPath}),this._isVisible&&this._container?.isConnected&&this._open(),i}"
+    );
+  });
+
+  it("matches regardless of the minifier's identifiers", async () => {
+    const fsLayer = bundle("{this._userHome=$u.fsPath}),this._isVisible&&this._open(),$x}");
+
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+
+    expect(fsLayer).toHaveFile(
+      WORKBENCH,
+      "{this._userHome=$u.fsPath}),this._isVisible&&this._container?.isConnected&&this._open(),$x}"
+    );
+  });
+
+  it("applies on every platform", async () => {
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      const fsLayer = bundle();
+
+      await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
+
+      expect(fsLayer).toHaveFileContaining(WORKBENCH, "this._container?.isConnected&&this._open()");
     }
   });
 });
