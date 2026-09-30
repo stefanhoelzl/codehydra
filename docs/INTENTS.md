@@ -525,7 +525,7 @@ Both gates run before any teardown or progress emission, so a refusal leaves the
 
 The `open-project` operation runs `select-folder` (when no path/URL given), `prepare` (e.g. git init), then `resolve` (clone if URL, validate git), `register` (generate ID, store state, persist), and `discover` (find existing workspaces).
 
-After the hooks, the operation dispatches `workspace:open` per discovered workspace (best-effort, continues on failure), sets the first workspace as active, and emits `project:opened`. A per-key idempotency rule prevents concurrent/duplicate opens of the same project path.
+After the hooks, the operation emits `project:opened` (the discovered workspaces, none open yet — the sidebar lists them as loading), switches to the first awake workspace in sidebar order when nothing is active, then dispatches `workspace:open` per awake workspace (best-effort, continues on failure), one at a time: the active one when it is still pending (asked before each open, so switching to a loading row moves it up), else the next in sidebar order. The returned project carries the opened workspaces' URLs; the event does not. A per-key idempotency rule prevents concurrent/duplicate opens of the same project path.
 
 The `close-project` operation uses these hook modules:
 

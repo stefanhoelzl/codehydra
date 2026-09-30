@@ -47,6 +47,7 @@ import type {
 import {
   OpenWorkspaceOperation,
   OPEN_WORKSPACE_OPERATION_ID,
+  INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
 } from "./open-workspace";
 import type {
@@ -574,9 +575,12 @@ function createTestHarness(options?: {
             const path = viewManager.getActiveWorkspacePath();
             if (!path) return { result: { workspaceRef: null } };
             const name = extractWorkspaceName(path);
-            // Find the project that owns this workspace
-            const project = projectState.registeredProjects.find((p) =>
-              p.workspaces.some((w) => w.path === path)
+            // Find the project that owns this workspace (its workspaces
+            // live under it; the registered list starts out empty)
+            const project = projectState.registeredProjects.find(
+              (p) =>
+                p.workspaces.some((w) => w.path === path) ||
+                new Path(path).isChildOf(new Path(p.path))
             );
             return {
               result: {
@@ -867,7 +871,7 @@ describe("OpenProjectOperation", () => {
     expect(harness.projectState.registeredProjects[0]!.path).toBe(PROJECT_PATH);
   });
 
-  it("test 5: project:opened event emitted after open", async () => {
+  it("test 5: project:opened event emitted with the discovered workspaces", async () => {
     const harness = createTestHarness();
 
     const receivedEvents: DomainEvent[] = [];
@@ -889,6 +893,85 @@ describe("OpenProjectOperation", () => {
     expect(harness.projectState.lastBaseBranches.get(new Path(PROJECT_PATH).toString())).toBe(
       "main"
     );
+  });
+
+  it("announces the project before opening any workspace; the caller still gets the URLs", async () => {
+    const harness = createTestHarness();
+    const order: string[] = [];
+    let announced: ProjectOpenedEvent | undefined;
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPENED, (event) => {
+      announced = event as ProjectOpenedEvent;
+      order.push(event.type);
+    });
+    harness.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+      order.push(`${event.type} ${(event as WorkspaceCreatedEvent).payload.workspaceName}`);
+    });
+
+    const result = (await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    )) as Project;
+
+    expect(order).toEqual([
+      "project:opened",
+      "workspace:created feature-a",
+      "workspace:created feature-b",
+    ]);
+    // Nothing is open when the project is announced, so no workspace has a URL yet.
+    expect(announced!.payload.project.workspaces.map((w) => w.url)).toEqual([undefined, undefined]);
+    expect(result.workspaces.map((w) => w.url)).toEqual([WORKSPACE_URL, WORKSPACE_URL]);
+  });
+
+  it("opens awake workspaces in sidebar order, landing on the first, skipping hibernated ones", async () => {
+    const discovered = (name: string, metadata: Record<string, string> = {}) => ({
+      name: name as WorkspaceName,
+      path: wsPath(new Path(`/test/project/workspaces/${name}`).toString()),
+      branch: name,
+      metadata,
+    });
+    const harness = createTestHarness({
+      discoverResult: [
+        discovered("zeta"),
+        discovered("beta", { hibernated: "true" }),
+        discovered("Alpha"),
+        discovered("gamma"),
+      ],
+    });
+
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
+
+    expect(harness.openPayloads.map((p) => p.workspaceName)).toEqual(["Alpha", "gamma", "zeta"]);
+    expect(harness.activeWorkspace.path).toBe(discovered("Alpha").path);
+  });
+
+  it("opens the active workspace next, so a row switched to while loading jumps the queue", async () => {
+    const discovered = (name: string) => ({
+      name: name as WorkspaceName,
+      path: wsPath(new Path(`/test/project/workspaces/${name}`).toString()),
+      branch: name,
+      metadata: {},
+    });
+    const harness = createTestHarness({
+      discoverResult: [discovered("a"), discovered("b"), discovered("c"), discovered("d")],
+    });
+    // The user switches to d while a is opening.
+    harness.dispatcher.addInterceptor({
+      id: "switch-mid-open",
+      before: async (intent) => {
+        const payload = intent.payload as OpenWorkspaceIntent["payload"];
+        if (intent.type === INTENT_OPEN_WORKSPACE && payload.workspaceName === "a") {
+          harness.activeWorkspace.path = discovered("d").path;
+        }
+        return intent;
+      },
+    });
+
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
+
+    expect(harness.openPayloads.map((p) => p.workspaceName)).toEqual(["a", "d", "b", "c"]);
   });
 
   it("test 6: continues best-effort when workspace:create fails", async () => {

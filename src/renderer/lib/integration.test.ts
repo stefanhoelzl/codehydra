@@ -129,7 +129,7 @@ describe("Integration tests", () => {
       // Deletion progress + removal arrive as snapshots
       pushState(snapshotOf([ws("ws1"), ws("ws2", { status: "deleting" })], "ws1"));
       await waitFor(() => {
-        expect(document.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
+        expect(document.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
       });
 
       pushState(snapshotOf([ws("ws1")], "ws1"));

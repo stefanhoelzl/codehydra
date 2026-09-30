@@ -23,8 +23,9 @@
  * theme). The creation panel is derived, not tracked: it is the main view's
  * ground state whenever no workspace is active. Workspace keys are
  * presenter-assigned and opaque to the renderer. Pushing starts at the
- * app:started event, which fires after the initial project:open dispatches
- * complete.
+ * renderer's ui-connected handshake; the startup screen gives way to the
+ * sidebar once every startup project:open has announced its workspaces (see
+ * endStartup), while they are still opening.
  */
 
 import type { IntentModule, EventDeclarations } from "../../intents/lib/module";
@@ -62,7 +63,14 @@ import {
   type SetupErrorEvent,
 } from "../../intents/setup";
 import type { LifecycleAgentType } from "../../shared/ipc";
-import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../../intents/open-project";
+import {
+  EVENT_PROJECT_OPENED,
+  EVENT_PROJECT_OPEN_FAILED,
+  INTENT_OPEN_PROJECT,
+  type OpenProjectIntent,
+  type ProjectOpenedEvent,
+  type ProjectOpenFailedEvent,
+} from "../../intents/open-project";
 import {
   EVENT_PROJECT_CLOSED,
   INTENT_CLOSE_PROJECT,
@@ -121,7 +129,12 @@ import {
   type PrepareCaptureHookResult,
   type CleanupCaptureHookResult,
 } from "../../intents/hibernate-workspace";
-import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
+import {
+  INTENT_WAKE_WORKSPACE,
+  EVENT_WORKSPACE_WAKE_FAILED,
+  type WakeWorkspaceIntent,
+  type WorkspaceWakeFailedEvent,
+} from "../../intents/wake-workspace";
 import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
 import type { UIMode } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
@@ -297,8 +310,17 @@ interface WorkspaceModel {
   hibernated: boolean;
   tags: WorkspaceTag[];
   url: string | undefined;
-  creating: boolean;
+  /**
+   * Where the workspace is in its open: `creating` (a new worktree, no path
+   * yet), `loading` (a discovered worktree whose workspace:open has not
+   * finished), `ready`, or `open-failed` (that open failed; `openError` says
+   * why). Deletion is tracked apart, in `deletions`.
+   */
+  phase: WorkspacePhase;
+  openError?: string;
 }
+
+type WorkspacePhase = "creating" | "loading" | "ready" | "open-failed";
 
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 function fromMetadata(
@@ -801,10 +823,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
 
   function rowStatus(workspace: WorkspaceModel): UiWorkspaceRow["status"] {
-    if (workspace.creating) return "creating";
     const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
     if (progress) return progress.completed && progress.hasErrors ? "delete-failed" : "deleting";
-    return "ready";
+    return workspace.phase;
   }
 
   /**
@@ -870,6 +891,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: key === activeKey,
+      ...(workspace.openError !== undefined && { openError: workspace.openError }),
       // Derive the render-ready row view from the full tracked progress.
       ...(progress && { deletionProgress: toUiDeletionProgress(progress) }),
     };
@@ -1002,6 +1024,70 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       return { ...intent, payload: { ...payload, stealFocus: false } };
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // End of the startup screen
+  //
+  // app:ready opens every saved project in parallel, and each opens its
+  // workspaces one after another — for many workspaces that takes a while. The
+  // blocking "Loading workspace..." screen only waits for each project to
+  // announce its workspaces (project:opened, emitted before they open) or fail:
+  // then the sidebar shows every row, the awake ones loading, and each turns
+  // ready as its workspace:created arrives. app:started still ends it at the
+  // latest (a project:open that settles without either event).
+  // ---------------------------------------------------------------------------
+
+  /** Paths of the startup project:opens that have not announced their workspaces yet. */
+  const startupOpens = new Set<string>();
+  /** Whether app:ready has dispatched any project:open (none saved: app:started ends it). */
+  let startupOpensSeen = false;
+
+  const trackStartupOpens: IntentInterceptor = {
+    id: "track-startup-opens",
+    before: async (intent: Intent): Promise<Intent | null> => {
+      if (intent.type !== INTENT_OPEN_PROJECT || startupPhase !== "running") return intent;
+      const { path } = (intent as OpenProjectIntent).payload;
+      if (path !== undefined) {
+        startupOpens.add(path);
+        startupOpensSeen = true;
+      }
+      return intent;
+    },
+  };
+
+  /** A startup project:open announced its workspaces or failed; the last one ends the screen. */
+  function settleStartupOpen(event: ProjectOpenedEvent | ProjectOpenFailedEvent): void {
+    const { path } = event.payload;
+    if (path === undefined || !startupOpens.delete(path)) return;
+    if (startupOpensSeen && startupOpens.size === 0) void endStartup();
+  }
+
+  /**
+   * Land on the topmost awake row, then hand the main view to the normal
+   * logic. Projects announce themselves in whatever order their discovery
+   * finishes, and each lands on its first workspace when nothing is active —
+   * so the one active now is whichever project was quickest. Every row is
+   * known here, which makes the choice the same on every start.
+   */
+  async function endStartup(): Promise<void> {
+    if (startupPhase !== "running") return;
+    const top = currentRows().find((entry) => !entry.workspace.hibernated);
+    const topPath = top?.workspace.path ?? null;
+    if (top !== undefined && topPath !== null && !top.row.active) {
+      try {
+        await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { workspacePath: topPath },
+        });
+      } catch (error: unknown) {
+        logger.debug("Startup landing switch failed", { error: getErrorMessage(error) });
+      }
+    }
+    // app:started or app:shutdown may have come first.
+    if (startupPhase !== "running") return;
+    startupPhase = "done";
+    scheduleUpdate();
+  }
 
   // ---------------------------------------------------------------------------
   // System dialog (startup surfaces + mid-session loading)
@@ -1146,6 +1232,29 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     };
   }
 
+  /** Action ids of the failed-open panel's buttons. */
+  const RETRY_OPEN_ACTION = "retry-open";
+  const DELETE_FAILED_ACTION = "delete-failed-open";
+
+  /** The panel over an active workspace whose open failed: why, Retry, Delete. */
+  function openFailedConfig(error: string | undefined): DialogConfig {
+    return {
+      sections: [
+        { type: "text", content: "Could not open workspace", style: "heading" },
+        ...(error !== undefined
+          ? [{ type: "text" as const, content: error, style: "error" as const }]
+          : []),
+        {
+          type: "group",
+          items: [
+            { type: "button", id: RETRY_OPEN_ACTION, label: "Retry", variant: "primary" },
+            { type: "button", id: DELETE_FAILED_ACTION, label: "Delete", variant: "secondary" },
+          ],
+        },
+      ],
+    };
+  }
+
   /** The first-run setup surface: progress rows, plus Retry/Quit on error. */
   function setupConfig(): DialogConfig {
     const items: ProgressItem[] = setupRowList().map((row) => ({
@@ -1223,16 +1332,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       case "agent-selection":
         return { config: agentConfig(), kind: "modal" };
       case "running":
-        // Startup opens every workspace in turn, so a hook of any of them is
-        // what the user is waiting on.
+        // Until every project has announced its workspaces (see endStartup), a
+        // hook of any of them is what the user is waiting on.
         return { config: loadingConfig(openHooks(), true), kind: "modal" };
       case "done": {
-        // Mid-session: a still-creating active workspace has no frame yet, and
-        // one whose open hook is running (a wake) is not usable yet either.
+        // Mid-session: a still-creating or still-loading active workspace has
+        // no frame yet, and one whose open hook is running (a wake) is not
+        // usable yet either. One whose open failed says why instead.
         if (activeKey === null) return null;
         const key = activeKey;
+        const workspace = findByKey(key)?.workspace;
+        if (workspace?.phase === "open-failed") {
+          return { config: openFailedConfig(workspace.openError), kind: "panel" };
+        }
         const hooks = openHooks().filter(([, hook]) => hookBelongsTo(hook, key));
-        return findByKey(key)?.workspace.creating || hooks.length > 0
+        return workspace?.phase === "creating" || workspace?.phase === "loading" || hooks.length > 0
           ? { config: loadingConfig(hooks, false), kind: "panel" }
           : null;
       }
@@ -1246,6 +1360,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       return;
     }
     switch (event.actionId) {
+      case RETRY_OPEN_ACTION:
+        if (activeKey !== null) retryOpen(activeKey);
+        return;
+      case DELETE_FAILED_ACTION: {
+        const path = activeKey === null ? null : (findByKey(activeKey)?.workspace.path ?? null);
+        if (path !== null) dispatchInteractiveDelete(path);
+        return;
+      }
       case "continue": {
         const agent = event.data?.["agent"];
         if (agentSelectionResolve && agent) {
@@ -1458,6 +1580,23 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     });
   }
 
+  /**
+   * Run a failed open again. A wake is that open (workspace:open against the
+   * existing worktree); the row loads until its workspace:created, or fails
+   * again with the new reason.
+   */
+  function retryOpen(key: string): void {
+    const found = findByKey(key);
+    if (!found || found.workspace.path === null || found.workspace.phase !== "open-failed") return;
+    found.workspace.phase = "loading";
+    delete found.workspace.openError;
+    scheduleUpdate();
+    dispatchDetached({
+      type: INTENT_WAKE_WORKSPACE,
+      payload: { workspacePath: found.workspace.path, source: "ui-ipc" },
+    });
+  }
+
   /** The interactive remove flow (shared by the ui:event and shortcut delete). */
   function dispatchInteractiveDelete(workspacePath: WorkspacePath): void {
     dispatchDetached({
@@ -1521,12 +1660,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspacePath: null } });
         return;
       }
-      // Resolve the echoed key; a stale key or still-creating placeholder
-      // (path null) has nothing to switch to. focus is omitted: a click
-      // focuses the workspace (the keyboard nav path passes focus:false).
+      // Resolve the echoed key; a stale key has nothing to switch to. focus
+      // is omitted: a click focuses the workspace (the keyboard nav path
+      // passes focus:false).
       const found = findByKey(event.key);
-      if (!found || found.workspace.path === null) {
+      if (!found) {
         logger.warn("Dropped switch-workspace for unknown key", { key: event.key });
+        return;
+      }
+      // A still-creating placeholder has no path to switch to yet: only the
+      // view moves to its loading panel, and workspace:created makes it active.
+      if (found.workspace.path === null) {
+        applyActiveKey(event.key);
+        scheduleUpdate();
         return;
       }
       dispatchDetached({
@@ -1539,6 +1685,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       const found = findByKey(event.key);
       if (!found || found.workspace.path === null) {
         logger.warn("Dropped wake-workspace for unknown key", { key: event.key });
+        return;
+      }
+      // A failed open's Retry: waking runs the same open again.
+      if (found.workspace.phase === "open-failed") {
+        retryOpen(event.key);
         return;
       }
       dispatchDetached({
@@ -1766,6 +1917,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     if (activeKey === null) return;
     const active = findByKey(activeKey);
     if (!active || active.workspace.path === null) return;
+    // Hibernating needs a running workspace; one still opening has nothing to stop.
+    if (active.workspace.phase !== "ready") return;
     if (active.workspace.hibernated) {
       dispatchDetached({
         type: INTENT_WAKE_WORKSPACE,
@@ -1785,7 +1938,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    *   view — unless it is already showing. Mode auto-computes to hover.
    * - delete: trigger the interactive remove flow for the active workspace
    *   (the same path the remove-workspace ui:event uses), unless it is still
-   *   creating or already deleting.
+   *   creating or loading, or already deleting.
    */
   function handleDialogKey(key: "enter" | "delete"): void {
     if (key === "enter") {
@@ -1800,7 +1953,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const active = findByKey(activeKey);
     if (!active || active.workspace.path === null) return;
     const status = rowStatus(active.workspace);
-    if (status === "creating" || status === "deleting") return;
+    if (status === "creating" || status === "loading" || status === "deleting") return;
     dispatchInteractiveDelete(active.workspace.path);
   }
 
@@ -1888,12 +2041,20 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
                 path: workspace.path,
                 ...fromMetadata(workspace.metadata),
                 url: workspace.url,
-                creating: false,
+                // project:open opens every awake workspace after announcing
+                // the project; hibernated ones stay as they are.
+                phase: workspace.metadata["hibernated"] === "true" ? "ready" : "loading",
               },
             ])
           ),
         });
+        settleStartupOpen(event as ProjectOpenedEvent);
         scheduleUpdate();
+      },
+    },
+    [EVENT_PROJECT_OPEN_FAILED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        settleStartupOpen(event as ProjectOpenFailedEvent);
       },
     },
     [EVENT_PROJECT_CLOSED]: {
@@ -1931,7 +2092,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             path: p.workspacePath,
             ...fromMetadata(p.metadata),
             url: p.workspaceUrl,
-            creating: false,
+            phase: "ready",
           });
           // A wake delivers a fresh URL; any cached screenshot is stale.
           screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
@@ -1942,8 +2103,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // mid-creation, the user must NOT be yanked back when it completes —
         // the operation declines its switch for the same reason, and the row
         // (plus its "new" tag) is the signal that it finished.
+        const key = workspaceKey(p.projectId, p.workspaceName);
         if (p.stealFocus !== false && activeKey === null) {
-          applyActiveKey(workspaceKey(p.projectId, p.workspaceName));
+          applyActiveKey(key);
+        } else if (activeKey === key && !p.reopened) {
+          // The view is on this placeholder — the user may have clicked it,
+          // which only moves the view (a placeholder has no path to switch
+          // to): make it the active workspace main-side too, which the
+          // operation declines once the user has moved. A no-op when the
+          // operation switches itself.
+          dispatchDetached({
+            type: INTENT_SWITCH_WORKSPACE,
+            payload: { workspacePath: p.workspacePath },
+          });
         }
         scheduleUpdate();
       },
@@ -1966,7 +2138,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           hibernated: false,
           tags: [],
           url: undefined,
-          creating: true,
+          phase: "creating",
         });
         // Landing in the creating placeholder is the visual confirmation the
         // workspace is being made (activating it also leaves the creation
@@ -1984,12 +2156,36 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const p = (event as WorkspaceCreateFailedEvent).payload;
         const project = findProjectByPath(p.projectPath);
         const workspace = project?.workspaces.get(p.workspaceName);
-        if (!project || !workspace?.creating) return;
+        if (!project || !workspace) return;
+        if (workspace.phase === "loading") {
+          // An existing worktree that would not open keeps its row, with the
+          // reason and a Retry.
+          workspace.phase = "open-failed";
+          workspace.openError = p.error;
+          scheduleUpdate();
+          return;
+        }
+        if (workspace.phase !== "creating") return;
         project.workspaces.delete(p.workspaceName);
         if (activeKey === workspaceKey(project.id, p.workspaceName)) {
           activeKey = null;
         }
         scheduleUpdate();
+      },
+    },
+    [EVENT_WORKSPACE_WAKE_FAILED]: {
+      // A Retry's wake can fail before it reaches workspace:open (which would
+      // report workspace:create-failed): the row must not stay loading.
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as WorkspaceWakeFailedEvent).payload;
+        for (const project of projects.values()) {
+          for (const workspace of project.workspaces.values()) {
+            if (workspace.path !== p.workspacePath || workspace.phase !== "loading") continue;
+            workspace.phase = "open-failed";
+            workspace.openError = p.error;
+            scheduleUpdate();
+          }
+        }
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
@@ -2298,7 +2494,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     trackRunningHook,
     cancelRunningHooks,
     events,
-    interceptors: [suppressBackgroundFocus],
+    interceptors: [suppressBackgroundFocus, trackStartupOpens],
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {

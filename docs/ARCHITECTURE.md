@@ -125,8 +125,9 @@ Workspaces render as `<iframe>` elements inside its DOM (`WorkspaceFrames`
 component), derived declaratively from the renderer's projects store:
 
 - **Mount**: every non-hibernated workspace with an IDE server URL gets an
-  iframe, eagerly (instant switching). URLs arrive on workspace payloads
-  (`workspace:created`, `project:opened`).
+  iframe, eagerly (instant switching). URLs arrive on `workspace:created`;
+  `project:opened` announces a project before any of its workspaces is open,
+  so its rows carry none.
 - **Visibility**: only the active workspace's iframe is `display: block`
   (`.active` class). Inactive iframes are `display: none`, so Chromium
   suspends their paint/layout. Iframes are cross-origin OOPIFs — each keeps
@@ -138,9 +139,17 @@ component), derived declaratively from the renderer's projects store:
   layout); an injected in-frame tracker (`installChildFrameScript`) restores
   the last-focused element inside VSCodium. Focus is routed by mode —
   entering shortcut mode blurs the frame so navigation keys stay in the UI.
-- **Loading indication**: the main process shows a "Loading workspace..."
-  dialog from `workspace:created` until the agent's first status report (or
-  a 10s timeout). No view-level load tracking exists.
+- **Loading indication**: a row whose workspace is not open yet — a creation
+  (`workspace:loading`) or a discovered worktree `project:opened` announced —
+  shows a spinner until its `workspace:created` (`creating` / `loading` row
+  status), and while it is the active one the presenter shows the
+  "Loading workspace..." panel over its missing frame. A failed open
+  (`workspace:create-failed`) turns an announced row `open-failed` (Retry =
+  wake, Delete) instead of removing it. The startup "Loading workspace..."
+  modal lasts only until every startup `project:open` has emitted
+  `project:opened` or `project:open-failed` (the presenter tracks them with an
+  interceptor; `app:started` ends it at the latest), then lands on the topmost
+  awake row. No view-level load tracking exists.
 - **Recovery**: two witnesses catch a frame that stays mounted but no longer
   shows a workbench. Showing a frame pings it, and a frame that stops
   answering is reloaded (renderer process died). A workbench that shuts down
@@ -1613,11 +1622,11 @@ User: Click "Open Project"
   → OpenProjectOperation runs "open" hook point:
       → LocalProjectModule: validate git repository, discover worktrees
       → (or RemoteProjectModule: clone from URL)
-  → Operation dispatches workspace:open per discovered worktree
-  → Sets first workspace as active
-  → Emits project:opened domain event → UiIpcModule → sendToUI → Renderer
-  → If 0 worktrees: auto-open create dialog
-  → If 1+ worktrees: activate first workspace
+  → Emits project:opened domain event (every row; awake ones loading)
+  → If nothing is active: switch to the first awake workspace (sidebar order)
+  → Operation dispatches workspace:open per awake worktree, one at a time, the
+    active one first (asked before each), else sidebar order
+  → If 0 worktrees: the creation panel stays
 ```
 
 ### Switching Workspaces

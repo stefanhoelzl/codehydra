@@ -117,7 +117,12 @@ export interface UiWorkspaceRow {
    * showing `name`.
    */
   readonly title?: string;
-  readonly status: "creating" | "ready" | "deleting" | "delete-failed";
+  /**
+   * `creating`: a new worktree is being made. `loading`: an existing worktree
+   * is being opened (startup, project open). `open-failed`: that open failed —
+   * `openError` says why; Retry echoes the key as `wake-workspace`.
+   */
+  readonly status: "creating" | "loading" | "ready" | "open-failed" | "deleting" | "delete-failed";
   /**
    * Orthogonal to `status`: a hibernated workspace is still `ready` (or even
    * `deleting`) — hibernation is a sleep flag layered on the lifecycle, not a
@@ -128,6 +133,8 @@ export interface UiWorkspaceRow {
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
+  /** Why the open failed; present while `status` is `open-failed`. */
+  readonly openError?: string;
   /** Present while `status` is `deleting`/`delete-failed`; absent otherwise. */
   readonly deletionProgress?: UiDeletionProgress;
 }

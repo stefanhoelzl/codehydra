@@ -1001,20 +1001,30 @@ Index display rules:
 
 ### Loading State
 
+A project is listed as soon as its worktrees are discovered; each awake
+workspace shows a spinner until it is open (one at a time, the active one
+first). The row can be selected (the main area shows the "Loading
+workspace..." panel) but offers no hibernate or remove action yet.
+
 ```
 
-│ 📁 my-project [+][×] │
-│ ◐ Loading workspaces... │
+│ 📁 my-project        [×] │
+│   feature-a           ◐  │
+│   feature-b           ◐  │
+│   old-idea            ⏸  │
 
 ```
 
 ### Error State
 
+A workspace that could not be opened keeps its row with a warning (the reason
+on hover); hovering offers Retry and Remove, and its panel says why with
+**Retry** and **Delete**.
+
 ```
 
-│ 📁 my-project [+][×] │
-│ ⚠ Failed to load workspaces │
-│ [Retry] │
+│ 📁 my-project        [×] │
+│   feature-a  [↻][🗑]  ⚠  │
 
 ```
 
