@@ -239,7 +239,10 @@ CLI (`pnpm -s appctrl`) exposes to agents, so what you debug interactively is wh
 **Root.** `_CH_ROOT_DIR` relocates the app's data root _and_ its bundles root together, in
 either build flavor (`path-provider.ts`). `e2e/env.ts` defaults it under the OS temp dir and
 **refuses to `rm -rf` anything outside it** — unset, the app resolves it to
-`~/.local/share/codehydra`, which holds every project you have.
+`~/.local/share/codehydra`, which holds every project you have. The global teardown
+(`e2e/global-teardown.ts`) deletes the root when the run ends — every run starts from an
+empty one anyway, and app logs are copied into `e2e/.output`. Set `CH_E2E_KEEP_ROOT=1` to
+keep it, e.g. to re-run one spec with `--no-deps` against the warm root.
 
 Note "packaged" does not imply "production": `isDevelopment` comes from `_CH_BUILD_RELEASE`
 at build time, not from `app.isPackaged`, so CI's PR artifacts are dev-flavored. Without the
