@@ -1149,6 +1149,11 @@ Busy and idle come from the agent itself: Claude Code through its hooks,
 OpenCode through its server's events. A pending permission prompt, or a
 question the agent asked you, counts as idle — the agent is waiting on you.
 
+A workspace created with a prompt reads busy from the moment its agent starts.
+Claude Code reports nothing while a question blocks its start, such as whether
+you trust the folder, so if its session has not started within a minute the
+workspace reads idle. Once you answer, it turns busy again and runs the prompt.
+
 So does a dialog in the workspace's editor — a notification, pick list or text
 prompt raised by the agent, `ch` or a plugin. The workspace reads idle
 until you dismiss it, even while the agent keeps working and even with no agent

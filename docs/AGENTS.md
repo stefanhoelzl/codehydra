@@ -461,7 +461,7 @@ Content-Type: application/json
 
 ### Status Derivation
 
-Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, background tasks (sub-agents and shells via the `Stop` payload's `background_tasks`), AskUserQuestion parking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`).
+Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, background tasks (sub-agents and shells via the `Stop` payload's `background_tasks`), AskUserQuestion parking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`). With a non-empty initial prompt, `WrapperStart` reads busy; if no `SessionStart` follows within `STARTUP_BUSY_TIMEOUT_MS` (60s) the workspace goes idle, since Claude fires no hook while a dialog blocks its start (folder trust), and the pending `SessionStart` turns it busy again.
 
 ### Session Resumption
 

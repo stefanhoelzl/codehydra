@@ -214,6 +214,12 @@ export interface WorkspaceState {
   /** Flag: first WrapperStart should set status to busy (a non-empty initial prompt) */
   busyOnWrapperStart?: boolean;
   /**
+   * Armed when WrapperStart reads busy for an initial prompt, cleared by
+   * SessionStart. Firing means `claude` is waiting on the user before its
+   * session starts (the folder trust dialog), so the workspace goes idle.
+   */
+  startupTimer?: ReturnType<typeof setTimeout>;
+  /**
    * True when the last Stop was suppressed because background tasks keep the
    * workspace busy — running shells and/or background sub-agents, read from the
    * Stop payload's background_tasks. Also suppresses the ~60s-lagging idle_prompt.
@@ -257,6 +263,13 @@ export interface ClaudeCodeServerManagerDeps {
  * not yet announced its inbox (SessionStart): the TUI is booting.
  */
 const STARTING_AGENT_WAIT_MS = 30_000;
+
+/**
+ * How long a workspace with an initial prompt reads busy before its session
+ * starts. Claude fires no hook while a dialog blocks its startup (folder trust),
+ * so past this the workspace goes idle: it is waiting on the user.
+ */
+const STARTUP_BUSY_TIMEOUT_MS = 60_000;
 
 /**
  * Claude Code Server Manager implementation.
@@ -370,6 +383,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     }
 
     // Remove workspace
+    clearTimeout(this.workspaces.get(normalizedPath)!.startupTimer);
     this.workspaces.delete(normalizedPath);
     this.inboxWaiters.notify();
 
@@ -412,6 +426,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const savedCallbacks = state.statusCallbacks;
     const savedInbox = state.inbox;
     const savedTerminalOpen = state.terminalOpen;
+    clearTimeout(state.startupTimer);
 
     // Fire stopped callback with isRestart=true
     for (const callback of this.stoppedCallbacks) {
@@ -936,7 +951,16 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       newStatus = "busy";
       if (hookName === "SessionStart") {
         state.busyOnWrapperStart = false;
+      } else if (state.startupTimer === undefined) {
+        state.startupTimer = setTimeout(
+          () => this.handleStartupTimeout(normalizedPath, state),
+          STARTUP_BUSY_TIMEOUT_MS
+        );
       }
+    }
+    if (hookName === "SessionStart" || hookName === "WrapperEnd") {
+      clearTimeout(state.startupTimer);
+      delete state.startupTimer;
     }
 
     // A tool starting while the workspace reads idle means the agent is
@@ -1096,23 +1120,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Update status if hook causes a change
     if (newStatus !== null && newStatus !== state.status) {
-      const oldStatus = state.status;
-      state.status = newStatus;
-
-      this.logger
-        .scoped({ path: normalizedPath })
-        .info("Status changed", { from: oldStatus, to: newStatus, hookName });
-
-      // Notify subscribers
-      for (const callback of state.statusCallbacks) {
-        callback(newStatus);
-      }
-
-      // When status becomes idle, or WrapperStart fires (even if busy due to initial prompt),
-      // mark the workspace active.
-      if (hookName === "WrapperStart" || newStatus === "idle") {
-        this.markActiveHandler?.(normalizedPath);
-      }
+      this.changeStatus(normalizedPath, state, newStatus, hookName);
     } else if (
       hookName === "Stop" &&
       newStatus === "idle" &&
@@ -1128,6 +1136,52 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // than a timed flash.
       this.emitBusyIdleEdge(normalizedPath, state);
     }
+  }
+
+  /**
+   * Set a workspace's status and notify its subscribers.
+   */
+  private changeStatus(
+    workspacePath: string,
+    state: WorkspaceState,
+    newStatus: AgentStatus,
+    hookName: ClaudeCodeHookName | "StartupTimeout"
+  ): void {
+    const oldStatus = state.status;
+    state.status = newStatus;
+
+    this.logger
+      .scoped({ path: workspacePath })
+      .info("Status changed", { from: oldStatus, to: newStatus, hookName });
+
+    // Notify subscribers
+    for (const callback of state.statusCallbacks) {
+      callback(newStatus);
+    }
+
+    // When status becomes idle, or WrapperStart fires (even if busy due to initial prompt),
+    // mark the workspace active.
+    if (hookName === "WrapperStart" || newStatus === "idle") {
+      this.markActiveHandler?.(workspacePath);
+    }
+  }
+
+  /**
+   * The session of a workspace with an initial prompt has not started within
+   * STARTUP_BUSY_TIMEOUT_MS of its terminal opening. Claude is blocked on the
+   * user before its session starts (the folder trust dialog), so read idle.
+   * `busyOnWrapperStart` stays set: once the user answers, SessionStart turns
+   * the workspace busy again for the prompt it then runs.
+   */
+  private handleStartupTimeout(workspacePath: string, state: WorkspaceState): void {
+    delete state.startupTimer;
+    if (this.workspaces.get(workspacePath) !== state || state.status !== "busy") {
+      return;
+    }
+    this.logger.scoped({ path: workspacePath }).info("Session not started, waiting on the user", {
+      timeoutMs: STARTUP_BUSY_TIMEOUT_MS,
+    });
+    this.changeStatus(workspacePath, state, "idle", "StartupTimeout");
   }
 
   /**
