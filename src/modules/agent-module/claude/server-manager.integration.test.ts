@@ -1561,6 +1561,66 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["busy"]);
     });
 
+    describe("session not starting (folder trust dialog)", () => {
+      const workspace = testPath("/workspace/feature-a").toNative();
+      let port: number;
+      let statusChanges: AgentStatus[];
+
+      beforeEach(async () => {
+        port = await serverManager.startServer(workspace);
+        statusChanges = [];
+        serverManager.onStatusChange(workspace, (status) => statusChanges.push(status));
+        await serverManager.setInitialPrompt(workspace, { prompt: "Build a feature" });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("goes idle after a minute without SessionStart, busy again once the session starts", async () => {
+        const markActiveHandler = vi.fn();
+        serverManager.setMarkActiveHandler(markActiveHandler);
+
+        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+        vi.advanceTimersByTime(59_999);
+        expect(statusChanges).toEqual(["busy"]);
+
+        vi.advanceTimersByTime(1);
+        expect(statusChanges).toEqual(["busy", "idle"]);
+        expect(markActiveHandler).toHaveBeenCalledTimes(2);
+
+        // The user accepts the dialog: the session starts and runs the prompt.
+        await sendHook(port, "SessionStart", { workspacePath: workspace });
+        await sendHook(port, "UserPromptSubmit", { workspacePath: workspace });
+        expect(statusChanges).toEqual(["busy", "idle", "busy"]);
+      });
+
+      it("stays busy when the session starts in time", async () => {
+        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+        await sendHook(port, "SessionStart", { workspacePath: workspace });
+        vi.advanceTimersByTime(60_000);
+
+        expect(statusChanges).toEqual(["busy"]);
+      });
+
+      it("does not go idle after the terminal closed", () => {
+        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+        serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+        vi.advanceTimersByTime(60_000);
+
+        expect(statusChanges).toEqual(["busy", "none"]);
+      });
+
+      it("does not fire for a workspace that was stopped", async () => {
+        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+        await serverManager.stopServer(workspace);
+        vi.advanceTimersByTime(60_000);
+
+        expect(statusChanges).toEqual(["busy"]);
+      });
+    });
+
     it("WrapperStart with a plan-mode prompt still sets status to busy (mode is irrelevant)", async () => {
       await serverManager.startServer(testPath("/workspace/feature-a").toNative());
       const statusChanges: AgentStatus[] = [];
