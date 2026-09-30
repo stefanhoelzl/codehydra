@@ -3,7 +3,8 @@
  *
  * Uses electron-updater directly (singleton with Electron lifecycle integration).
  * Separates detection from download: checkForUpdates() detects, downloadUpdate()
- * downloads on demand, quitAndInstall() restarts the app.
+ * downloads on demand, quitAndInstall() restarts the app. A downloaded update
+ * also installs silently on any clean quit (autoInstallOnAppQuit).
  *
  * Platform support:
  * - Windows (NSIS): Full auto-update
@@ -57,7 +58,10 @@ export class AutoUpdater {
     if (!this.isDevelopment) {
       // Configure electron-updater
       autoUpdater.autoDownload = false;
-      autoUpdater.autoInstallOnAppQuit = false;
+      // A downloaded update also installs on a clean quit, not only via
+      // "Restart Now": a user who closes the app and starts it again expects
+      // the new version.
+      autoUpdater.autoInstallOnAppQuit = true;
 
       // Route electron-updater logs through app logger
       autoUpdater.logger = {

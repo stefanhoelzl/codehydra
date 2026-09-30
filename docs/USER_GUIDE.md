@@ -246,8 +246,9 @@ failed panel means Dismiss.
   their own with `ch notification show` (see
   [Sidebar notifications](#sidebar-notifications)).
 - **Updates** — checked every 4 hours and on resume. A sidebar card offers
-  **Install**, shows the download, then **Restart Now**; dismissing silences
-  that version (a newer one shows again). Only for DMG, NSIS and AppImage
+  **Install**, shows the download, then **Restart Now**; closing CodeHydra
+  instead installs the downloaded update too (it takes a moment after the
+  window closes). Dismissing silences that version (a newer one shows again). Only for DMG, NSIS and AppImage
   builds. Turn it off with `update.notification`.
 - **Bug reports** — <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>B</kbd> opens **Report a
   Bug**; your config (secrets redacted) and logs are attached, and it is sent

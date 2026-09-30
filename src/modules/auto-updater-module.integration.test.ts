@@ -277,6 +277,7 @@ describe("AutoUpdaterModule Integration", () => {
 
     const last = slot.updates[slot.updates.length - 1]!;
     expect(last.title).toBe("Update ready");
+    expect(last.message).toBe("Version 2.0.0 will be installed when CodeHydra quits.");
     expect(last.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
     expect(last.dismissible).toBe(false);
   });

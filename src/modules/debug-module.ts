@@ -180,7 +180,7 @@ function readyConfig(version: string): NotificationConfig {
   return {
     type: "info",
     title: "Update ready",
-    message: `Version ${version} is ready to install.`,
+    message: `Version ${version} will be installed when CodeHydra quits.`,
     dismissible: false,
     actions: [{ id: "restart", label: "Restart Now" }],
   };
