@@ -9,9 +9,10 @@
  * The operation mediates data flow between hook points — only pure data
  * flows through contexts. Providers are module dependencies via closure.
  *
- * After hooks, dispatches workspace:open per discovered workspace (best-effort)
- * and emits project:opened. View activation is handled by the projectViewModule
- * event handler (registered in bootstrap).
+ * After hooks, emits project:opened (the discovered workspaces, none opened
+ * yet), switches to the first awake workspace when nothing is active, then
+ * dispatches workspace:open per awake workspace (best-effort, one at a time,
+ * the active one first).
  *
  * Contract schemas (item 2): zod is the single source of truth. The payload/result/hook/event
  * schemas are declared once and hung on the operation's `schemas` field; the `Intent` and
@@ -42,6 +43,7 @@ import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./ge
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
+import { compareDisplayNames } from "../shared/ui-state";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 // Defined in ./contract so open-workspace can import it without a module cycle;
@@ -287,6 +289,17 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
   readonly schemas = schemas;
 
+  /** The active workspace's path, or null when none is active. */
+  private async activePath(
+    ctx: OperationContext<OpenProjectIntent, typeof schemas>
+  ): Promise<Path | null> {
+    const active = await ctx.dispatch<GetActiveWorkspaceIntent>({
+      type: INTENT_GET_ACTIVE_WORKSPACE,
+      payload: {},
+    });
+    return active === null ? null : new Path(active.path);
+  }
+
   async execute(ctx: OperationContext<OpenProjectIntent, typeof schemas>): Promise<Project | null> {
     const { intent } = ctx;
 
@@ -421,12 +434,47 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
 
       // When already open, register + discover ran (idempotent) but skip side effects
       if (!alreadyOpen) {
-        // Dispatch workspace:open per discovered workspace (best-effort).
-        // Hibernated workspaces stay inert at startup — no view + agent init runs;
-        // they appear in the sidebar with the hibernation indicator.
+        // Announce the project before opening anything: its rows appear at once,
+        // each awake one loading until its workspace:created (or
+        // workspace:create-failed) arrives. Opening every workspace takes a
+        // while — git and an agent start each, one after another.
+        const event: ProjectOpenedEvent = {
+          type: EVENT_PROJECT_OPENED,
+          payload: { project, ...origin },
+        };
+        ctx.emit(event);
+
+        // Hibernated workspaces stay inert — no view + agent init runs; they
+        // appear in the sidebar with the hibernation indicator. The rest open
+        // in sidebar order, so the rows fill in top to bottom.
+        const pending = workspaces
+          .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
+          .sort((a, b) => compareDisplayNames(a.name, b.name));
+
+        // Land on the first of them when nothing is active, so the user sees
+        // this project's workspace loading rather than an empty view.
+        const first = pending[0];
+        if (first !== undefined && (await this.activePath(ctx)) === null) {
+          try {
+            await ctx.dispatch<SwitchWorkspaceIntent>({
+              type: INTENT_SWITCH_WORKSPACE,
+              payload: { workspacePath: first.path },
+            });
+          } catch {
+            // Best-effort: switch failure doesn't fail the project open
+          }
+        }
+
+        // Open one at a time (best-effort), the active workspace first: asked
+        // before each open, so switching to a row still loading moves it to
+        // the front of the queue.
         const urlByPath = new Map<string, string>();
-        for (const workspace of workspaces) {
-          if (workspace.metadata[HIBERNATED_METADATA_KEY] === "true") continue;
+        while (pending.length > 0) {
+          const activePath = await this.activePath(ctx);
+          const activeIndex =
+            activePath === null ? -1 : pending.findIndex((w) => activePath.equals(w.path));
+          const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
+          if (workspace === undefined) break;
           try {
             const existingWorkspace: ExistingWorkspaceData = {
               path: workspace.path,
@@ -451,14 +499,13 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
               urlByPath.set(opened.path, opened.url);
             }
           } catch {
-            // Best-effort: individual workspace:open failures don't fail the project open
+            // Best-effort: individual workspace:open failures don't fail the
+            // project open (workspace:create-failed marks the row)
           }
         }
 
-        // Carry each opened workspace's IDE server URL so the renderer can
-        // mount iframes for workspaces it learns about via project:opened
-        // (their earlier workspace:created events predate the project in the
-        // renderer store). Hibernated workspaces stay URL-less.
+        // The caller gets each opened workspace's IDE server URL.
+        // Hibernated workspaces stay URL-less.
         project = {
           ...project,
           workspaces: project.workspaces.map((w) => {
@@ -466,41 +513,6 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
             return url !== undefined ? { ...w, url } : w;
           }),
         };
-
-        // Emit project:opened event
-        const event: ProjectOpenedEvent = {
-          type: EVENT_PROJECT_OPENED,
-          payload: { project, ...origin },
-        };
-        ctx.emit(event);
-
-        // Switch to the first workspace only if no workspace is currently active.
-        // During startup, multiple projects open sequentially — only the first
-        // should activate a workspace to avoid visual jumping.
-        if (project.workspaces.length > 0) {
-          const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
-            type: INTENT_GET_ACTIVE_WORKSPACE,
-            payload: {},
-          });
-
-          if (activeWorkspace === null) {
-            // Pick the first non-hibernated workspace; if all are hibernated,
-            // leave no workspace active so the user lands on the empty backdrop.
-            const firstAwake = project.workspaces.find(
-              (w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true"
-            );
-            if (firstAwake) {
-              try {
-                await ctx.dispatch<SwitchWorkspaceIntent>({
-                  type: INTENT_SWITCH_WORKSPACE,
-                  payload: { workspacePath: firstAwake.path },
-                });
-              } catch {
-                // Best-effort: switch failure doesn't fail the project open
-              }
-            }
-          }
-        }
       } else {
         // Project already open — emit failed event so idempotency key is released
         ctx.emit({

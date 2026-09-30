@@ -508,9 +508,7 @@
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
                 in:arrivalFlash
-                onclick={() => {
-                  if (status !== "creating") onSwitchWorkspace(workspace.key);
-                }}
+                onclick={() => onSwitchWorkspace(workspace.key)}
                 onmouseenter={() => (hoveredRowKey = workspace.key)}
                 onmouseleave={() => {
                   if (hoveredRowKey === workspace.key) hoveredRowKey = null;
@@ -571,7 +569,21 @@
                         <Icon name="debug-pause" size={14} />
                       </button>
                     {/if}
-                    {#if status === "ready"}
+                    {#if status === "open-failed"}
+                      <button
+                        type="button"
+                        class="action-btn hover-action retry-btn"
+                        aria-label="Retry opening workspace"
+                        title="Retry opening workspace"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          handleWakeWorkspace(workspace.key);
+                        }}
+                      >
+                        <Icon name="refresh" size={14} />
+                      </button>
+                    {/if}
+                    {#if status === "ready" || status === "open-failed"}
                       <button
                         type="button"
                         class="action-btn hover-action remove-btn"
@@ -594,20 +606,26 @@
                   <button
                     type="button"
                     class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
+                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "loading" ? "Loading" : status === "open-failed" ? "Failed to open" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (hibernated) handleWakeWorkspace(workspace.key);
                     }}
                   >
-                    {#if status === "creating"}
-                      <!-- Creating: show red "busy" immediately (work is queued) -->
-                      <AgentStatusIndicator idleCount={0} busyCount={1} />
-                    {:else if status === "deleting"}
-                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                    {#if status === "creating" || status === "loading" || status === "deleting"}
+                      <vscode-progress-ring class="row-spinner"></vscode-progress-ring>
+                    {:else if status === "open-failed"}
+                      <span
+                        class="row-error"
+                        role="img"
+                        aria-label="Failed to open"
+                        title={workspace.openError ?? "Failed to open"}
+                      >
+                        <Icon name="warning" size={14} />
+                      </span>
                     {:else if status === "delete-failed"}
                       <span
-                        class="deletion-error"
+                        class="row-error"
                         role="img"
                         aria-label="Deletion failed"
                         title="Deletion failed"
@@ -1133,13 +1151,13 @@
     opacity: 0.4;
   }
 
-  .deletion-spinner {
+  .row-spinner {
     width: 16px;
     height: 16px;
     flex-shrink: 0;
   }
 
-  .deletion-error {
+  .row-error {
     --vscode-icon-foreground: var(--ch-danger);
     font-size: 14px;
     flex-shrink: 0;

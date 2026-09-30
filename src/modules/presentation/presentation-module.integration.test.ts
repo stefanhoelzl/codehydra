@@ -42,7 +42,12 @@ import type { ShowUIHookResult } from "../../intents/app-start";
 import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../../intents/setup";
 import type { AgentSelectionHookContext } from "../../intents/app-start";
 import type { HookOutput } from "../../intents/lib/operation";
-import { EVENT_PROJECT_OPENED } from "../../intents/open-project";
+import {
+  EVENT_PROJECT_OPENED,
+  EVENT_PROJECT_OPEN_FAILED,
+  INTENT_OPEN_PROJECT,
+} from "../../intents/open-project";
+import { EVENT_WORKSPACE_WAKE_FAILED } from "../../intents/wake-workspace";
 import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
 import type { CloseConfirmHookResult } from "../../intents/close-project";
 import {
@@ -265,6 +270,29 @@ async function startModule(deps: Deps): Promise<UiPresenter> {
   return module;
 }
 
+/**
+ * Open a project the way project:open does: announce it (every awake row
+ * loading), then report each awake workspace opened.
+ */
+async function openProject(module: IntentModule, project: Project): Promise<void> {
+  await emit(module, EVENT_PROJECT_OPENED, { project });
+  for (const workspace of project.workspaces) {
+    if (workspace.metadata["hibernated"] === "true") continue;
+    await emit(module, EVENT_WORKSPACE_CREATED, {
+      projectId: project.id,
+      workspaceName: workspace.name,
+      workspacePath: workspace.path,
+      projectPath: project.path,
+      branch: workspace.branch,
+      metadata: workspace.metadata,
+      workspaceUrl: workspace.url,
+      stealFocus: false,
+      reopened: true,
+      source: "open-project",
+    });
+  }
+}
+
 function switchedPayload(workspace: Workspace): unknown {
   return {
     projectId: PROJECT_ID,
@@ -475,7 +503,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await openProject(module, makeProject([workspace]));
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
 
     connect(deps);
@@ -651,7 +679,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await openProject(module, makeProject([existing]));
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
 
     await emit(module, EVENT_WORKSPACE_LOADING, {
@@ -680,7 +708,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await openProject(module, makeProject([existing]));
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "deps",
       projectPath: PROJECT_PATH,
@@ -702,7 +730,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const existing = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([existing]) });
+    await openProject(module, makeProject([existing]));
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "deps",
       projectPath: PROJECT_PATH,
@@ -2476,7 +2504,7 @@ describe("PresentationModule - shortcut navigation", () => {
     const deps = createDeps();
     const awake = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
     const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake]) });
+    await openProject(module, makeProject([awake]));
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(awake));
     const dispatched = recordDispatches(deps);
 
@@ -2579,7 +2607,7 @@ describe("PresentationModule - shortcut navigation", () => {
     const deps = createDeps();
     const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
     const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await openProject(module, makeProject([workspace]));
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     const dispatched = recordDispatches(deps);
 
@@ -2635,11 +2663,11 @@ describe("PresentationModule - shortcut navigation", () => {
 // =============================================================================
 
 describe("PresentationModule - background-focus suppression", () => {
-  /** The module's sole interceptor. */
+  /** The module's background-focus interceptor. */
   function interceptor(module: UiPresenter) {
-    const list = module.interceptors ?? [];
-    expect(list).toHaveLength(1);
-    return list[0]!;
+    const found = (module.interceptors ?? []).find((i) => i.id === "suppress-background-focus");
+    expect(found).toBeDefined();
+    return found!;
   }
 
   /** A workspace:open intent from `source`, requesting focus (or as given). */
@@ -3315,4 +3343,315 @@ describe("PresentationModule - running repository hooks", () => {
       vi.useRealTimers();
     }
   });
+});
+
+// =============================================================================
+// Loading rows (discovered workspaces not opened yet) and the startup screen
+// =============================================================================
+
+describe("PresentationModule - loading rows", () => {
+  function recordDispatches(deps: Deps): Array<{ type: string; payload: unknown }> {
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+    return dispatched;
+  }
+
+  function rows(deps: Deps): Array<[string, string, boolean]> {
+    return lastSnapshot(deps).sidebar.projects.flatMap((project) =>
+      project.workspaces.map((w): [string, string, boolean] => [w.name, w.status, w.active])
+    );
+  }
+
+  function createdPayload(workspace: Workspace): unknown {
+    return {
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspacePath: workspace.path,
+      projectPath: PROJECT_PATH,
+      branch: workspace.branch,
+      metadata: workspace.metadata,
+      workspaceUrl: `http://127.0.0.1:1/${workspace.name}`,
+      stealFocus: false,
+      reopened: true,
+      source: "open-project",
+    };
+  }
+
+  function failedPayload(workspace: Workspace, error: string): unknown {
+    return {
+      workspaceName: workspace.name,
+      projectPath: PROJECT_PATH,
+      error,
+      source: "open-project",
+    };
+  }
+
+  const FAILED_PANEL = (error: string): unknown[] => [
+    { type: "text", content: "Could not open workspace", style: "heading" },
+    { type: "text", content: error, style: "error" },
+    {
+      type: "group",
+      items: [
+        { type: "button", id: "retry-open", label: "Retry", variant: "primary" },
+        { type: "button", id: "delete-failed-open", label: "Delete", variant: "secondary" },
+      ],
+    },
+  ];
+
+  function click(deps: Deps, actionId: string): void {
+    const { id } = currentSystemDialog(deps);
+    emitUiEvent(deps, { kind: "dialog-action", dialogId: id, actionId });
+  }
+
+  it("an announced awake workspace loads until workspace:created; a hibernated one does not", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const awake = makeWorkspace("a");
+    const asleep = makeWorkspace("b", { metadata: { hibernated: "true" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake, asleep]) });
+    await flush();
+
+    expect(rows(deps)).toEqual([
+      ["a", "loading", false],
+      ["b", "ready", false],
+    ]);
+    expect(lastSnapshot(deps).frames).toEqual({});
+
+    await emit(module, EVENT_WORKSPACE_CREATED, createdPayload(awake));
+    await flush();
+
+    expect(rows(deps)).toEqual([
+      ["a", "ready", false],
+      ["b", "ready", false],
+    ]);
+    expect(lastSnapshot(deps).frames).toEqual({ [`${PROJECT_ID}/a`]: "http://127.0.0.1:1/a" });
+  });
+
+  it("an active loading workspace shows the loading panel over its missing frame", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/a` });
+    expect(currentSystemDialog(deps).kind).toBe("panel");
+    expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
+    expect(lastSnapshot(deps).mode).not.toBe("dialog");
+  });
+
+  it("a loading workspace can be neither hibernated nor deleted from the keyboard", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    const dispatched = recordDispatches(deps);
+
+    await emit(module, EVENT_SHORTCUT_KEY_PRESSED, { key: "h" });
+    await emit(module, EVENT_SHORTCUT_KEY_PRESSED, { key: "delete" });
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it("a reopen that fails keeps its row, with the reason, and a panel offering Retry and Delete", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await emit(module, EVENT_WORKSPACE_CREATE_FAILED, failedPayload(workspace, "agent crashed"));
+    await flush();
+
+    const row = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    expect(row).toMatchObject({ status: "open-failed", openError: "agent crashed", active: true });
+    expect(currentSystemDialog(deps).kind).toBe("panel");
+    expect(currentSystemDialog(deps).config.sections).toEqual(FAILED_PANEL("agent crashed"));
+
+    const dispatched = recordDispatches(deps);
+    click(deps, "delete-failed-open");
+    expect(dispatched).toEqual([
+      {
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          workspacePath: workspace.path,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+          interactive: true,
+        },
+      },
+    ]);
+  });
+
+  it("Retry — from the panel or the row — opens it again, loading until it lands or fails anew", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("a");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await emit(module, EVENT_WORKSPACE_CREATE_FAILED, failedPayload(workspace, "first"));
+    await flush();
+    const dispatched = recordDispatches(deps);
+
+    click(deps, "retry-open");
+    await flush();
+    expect(dispatched).toEqual([
+      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+    ]);
+    expect(rows(deps)).toEqual([["a", "loading", true]]);
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.openError).toBeUndefined();
+
+    // The wake failed before reaching workspace:open.
+    await emit(module, EVENT_WORKSPACE_WAKE_FAILED, {
+      workspacePath: workspace.path,
+      error: "second",
+    });
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]).toMatchObject({
+      status: "open-failed",
+      openError: "second",
+    });
+
+    // The row's Retry echoes the key as wake-workspace.
+    dispatched.length = 0;
+    emitUiEvent(deps, { kind: "wake-workspace", key: `${PROJECT_ID}/a` });
+    await flush();
+    expect(dispatched).toEqual([
+      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+    ]);
+
+    await emit(module, EVENT_WORKSPACE_CREATED, { ...(createdPayload(workspace) as object) });
+    await flush();
+    expect(rows(deps)).toEqual([["a", "ready", true]]);
+  });
+
+  it("a background creation's placeholder takes the view on click and becomes active once created", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const feat = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await openProject(module, makeProject([feat]));
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "deps",
+      projectPath: PROJECT_PATH,
+      stealFocus: false,
+    });
+    const dispatched = recordDispatches(deps);
+
+    emitUiEvent(deps, { kind: "switch-workspace", key: `${PROJECT_ID}/deps` });
+    await flush();
+    expect(dispatched).toEqual([]);
+    expect(rows(deps)).toEqual([
+      ["deps", "creating", true],
+      ["feat", "ready", false],
+    ]);
+    expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
+
+    await emit(module, EVENT_WORKSPACE_CREATED, {
+      projectId: PROJECT_ID,
+      workspaceName: "deps" as WorkspaceName,
+      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
+      projectPath: PROJECT_PATH,
+      branch: "deps",
+      metadata: {},
+      workspaceUrl: "http://127.0.0.1:1/deps",
+      stealFocus: false,
+    });
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: `${PROJECT_PATH}/.worktrees/deps` } },
+    ]);
+  });
+});
+
+describe("PresentationModule - startup screen", () => {
+  const BETA_PATH = projPath("/projects/beta");
+
+  function trackOpens(module: UiPresenter) {
+    const found = (module.interceptors ?? []).find((i) => i.id === "track-startup-opens");
+    expect(found).toBeDefined();
+    return found!;
+  }
+
+  async function toRunning(deps: Deps): Promise<UiPresenter> {
+    const module = createPresentationModule(deps);
+    connect(deps);
+    await module.hooks![APP_START_OPERATION_ID]!.start!.handler({
+      intent: { type: "app:start", payload: {} },
+    } as never);
+    return module;
+  }
+
+  it("ends once every startup project:open announced itself or failed, landing on the topmost awake row", async () => {
+    const deps = createDeps();
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+      withOrigin: <T>(_options: unknown, fn: () => T): T => fn(),
+    } as unknown as Deps["dispatcher"];
+    const module = await toRunning(deps);
+
+    for (const path of [PROJECT_PATH, BETA_PATH]) {
+      const intent: Intent = { type: INTENT_OPEN_PROJECT, payload: { path } };
+      expect(await trackOpens(module).before(intent)).toBe(intent);
+    }
+
+    const zeta = makeWorkspace("zeta");
+    const asleep = makeWorkspace("alpha", { metadata: { hibernated: "true" } });
+    const beta = makeWorkspace("beta");
+    // Quicker discovery elsewhere already landed on zeta.
+    await emit(module, EVENT_PROJECT_OPENED, {
+      project: makeProject([zeta, asleep, beta]),
+      path: PROJECT_PATH,
+    });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(zeta));
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    expect(currentSystemDialog(deps).kind).toBe("modal");
+    expect(dispatched).toEqual([]);
+
+    await emit(module, EVENT_PROJECT_OPEN_FAILED, { path: BETA_PATH, reason: "not a repository" });
+    await flush();
+
+    // The topmost awake row, whichever project announced itself first.
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: beta.path } },
+    ]);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(beta));
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/beta` });
+    expect(rows(deps)).toEqual([
+      ["alpha", "ready", false],
+      ["beta", "loading", true],
+      ["zeta", "loading", false],
+    ]);
+    // The startup modal gave way to the active workspace's loading panel.
+    expect(currentSystemDialog(deps).kind).toBe("panel");
+  });
+
+  it("ignores project:opens outside startup", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const intent: Intent = { type: INTENT_OPEN_PROJECT, payload: { path: PROJECT_PATH } };
+    expect(await trackOpens(module).before(intent)).toBe(intent);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]), path: PROJECT_PATH });
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+  });
+
+  function rows(deps: Deps): Array<[string, string, boolean]> {
+    return lastSnapshot(deps).sidebar.projects.flatMap((project) =>
+      project.workspaces.map((w): [string, string, boolean] => [w.name, w.status, w.active])
+    );
+  }
 });

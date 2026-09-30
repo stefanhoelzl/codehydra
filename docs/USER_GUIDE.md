@@ -126,15 +126,15 @@ a cloned one.
 
 The icon on each row:
 
-| Icon                       | Meaning                    |
-| -------------------------- | -------------------------- |
-| Grey dot                   | No agent                   |
-| Green dot                  | Idle                       |
-| Red pulsing dot            | Busy                       |
-| Red dot                    | Mixed                      |
-| Spinner                    | Being deleted              |
-| Warning triangle           | Deletion failed            |
-| Pause icon (play on hover) | Hibernated — click to wake |
+| Icon                       | Meaning                                                       |
+| -------------------------- | ------------------------------------------------------------- |
+| Grey dot                   | No agent                                                      |
+| Green dot                  | Idle                                                          |
+| Red pulsing dot            | Busy                                                          |
+| Red dot                    | Mixed                                                         |
+| Spinner                    | Being created, opened or deleted                              |
+| Warning triangle           | Could not be opened (the reason on hover), or deletion failed |
+| Pause icon (play on hover) | Hibernated — click to wake                                    |
 
 Hovering the dot shows the counts, e.g. "2 idle, 1 busy". A row also turns
 green while a dialog about that workspace is waiting for you — a hook trust
@@ -158,6 +158,23 @@ Open a project from the New workspace form (**Open project folder** or
   background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
   repository that does not exist it offers **Create on GitHub** (initialize it
   with a README so it can be cloned) and **Retry Clone**.
+
+A project's workspaces are listed as soon as CodeHydra has found them —
+opening them takes a while (git and an agent start each). Each awake one shows
+a spinner until it is open. They open one at a time, top to bottom, except that
+the one you are looking at goes next; selecting a row that is still opening
+shows its **Loading workspace...** panel. Hibernated workspaces are not
+opened. When nothing was active, you land on the project's first awake
+workspace. A workspace still opening cannot be hibernated or deleted yet.
+
+A workspace that could not be opened keeps its row with a warning triangle; hover
+it for the reason. Its panel (and its row, on hover) offers **Retry**, which
+opens it again, and **Delete**.
+
+**At start** CodeHydra reopens every project it had open this way. The
+**Loading workspace...** screen only lasts until each project has listed its
+workspaces; then you land on the topmost awake workspace in the sidebar while
+the rest keep opening.
 
 To **close** a project, hover its header and click the trash icon. By default
 its worktrees stay on disk and reappear when you open it again. The dialog
@@ -189,8 +206,9 @@ Click **New workspace** at the top of the sidebar (or <kbd>Alt</kbd>+<kbd>X</kbd
   permission modes.
 
 **Create** is enabled once the form is valid; **Reset** or <kbd>Escape</kbd>
-clears it (otherwise it keeps what you typed). The new row shows as loading
-until the workspace is ready.
+clears it (otherwise it keeps what you typed). The new row shows a spinner
+until the workspace is ready; you can select it meanwhile (its panel says
+**Loading workspace...**), and you land on it when it is done.
 
 Every new workspace gets a blue **new** tag until you first switch to it, so
 one you left while it was being created — or one an agent or automation made —
@@ -213,8 +231,8 @@ is easy to spot. Turn this off with `auto-tag.new`.
 
 ### Deleting a workspace
 
-Hover a ready row and click its trash icon (or <kbd>Alt</kbd>+<kbd>X</kbd>,
-<kbd>Delete</kbd>). The dialog checks the worktree and warns about uncommitted
+Hover a ready row (or one that could not be opened) and click its trash icon
+(or <kbd>Alt</kbd>+<kbd>X</kbd>, <kbd>Delete</kbd>). The dialog checks the worktree and warns about uncommitted
 changes and commits not merged into its base; confirming deletes anyway. Tick
 **Keep branch** to keep the git branch. (From `ch` or MCP, a workspace with
 uncommitted or unmerged work is refused unless told to ignore warnings.)
@@ -765,11 +783,13 @@ A blocking hook has no timeout, so while one runs CodeHydra offers **Cancel**
 for it, naming the entry and the plugin:
 
 - `after-worktree-created` and `before-workspace-opened`: on the
-  **Loading workspace...** screen — at startup, one Cancel per running script,
-  each naming its workspace; later, on the loading panel of the workspace you
+  **Loading workspace...** screen — while CodeHydra starts (until every
+  project has listed its workspaces), one Cancel per running script, each
+  naming its workspace; after that, on the loading panel of the workspace you
   are looking at. A script of a workspace you are not looking at (a background
-  creation, a wake, a project being opened) gets a sidebar notification with
-  Cancel once it has run for about a second and a half.
+  creation, a wake, a workspace of a project being opened, at start too) gets
+  a sidebar notification with Cancel once it has run for about a second and a
+  half.
 - `before-worktree-deleted`: on the deletion progress panel, below the
   row.
 

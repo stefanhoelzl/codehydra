@@ -436,19 +436,53 @@ describe("Sidebar component", () => {
       expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
     });
 
-    it("does not call switchWorkspace for a creating workspace row", async () => {
-      const onSwitchWorkspace = vi.fn();
-      const ws = makeUiWorkspaceRow("ws1", { status: "creating" });
-      const project = makeUiProjectRow([ws]);
+    it.each(["creating", "loading", "open-failed"] as const)(
+      "calls switchWorkspace for a %s workspace row (its panel shows in main)",
+      async (status) => {
+        const onSwitchWorkspace = vi.fn();
+        const ws = makeUiWorkspaceRow("ws1", { status });
+        const project = makeUiProjectRow([ws]);
 
-      render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onSwitchWorkspace },
+        render(Sidebar, {
+          props: { ...defaultProps, projects: [project], onSwitchWorkspace },
+        });
+
+        const workspaceButton = screen.getByRole("button", { name: ws.name });
+        await fireEvent.click(workspaceButton);
+
+        expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
+      }
+    );
+
+    it.each(["creating", "loading"] as const)(
+      "shows a spinner and no hibernate or remove action while %s",
+      (status) => {
+        const ws = makeUiWorkspaceRow("ws1", { status });
+        const { container } = render(Sidebar, {
+          props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
+        });
+
+        expect(container.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Hibernate workspace" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Remove workspace" })).toBeNull();
+      }
+    );
+
+    it("offers Retry and Remove for an open-failed row, with the reason on hover", async () => {
+      const ws = makeUiWorkspaceRow("ws1", { status: "open-failed", openError: "agent crashed" });
+      const onRemoveWorkspace = vi.fn();
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [makeUiProjectRow([ws])], onRemoveWorkspace },
       });
 
-      const workspaceButton = screen.getByRole("button", { name: ws.name });
-      await fireEvent.click(workspaceButton);
+      expect(container.querySelector(".row-error")).toHaveAttribute("title", "agent crashed");
+      expect(screen.queryByRole("button", { name: "Hibernate workspace" })).toBeNull();
 
-      expect(onSwitchWorkspace).not.toHaveBeenCalled();
+      await fireEvent.click(screen.getByRole("button", { name: "Retry opening workspace" }));
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "wake-workspace", key: ws.key });
+
+      await fireEvent.click(screen.getByRole("button", { name: "Remove workspace" }));
+      expect(onRemoveWorkspace).toHaveBeenCalledWith(ws.key);
     });
   });
 
@@ -1472,7 +1506,7 @@ describe("Sidebar component", () => {
       });
 
       // Should have progress-ring (spinner) instead of status indicator
-      expect(container.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
+      expect(container.querySelector("vscode-progress-ring.row-spinner")).toBeInTheDocument();
     });
 
     it("shows agent status indicator when not deleting", () => {
@@ -1483,9 +1517,7 @@ describe("Sidebar component", () => {
       });
 
       // Should have status indicator, NOT spinner
-      expect(
-        container.querySelector("vscode-progress-ring.deletion-spinner")
-      ).not.toBeInTheDocument();
+      expect(container.querySelector("vscode-progress-ring.row-spinner")).not.toBeInTheDocument();
       expect(screen.getByRole("status")).toBeInTheDocument();
     });
 
@@ -1512,7 +1544,7 @@ describe("Sidebar component", () => {
       });
 
       // Should have one spinner (ws1) and one status indicator (ws2)
-      expect(container.querySelectorAll("vscode-progress-ring.deletion-spinner")).toHaveLength(1);
+      expect(container.querySelectorAll("vscode-progress-ring.row-spinner")).toHaveLength(1);
       expect(screen.getAllByRole("status")).toHaveLength(1);
     });
 
@@ -1549,7 +1581,7 @@ describe("Sidebar component", () => {
       });
 
       // Warning triangle should be visible - Icon component renders vscode-icon
-      const warning = container.querySelector(".deletion-error");
+      const warning = container.querySelector(".row-error");
       expect(warning).toBeInTheDocument();
       expect(warning!.querySelector("vscode-icon")).toBeInTheDocument();
     });
@@ -1563,7 +1595,7 @@ describe("Sidebar component", () => {
       });
 
       // Warning should have role="img" and aria-label
-      const warning = container.querySelector(".deletion-error");
+      const warning = container.querySelector(".row-error");
       expect(warning).toHaveAttribute("role", "img");
       expect(warning).toHaveAttribute("aria-label", "Deletion failed");
     });
