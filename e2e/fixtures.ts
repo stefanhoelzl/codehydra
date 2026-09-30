@@ -521,6 +521,28 @@ export async function expandSidebar(ui: Page): Promise<void> {
     await ui.locator("nav.sidebar").dispatchEvent("mouseenter");
     await expect(ui.getByRole("button", { name: "Settings" })).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 15_000 });
+
+  // Visible is not clickable yet: the sidebar widens over a CSS transition, and
+  // Chromium routes a trusted click by the last composited frame, not the DOM.
+  // A click mid-transition can land on the workspace iframe the old frame still
+  // showed there, while Playwright, which checks the DOM, reports it clicked.
+  // So wait for the full width, then for two frames to be painted at it.
+  await expect
+    .poll(
+      () =>
+        ui.locator("nav.sidebar").evaluate((nav) => {
+          const target = parseFloat(nav.style.getPropertyValue("--ch-sidebar-width"));
+          return Math.abs(nav.getBoundingClientRect().width - target) < 0.5;
+        }),
+      { intervals: POLL_INTERVALS, message: "the sidebar never reached its expanded width" }
+    )
+    .toBe(true);
+  await ui.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+  );
 }
 
 export async function collapseSidebar(ui: Page): Promise<void> {
