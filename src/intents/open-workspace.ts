@@ -676,13 +676,17 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // creation panel, null → null) and lands on it; changed means they moved on
     // mid-creation, and a completion that steals the view back is exactly the
     // yank this avoids.
+    //
+    // A project's reopens never switch: project:open lands on a workspace
+    // before it opens any, and its rows are listed (and selectable) while they
+    // load — nothing active by now means the user left for the creation panel.
     const activeWorkspace = await ctx.dispatch<GetActiveWorkspaceIntent>({
       type: INTENT_GET_ACTIVE_WORKSPACE,
       payload: {},
     });
     const shouldSwitch = trackFocus
       ? activeWorkspace?.path === activeAtStart?.path
-      : activeWorkspace === null;
+      : activeWorkspace === null && ctx.intent.payload.source !== "open-project";
 
     if (shouldSwitch) {
       await ctx.dispatch<SwitchWorkspaceIntent>({

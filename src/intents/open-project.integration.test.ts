@@ -293,10 +293,27 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(new OpenProjectOperation());
   dispatcher.registerOperation(new OpenWorkspaceOperation());
 
-  // Shared workspace:resolve (reverse lookup over registered projects),
-  // project:resolve, switch-workspace activate, and infra operations.
+  // Shared workspace:resolve (reverse lookup over registered projects, then —
+  // like the worktree module, which knows a workspace from discovery on — over
+  // the discovered ones of a registered project), project:resolve,
+  // switch-workspace activate, and infra operations.
+  const registeredWorkspace = workspacesFromProjects(() => projectState.registeredProjects);
   registerTestInfrastructure(dispatcher, {
-    workspaces: workspacesFromProjects(() => projectState.registeredProjects),
+    workspaces: (workspacePath) => {
+      const registered = registeredWorkspace(workspacePath);
+      if (registered !== undefined) return registered;
+      const discovered = discoverResult.find((w) => w.path === workspacePath);
+      const project = projectState.registeredProjects.find((p) =>
+        new Path(workspacePath).isChildOf(new Path(p.path))
+      );
+      return discovered && project
+        ? {
+            projectPath: project.path,
+            workspaceName: discovered.name,
+            metadata: discovered.metadata,
+          }
+        : undefined;
+    },
     projects: (projectPath) => {
       const project = projectState.registeredProjects.find((p) => p.path === projectPath);
       return project
@@ -972,6 +989,28 @@ describe("OpenProjectOperation", () => {
     );
 
     expect(harness.openPayloads.map((p) => p.workspaceName)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("a workspace that finishes loading does not take the view back from the creation panel", async () => {
+    const harness = createTestHarness();
+    // The user opens the creation panel (nothing active) while feature-a opens.
+    harness.dispatcher.addInterceptor({
+      id: "deselect-mid-open",
+      before: async (intent) => {
+        const payload = intent.payload as OpenWorkspaceIntent["payload"];
+        if (intent.type === INTENT_OPEN_WORKSPACE && payload.workspaceName === "feature-a") {
+          harness.activeWorkspace.path = null;
+        }
+        return intent;
+      },
+    });
+
+    await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: projPath(new Path(PROJECT_PATH).toString()) })
+    );
+
+    expect(harness.openPayloads.map((p) => p.workspaceName)).toEqual(["feature-a", "feature-b"]);
+    expect(harness.activeWorkspace.path).toBeNull();
   });
 
   it("test 6: continues best-effort when workspace:create fails", async () => {
