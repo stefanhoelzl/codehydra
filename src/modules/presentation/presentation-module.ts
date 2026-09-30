@@ -109,6 +109,10 @@ import {
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
 import {
+  INTENT_GET_ACTIVE_WORKSPACE,
+  type GetActiveWorkspaceIntent,
+} from "../../intents/get-active-workspace";
+import {
   EVENT_AGENT_STATUS_UPDATED,
   type AgentStatusUpdatedEvent,
 } from "../../intents/update-agent-status";
@@ -2216,7 +2220,28 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     [EVENT_WORKSPACE_SWITCHED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
-        applyActiveKey(payload ? workspaceKey(payload.projectId, payload.workspaceName) : null);
+        const key = payload ? workspaceKey(payload.projectId, payload.workspaceName) : null;
+        // Handlers run in module order and an earlier one may await (auto-tagging
+        // clears the "new" tag, a git write that takes a second on Windows), so a
+        // later switch — deselecting to open the creation panel — can land here
+        // first. Applying the older event then would pull the view back to a
+        // workspace that is no longer active. The lifecycle module tracks switches
+        // in dispatch order, so ask it.
+        try {
+          const active = await deps.dispatcher.dispatch<GetActiveWorkspaceIntent>({
+            type: INTENT_GET_ACTIVE_WORKSPACE,
+            payload: {},
+          });
+          const activeNow = active ? workspaceKey(active.projectId, active.workspaceName) : null;
+          if (activeNow !== key) {
+            logger.debug("Dropped stale workspace:switched", { key, active: activeNow });
+            return;
+          }
+        } catch (error: unknown) {
+          // Nothing to check against: trust the event.
+          logger.debug("Active workspace lookup failed", { error: getErrorMessage(error) });
+        }
+        applyActiveKey(key);
         scheduleUpdate();
       },
     },

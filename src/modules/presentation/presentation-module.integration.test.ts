@@ -34,7 +34,13 @@ import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { UiState } from "../../shared/ui-state";
-import type { Project, ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
+import type {
+  Project,
+  ProjectId,
+  Workspace,
+  WorkspaceName,
+  WorkspaceRef,
+} from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
@@ -67,6 +73,11 @@ import {
 } from "../../intents/delete-workspace";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import { EVENT_WORKSPACE_SWITCHED } from "../../intents/switch-workspace";
+import {
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  GetActiveWorkspaceOperation,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "../../intents/get-active-workspace";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
   type HibernatePipelineHookInput,
@@ -583,9 +594,16 @@ describe("PresentationModule - ui:state snapshots", () => {
     const before = snapshots(deps).length;
 
     const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
-    // Fire both without yielding between them.
+    // Fire both without yielding between them. (Not workspace:switched: that
+    // asks the lifecycle module first, so it lands a tick later.)
     void emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    void emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    void emit(module, EVENT_METADATA_CHANGED, {
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspacePath: workspace.path,
+      key: "tags.x",
+      value: "{}",
+    });
     await flush();
 
     expect(snapshots(deps).length).toBe(before + 1);
@@ -1179,6 +1197,37 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).frames).toEqual({
       [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat",
     });
+  });
+
+  it("drops a workspace:switched that a later switch overtook", async () => {
+    // Deselect (open the creation panel) while the earlier switch's event is
+    // still held up by a slow handler ahead of the presenter.
+    const deps = createDeps();
+    let active: WorkspaceRef | null = null;
+    deps.dispatcher.registerOperation(new GetActiveWorkspaceOperation());
+    deps.dispatcher.registerModule({
+      name: "active-stub",
+      hooks: {
+        [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+          get: { handler: async () => ({ result: { workspaceRef: active } }) },
+        },
+      },
+    });
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    active = { projectId: PROJECT_ID, workspaceName: workspace.name, path: workspace.path };
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+
+    active = null;
+    await emit(module, EVENT_WORKSPACE_SWITCHED, null);
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.active).toBe(false);
   });
 
   it("project:closed falls back to the first remaining workspace", async () => {
@@ -3592,8 +3641,11 @@ describe("PresentationModule - startup screen", () => {
   it("ends once every startup project:open announced itself or failed, landing on the topmost awake row", async () => {
     const deps = createDeps();
     const dispatched: Array<{ type: string; payload: unknown }> = [];
+    // The workspace the lifecycle module reports active.
+    let active: WorkspaceRef | null = null;
     deps.dispatcher = {
       dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        if (intent.type === INTENT_GET_ACTIVE_WORKSPACE) return Promise.resolve(active);
         dispatched.push(intent);
         return Promise.resolve();
       }),
@@ -3614,6 +3666,7 @@ describe("PresentationModule - startup screen", () => {
       project: makeProject([zeta, asleep, beta]),
       path: PROJECT_PATH,
     });
+    active = { projectId: PROJECT_ID, workspaceName: zeta.name, path: zeta.path };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(zeta));
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
@@ -3627,6 +3680,7 @@ describe("PresentationModule - startup screen", () => {
     expect(dispatched).toEqual([
       { type: "workspace:switch", payload: { workspacePath: beta.path } },
     ]);
+    active = { projectId: PROJECT_ID, workspaceName: beta.name, path: beta.path };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(beta));
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/beta` });
