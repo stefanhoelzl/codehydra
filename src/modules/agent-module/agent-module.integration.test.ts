@@ -80,10 +80,15 @@ import {
   INTENT_VSCODE_MODAL_CHANGED,
 } from "../../intents/vscode-modal-changed";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { AgentUnreachableError, type McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import { createAgentModule, type AgentModuleDeps } from "./agent-module";
-import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
+import type {
+  AgentModuleProvider,
+  WorkspaceStartOptions,
+  WorkspaceStartResult,
+} from "./agent-module-provider";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { AggregatedAgentStatus } from "../../shared/ipc";
@@ -377,8 +382,16 @@ function createTestSetup(
   const mockProvider = createMockProvider(providerOverrides);
   const agentConfig = createMockAccessor<ConfigAgentType>("agent", "claude");
 
+  // Workspace metadata, as written through the module's workspace:set-metadata dispatches.
+  const metadata = new Map<string, string>();
   const mockDispatcher = {
-    dispatch: vi.fn().mockResolvedValue(undefined),
+    dispatch: vi.fn(async (intent: { type: string; payload: unknown }) => {
+      if (intent.type !== INTENT_SET_METADATA) return undefined;
+      const { key, value } = intent.payload as SetMetadataIntent["payload"];
+      if (value === null) metadata.delete(key);
+      else metadata.set(key, value);
+      return undefined;
+    }),
   } as unknown as Dispatcher;
 
   const moduleDeps: AgentModuleDeps = {
@@ -393,7 +406,7 @@ function createTestSetup(
 
   dispatcher.registerModule(agentModule);
 
-  return { mockProvider, agentConfig, moduleDeps, dispatcher, agentModule };
+  return { mockProvider, agentConfig, moduleDeps, dispatcher, agentModule, metadata };
 }
 
 /**
@@ -927,9 +940,130 @@ describe("createAgentModule", () => {
         testPath("/test/workspace").toString(),
         {
           initialPrompt: { prompt: "Hello Claude" },
+          onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
         }
       );
+    });
+
+    describe("pending initial prompt (survives a restart)", () => {
+      const PENDING_KEY = "agent.pending-prompt";
+      const spec = { type: "claude", prompt: "Review PR #65", permissionMode: "plan" } as const;
+
+      function openNew(dispatcher: Dispatcher, agent?: unknown) {
+        return dispatcher.dispatch({
+          type: "workspace:open",
+          payload: {
+            projectId: "test-12345678",
+            workspaceName: "feature-1",
+            base: "main",
+            ...(agent !== undefined && { agent }),
+          },
+        } as unknown as OpenWorkspaceIntent);
+      }
+
+      function reopen(dispatcher: Dispatcher, metadata: Record<string, string>) {
+        return dispatcher.dispatch({
+          type: "workspace:open",
+          payload: {
+            projectId: "test-12345678",
+            workspaceName: "feature-1",
+            existingWorkspace: {
+              path: testPath("/test/workspace").toNative(),
+              name: "feature-1",
+              branch: "feature-1",
+              metadata,
+            },
+          },
+        } as unknown as OpenWorkspaceIntent);
+      }
+
+      function startOptions(mockProvider: AgentModuleProvider): WorkspaceStartOptions {
+        const calls = vi.mocked(mockProvider.startWorkspace).mock.calls;
+        return calls.at(-1)![1]!;
+      }
+
+      async function setup() {
+        const ctx = createTestSetup();
+        await activateModule(ctx.dispatcher, ctx.agentConfig);
+        ctx.dispatcher.registerOperation(
+          minimalSetup({
+            workspacePath: wsPath("/test/workspace"),
+            projectPath: projPath("/test/project"),
+          })
+        );
+        return ctx;
+      }
+
+      it("stores a new workspace's agent spec before the agent starts", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        let storedAtStart: string | undefined;
+        vi.mocked(mockProvider.startWorkspace).mockImplementation(async () => {
+          storedAtStart = metadata.get(PENDING_KEY);
+          return { envVars: {} };
+        });
+
+        await openNew(dispatcher, spec);
+
+        expect(storedAtStart).toBeDefined();
+        expect(JSON.parse(storedAtStart!)).toEqual(spec);
+      });
+
+      it("clears it once the agent has taken the prompt over", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        await openNew(dispatcher, spec);
+
+        startOptions(mockProvider).onInitialPromptDelivered!();
+
+        await vi.waitFor(() => expect(metadata.has(PENDING_KEY)).toBe(false));
+      });
+
+      it("stores nothing for a workspace created without a prompt", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        await openNew(dispatcher);
+
+        expect(metadata.has(PENDING_KEY)).toBe(false);
+        expect(startOptions(mockProvider).onInitialPromptDelivered).toBeUndefined();
+      });
+
+      it("hands a reopened workspace its undelivered prompt, as a new workspace", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        metadata.set(PENDING_KEY, JSON.stringify(spec));
+
+        await reopen(dispatcher, { [PENDING_KEY]: JSON.stringify(spec) });
+
+        expect(startOptions(mockProvider)).toEqual({
+          initialPrompt: { prompt: "Review PR #65", permissionMode: "plan" },
+          onInitialPromptDelivered: expect.any(Function),
+          isNewWorkspace: true,
+        });
+        // Still pending until the agent takes it over.
+        expect(metadata.get(PENDING_KEY)).toBe(JSON.stringify(spec));
+
+        startOptions(mockProvider).onInitialPromptDelivered!();
+        await vi.waitFor(() => expect(metadata.has(PENDING_KEY)).toBe(false));
+      });
+
+      it("drops an unreadable pending prompt instead of keeping it forever", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        metadata.set(PENDING_KEY, "{not json");
+
+        await reopen(dispatcher, { [PENDING_KEY]: "{not json" });
+
+        expect(metadata.has(PENDING_KEY)).toBe(false);
+        expect(startOptions(mockProvider)).toEqual({ isNewWorkspace: false });
+      });
+
+      it("drops a pending prompt meant for another agent", async () => {
+        const { dispatcher, mockProvider, metadata } = await setup();
+        const other = JSON.stringify({ type: "opencode", prompt: "Hi" });
+        metadata.set(PENDING_KEY, other);
+
+        await reopen(dispatcher, { [PENDING_KEY]: other });
+
+        expect(metadata.has(PENDING_KEY)).toBe(false);
+        expect(startOptions(mockProvider)).toEqual({ isNewWorkspace: false });
+      });
     });
 
     it("passes isNewWorkspace=false for existing workspaces", async () => {

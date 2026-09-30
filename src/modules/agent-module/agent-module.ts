@@ -78,6 +78,8 @@ import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../../intents/vscode-modal-ch
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import type { AgentSpec } from "../../shared/api/types";
+import { agentSpecSchema } from "../../intents/contract";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { AgentUnreachableError, type AgentPromptConfig, type McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import type { AgentModuleProvider } from "./agent-module-provider";
@@ -133,6 +135,26 @@ function agentPromptConfigFor(
     ...(spec.agentName !== undefined && { agentName: spec.agentName }),
   };
   return Object.keys(config).length > 0 ? config : undefined;
+}
+
+/**
+ * Metadata key holding a new workspace's AgentSpec (JSON) until its agent has
+ * taken the prompt over. The prompt is otherwise handed to the agent in memory,
+ * so a restart before the agent starts would lose it; the reopen that follows
+ * reads it back from here. Internal: not rendered, not documented.
+ */
+const PENDING_PROMPT_METADATA_KEY = "agent.pending-prompt";
+
+/** The AgentSpec a reopened workspace still owes its agent, if any. */
+function pendingAgentSpec(metadata: Readonly<Record<string, string>>): AgentSpec | undefined {
+  const value = metadata[PENDING_PROMPT_METADATA_KEY];
+  if (value === undefined) return undefined;
+  try {
+    const parsed = agentSpecSchema.safeParse(JSON.parse(value));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -194,6 +216,23 @@ export function createAgentModule(
       const message = getErrorMessage(error);
       logger.warn(`${provider.type}AgentModule: ${logTag} error`, { error: message });
       return { error: message };
+    }
+  }
+
+  /**
+   * Write (or, with null, clear) the pending prompt. Best-effort: a failure
+   * only loses the restart safety net, never the workspace.
+   */
+  async function setPendingPrompt(workspacePath: WorkspacePath, value: string | null) {
+    try {
+      await deps.dispatcher.dispatch<SetMetadataIntent>({
+        type: INTENT_SET_METADATA,
+        payload: { workspacePath, key: PENDING_PROMPT_METADATA_KEY, value },
+      });
+    } catch (error) {
+      logger.scoped({ path: workspacePath }).warn("Failed to update pending initial prompt", {
+        error: getErrorMessage(error),
+      });
     }
   }
 
@@ -391,12 +430,27 @@ export function createAgentModule(
             const intent = ctx.intent as OpenWorkspaceIntent;
             const workspacePath = setupCtx.workspacePath;
 
-            const initialPrompt = agentPromptConfigFor(intent.payload.agent, provider.type);
-            const isNewWorkspace = intent.payload.existingWorkspace === undefined;
+            // A reopened workspace whose agent never took its prompt over (the app
+            // quit first) gets it again, and starts as fresh as a new one.
+            const existing = intent.payload.existingWorkspace;
+            const hasPending = existing?.metadata[PENDING_PROMPT_METADATA_KEY] !== undefined;
+            const spec =
+              existing === undefined ? intent.payload.agent : pendingAgentSpec(existing.metadata);
+            const initialPrompt = agentPromptConfigFor(spec, provider.type);
+
+            if (existing === undefined && initialPrompt !== undefined) {
+              await setPendingPrompt(workspacePath, JSON.stringify(spec));
+            } else if (hasPending && initialPrompt === undefined) {
+              // Unreadable, or nothing this agent can use: drop it rather than keep it forever.
+              await setPendingPrompt(workspacePath, null);
+            }
 
             const result = await provider.startWorkspace(workspacePath, {
-              ...(initialPrompt !== undefined && { initialPrompt }),
-              isNewWorkspace,
+              ...(initialPrompt !== undefined && {
+                initialPrompt,
+                onInitialPromptDelivered: () => void setPendingPrompt(workspacePath, null),
+              }),
+              isNewWorkspace: existing === undefined || initialPrompt !== undefined,
               env: setupCtx.workspaceEnv,
             });
 

@@ -157,10 +157,12 @@ Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concre
 | `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`            |
 | `onProviderRegistered`   | —                                                                   | sends the pending initial prompt               |
 | `startServer`            | `startServer(path)`                                                 | `startServer(path, {initialPrompt, binary})`   |
-| `afterProviderReady`     | writes prompt file + no-session marker                              | —                                              |
+| `afterProviderReady`     | writes prompt file + no-session marker                              | reports the prompt delivered (already sent)    |
 | `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach             |
 | `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking) |
 | `clearWorkspaceTracking` | — (no per-workspace tracking)                                       | clears the TUI-attached entry                  |
+
+The initial prompt reaches the agent in memory (Claude: a one-shot temp file named only in the server manager's state), so the agent module also keeps the workspace's `AgentSpec` in the internal `agent.pending-prompt` metadata key until the agent has taken it over — `onInitialPromptDelivered` in `WorkspaceStartOptions`: Claude's first `SessionStart` after the prompt file was written, OpenCode's `afterProviderReady`. A reopen (startup, wake) that finds the key starts the agent with that prompt as a new workspace (no-session marker included); an unreadable key, or one for another agent, is dropped.
 
 ### AgentServerManager
 

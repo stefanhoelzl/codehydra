@@ -568,6 +568,24 @@ describe("OpenCode module provider", () => {
       });
     });
 
+    it("reports the prompt delivered once it has been sent", async () => {
+      provider.initialize(null);
+      vi.mocked(serverManager.startServer).mockImplementation(async () => {
+        serverManager._triggerStarted(WS_PATH, 8080, { prompt: "build feature X" });
+        return 8080;
+      });
+      const onInitialPromptDelivered = vi.fn(() => {
+        expect(getLatestMockProvider().sendPrompt).toHaveBeenCalled();
+      });
+
+      await provider.startWorkspace(WS_PATH, {
+        initialPrompt: { prompt: "build feature X" },
+        onInitialPromptDelivered,
+      });
+
+      expect(onInitialPromptDelivered).toHaveBeenCalledOnce();
+    });
+
     it("calls startServer without a prompt when no initialPrompt", async () => {
       provider.initialize(null);
 
