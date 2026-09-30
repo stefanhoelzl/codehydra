@@ -149,10 +149,9 @@ Open a project from the New workspace form (**Open project folder** or
 - A folder that is not a git repository asks to **initialize** one (git init
   with an initial commit).
 - A repository that already has worktrees CodeHydra does not manage asks which
-  to **adopt**; worktrees on a detached HEAD cannot be adopted. An adopted
-  workspace is named after its branch, like every other workspace. The
-  adoption is stored on that branch: with another branch checked out in the
-  worktree, it is not listed after the next start until the branch is back.
+  to **adopt**. An adopted workspace is named after its branch, like every
+  other workspace (its directory on a detached HEAD). The adoption belongs to
+  the worktree, so it holds whatever is checked out there.
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
   `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
   background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
@@ -660,8 +659,9 @@ Output — every field optional:
   invalid tag name makes that plugin's whole output invalid: a failed run whose
   message names it, and none of its title or tags are applied.
 
-`title` and `tags` are stored in the workspace's git config, so they survive a
-restart like a title set by hand. `env` is not accepted here: environment
+`title` and `tags` are stored in the workspace's metadata (see
+[Workspace metadata](#workspace-metadata)), so they survive a restart like a
+title set by hand. `env` is not accepted here: environment
 belongs to `before-workspace-opened`.
 
 **Failure is loud but not fatal**: a failed or canceled run raises **Plugin
@@ -905,7 +905,8 @@ and three that only automations have:
 | `metadata` | `title` (sidebar title), `tags` (by name: `{ color, label, description }`) and any other keys (string values) |
 
 Metadata keys must start with a letter and contain only letters, digits and
-`-`. Every workspace an automation creates or matches also gets
+`-`, and must not be one CodeHydra manages (see
+[Workspace metadata](#workspace-metadata)). Every workspace an automation creates or matches also gets
 `source: <plugin>/<automation>` in its metadata, and a created one gets the blue
 **new** tag.
 
@@ -1037,7 +1038,8 @@ named in the message.
 
 Each workspace runs one coding agent — Claude Code or OpenCode, chosen by the
 `agent` setting or per workspace when you create it — in a terminal tab of its
-editor.
+editor. The agent is recorded in the workspace when it first opens, so changing
+the `agent` setting applies to new workspaces only.
 
 ### Which agent binary runs
 
@@ -1282,6 +1284,37 @@ ch guide plugins
   error. PDFs do not display: Simple Browser sandboxes its page, and Chromium's
   PDF viewer refuses to run in a sandboxed frame — open them with
   `ch ws open <path>` instead.
+
+### Workspace metadata
+
+Every workspace carries string key/value metadata: its sidebar `title`, its
+tags (`tags.<name>`, each a JSON `{ color, label, description }`) and any keys
+you add with `ch ws metadata set`. It lives in the worktree's own git
+directory (`.git/worktrees/<id>/codehydra.json` in the repository), not in git
+config, so it survives renaming the branch or detaching HEAD, moves with
+`git worktree move`, and is gone when the worktree is.
+
+Some keys are CodeHydra's own, and `ws metadata get` shows them read-only:
+
+| Key          | Meaning                                                     |
+| ------------ | ----------------------------------------------------------- |
+| `base`       | The branch the workspace was created from                   |
+| `agent`      | The agent the workspace runs (`claude` or `opencode`)       |
+| `hibernated` | `true` while the workspace is hibernated                    |
+| `source`     | The `<plugin>/<automation>` that created or last matched it |
+
+Setting one of those — or a key CodeHydra keeps to itself and does not show —
+is refused, from `ch`, MCP, the extension API, plugin actions and automation
+items alike. Hibernate, wake and creation change them.
+
+Versions before this one kept metadata in git config
+(`branch.<name>.codehydra.*`). Opening a project moves its workspaces' entries
+into their files — recording the current `agent` setting for a workspace that
+had no agent of its own, since that is the agent it has been running — and
+removes them from git config, along with the entries of
+branches that no longer exist; entries of a branch CodeHydra does not manage
+stay, in case another CodeHydra (a development build, say) still uses them.
+An older version opened afterwards no longer sees that metadata.
 
 ### Locks
 

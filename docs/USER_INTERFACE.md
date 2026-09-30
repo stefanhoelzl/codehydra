@@ -512,7 +512,7 @@ When selecting an existing branch from the dropdown:
 
 - The name field auto-fills with the branch name
 - The base branch field auto-fills with a suggested base:
-  - For local branches: uses `codehydra.base` config or matching `origin/*` branch
+  - For local branches: uses the base recorded for the branch's workspace or matching `origin/*` branch
   - For remote branches: uses the full remote ref (e.g., `origin/feature-x`)
 
 When typing a custom name and pressing Enter with no dropdown selection:

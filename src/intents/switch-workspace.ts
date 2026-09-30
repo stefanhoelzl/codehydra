@@ -99,7 +99,7 @@ export const workspaceSwitchedPayloadSchema = z
     path: workspacePathSchema,
     /** The workspace's raw domain metadata, as resolved at switch time. It is
      *  the baseline consumers can't reconstruct from workspace:metadata-changed
-     *  alone: metadata persists in git config across restarts, so a title set in
+     *  alone: metadata persists across restarts, so a title set in
      *  an earlier run never re-emits as a change. Consumers interpret it (see
      *  `readTitle`/`extractTags`) and keep the meanings, never the raw map. */
     metadata: z.record(z.string(), z.string()).readonly(),

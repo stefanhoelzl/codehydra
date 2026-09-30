@@ -245,6 +245,34 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("getWorktreeGitDir", () => {
+    it("resolves a linked worktree's private git directory", async () => {
+      await client.createBranch(repoPath, "gitdir-test", "main");
+      const worktreePath = new Path(repoPath.dirname, "gitdir-test");
+      try {
+        await client.addWorktree(repoPath, worktreePath, "gitdir-test");
+
+        const gitDir = await client.getWorktreeGitDir(worktreePath);
+
+        // By name: git reports the real path, which differs where the temp dir is
+        // a symlink (macOS /var → /private/var)
+        expect(gitDir.basename).toBe("gitdir-test");
+        expect(gitDir.dirname.basename).toBe("worktrees");
+      } finally {
+        await fs.rm(worktreePath.toNative(), { recursive: true, force: true });
+      }
+    });
+
+    it("throws GitError for a path that is not a worktree", async () => {
+      const tempDir = await createTempDir();
+      try {
+        await expect(client.getWorktreeGitDir(new Path(tempDir.path))).rejects.toThrow(GitError);
+      } finally {
+        await tempDir.cleanup();
+      }
+    });
+  });
+
   describe("repairWorktrees", () => {
     it("reconnects worktrees to a repository that moved", async () => {
       await client.createBranch(repoPath, "repair-test", "main");
@@ -786,6 +814,26 @@ describe("SimpleGitClient", () => {
       } finally {
         await tempDir.cleanup();
       }
+    });
+  });
+
+  describe("removeConfigSection", () => {
+    it("removes every key of the section and nothing else", async () => {
+      await client.setBranchConfig(repoPath, "main", "codehydra.base", "main");
+      await client.setBranchConfig(repoPath, "main", "codehydra.note", "WIP");
+      await client.setBranchConfig(repoPath, "main", "codehydra.tags.new", "{}");
+
+      await client.removeConfigSection(repoPath, "branch.main.codehydra");
+
+      expect(await client.getGitConfig(repoPath, { regex: "codehydra" })).toEqual(
+        new Map([["branch.main.codehydra.tags.new", "{}"]])
+      );
+    });
+
+    it("throws GitError for a section that does not exist", async () => {
+      await expect(client.removeConfigSection(repoPath, "branch.main.codehydra")).rejects.toThrow(
+        GitError
+      );
     });
   });
 

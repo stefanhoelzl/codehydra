@@ -25,7 +25,6 @@
  * each time they would run, so nothing needs a restart to see them.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -295,12 +294,27 @@ function hibernatedRow(ui: Page, name: string): Locator {
   return ui.getByRole("button", { name: new RegExp(`^${name} in .*Hibernated`) });
 }
 
+/**
+ * The metadata file of the workspace on branch `name`: `codehydra.json` in the
+ * git directory (`.git/worktrees/<id>`) of the worktree whose HEAD is that branch.
+ */
+function metadataFileOf(name: string): string {
+  const worktrees = join(repo.path, ".git", "worktrees");
+  for (const id of existsSync(worktrees) ? readdirSync(worktrees) : []) {
+    const head = readFileSync(join(worktrees, id, "HEAD"), "utf-8").trim();
+    if (head === `ref: refs/heads/${name}`) return join(worktrees, id, "codehydra.json");
+  }
+  throw new Error(`no worktree on branch ${name}`);
+}
+
+type MetadataFile = Record<"internal" | "protected" | "public", Record<string, string>>;
+
+function readMetadataFile(name: string): MetadataFile {
+  return JSON.parse(readFileSync(metadataFileOf(name), "utf-8")) as MetadataFile;
+}
+
 function hibernatedFlag(name: string): string {
-  const result = spawnSync("git", ["config", "--get", `branch.${name}.codehydra.hibernated`], {
-    cwd: repo.path,
-    encoding: "utf-8",
-  });
-  return result.stdout.trim();
+  return readMetadataFile(name).protected.hibernated ?? "";
 }
 
 /** Click until `done` holds: `<vscode-button>` can swallow a click on Windows. */
@@ -612,9 +626,13 @@ test("an event wakes the hibernated workspace it matches", async () => {
   test.setTimeout(CREATE_TIMEOUT * 2);
 
   // Hibernation has no affordance a spec can drive (it is Alt+X then H, which
-  // CDP input cannot reach), so write the flag the app writes and relaunch.
-  spawnSync("git", ["config", "branch.ev-42.codehydra.hibernated", "true"], { cwd: repo.path });
+  // CDP input cannot reach), so write the flag the app writes and relaunch. The
+  // app holds metadata in memory while it runs, so the file is edited while it
+  // is stopped.
   await app().stop();
+  const metadata = readMetadataFile("ev-42");
+  metadata.protected.hibernated = "true";
+  writeFileSync(metadataFileOf("ev-42"), JSON.stringify(metadata));
   await launchApp(app(), { agent: test.info().project.name as Agent, extraArgs: launchFlags() });
   const ui = app().uiPage();
   await hibernatedRow(ui, "ev-42").waitFor({ timeout: CREATE_TIMEOUT });

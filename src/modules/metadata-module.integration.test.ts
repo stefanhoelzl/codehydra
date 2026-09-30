@@ -48,7 +48,14 @@ interface TestSetup {
 }
 
 function createTestSetup(): TestSetup {
+  const mockFs = createFileSystemMock({
+    entries: {
+      [WORKSPACES_DIR.toString()]: directory(),
+    },
+  });
+
   const mockClient = createMockGitClient({
+    fileSystem: mockFs,
     repositories: {
       [PROJECT_ROOT.toString()]: {
         branches: ["main", "feature-x"],
@@ -61,12 +68,6 @@ function createTestSetup(): TestSetup {
           },
         ],
       },
-    },
-  });
-
-  const mockFs = createFileSystemMock({
-    entries: {
-      [WORKSPACES_DIR.toString()]: directory(),
     },
   });
 

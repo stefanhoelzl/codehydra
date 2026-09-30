@@ -269,8 +269,7 @@ export function createGitWorktreeWorkspaceModule(
    * branch), then where it lives.
    */
   function worktreeLabel(wt: UnmanagedWorktree): string {
-    const detached = wt.adoptable ? "" : " — detached HEAD, cannot be adopted";
-    return `${wt.name} — ${wt.path.toString()}${detached}`;
+    return `${wt.name} — ${wt.path.toString()}`;
   }
 
   /**
@@ -290,7 +289,6 @@ export function createGitWorktreeWorkspaceModule(
     unmanaged: readonly UnmanagedWorktree[],
     selected: ReadonlySet<number>
   ): DialogSection[] {
-    const adoptable = unmanaged.filter((wt) => wt.adoptable);
     const sections: DialogSection[] = [
       { type: "text", content: "Open existing worktrees?", style: "heading" },
       { type: "text", content: projectPath, style: "subtitle" },
@@ -300,7 +298,7 @@ export function createGitWorktreeWorkspaceModule(
         label: "Select all",
         // Reflects the rows rather than driving them alone: unticking one row
         // unticks this too, which is what a select-all box is expected to do.
-        value: adoptable.length > 0 && adoptable.every((wt) => selected.has(unmanaged.indexOf(wt))),
+        value: unmanaged.length > 0 && selected.size === unmanaged.length,
         changeEvent: true,
       },
     ];
@@ -312,7 +310,6 @@ export function createGitWorktreeWorkspaceModule(
         label: worktreeLabel(wt),
         value: selected.has(index),
         changeEvent: true,
-        disabled: !wt.adoptable,
       });
     });
 
@@ -354,8 +351,8 @@ export function createGitWorktreeWorkspaceModule(
     const setAll = (checked: boolean): void => {
       selected.clear();
       if (!checked) return;
-      unmanaged.forEach((wt, index) => {
-        if (wt.adoptable) selected.add(index);
+      unmanaged.forEach((_wt, index) => {
+        selected.add(index);
       });
     };
 
@@ -399,7 +396,7 @@ export function createGitWorktreeWorkspaceModule(
     dialog.close();
 
     if (!confirmed) return null;
-    return unmanaged.filter((wt, index) => wt.adoptable && selected.has(index));
+    return unmanaged.filter((_wt, index) => selected.has(index));
   }
 
   // ---------------------------------------------------------------------------
@@ -463,14 +460,13 @@ export function createGitWorktreeWorkspaceModule(
             // Nothing the user could act on: say nothing. discover() logs the
             // worktrees it skips, so agent scratch worktrees stay diagnosable
             // without putting a dialog in the way of adding a project.
-            if (!unmanaged.some((wt) => wt.adoptable)) return { result: {} };
+            if (unmanaged.length === 0) return { result: {} };
 
             const picked = await runPicker(path, unmanaged);
             if (picked === null) return { result: { canceled: true } };
 
             const failed: string[] = [];
             for (const wt of picked) {
-              if (wt.branch === null) continue;
               try {
                 await gitWorktreeProvider.adoptWorktree(projectPathObj, wt.path, wt.branch);
               } catch (error: unknown) {
@@ -696,8 +692,8 @@ export function createGitWorktreeWorkspaceModule(
         finalize: {
           /**
            * Re-read the workspace's metadata so `workspace:created` (and the
-           * Workspace this operation returns) carry what git config actually
-           * holds when creation completes.
+           * Workspace this operation returns) carry what the metadata store
+           * actually holds when creation completes.
            *
            * The `create` snapshot plus the metadata hook handlers *report* is
            * only as complete as its reporters. An agent that acts on its own
@@ -707,7 +703,7 @@ export function createGitWorktreeWorkspaceModule(
            * result and so is invisible to that fold. Its `metadata:changed`
            * event then lands on a row the presenter is about to overwrite with
            * the stale snapshot, and the change vanishes until a restart re-reads
-           * git config.
+           * the metadata.
            *
            * Reading here fixes it for every writer rather than for the ones that
            * remember to report, and keeps the presenter's "install the

@@ -103,49 +103,61 @@ describe("Services Integration", () => {
       expect(finalWorkspaces).toHaveLength(0);
     }, 15000);
 
-    it("prunes codehydra config left behind by a hand-deleted branch", async () => {
+    it("keeps metadata in the worktree's git directory, and migrates legacy config", async () => {
       const fileSystemLayer = new DefaultFileSystemBoundary(SILENT_LOGGER);
       const gitClient = new SimpleGitClient(SILENT_LOGGER);
       const workspacesDir = getWorkspacesDir(repoPath);
+      const projectRoot = new Path(repoPath);
       const provider = await createProvider(
-        new Path(repoPath),
+        projectRoot,
         gitClient,
         new Path(workspacesDir),
         fileSystemLayer,
         SILENT_LOGGER
       );
-      const projectRoot = new Path(repoPath);
 
-      const kept = await provider.createWorkspace(projectRoot, "still-here", "main");
-      await provider.createWorkspace(projectRoot, "hand-deleted", "main");
+      const workspace = await provider.createWorkspace(projectRoot, "feature-x", "main");
+      await provider.setMetadata(workspace.path, "title", "Login flow");
 
-      // Delete the branch the way a user would — the worktree and the
-      // [branch "hand-deleted.codehydra"] section both survive this.
-      await gitClient.removeWorktree(projectRoot, new Path(workspacesDir, "hand-deleted"));
-      await gitClient.deleteBranch(projectRoot, "hand-deleted");
-      const before = await gitClient.getGitConfig(projectRoot, {
-        regex: `^branch\\.hand-deleted\\.codehydra\\.`,
+      const gitDir = await gitClient.getWorktreeGitDir(workspace.path);
+      expect(gitDir.dirname.basename).toBe("worktrees");
+      const file = new Path(gitDir, "codehydra.json");
+      expect(JSON.parse(await fileSystemLayer.readFile(file))).toEqual({
+        version: 1,
+        internal: {},
+        protected: { base: "main" },
+        public: { title: "Login flow" },
       });
-      expect(before.size).toBeGreaterThan(0);
+      expect(await gitClient.getGitConfig(projectRoot, { regex: "codehydra" })).toEqual(new Map());
 
-      await provider.cleanupOrphanedWorkspaces(projectRoot);
+      // Rewind to an older version's storage: no file, metadata in branch config
+      await fileSystemLayer.unlink(file);
+      await gitClient.setBranchConfig(projectRoot, "feature-x", "codehydra.base", "main");
+      await gitClient.setBranchConfig(projectRoot, "feature-x", "codehydra.tags.new", "{}");
 
-      const after = await gitClient.getGitConfig(projectRoot, {
-        regex: `^branch\\.hand-deleted\\.codehydra\\.`,
+      const restarted = await createProvider(
+        projectRoot,
+        gitClient,
+        new Path(workspacesDir),
+        fileSystemLayer,
+        SILENT_LOGGER
+      );
+      const [discovered] = await restarted.discover(projectRoot);
+
+      expect(discovered?.metadata).toEqual({ base: "main", "tags.new": "{}" });
+      expect(JSON.parse(await fileSystemLayer.readFile(file))).toEqual({
+        version: 1,
+        internal: {},
+        protected: { base: "main" },
+        public: { "tags.new": "{}" },
       });
-      expect(after.size).toBe(0);
-      // The surviving branch keeps both its branch and its metadata.
-      const stillHere = await gitClient.getGitConfig(projectRoot, {
-        regex: `^branch\\.still-here\\.codehydra\\.`,
-      });
-      expect(stillHere.size).toBeGreaterThan(0);
-      expect(kept.branch).toBe("still-here");
+      expect(await gitClient.getGitConfig(projectRoot, { regex: "codehydra" })).toEqual(new Map());
     }, 15000);
 
-    it("deletes the branch of a detached workspace and clears its metadata", async () => {
+    it("deletes the branch of a detached workspace", async () => {
       // Regression: a rebase that stops on a conflict leaves HEAD detached, so
       // `git worktree list` reports no branch for it. The branch name was then
-      // null, which skipped both the metadata cleanup and the branch delete —
+      // null, which skipped the branch delete —
       // the worktree went away, no error was raised, and the branch was orphaned.
       const fileSystemLayer = new DefaultFileSystemBoundary(SILENT_LOGGER);
       const gitClient = new SimpleGitClient(SILENT_LOGGER);
@@ -172,10 +184,6 @@ describe("Services Integration", () => {
       expect(result.baseDeleted).toBe(true);
       const branches = await gitClient.listBranches(projectRoot);
       expect(branches.some((b) => b.name === "detach-me" && !b.isRemote)).toBe(false);
-      const metadata = await gitClient.getGitConfig(projectRoot, {
-        regex: `^branch\\.detach-me\\.codehydra\\.`,
-      });
-      expect(metadata.size).toBe(0);
     }, 15000);
 
     it("handles multiple workspaces", async () => {

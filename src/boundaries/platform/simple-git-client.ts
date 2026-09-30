@@ -384,6 +384,14 @@ export class SimpleGitClient implements IGitClient {
     this.logger.scoped({ path: repoPath.toString() }).debug("DeleteBranch", { branch: name });
   }
 
+  async getWorktreeGitDir(worktreePath: Path): Promise<Path> {
+    return this.wrapGitOperation(async () => {
+      const git = this.getGit(worktreePath);
+      const gitDir = await git.revparse(["--absolute-git-dir"]);
+      return new Path(gitDir.trim());
+    }, "Failed to resolve worktree git directory");
+  }
+
   async getCurrentBranch(repoPath: Path): Promise<string | null> {
     return this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
@@ -543,6 +551,15 @@ export class SimpleGitClient implements IGitClient {
         throw new GitError(`Failed to unset branch config: ${errMsg}`);
       }
     });
+  }
+
+  async removeConfigSection(repoPath: Path, section: string): Promise<void> {
+    return this.serializeConfigWrite(() =>
+      this.wrapGitOperation(async () => {
+        const git = this.getGit(repoPath);
+        await git.raw(["config", "--local", "--remove-section", section]);
+      }, `Failed to remove config section ${section}`)
+    );
   }
 
   async clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void> {

@@ -15,6 +15,7 @@ import type { EntryDeps } from "./deps";
 import { createTargetResolver, targetFields } from "./target";
 import type { WorkspacePath } from "../../intents/contract";
 import { extractTags, isValidMetadataKey } from "../../shared/api/types";
+import { metadataTier, visibleMetadata } from "../../utils/metadata-tier";
 
 import { INTENT_GET_METADATA } from "../../intents/get-metadata";
 import type { GetMetadataIntent } from "../../intents/get-metadata";
@@ -27,11 +28,15 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
   const targetOf = createTargetResolver(dispatcher);
 
-  const read = (workspacePath: WorkspacePath) =>
-    dispatcher.dispatch<GetMetadataIntent>({
+  // Every read and write here comes from outside CodeHydra, so internal keys are
+  // hidden and only public ones can be written (see utils/metadata-tier.ts).
+  const read = async (workspacePath: WorkspacePath) => {
+    const metadata = await dispatcher.dispatch<GetMetadataIntent>({
       type: INTENT_GET_METADATA,
       payload: { workspacePath },
     });
+    return metadata && visibleMetadata(metadata);
+  };
 
   const write = async (workspacePath: WorkspacePath, key: string, value: string | null) => {
     if (!isValidMetadataKey(key)) {
@@ -40,6 +45,9 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         `Invalid metadata key "${key}": dot-separated segments, each starting with a letter ` +
           `and containing only letters, digits and hyphens.`
       );
+    }
+    if (metadataTier(key) !== "public") {
+      throw new ApiError("usage", `Metadata key "${key}" is managed by CodeHydra and read-only.`);
     }
     await dispatcher.dispatch<SetMetadataIntent>({
       type: INTENT_SET_METADATA,
@@ -52,7 +60,9 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     name: "metadata.get",
     kind: "command",
     description: "Get all metadata for a workspace.",
-    instructions: "Always includes a 'base' key holding the base branch name.",
+    instructions:
+      "Includes a 'base' key holding the base branch name when one is recorded. 'base', " +
+      "'agent', 'hibernated' and 'source' are read-only.",
     input: z.object(targetFields),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
@@ -68,7 +78,8 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     description: "Set or delete a metadata key on a workspace.",
     instructions:
       "Pass a null value to delete the key. Prefer the dedicated title and tag commands over " +
-      "writing the 'title' key or 'tags.' prefix by hand.",
+      "writing the 'title' key or 'tags.' prefix by hand. Keys CodeHydra manages ('base', " +
+      "'agent', 'hibernated', 'source') are read-only.",
     input: z.object({
       ...targetFields,
       key: z.string().describe("Metadata key, e.g. 'base' or 'tags.bugfix'"),

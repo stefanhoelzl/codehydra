@@ -27,6 +27,7 @@ import type { OperationRegistry } from "../../api/registry";
 import type { OperationName } from "../../api/names";
 import { PLUGIN_ACTION_NAMES } from "../../api/adapters/plugin-actions-map";
 import { isValidMetadataKey, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
+import { metadataTier } from "../../utils/metadata-tier";
 
 /** The action that creates workspaces, with the automation-only fields. */
 export const CREATE_ACTION = "workspace.create";
@@ -58,6 +59,8 @@ const metadataSchema = z
       if (key === "title" || key === "tags") continue;
       if (!isValidMetadataKey(key)) {
         ctx.addIssue({ code: "custom", path: [key], message: "not a valid metadata key" });
+      } else if (metadataTier(key) !== "public") {
+        ctx.addIssue({ code: "custom", path: [key], message: "managed by CodeHydra, read-only" });
       }
     }
   });

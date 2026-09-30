@@ -397,7 +397,13 @@ const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 const gitWorktreeProvider = new GitWorktreeProvider(
   gitClient,
   fileSystemLayer,
-  loggingService.createLogger("worktree")
+  loggingService.createLogger("worktree"),
+  // A workspace migrated from git config without a recorded agent has been
+  // running the default: pin it, as the agent resolver does on open.
+  () => {
+    const agent = agentConfig.get();
+    return agent === "claude" || agent === "opencode" ? { agent } : {};
+  }
 );
 const autoUpdater = new AutoUpdater({
   logger: loggingService.createLogger("updater"),
