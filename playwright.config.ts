@@ -10,6 +10,8 @@ const WARM_SPECS = "**/!(download-binaries).e2e.ts";
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/.output",
+  // Deletes the root when the run ends (CH_E2E_KEEP_ROOT=1 keeps it).
+  globalTeardown: "./e2e/global-teardown.ts",
 
   // A packaged app + IDE server + agent server is heavy, and prod pins
   // ide-server.port to a constant. Serial.

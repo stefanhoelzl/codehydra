@@ -118,6 +118,21 @@ export async function resetRoot(): Promise<void> {
 }
 
 /**
+ * Delete the root once the run is over (Playwright's global teardown).
+ *
+ * Nothing is lost: `download-binaries` starts every run from an empty root, and
+ * each spec's app logs are already copied into its output dir. A root left
+ * behind is up to a couple of GB (VSCodium plus both agents) in the OS temp
+ * dir, per checkout. `CH_E2E_KEEP_ROOT=1` keeps it, for re-running a spec with
+ * `--no-deps` against the warm root, or for looking around after a failure.
+ */
+export async function removeRoot(): Promise<void> {
+  if (process.env.CH_E2E_KEEP_ROOT) return;
+  assertDisposable(ROOT_DIR);
+  await removeTree(ROOT_DIR);
+}
+
+/**
  * Wipe the app's mutable state without touching bundles or installed extensions.
  * Safe by construction — it deletes named children, never the root itself.
  *
