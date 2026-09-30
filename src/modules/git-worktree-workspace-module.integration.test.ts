@@ -1959,7 +1959,6 @@ describe("Add-project worktree picker", () => {
       name: branch ?? dir,
       path: new Path(`/code/${dir}`),
       branch,
-      adoptable: branch !== null,
     };
   }
 
@@ -2042,17 +2041,15 @@ describe("Add-project worktree picker", () => {
     expect(dialogs.handles).toHaveLength(0);
   });
 
-  it("stays silent when nothing is adoptable", async () => {
-    // An agent's scratch worktree is detached, so adding a project alongside one
-    // must not put a dialog in the way.
-    const { dispatcher, dialogs } = createPickerSetup([makeUnmanaged("wt-8fa2", null)]);
+  it("stays silent when there is nothing to adopt", async () => {
+    const { dispatcher, dialogs } = createPickerSetup([]);
 
     await prepare(dispatcher, { path: PROJECT, initial: true });
 
     expect(dialogs.handles).toHaveLength(0);
   });
 
-  it("lists unmanaged worktrees with nothing pre-ticked, detached ones disabled", async () => {
+  it("lists unmanaged worktrees with nothing pre-ticked, detached ones included", async () => {
     const { dispatcher, dialogs } = createPickerSetup([
       makeUnmanaged("repo-login", "feature/login"),
       makeUnmanaged("wt-8fa2", null),
@@ -2069,15 +2066,13 @@ describe("Add-project worktree picker", () => {
       label: "feature/login — /code/repo-login",
       value: false,
       changeEvent: true,
-      disabled: false,
     });
     expect(handle.config.sections).toContainEqual({
       type: "checkbox",
       id: "wt-1",
-      label: "wt-8fa2 — /code/wt-8fa2 — detached HEAD, cannot be adopted",
+      label: "wt-8fa2 — /code/wt-8fa2",
       value: false,
       changeEvent: true,
-      disabled: true,
     });
     // No orphaned detail lines: a second section per row is centered by the
     // default layout and a full gap away from its own checkbox.
@@ -2108,7 +2103,7 @@ describe("Add-project worktree picker", () => {
     expect(handle.closed).toBe(true);
   });
 
-  it("Select all ticks every adoptable worktree, never the detached one", async () => {
+  it("Select all ticks every worktree, the detached one included", async () => {
     const { dispatcher, provider, dialogs } = createPickerSetup([
       makeUnmanaged("repo-login", "feature/login"),
       makeUnmanaged("wt-8fa2", null),
@@ -2123,15 +2118,16 @@ describe("Add-project worktree picker", () => {
     expect(rowValues(handle.config)).toEqual({
       "select-all": true,
       "wt-0": true,
-      "wt-1": false,
+      "wt-1": true,
       "wt-2": true,
     });
 
-    handle.emitAction("continue", { "wt-0": "true", "wt-1": "false", "wt-2": "true" });
+    handle.emitAction("continue", { "wt-0": "true", "wt-1": "true", "wt-2": "true" });
     await pending;
 
     expect(provider.adoptWorktree.mock.calls.map((call) => call[2])).toEqual([
       "feature/login",
+      null,
       "hotfix-2",
     ]);
   });

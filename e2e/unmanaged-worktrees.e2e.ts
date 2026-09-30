@@ -71,10 +71,10 @@ test("stray worktrees stay out of the sidebar unless adopted in the picker", asy
 
   await expect(adoptable).toHaveAttribute("aria-label", /^feature\/login — .*repo-login$/);
   await expect(adoptable).not.toHaveAttribute("disabled", "");
-  // The agent's detached worktree is listed but cannot be adopted: the marker is
-  // stored per branch, and it has none.
-  await expect(detached).toHaveAttribute("aria-label", /detached HEAD, cannot be adopted$/);
-  await expect(detached).toHaveAttribute("disabled", "");
+  // The agent's detached worktree is offered too: adoption is recorded in the
+  // worktree's own metadata file, so it needs no branch.
+  await expect(detached).toHaveAttribute("aria-label", /^agent-scratch — .*agent-scratch$/);
+  await expect(detached).not.toHaveAttribute("disabled", "");
 
   // --- Continue without ticking anything ---
   await ui.getByRole("button", { name: "Continue" }).click();

@@ -119,6 +119,7 @@ import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
+import { metadataTier, visibleMetadata } from "../utils/metadata-tier";
 import { workspacePathSchema } from "../intents/contract";
 import type { WorkspacePath } from "../intents/contract";
 
@@ -1263,7 +1264,8 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         if (!result) {
           throw new Error("Get metadata dispatch returned no result");
         }
-        return result as Record<string, string>;
+        // Extensions are outside callers: internal keys stay hidden.
+        return visibleMetadata(result);
       })
     );
 
@@ -1276,6 +1278,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         validateSetMetadataRequest,
         (req) =>
           handleApiCall(workspacePath, "setMetadata", async () => {
+            if (metadataTier(req.key) !== "public") {
+              throw new Error(`Metadata key "${req.key}" is managed by CodeHydra and read-only.`);
+            }
             const intent: SetMetadataIntent = {
               type: INTENT_SET_METADATA,
               payload: {

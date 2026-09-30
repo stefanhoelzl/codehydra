@@ -82,6 +82,11 @@ describe("parse", () => {
       { action: "workspace.create", name: "x", metadata: { tags: { "1st": {} } } },
       /not a valid tag name/,
     ],
+    [
+      "a key CodeHydra manages",
+      { action: "workspace.create", name: "x", metadata: { hibernated: "true" } },
+      /hibernated: managed by CodeHydra, read-only/,
+    ],
     ["not an object", "workspace.create", /must be a JSON object/],
   ])("refuses %s, naming it", (_what, raw, message) => {
     expect(() => schemas().parse(raw)).toThrow(message);

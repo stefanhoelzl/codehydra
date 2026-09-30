@@ -28,6 +28,7 @@
 import { expect } from "vitest";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./git-types";
+import { directory, type MockFileSystemBoundary } from "./filesystem.state-mock";
 import { GitError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
 import { testPath } from "../../shared/test-fixtures";
@@ -143,6 +144,13 @@ export interface RepositoryInit {
 export interface MockGitClientOptions {
   /** Repositories by path */
   readonly repositories?: Readonly<Record<string, RepositoryInit>>;
+  /**
+   * Filesystem holding each worktree's git directory, for code that stores files
+   * there: `getWorktreeGitDir` creates the directory in it (as git has for a live
+   * worktree) and `removeWorktree` deletes it. Without one, git directories exist
+   * only as paths.
+   */
+  readonly fileSystem?: MockFileSystemBoundary;
 }
 
 // =============================================================================
@@ -281,6 +289,14 @@ class GitClientMockStateImpl implements GitClientMockState {
  *   },
  * });
  */
+/** A worktree's git directory: `worktrees/<name>` in the repository's git directory. */
+function worktreeGitDir(repoPath: string, repo: RepositoryState, name: string): Path {
+  // A bare repository is its own git directory
+  return repo.isBare
+    ? new Path(repoPath, "worktrees", name)
+    : new Path(repoPath, ".git", "worktrees", name);
+}
+
 export function createMockGitClient(options?: MockGitClientOptions): MockGitClient {
   // Initialize repositories
   const repos = new Map<string, RepositoryState>();
@@ -403,6 +419,20 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       return result;
     },
 
+    async getWorktreeGitDir(worktreePath: Path): Promise<Path> {
+      const normalizedPath = normalizePath(worktreePath);
+      const found = findRepoForWorktree(normalizedPath);
+      const wt = found?.[1].worktrees.get(normalizedPath);
+      if (!found || !wt) {
+        throw new GitError(`Not a worktree: ${normalizedPath}`);
+      }
+      const gitDir = worktreeGitDir(found[0], found[1], wt.name);
+      if (options?.fileSystem && !options.fileSystem.$.entries.has(gitDir.toString())) {
+        options.fileSystem.$.setEntry(gitDir, directory());
+      }
+      return gitDir;
+    },
+
     async addWorktree(repoPath: Path, worktreePath: Path, branch: string): Promise<void> {
       const repo = getRepoOrThrow(repoPath);
       const normalizedRepoPath = normalizePath(repoPath);
@@ -444,7 +474,12 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         throw new GitError(`Worktree not found: ${normalizedWorktreePath}`);
       }
 
+      const wt = repo.worktrees.get(normalizedWorktreePath)!;
       repo.worktrees.delete(normalizedWorktreePath);
+      await options?.fileSystem?.rm(worktreeGitDir(normalizePath(repoPath), repo, wt.name), {
+        recursive: true,
+        force: true,
+      });
     },
 
     async repairWorktrees(repoPath: Path, worktreePaths: readonly Path[]): Promise<void> {
@@ -673,6 +708,26 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         }
       }
       // No-op if key doesn't exist (per interface contract)
+    },
+
+    async removeConfigSection(repoPath: Path, section: string): Promise<void> {
+      getRepoOrThrow(repoPath); // Validate repo exists
+      const repo = state.getRepo(normalizePath(repoPath))!;
+
+      let removed = false;
+      for (const [branch, branchConfig] of repo.branchConfigs) {
+        for (const subKey of [...branchConfig.keys()]) {
+          const fullKey = `branch.${branch}.${subKey}`;
+          if (fullKey.substring(0, fullKey.lastIndexOf(".")) === section) {
+            branchConfig.delete(subKey);
+            removed = true;
+          }
+        }
+        if (branchConfig.size === 0) repo.branchConfigs.delete(branch);
+      }
+      if (!removed) {
+        throw new GitError(`No such section: ${section}`);
+      }
     },
 
     async clone(url: string, targetPath: Path, _onProgress?: CloneProgressCallback): Promise<void> {

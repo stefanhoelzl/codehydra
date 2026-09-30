@@ -542,7 +542,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
 
     // Metadata written by later hook points folds into the create snapshot, so the
     // workspace:created event (and the returned Workspace) carry it. Without this a
-    // later write would only surface after a restart re-read git config: its
+    // later write would only surface after a restart re-read the metadata: its
     // workspace:metadata-changed event lands before the row exists and the
     // presenter drops it (presentation-module.ts, EVENT_METADATA_CHANGED).
     const mergedMetadata: Record<string, string> = { ...metadata };

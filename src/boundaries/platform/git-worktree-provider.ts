@@ -26,6 +26,7 @@ import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "./paths";
 import { isValidMetadataKey } from "../../shared/api/types";
 import type { FileSystemBoundary } from "./filesystem";
 import type { Logger } from "./logging";
+import { WorkspaceMetadataStore, type Metadata } from "./workspace-metadata-store";
 import { Path } from "../../utils/path/path";
 
 /**
@@ -47,6 +48,15 @@ function isOwnWorktree(
     worktreePath.isChildOf(registration.workspacesDir) ||
     registration.previousWorkspacesDirs.some((dir) => worktreePath.isChildOf(dir))
   );
+}
+
+/**
+ * A worktree's metadata file and what it holds: null metadata when it has no file
+ * yet, null file when its git directory could not be resolved.
+ */
+interface LoadedMetadata {
+  readonly file: Path | null;
+  readonly metadata: Metadata | null;
 }
 
 /**
@@ -96,7 +106,8 @@ export function parseBranchConfigs(
  * Adopted worktrees live outside `workspacesDir` (they were created by hand or by
  * another tool), so the directory alone cannot prove ownership. The tag is both the
  * ownership record read by `discover()` and the `external` badge the sidebar renders
- * — `extractTags()` picks up any `tags.*` metadata key without further plumbing.
+ * — `extractTags()` picks up any `tags.*` metadata key without further plumbing. A
+ * metadata file alone never makes a worktree managed: only this tag does.
  */
 export const EXTERNAL_TAG_NAME = "external";
 
@@ -127,7 +138,10 @@ export const EXTERNAL_TAG_VALUE = JSON.stringify({
  * All paths are handled using the Path class for normalized, cross-platform handling.
  */
 export class GitWorktreeProvider {
-  /** Git config prefix for workspace metadata */
+  /**
+   * Git config prefix of the legacy metadata store (`branch.<b>.codehydra.*`).
+   * Read only to migrate it into metadata files; see `discover()`.
+   */
   private static readonly METADATA_CONFIG_PREFIX = "codehydra";
 
   /** Timeout for fallback fs.rm() when git worktree remove fails */
@@ -143,10 +157,27 @@ export class GitWorktreeProvider {
   /** Map of normalized workspace path strings to project root Path (for metadata resolution) */
   private readonly workspaceRegistry: Map<string, Path> = new Map();
 
-  constructor(gitClient: IGitClient, fileSystemLayer: FileSystemBoundary, logger: Logger) {
+  /** Every registered workspace's metadata, held in memory and in its metadata file. */
+  private readonly metadataStore: WorkspaceMetadataStore;
+
+  /**
+   * Keys a workspace migrated from the legacy git config gets when its config has
+   * none — the agent it has been running (the default), so a later change of the
+   * default leaves it alone.
+   */
+  private readonly migrationDefaults: () => Metadata;
+
+  constructor(
+    gitClient: IGitClient,
+    fileSystemLayer: FileSystemBoundary,
+    logger: Logger,
+    migrationDefaults: () => Metadata = () => ({})
+  ) {
     this.gitClient = gitClient;
     this.fileSystemLayer = fileSystemLayer;
     this.logger = logger;
+    this.metadataStore = new WorkspaceMetadataStore(fileSystemLayer, logger);
+    this.migrationDefaults = migrationDefaults;
   }
 
   /**
@@ -184,6 +215,7 @@ export class GitWorktreeProvider {
     for (const [workspaceKey, registeredRoot] of this.workspaceRegistry) {
       if (registeredRoot.toString() === projectRootStr) {
         this.workspaceRegistry.delete(workspaceKey);
+        this.metadataStore.forget(new Path(workspaceKey));
       }
     }
   }
@@ -271,28 +303,46 @@ export class GitWorktreeProvider {
   }
 
   /**
-   * Read all `codehydra.*` branch metadata for a repository in a single git config
-   * call, keyed by branch name. Replaces per-branch / per-worktree config reads.
+   * Read the legacy `branch.<b>.codehydra.*` metadata of a repository in one git
+   * config call, keyed by branch name. Only migration and the add-project picker
+   * read it: metadata lives in each worktree's metadata file now.
    */
-  private async getAllBranchMetadata(
+  private async getLegacyBranchMetadata(
     projectRoot: Path
   ): Promise<ReadonlyMap<string, Readonly<Record<string, string>>>> {
     const prefix = GitWorktreeProvider.METADATA_CONFIG_PREFIX;
-    const entries = await this.gitClient.getGitConfig(projectRoot, {
-      regex: `^branch\\..*\\.${prefix}\\.`,
-    });
-    return parseBranchConfigs(entries, prefix);
+    try {
+      const entries = await this.gitClient.getGitConfig(projectRoot, {
+        regex: `^branch\\..*\\.${prefix}\\.`,
+      });
+      return parseBranchConfigs(entries, prefix);
+    } catch (error: unknown) {
+      this.logger.warn("Failed to read legacy metadata config", {
+        error: getErrorMessage(error),
+      });
+      return new Map();
+    }
   }
 
-  /**
-   * Read one branch's `codehydra.*` metadata (empty record if the branch has none).
-   */
-  private async getBranchMetadata(
-    projectRoot: Path,
-    branch: string
-  ): Promise<Readonly<Record<string, string>>> {
-    const all = await this.getAllBranchMetadata(projectRoot);
-    return all.get(branch) ?? {};
+  /** Read a worktree's metadata file, locating it through the worktree's git directory. */
+  private async loadMetadataFile(worktreePath: Path): Promise<LoadedMetadata> {
+    let file: Path;
+    try {
+      file = WorkspaceMetadataStore.fileIn(await this.gitClient.getWorktreeGitDir(worktreePath));
+    } catch (error: unknown) {
+      this.logger
+        .scoped({ path: worktreePath.toString() })
+        .warn("Failed to locate worktree git directory", { error: getErrorMessage(error) });
+      return { file: null, metadata: null };
+    }
+    try {
+      return { file, metadata: await this.metadataStore.read(file) };
+    } catch (error: unknown) {
+      this.logger
+        .scoped({ path: file.toString() })
+        .warn("Failed to read workspace metadata file", { error: getErrorMessage(error) });
+      return { file, metadata: null };
+    }
   }
 
   /**
@@ -300,10 +350,17 @@ export class GitWorktreeProvider {
    *
    * A worktree is managed when CodeHydra created it (it lives under the project's
    * `workspacesDir`, or under one the project had before a workspaces-root
-   * migration, whatever branch is checked out there) or when the user adopted it through the add-project picker (its
-   * branch carries the external tag). Every other worktree of the repository is
-   * skipped: agents (Claude's `isolation: "worktree"`, for one) create worktrees of
-   * the same repo as scratch space, and those must not surface as workspaces.
+   * migration, whatever is checked out there) or when the user adopted it through
+   * the add-project picker (its metadata carries the external tag). Every other
+   * worktree of the repository is skipped: agents (Claude's `isolation: "worktree"`,
+   * for one) create worktrees of the same repo as scratch space, and those must not
+   * surface as workspaces.
+   *
+   * Loads every managed workspace's metadata file into memory. A managed worktree
+   * without one is migrated from the legacy `branch.<b>.codehydra.*` git config:
+   * its file is written (`migrationDefaults` fill the keys its config lacks; with
+   * neither, the file is still written, as the migration record), then the migrated
+   * branches' config sections are removed.
    */
   async discover(projectRoot: Path): Promise<readonly Workspace[]> {
     const registration = this.getProjectRegistration(projectRoot);
@@ -322,57 +379,134 @@ export class GitWorktreeProvider {
       await this.gitClient.pruneWorktrees(projectRoot);
     }
 
-    // Read every branch's metadata in one git config call (was one read per worktree)
-    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
-    try {
-      branchMetadata = await this.getAllBranchMetadata(projectRoot);
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, "Unknown error");
-      this.logger.warn("Failed to get metadata config", { error: message });
-      branchMetadata = new Map();
-    }
+    const candidates = worktrees.filter((wt) => !wt.isMain && !wt.prunable);
+    const loaded = await Promise.all(candidates.map((wt) => this.loadMetadataFile(wt.path)));
 
-    // Filter out the main worktree, prunable entries and worktrees CodeHydra does
-    // not manage; map the rest to Workspace objects
+    // The legacy config is read only while some worktree still has no file: once
+    // every managed worktree is migrated, discovery runs no git config at all.
+    const legacy = loaded.some((entry) => entry.metadata === null)
+      ? await this.getLegacyBranchMetadata(projectRoot)
+      : new Map<string, Readonly<Record<string, string>>>();
+
     const workspaces: Workspace[] = [];
-    for (const wt of worktrees) {
-      if (wt.isMain || wt.prunable) continue;
-
-      const metadata: Record<string, string> = wt.branch
-        ? { ...(branchMetadata.get(wt.branch) ?? {}) }
-        : {};
+    const migrations: { path: Path; file: Path; branch: string | null; metadata: Metadata }[] = [];
+    candidates.forEach((wt, index) => {
+      const { file, metadata: fromFile } = loaded[index]!;
+      const fromLegacy = wt.branch ? legacy.get(wt.branch) : undefined;
+      let metadata: Record<string, string> = { ...(fromFile ?? fromLegacy ?? {}) };
 
       const own = isOwnWorktree(registration, wt.path);
       if (!own && metadata[EXTERNAL_TAG_METADATA_KEY] === undefined) {
         this.logger
           .scoped({ path: wt.path.toString() })
           .warn("Skipping unmanaged worktree", { branch: wt.branch });
-        continue;
+        return;
       }
 
       // Register workspace in the workspace registry for metadata resolution
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
+      if (file !== null) {
+        if (fromFile === null) {
+          metadata = { ...this.migrationDefaults(), ...metadata };
+          migrations.push({ path: wt.path, file, branch: wt.branch, metadata });
+        } else {
+          this.metadataStore.track(wt.path, file, metadata);
+        }
+      }
 
       workspaces.push({
         // A workspace is named after its branch, wherever its directory is and
         // whatever it is called. Only a detached HEAD falls back to the directory:
         // CodeHydra's own directories are the sanitized branch, so unsanitizing
-        // recovers it; an adopted one always has a branch (its tag is stored there).
+        // recovers it; an adopted one keeps the name the user gave its directory.
         name: wt.branch ?? (own ? unsanitizeWorkspaceName(wt.name) : wt.name),
         path: wt.path,
         branch: wt.branch,
         metadata,
       });
+    });
+
+    if (migrations.length > 0) {
+      await this.migrateLegacyMetadata(projectRoot, migrations, legacy);
     }
     return workspaces;
   }
 
   /**
-   * List the worktrees of a project that `discover()` would skip — everything the
-   * user could still adopt, plus the ones that cannot be adopted at all.
+   * Write the metadata files of worktrees that have none yet, then drop the
+   * legacy config sections nothing needs any more.
    *
-   * Feeds the add-project picker. `adoptable` is false for a detached HEAD: the
-   * external tag is stored per branch, so there is nowhere to record the adoption.
+   * A section goes once its branch's workspace has its file, or when the branch
+   * itself is gone (`git branch -D` leaves the sections behind). Sections of a
+   * branch that still exists but is not one of this discovery's workspaces stay:
+   * the worktree may belong to another CodeHydra instance (a dev build, one with
+   * a different workspaces folder) still reading them. A failed write keeps its
+   * branch's sections, so the next discovery migrates it again.
+   */
+  private async migrateLegacyMetadata(
+    projectRoot: Path,
+    migrations: readonly { path: Path; file: Path; branch: string | null; metadata: Metadata }[],
+    legacy: ReadonlyMap<string, Readonly<Record<string, string>>>
+  ): Promise<void> {
+    const migrated = new Set<string>();
+    await Promise.all(
+      migrations.map(async ({ path, file, branch, metadata }) => {
+        try {
+          await this.metadataStore.initialize(path, file, metadata);
+          if (branch !== null) migrated.add(branch);
+        } catch (error: unknown) {
+          // Still usable this session: the write is retried on the next set.
+          this.metadataStore.track(path, file, metadata);
+          this.logger
+            .scoped({ path: path.toString() })
+            .warn("Failed to write migrated workspace metadata", {
+              error: getErrorMessage(error),
+            });
+        }
+      })
+    );
+    if (legacy.size === 0) return;
+
+    let liveBranches: ReadonlySet<string>;
+    try {
+      const branches = await this.gitClient.listBranches(projectRoot);
+      liveBranches = new Set(branches.filter((b) => !b.isRemote).map((b) => b.name));
+    } catch (error: unknown) {
+      this.logger.warn("Failed to list branches for legacy metadata cleanup", {
+        error: getErrorMessage(error),
+      });
+      return;
+    }
+
+    const prefix = GitWorktreeProvider.METADATA_CONFIG_PREFIX;
+    for (const [branch, entries] of legacy) {
+      if (!migrated.has(branch) && liveBranches.has(branch)) continue;
+      // `branch.<b>.codehydra.tags.new` lives in section `branch.<b>.codehydra.tags`
+      const sections = new Set(
+        Object.keys(entries).map((key) => {
+          const fullKey = `branch.${branch}.${prefix}.${key}`;
+          return fullKey.substring(0, fullKey.lastIndexOf("."));
+        })
+      );
+      for (const section of sections) {
+        try {
+          await this.gitClient.removeConfigSection(projectRoot, section);
+        } catch (error: unknown) {
+          this.logger.warn("Failed to remove legacy metadata config", {
+            section,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * List the worktrees of a project that `discover()` would skip — everything the
+   * user could still adopt.
+   *
+   * Feeds the add-project picker, which runs before the project's first discovery,
+   * so an adoption still recorded only in the legacy git config counts too.
    *
    * @param projectRoot Root of the git repository
    * @param workspacesDir Directory CodeHydra creates this project's worktrees in
@@ -384,59 +518,59 @@ export class GitWorktreeProvider {
     previousWorkspacesDirs: readonly Path[] = []
   ): Promise<readonly UnmanagedWorktree[]> {
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
-
-    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
-    try {
-      branchMetadata = await this.getAllBranchMetadata(projectRoot);
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, "Unknown error");
-      this.logger.warn("Failed to get metadata config", { error: message });
-      branchMetadata = new Map();
-    }
+    const candidates = worktrees.filter(
+      (wt) =>
+        !wt.isMain &&
+        !wt.prunable &&
+        !isOwnWorktree({ workspacesDir, previousWorkspacesDirs }, wt.path)
+    );
+    const loaded = await Promise.all(candidates.map((wt) => this.loadMetadataFile(wt.path)));
+    const legacy = loaded.some((entry) => entry.metadata === null)
+      ? await this.getLegacyBranchMetadata(projectRoot)
+      : new Map<string, Readonly<Record<string, string>>>();
 
     const unmanaged: UnmanagedWorktree[] = [];
-    for (const wt of worktrees) {
-      if (wt.isMain || wt.prunable) continue;
-      if (isOwnWorktree({ workspacesDir, previousWorkspacesDirs }, wt.path)) continue;
-
-      const metadata = wt.branch ? (branchMetadata.get(wt.branch) ?? {}) : {};
-      if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) continue;
+    candidates.forEach((wt, index) => {
+      const fromFile = loaded[index]!.metadata;
+      const metadata = fromFile ?? (wt.branch ? legacy.get(wt.branch) : undefined) ?? {};
+      if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) return;
 
       unmanaged.push({
-        // The name the workspace would take: its branch, like discover() gives it.
+        // The name the workspace would take, like discover() gives it.
         name: wt.branch ?? wt.name,
         path: wt.path,
         branch: wt.branch,
-        adoptable: wt.branch !== null,
       });
-    }
+    });
     return unmanaged;
   }
 
   /**
    * Adopt an existing worktree so `discover()` treats it as a workspace from now on.
    *
-   * Writes the external tag against the worktree's branch. Unlike the best-effort
-   * metadata write in `createWorkspace()`, a failure here throws: the tag IS the
-   * ownership record, so a silent failure would hand the user a workspace that
-   * disappears on the next restart.
+   * Writes the external tag into the worktree's metadata file, so a detached HEAD
+   * can be adopted too. Unlike the best-effort metadata write in
+   * `createWorkspace()`, a failure here throws: the tag IS the ownership record, so
+   * a silent failure would hand the user a workspace that disappears on the next
+   * restart.
    *
-   * @throws WorkspaceError if the worktree has no branch or the tag cannot be written
+   * @throws WorkspaceError if the tag cannot be written
    */
-  async adoptWorktree(projectRoot: Path, worktreePath: Path, branch: string): Promise<Workspace> {
-    if (!branch) {
-      throw new WorkspaceError(
-        `Cannot adopt worktree at '${worktreePath.toString()}': it has no branch (detached HEAD).`
-      );
-    }
-
+  async adoptWorktree(
+    projectRoot: Path,
+    worktreePath: Path,
+    branch: string | null
+  ): Promise<Workspace> {
+    let metadata: Record<string, string>;
     try {
-      await this.gitClient.setBranchConfig(
-        projectRoot,
-        branch,
-        `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${EXTERNAL_TAG_METADATA_KEY}`,
-        EXTERNAL_TAG_VALUE
+      const file = WorkspaceMetadataStore.fileIn(
+        await this.gitClient.getWorktreeGitDir(worktreePath)
       );
+      metadata = {
+        ...((await this.metadataStore.read(file)) ?? {}),
+        [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE,
+      };
+      await this.metadataStore.initialize(worktreePath, file, metadata);
     } catch (error: unknown) {
       const message = getErrorMessage(error, "Unknown error");
       throw new WorkspaceError(
@@ -447,11 +581,11 @@ export class GitWorktreeProvider {
     this.ensureWorkspaceRegistered(worktreePath, projectRoot);
 
     return {
-      // Named after its branch, like every workspace — see discover().
-      name: branch,
+      // Named like discover() names it: the branch, else the directory.
+      name: branch ?? worktreePath.basename,
       path: worktreePath,
       branch,
-      metadata: { [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE },
+      metadata,
     };
   }
 
@@ -459,20 +593,15 @@ export class GitWorktreeProvider {
     const branches = await this.gitClient.listBranches(projectRoot);
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
-    // Read every branch's metadata in one git config call (was one read per local branch)
-    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
-    try {
-      branchMetadata = await this.getAllBranchMetadata(projectRoot);
-    } catch {
-      // Ignore config errors; bases fall back to origin/* detection below
-      branchMetadata = new Map();
-    }
-
-    // Build set of branches that have worktrees
+    // Build set of branches that have worktrees, and the base recorded for each
+    // branch a workspace has checked out
     const branchesWithWorktrees = new Set<string>();
+    const recordedBases = new Map<string, string>();
     for (const wt of worktrees) {
       if (wt.branch) {
         branchesWithWorktrees.add(wt.branch);
+        const recorded = this.metadataStore.get(wt.path)?.base;
+        if (recorded) recordedBases.set(wt.branch, recorded);
       }
     }
 
@@ -510,11 +639,11 @@ export class GitWorktreeProvider {
         // Local branch: derives if no worktree exists
         const hasWorktree = branchesWithWorktrees.has(branch.name);
 
-        // Compute base: codehydra.base config or matching origin/* branch
+        // Compute base: its workspace's recorded base or matching origin/* branch
         let base: string | undefined;
-        const configBase = branchMetadata.get(branch.name)?.base;
-        if (configBase) {
-          base = configBase;
+        const recordedBase = recordedBases.get(branch.name);
+        if (recordedBase) {
+          base = recordedBase;
         } else {
           // Check for matching origin/* branch
           const originBranch = `origin/${branch.name}`;
@@ -721,17 +850,16 @@ export class GitWorktreeProvider {
     // Register workspace in the workspace registry
     this.ensureWorkspaceRegistered(worktreePath, projectRoot);
 
-    // Save base branch in git config (non-critical - log warning on failure)
+    // Record the base in the new worktree's metadata file (non-critical - log
+    // warning on failure; the file is created by the next metadata write)
     try {
-      await this.gitClient.setBranchConfig(
-        projectRoot,
-        name,
-        `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.base`,
-        baseBranch
+      const file = WorkspaceMetadataStore.fileIn(
+        await this.gitClient.getWorktreeGitDir(worktreePath)
       );
+      await this.metadataStore.initialize(worktreePath, file, { base: baseBranch });
     } catch (error: unknown) {
       const message = getErrorMessage(error, "Unknown error");
-      this.logger.warn("Failed to save base branch config", { branch: name, error: message });
+      this.logger.warn("Failed to save base branch metadata", { branch: name, error: message });
     }
 
     return {
@@ -759,9 +887,8 @@ export class GitWorktreeProvider {
     // createWorkspace), so the basename recovers it in both cases where the worktree
     // entry can't supply one: the entry is missing (retry after a partial failure), or
     // HEAD is detached — a rebase that stopped on a conflict leaves it that way, and
-    // worktree.branch is then null. Falling back matters: on null, both the metadata
-    // cleanup and the branch delete below are skipped and the branch is orphaned with
-    // no error. Deleting is still guarded by the branch-exists check in step 3, so a
+    // worktree.branch is then null. Falling back matters: on null, the
+    // branch delete below is skipped and the branch is orphaned with no error. Deleting is still guarded by the branch-exists check in step 3, so a
     // workspace whose basename maps to no branch (detached on purpose) stays a no-op.
     //
     // That derivation only holds inside workspacesDir. An adopted worktree sits in a
@@ -775,28 +902,7 @@ export class GitWorktreeProvider {
         : "";
     const branchName = worktree?.branch ?? derivedBranch;
 
-    // Step 1: Clear codehydra metadata from branch config
-    // Done before worktree removal because metadata lives in project root's .git/config,
-    // not in the worktree, and clearing after removal can race with shutdown hooks.
-    if (branchName) {
-      try {
-        const metadata = await this.getBranchMetadata(projectRoot, branchName);
-        for (const key of Object.keys(metadata)) {
-          await this.gitClient.unsetBranchConfig(
-            projectRoot,
-            branchName,
-            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
-          );
-        }
-      } catch (error: unknown) {
-        this.logger.warn("Failed to clear branch metadata", {
-          branch: branchName,
-          error: getErrorMessage(error),
-        });
-      }
-    }
-
-    // Step 2: Try to remove worktree, save error if it fails
+    // Step 1: Try to remove worktree (its metadata file goes with it), save error if it fails
     // We save the error to throw later, after attempting branch deletion
     let worktreeError: Error | null = null;
     if (worktree) {
@@ -845,7 +951,7 @@ export class GitWorktreeProvider {
       }
     }
 
-    // Step 3: Delete the branch (always attempt if requested)
+    // Step 2: Delete the branch (always attempt if requested)
     // This ensures branch is deleted even if worktree removal failed
     // (e.g., due to Windows file locks - directory cleanup happens at startup)
     let baseDeleted = false;
@@ -873,7 +979,7 @@ export class GitWorktreeProvider {
       }
     }
 
-    // Step 4: Throw saved worktree error (after branch deletion attempted)
+    // Step 3: Throw saved worktree error (after branch deletion attempted)
     if (worktreeError) {
       throw worktreeError;
     }
@@ -883,6 +989,7 @@ export class GitWorktreeProvider {
 
     // Remove workspace from registry
     this.workspaceRegistry.delete(workspacePath.toString());
+    this.metadataStore.forget(workspacePath);
 
     return {
       workspaceRemoved: true,
@@ -943,8 +1050,7 @@ export class GitWorktreeProvider {
       const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
       if (!projectRoot) return 0;
 
-      const metadata = await this.getBranchMetadata(projectRoot, branch);
-      let base = metadata.base;
+      let base = this.metadataStore.get(workspacePath)?.base;
       if (!base) {
         base = await this.defaultBase(projectRoot);
       }
@@ -1045,67 +1151,9 @@ export class GitWorktreeProvider {
     registration.cleanupInProgress = true;
 
     try {
-      const result = await this.doCleanupOrphanedWorkspaces(
-        projectRoot,
-        registration.workspacesDir
-      );
-      await this.pruneOrphanedBranchMetadata(projectRoot);
-      return result;
+      return await this.doCleanupOrphanedWorkspaces(projectRoot, registration.workspacesDir);
     } finally {
       registration.cleanupInProgress = false;
-    }
-  }
-
-  /**
-   * Drop `codehydra.*` branch config left behind by branches that no longer exist.
-   *
-   * `git branch -D` removes the branch but not our `[branch "<name>.codehydra"]`
-   * section, so hand-deleted branches leave their metadata behind indefinitely.
-   *
-   * Config only — this never deletes a branch. A branch that still exists keeps its
-   * metadata regardless of whether it has a worktree, because "metadata but no
-   * worktree" is not evidence the branch is disposable: a worktree removed outside
-   * CodeHydra leaves exactly that shape, and the branch may hold unmerged work.
-   */
-  private async pruneOrphanedBranchMetadata(projectRoot: Path): Promise<void> {
-    let metadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
-    let branches: readonly { name: string; isRemote: boolean }[];
-    try {
-      metadata = await this.getAllBranchMetadata(projectRoot);
-      branches = await this.gitClient.listBranches(projectRoot);
-    } catch (error: unknown) {
-      // Best-effort: stale config is inert, so never fail cleanup over it.
-      this.logger.warn("Failed to read branch metadata for cleanup", {
-        error: getErrorMessage(error),
-      });
-      return;
-    }
-
-    const liveBranches = new Set(branches.filter((b) => !b.isRemote).map((b) => b.name));
-    let prunedBranches = 0;
-
-    for (const [branch, entries] of metadata) {
-      if (liveBranches.has(branch)) continue;
-      for (const key of Object.keys(entries)) {
-        try {
-          await this.gitClient.unsetBranchConfig(
-            projectRoot,
-            branch,
-            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
-          );
-        } catch (error: unknown) {
-          this.logger.warn("Failed to prune branch metadata", {
-            branch,
-            key,
-            error: getErrorMessage(error),
-          });
-        }
-      }
-      prunedBranches++;
-    }
-
-    if (prunedBranches > 0) {
-      this.logger.info("Pruned metadata for deleted branches", { count: prunedBranches });
     }
   }
 
@@ -1196,37 +1244,35 @@ export class GitWorktreeProvider {
   }
 
   /**
-   * Get the branch name for a workspace path.
-   * Resolves projectRoot from the workspace registry.
-   * @throws WorkspaceError if workspace not found
+   * The metadata the store holds for a registered workspace, loading its file on
+   * first use (a workspace whose file could not be written at creation, say).
+   * @throws WorkspaceError if the workspace is not registered or not a worktree
    */
-  private async getBranchForWorkspace(projectRoot: Path, workspacePath: Path): Promise<string> {
-    const worktrees = await this.gitClient.listWorktrees(projectRoot);
-    const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
+  private async heldMetadata(workspacePath: Path): Promise<Metadata> {
+    this.resolveProjectRoot(workspacePath);
+    const held = this.metadataStore.get(workspacePath);
+    if (held) return held;
 
-    if (!worktree) {
+    let file: Path;
+    try {
+      file = WorkspaceMetadataStore.fileIn(await this.gitClient.getWorktreeGitDir(workspacePath));
+    } catch {
       throw new WorkspaceError(
         `Workspace not found: ${workspacePath.toString()}`,
         "WORKSPACE_NOT_FOUND"
       );
     }
-
-    if (!worktree.branch) {
-      throw new WorkspaceError(
-        `Cannot manage metadata for detached HEAD workspace: ${workspacePath.toString()}`,
-        "DETACHED_HEAD"
-      );
-    }
-
-    return worktree.branch;
+    const metadata = (await this.metadataStore.read(file)) ?? {};
+    this.metadataStore.track(workspacePath, file, metadata);
+    return metadata;
   }
 
   /**
-   * Set a metadata value for a workspace.
-   * Resolves projectRoot from workspace registry automatically.
+   * Set a metadata value for a workspace. Replaces the workspace's metadata file;
+   * works on any worktree, detached HEAD included.
    *
    * @param workspacePath Absolute path to the workspace
-   * @param key Metadata key (must match /^[A-Za-z][A-Za-z0-9-]*$/)
+   * @param key Metadata key (see `isValidMetadataKey`)
    * @param value Value to set, or null to delete the key
    * @throws WorkspaceError with code "INVALID_METADATA_KEY" if key format invalid
    */
@@ -1239,40 +1285,17 @@ export class GitWorktreeProvider {
       );
     }
 
-    const projectRoot = this.resolveProjectRoot(workspacePath);
-    const branch = await this.getBranchForWorkspace(projectRoot, workspacePath);
-    const configKey = `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`;
-
-    if (value === null) {
-      await this.gitClient.unsetBranchConfig(projectRoot, branch, configKey);
-    } else {
-      await this.gitClient.setBranchConfig(projectRoot, branch, configKey, value);
-    }
+    await this.heldMetadata(workspacePath);
+    await this.metadataStore.set(workspacePath, key, value);
   }
 
   /**
-   * Get all metadata for a workspace.
-   * Resolves projectRoot from workspace registry automatically.
+   * Get all metadata for a workspace, every tier included. Served from memory.
    *
    * @param workspacePath Absolute path to the workspace
-   * @returns Metadata record from git config
+   * @returns The workspace's metadata record
    */
   async getMetadata(workspacePath: Path): Promise<Readonly<Record<string, string>>> {
-    const projectRoot = this.resolveProjectRoot(workspacePath);
-    const worktrees = await this.gitClient.listWorktrees(projectRoot);
-    const worktree = worktrees.find((wt) => wt.path.equals(workspacePath));
-
-    if (!worktree) {
-      throw new WorkspaceError(
-        `Workspace not found: ${workspacePath.toString()}`,
-        "WORKSPACE_NOT_FOUND"
-      );
-    }
-
-    const metadata: Record<string, string> = worktree.branch
-      ? { ...(await this.getBranchMetadata(projectRoot, worktree.branch)) }
-      : {};
-
-    return metadata;
+    return { ...(await this.heldMetadata(workspacePath)) };
   }
 }

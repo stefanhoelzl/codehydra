@@ -103,7 +103,7 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
       },
     },
     events: {
-      // Re-seeds the set from git config on startup, so a tag written in an earlier
+      // Re-seeds the set from stored metadata on startup, so a tag written in an earlier
       // run still clears on the next switch rather than sticking forever.
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {

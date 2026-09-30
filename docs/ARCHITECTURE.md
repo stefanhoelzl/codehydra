@@ -380,42 +380,48 @@ When a workspace is deleted, the renderer unmounts its iframe (DOM removal
 destroys the frame's renderer process). Session storage is NOT cleared — it
 is shared with the other workspaces.
 
-### Git Configuration Storage (Workspace Metadata)
+### Workspace Metadata Storage
 
-CodeHydra stores workspace metadata in git config using the `branch.<name>.codehydra.<key>` pattern:
+Each workspace's metadata (flat string key → value) lives in one JSON file in the worktree's private git directory, `.git/worktrees/<id>/codehydra.json` (`WorkspaceMetadataStore`, `src/boundaries/platform/workspace-metadata-store.ts`, owned by `GitWorktreeProvider`). The git directory is resolved once per workspace with `git rev-parse --absolute-git-dir` (`IGitClient.getWorktreeGitDir`).
 
-| Config Key                      | Purpose                                | Example                                   |
-| ------------------------------- | -------------------------------------- | ----------------------------------------- |
-| `branch.<name>.codehydra.base`  | Base branch workspace was created from | `branch.feature-x.codehydra.base = main`  |
-| `branch.<name>.codehydra.note`  | User notes for the workspace           | `branch.feature-x.codehydra.note = WIP`   |
-| `branch.<name>.codehydra.model` | AI model preference                    | `branch.feature-x.codehydra.model = gpt4` |
+```json
+{
+  "version": 1,
+  "internal": { "agent.pending-prompt": "…" },
+  "protected": { "base": "main", "agent": "claude" },
+  "public": { "title": "…", "tags.new": "{}" }
+}
+```
 
-**Storage location**: Repository's `.git/config` file
+**Why the worktree's git directory?** It belongs to the worktree, not the branch: it survives a branch rename and a detached HEAD, follows `git worktree move`/`repair`, and goes away with `git worktree remove`/`prune` (no orphan pruning). Writing it takes no git lock, unlike `git config`, which rewrites the shared `.git/config` through `config.lock`.
 
-**Why git config?**
+**Memory is authoritative while running.** `discover()` reads every managed worktree's file once; `createWorkspace()` and `adoptWorktree()` write one. Every later read (`getMetadata`, `countUnmergedCommits`, `listBases`) is served from memory with no git process. A write replaces the file atomically (temp file + rename) before memory changes; writes to one workspace queue, different workspaces write in parallel. A hand edit to a file takes effect at the next project open.
 
-- Portable: survives app reinstall, stored with the repository
-- Standard mechanism: git provides CLI and library support
-- Per-branch: each workspace/branch has isolated config
+**Tiers** (`src/utils/metadata-tier.ts`) decide what the outside — API/MCP/`ch`, the sidekick extension, plugin actions, automation items — may do with a key; CodeHydra's own modules read and write every key:
 
-**Caveats**:
+| Tier        | Keys                                         | Outside                                   |
+| ----------- | -------------------------------------------- | ----------------------------------------- |
+| `internal`  | `agent.pending-prompt`                       | hidden (`metadata.get` omits it), refused |
+| `protected` | `base`, `agent`, `hibernated`, `source`      | read-only                                 |
+| `public`    | `title`, `tags.*` (incl. `external`), others | read/write                                |
 
-- Lost if branch is renamed (same as `branch.<name>.remote`)
-- Not a standard git key, but git allows arbitrary branch config
+Enforced where outside calls enter: the `metadata.*` registry entries, the sidekick's `api:workspace:getMetadata`/`setMetadata` handlers and the automation item schema. `workspace:set-metadata` itself is unrestricted.
+
+**Migration from git config.** Older versions stored metadata as `branch.<name>.codehydra.<key>`. `discover()` reads that config (one `--get-regexp`) only while some worktree has no file, writes a file for every managed worktree lacking one (presence marks it migrated, so it is written even when its branch had nothing; unmanaged worktrees never get one). A migrated workspace without an `agent` gets the current default agent (`migrationDefaults`, from `main.ts`), the one it has been running, then removes the config sections of migrated branches and of branches that no longer exist. Sections of a live branch that is not one of this discovery's workspaces stay: another CodeHydra instance may own that worktree. A failed write keeps its sections for the next discovery. `listUnmanagedWorktrees()` still consults the config, since the add-project picker runs before a project's first discovery. `branch.<name>.remote`/`.merge` are git's own and stay in git config.
 
 #### Metadata Key Restrictions
 
-Metadata keys are validated with `/^[A-Za-z][A-Za-z0-9-]*$/` and:
+Metadata keys are validated with `/^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)*$/` and:
 
 - Maximum length: 64 characters
-- Cannot end with a hyphen
+- No segment ends with a hyphen
 
-**Valid keys**: `base`, `note`, `model-name`, `AI-model`
+**Valid keys**: `base`, `note`, `model-name`, `AI-model`, `tags.bugfix`
 **Invalid keys**: `_private` (leading underscore), `my_key` (underscore), `123note` (starts with digit), `note-` (trailing hyphen)
 
 #### Base Branch
 
-`metadata.base` is exactly the `codehydra.base` git config value, and absent when none is recorded (an adopted worktree, or a branch CodeHydra never created). There is no fallback to the branch or the workspace name: consumers — repository hooks included — treat a missing base as unknown rather than guessing one.
+`metadata.base` is exactly the base recorded at creation, and absent when none is recorded (an adopted worktree, or a branch CodeHydra never created). There is no fallback to the branch or the workspace name: consumers — repository hooks included — treat a missing base as unknown rather than guessing one.
 
 ### Shell and Platform Layers
 

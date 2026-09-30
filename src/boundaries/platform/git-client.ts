@@ -35,6 +35,15 @@ export interface IGitClient {
   listWorktrees(repoPath: Path): Promise<readonly WorktreeInfo[]>;
 
   /**
+   * Resolve a worktree's private git directory (`<repo>/.git/worktrees/<id>` for a
+   * linked worktree). Read-only: takes no lock.
+   * @param worktreePath Absolute path to the worktree
+   * @returns Promise resolving to the absolute git directory
+   * @throws GitError if the path is not a worktree
+   */
+  getWorktreeGitDir(worktreePath: Path): Promise<Path>;
+
+  /**
    * Add a new worktree to the repository.
    * @param repoPath Absolute path to the git repository
    * @param worktreePath Absolute path where worktree will be created
@@ -201,6 +210,15 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void>;
+
+  /**
+   * Remove a whole section from the repository's config
+   * (`git config --local --remove-section <section>`), e.g. `branch.feature.codehydra`.
+   * @param repoPath Absolute path to the git repository
+   * @param section Section name, subsection included
+   * @throws GitError if the section does not exist or not a git repository
+   */
+  removeConfigSection(repoPath: Path, section: string): Promise<void>;
 
   /**
    * Clone a repository in bare mode.

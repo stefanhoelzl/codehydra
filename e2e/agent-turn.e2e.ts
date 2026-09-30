@@ -17,7 +17,7 @@
  * behaviour through their two very different launch paths.
  */
 import { expect, test } from "@playwright/test";
-import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { projectDirName } from "../src/boundaries/platform/paths";
 import { Path } from "../src/utils/path/path";
@@ -112,16 +112,25 @@ test.afterEach(async () => {
 });
 
 /**
- * The workspace's title as CodeHydra stores it: `codehydra.title` on the
- * workspace's branch, in the project repository's git config.
+ * The workspace's title as CodeHydra stores it: `public.title` in the metadata
+ * file of the workspace's worktree, `.git/worktrees/<id>/codehydra.json` in the
+ * project repository — the worktree whose HEAD is the workspace's branch.
  */
 function readWorkspaceTitle(): string {
-  const run = spawnSync(
-    "git",
-    ["-C", repo.path, "config", "--get", `branch.${WORKSPACE_NAME}.codehydra.title`],
-    { encoding: "utf-8" }
-  );
-  return (run.stdout ?? "").trim();
+  const worktrees = join(repo.path, ".git", "worktrees");
+  if (!existsSync(worktrees)) return "";
+  for (const id of readdirSync(worktrees)) {
+    const gitDir = join(worktrees, id);
+    const head = readFileSync(join(gitDir, "HEAD"), "utf-8").trim();
+    if (head !== `ref: refs/heads/${WORKSPACE_NAME}`) continue;
+    const file = join(gitDir, "codehydra.json");
+    if (!existsSync(file)) return "";
+    const metadata = JSON.parse(readFileSync(file, "utf-8")) as {
+      public?: Record<string, string>;
+    };
+    return metadata.public?.title ?? "";
+  }
+  return "";
 }
 
 /** The agent this Playwright project exercises. */
@@ -201,7 +210,7 @@ test("an agent takes a turn and renames its own workspace over MCP", async () =>
   // Two separate facts, asserted separately so a failure says which one broke.
   //
   // First: the agent's MCP call reached CodeHydra and took effect. Read straight
-  // out of git config, where workspace metadata lives — no app connection, so a
+  // out of the workspace's metadata file — no app connection, so a
   // transport problem cannot be mistaken for the agent not having acted.
   await expect
     .poll(() => readWorkspaceTitle(), {

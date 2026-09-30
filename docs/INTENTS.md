@@ -505,12 +505,12 @@ The `show-notification` / `close-notification` operations are the only way anyth
 The `open-workspace` operation uses these hook modules:
 
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces). Reports `branch` as `null` on a detached HEAD and `resolvedBase` only when a base is known (the one a new worktree was created from, or the one an existing workspace's metadata records) -- never a stand-in. Every later hook point receives both as optional `branch`/`base`, absent when unknown
-- **provision**: PluginModule -- the plugins' `after-worktree-created` hooks, for a genuinely new worktree only (no `existingWorkspace`). Contributes `title`/`tags` as `metadata` (also written to git config). Best-effort with internal try/catch
+- **provision**: PluginModule -- the plugins' `after-worktree-created` hooks, for a genuinely new worktree only (no `existingWorkspace`). Contributes `title`/`tags` as `metadata` (also written to the workspace's metadata file). Best-effort with internal try/catch
 - **prepare**: PluginModule -- the plugins' `before-workspace-opened` hooks, on **every** open (new, app start, project open, wake). Contributes `env`, with any `_CH_*` key dropped. Best-effort with internal try/catch. The merged result becomes the setup and finalize enrichment `workspaceEnv`
 - **setup**: AgentModule (starts agent server, fatal) -- passed `workspaceEnv`, which OpenCode's server manager spawns `opencode serve` with (kept in memory for restarts, forgotten on stop). Both repository hook points precede this one, so the agent never starts against a tree a setup script is still preparing, nor without its environment
-- **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), ApiServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's `codehydra.*` metadata)
+- **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), ApiServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's metadata)
 
-The metadata a `workspace:open` reports is the `create` snapshot plus whatever provision, setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads git config. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what git config actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
+The metadata a `workspace:open` reports is the `create` snapshot plus whatever provision, setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads the metadata. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what the metadata store actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
 
 The `delete-workspace` operation uses these hook modules:
 
@@ -1508,7 +1508,10 @@ All paths below are relative to `src/boundaries/`.
 ```typescript
 import { createMockGitClient } from "./git/git-client.state-mock";
 
+const fs = createFileSystemMock();
 const mock = createMockGitClient({
+  // Holds each worktree's git directory (where workspace metadata files live)
+  fileSystem: fs,
   repositories: {
     "/project": {
       branches: ["main", "feature-x"],
@@ -1517,7 +1520,7 @@ const mock = createMockGitClient({
       worktrees: [
         { name: "feature-x", path: "/workspaces/feature-x", branch: "feature-x", isDirty: true },
       ],
-      branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+      branchConfigs: { "feature-x": { remote: "origin" } },
       mainIsDirty: false,
       currentBranch: "main",
     },
@@ -1530,5 +1533,5 @@ expect(mock).toHaveBranch("/project", "feature-y");
 
 // Custom matchers
 expect(mock).toHaveWorktree("/project", "/workspaces/feature-x");
-expect(mock).toHaveBranchConfig("/project", "feature-x", "codehydra.base", "main");
+expect(mock).toHaveBranchConfig("/project", "feature-x", "remote", "origin");
 ```

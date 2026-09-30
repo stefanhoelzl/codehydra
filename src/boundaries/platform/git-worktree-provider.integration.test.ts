@@ -23,6 +23,21 @@ import type { Logger } from "./logging";
 import { projPath, testPath } from "../../shared/test-fixtures";
 import { sep } from "node:path";
 
+/** The flat metadata a worktree's metadata file holds, or null when it has none. */
+async function readMetadataFile(
+  fs: FileSystemBoundary,
+  gitDir: Path
+): Promise<Record<string, Record<string, string>> | null> {
+  try {
+    return JSON.parse(await fs.readFile(new Path(gitDir, "codehydra.json"))) as Record<
+      string,
+      Record<string, string>
+    >;
+  } catch {
+    return null;
+  }
+}
+
 /** Construct a provider the way production does: new + validateRepository + registerProject. */
 async function createProvider(
   projectRoot: Path,
@@ -176,8 +191,9 @@ describe("GitWorktreeProvider integration", () => {
   });
 
   describe("adoption", () => {
-    function repoWithExternalWorktree() {
+    function repoWithExternalWorktree(fileSystem?: ReturnType<typeof createFileSystemMock>) {
       return createMockGitClient({
+        ...(fileSystem && { fileSystem }),
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "feature/login"],
@@ -188,13 +204,14 @@ describe("GitWorktreeProvider integration", () => {
                 path: "/code/repo-login",
                 branch: "feature/login",
               },
+              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
             ],
           },
         },
       });
     }
 
-    it("lists what discover() skips, flagging detached worktrees as unadoptable", async () => {
+    it("lists what discover() skips, detached worktrees included", async () => {
       const client = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -226,10 +243,7 @@ describe("GitWorktreeProvider integration", () => {
 
       const unmanaged = await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR);
 
-      expect(unmanaged.map((w) => ({ name: w.name, adoptable: w.adoptable }))).toEqual([
-        { name: "feature/login", adoptable: true },
-        { name: "wt-8fa2", adoptable: false },
-      ]);
+      expect(unmanaged.map((w) => w.name)).toEqual(["feature/login", "wt-8fa2"]);
     });
 
     it("omits an already-adopted worktree from the offer", async () => {
@@ -263,12 +277,13 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("adopting makes the worktree discoverable across a restart", async () => {
-      const client = repoWithExternalWorktree();
+      const fs = createFileSystemMock();
+      const client = repoWithExternalWorktree(fs);
       const provider = await createProvider(
         PROJECT_ROOT,
         client,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       expect(await provider.discover(PROJECT_ROOT)).toEqual([]);
@@ -280,12 +295,12 @@ describe("GitWorktreeProvider integration", () => {
       );
       expect(adopted.name).toBe("feature/login");
 
-      // A fresh provider over the same repo: the tag lives in git config, not memory.
+      // A fresh provider over the same repo: the tag lives in the metadata file, not memory.
       const restarted = await createProvider(
         PROJECT_ROOT,
         client,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual([
@@ -330,28 +345,39 @@ describe("GitWorktreeProvider integration", () => {
       ).toEqual([expect.objectContaining({ name: "wt-8fa2" })]);
     });
 
-    it("refuses to adopt a detached worktree — there is no branch to mark", async () => {
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        repoWithExternalWorktree(),
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
-
-      await expect(
-        provider.adoptWorktree(PROJECT_ROOT, testPath("/tmp/wt-8fa2"), "")
-      ).rejects.toThrow(WorkspaceError);
-    });
-
-    it("throws when the tag cannot be written, rather than reporting a phantom workspace", async () => {
-      const client = repoWithExternalWorktree();
-      vi.spyOn(client, "setBranchConfig").mockRejectedValue(new Error("config is read-only"));
+    it("adopts a detached worktree, named after its directory", async () => {
+      const fs = createFileSystemMock();
+      const client = repoWithExternalWorktree(fs);
       const provider = await createProvider(
         PROJECT_ROOT,
         client,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
+        worktreeLogger
+      );
+
+      const adopted = await provider.adoptWorktree(PROJECT_ROOT, testPath("/tmp/wt-8fa2"), null);
+      expect(adopted.name).toBe("wt-8fa2");
+
+      const restarted = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+      expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual(["wt-8fa2"]);
+    });
+
+    it("throws when the tag cannot be written, rather than reporting a phantom workspace", async () => {
+      const fs = createFileSystemMock();
+      const client = repoWithExternalWorktree(fs);
+      vi.spyOn(fs, "writeFile").mockRejectedValue(new Error("disk is read-only"));
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
         worktreeLogger
       );
 
@@ -363,7 +389,9 @@ describe("GitWorktreeProvider integration", () => {
 
   describe("metadata.base persistence", () => {
     it("creates workspace with metadata.base and retrieves via discover()", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -375,7 +403,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
 
@@ -390,7 +418,9 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("metadata.base survives provider instance recreation", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -404,7 +434,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -415,7 +445,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       const discovered = await provider2.discover(PROJECT_ROOT);
@@ -454,8 +484,10 @@ describe("GitWorktreeProvider integration", () => {
       expect(discovered[0]?.metadata.base).toBeUndefined();
     });
 
-    it("stores metadata.base in branch config", async () => {
+    it("stores metadata.base as a protected key in the worktree's metadata file", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -467,13 +499,17 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
-      // Verify config was set using behavioral assertion
-      expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "feature-x", "codehydra.base", "main");
+      expect(
+        await readMetadataFile(fs, new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x"))
+      ).toEqual({ version: 1, internal: {}, protected: { base: "main" }, public: {} });
+      expect(await mockClient.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
+        new Map()
+      );
     });
   });
 
@@ -546,7 +582,9 @@ describe("GitWorktreeProvider integration", () => {
 
   describe("metadata setMetadata/getMetadata", () => {
     it("setMetadata persists and getMetadata retrieves", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -558,7 +596,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -571,7 +609,9 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("metadata survives provider recreation", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -583,7 +623,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       const workspace = await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -593,7 +633,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       // Must discover to populate workspace registry before getMetadata
@@ -662,7 +702,9 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("setMetadata with null deletes the key", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main"],
@@ -674,7 +716,7 @@ describe("GitWorktreeProvider integration", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -1050,16 +1092,12 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("config read batching (regression)", () => {
-    it("listBases issues exactly one getGitConfig call regardless of branch count", async () => {
+    it("listBases reads no git config", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "a", "b", "c", "d"],
             currentBranch: "main",
-            branchConfigs: {
-              a: { "codehydra.base": "main" },
-              b: { "codehydra.base": "main" },
-            },
           },
         },
       });
@@ -1074,11 +1112,12 @@ describe("GitWorktreeProvider", () => {
 
       await provider.listBases(PROJECT_ROOT);
 
-      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).not.toHaveBeenCalled();
     });
-
-    it("discover issues exactly one getGitConfig call regardless of worktree count", async () => {
+    it("discover reads git config once while unmigrated, never after", async () => {
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "a", "b", "c"],
@@ -1113,13 +1152,15 @@ describe("GitWorktreeProvider", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       const spy = vi.spyOn(mockClient, "getGitConfig");
 
       await provider.discover(PROJECT_ROOT);
+      expect(spy).toHaveBeenCalledTimes(1);
 
+      await provider.discover(PROJECT_ROOT);
       expect(spy).toHaveBeenCalledTimes(1);
     });
   });
@@ -1282,12 +1323,19 @@ describe("GitWorktreeProvider", () => {
       expect(upstreamBranch?.derives).toBeUndefined();
     });
 
-    it("returns base from codehydra.base config for local branch", async () => {
+    it("returns the base recorded for a local branch's workspace", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "feature-x"],
             currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+                branch: "feature-x",
+              },
+            ],
             branchConfigs: {
               "feature-x": { "codehydra.base": "develop" },
             },
@@ -1301,13 +1349,13 @@ describe("GitWorktreeProvider", () => {
         mockFs,
         worktreeLogger
       );
+      await provider.discover(PROJECT_ROOT);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
       const featureX = bases.find((b) => b.name === "feature-x");
       expect(featureX?.base).toBe("develop");
     });
-
     it("returns base from matching remote when no config", async () => {
       const mockClient = createMockGitClient({
         repositories: {
@@ -2028,23 +2076,18 @@ describe("GitWorktreeProvider", () => {
       expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
     });
 
-    it("clears codehydra metadata from branch config on deletion", async () => {
+    it("forgets a removed workspace's metadata", async () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "feature-x"],
             currentBranch: "main",
             worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-            branchConfigs: {
-              "feature-x": {
-                "codehydra.base": "main",
-                "codehydra.note": "WIP feature",
-                "codehydra.model": "claude-4",
-              },
-            },
           },
         },
       });
@@ -2052,63 +2095,16 @@ describe("GitWorktreeProvider", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
+      await provider.discover(PROJECT_ROOT);
+      await provider.setMetadata(worktreePath, "note", "WIP feature");
 
       await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
-      // Branch still exists but metadata should be cleared
       expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
-      const metadata = await mockClient.getGitConfig(PROJECT_ROOT, {
-        regex: "^branch\\.feature-x\\.codehydra\\.",
-      });
-      expect(metadata.size).toBe(0);
-    });
-
-    it("clears metadata even when worktree removal fails", async () => {
-      const worktreePath = new Path(
-        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
-      );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-            branchConfigs: {
-              "feature-x": {
-                "codehydra.base": "main",
-                "codehydra.note": "WIP feature",
-              },
-            },
-          },
-        },
-      });
-      vi.spyOn(mockClient, "removeWorktree").mockRejectedValue(new Error("worktree locked"));
-      const failingFs = createFileSystemMock({
-        entries: {
-          [WORKSPACES_DIR.toString()]: directory(),
-        },
-      });
-      vi.spyOn(failingFs, "rm").mockRejectedValue(new Error("rm failed"));
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        failingFs,
-        worktreeLogger
-      );
-
-      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, false)).rejects.toThrow(
-        "worktree locked"
-      );
-
-      // Metadata should still have been cleared before the failing worktree removal
-      const metadata = await mockClient.getGitConfig(PROJECT_ROOT, {
-        regex: "^branch\\.feature-x\\.codehydra\\.",
-      });
-      expect(metadata.size).toBe(0);
+      await expect(provider.getMetadata(worktreePath)).rejects.toThrow(WorkspaceError);
     });
   });
 
@@ -2638,40 +2634,6 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("cleanupOrphanedWorkspaces", () => {
-    it("prunes codehydra config left by branches that no longer exist", async () => {
-      // `git branch -D` drops the branch but not our [branch "<n>.codehydra"] section.
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [],
-            branchConfigs: {
-              "feature-x": { "codehydra.base": "main" },
-              "long-gone": { "codehydra.base": "main", "codehydra.tags.new": "{}" },
-            },
-          },
-        },
-      });
-      const spyFs = createSpyFileSystemBoundary({
-        entries: { [WORKSPACES_DIR.toString()]: directory() },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
-
-      await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
-
-      const remaining = await mockClient.getGitConfig(PROJECT_ROOT, {
-        regex: `^branch\\..*\\.codehydra\\.`,
-      });
-      expect([...remaining.keys()]).toEqual(["branch.feature-x.codehydra.base"]);
-    });
-
     it("keeps metadata for an existing branch that has no worktree", async () => {
       // A worktree removed outside CodeHydra leaves this shape; the branch may
       // still hold unmerged work, so its metadata must survive.
@@ -2999,11 +2961,13 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("setMetadata", () => {
-    it("sets branch config correctly", async () => {
+    it("writes the worktree's metadata file, not git config", async () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
+      const fs = createFileSystemMock();
       const mockClient = createMockGitClient({
+        fileSystem: fs,
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "feature-x"],
@@ -3016,20 +2980,315 @@ describe("GitWorktreeProvider", () => {
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        fs,
         worktreeLogger
       );
       await provider.discover(PROJECT_ROOT);
 
       await provider.setMetadata(worktreePath, "note", "WIP feature");
+      await provider.setMetadata(worktreePath, "hibernated", "true");
+      await provider.setMetadata(worktreePath, "agent.pending-prompt", "{}");
 
-      // Behavioral assertion: config should be set
-      expect(mockClient).toHaveBranchConfig(
-        PROJECT_ROOT,
-        "feature-x",
-        "codehydra.note",
-        "WIP feature"
+      expect(
+        await readMetadataFile(fs, new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x"))
+      ).toEqual({
+        version: 1,
+        internal: { "agent.pending-prompt": "{}" },
+        protected: { hibernated: "true" },
+        public: { note: "WIP feature" },
+      });
+      expect(await mockClient.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
+        new Map()
       );
+    });
+
+    it("works on a detached HEAD", async () => {
+      const worktreePath = new Path(
+        testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
+      );
+      const fs = createFileSystemMock();
+      const mockClient = createMockGitClient({
+        fileSystem: fs,
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+      await provider.discover(PROJECT_ROOT);
+
+      await provider.setMetadata(worktreePath, "hibernated", "true");
+
+      expect(await provider.getMetadata(worktreePath)).toEqual({ hibernated: "true" });
+    });
+  });
+
+  describe("legacy git config migration", () => {
+    const FEATURE_PATH = new Path(
+      testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
+    );
+    const FEATURE_GIT_DIR = new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x");
+
+    function legacyRepo(
+      fs: ReturnType<typeof createFileSystemMock>,
+      extra: {
+        branches?: readonly string[];
+        worktrees?: readonly { name: string; path: string; branch: string | null }[];
+        branchConfigs?: Record<string, Record<string, string>>;
+        featureBranch?: string;
+      } = {}
+    ) {
+      const featureBranch = extra.featureBranch ?? "feature-x";
+      return createMockGitClient({
+        fileSystem: fs,
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", featureBranch, ...(extra.branches ?? [])],
+            currentBranch: "main",
+            worktrees: [
+              { name: "feature-x", path: FEATURE_PATH.toString(), branch: featureBranch },
+              ...(extra.worktrees ?? []),
+            ],
+            branchConfigs: extra.branchConfigs ?? {},
+          },
+        },
+      });
+    }
+
+    it("moves a branch's config into its worktree's file, sorted by tier, and drops the config", async () => {
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branchConfigs: {
+          "feature-x": {
+            "codehydra.base": "main",
+            "codehydra.title": "Login flow",
+            "codehydra.tags.new": "{}",
+            "codehydra.agent": "claude",
+            "codehydra.agent.pending-prompt": "{}",
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      const [workspace] = await provider.discover(PROJECT_ROOT);
+
+      expect(workspace?.metadata).toEqual({
+        base: "main",
+        title: "Login flow",
+        "tags.new": "{}",
+        agent: "claude",
+        "agent.pending-prompt": "{}",
+      });
+      expect(await readMetadataFile(fs, FEATURE_GIT_DIR)).toEqual({
+        version: 1,
+        internal: { "agent.pending-prompt": "{}" },
+        protected: { base: "main", agent: "claude" },
+        public: { title: "Login flow", "tags.new": "{}" },
+      });
+      expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(new Map());
+    });
+
+    it("pins the default agent on a migrated workspace that has none recorded", async () => {
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branches: ["pinned"],
+        worktrees: [
+          {
+            name: "pinned",
+            path: new Path(FEATURE_PATH.dirname, "pinned").toString(),
+            branch: "pinned",
+          },
+        ],
+        branchConfigs: { pinned: { "codehydra.agent": "opencode" } },
+      });
+      const provider = new GitWorktreeProvider(client, fs, worktreeLogger, () => ({
+        agent: "claude",
+      }));
+      await provider.validateRepository(PROJECT_ROOT);
+      provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ agent: "claude" });
+      expect((await readMetadataFile(fs, FEATURE_GIT_DIR))?.protected).toEqual({
+        agent: "claude",
+      });
+      expect(await provider.getMetadata(new Path(FEATURE_PATH.dirname, "pinned"))).toEqual({
+        agent: "opencode",
+      });
+    });
+
+    it("leaves a workspace that already has a file alone", async () => {
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs);
+      await (
+        await createProvider(PROJECT_ROOT, client, WORKSPACES_DIR, fs, worktreeLogger)
+      ).discover(PROJECT_ROOT);
+
+      const provider = new GitWorktreeProvider(client, fs, worktreeLogger, () => ({
+        agent: "claude",
+      }));
+      await provider.validateRepository(PROJECT_ROOT);
+      provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({});
+    });
+
+    it("writes an empty file for a workspace without config", async () => {
+      const fs = createFileSystemMock();
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        legacyRepo(fs),
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await readMetadataFile(fs, FEATURE_GIT_DIR)).toEqual({
+        version: 1,
+        internal: {},
+        protected: {},
+        public: {},
+      });
+    });
+
+    it("keeps the config of a live branch that is not one of its workspaces", async () => {
+      // Another CodeHydra instance (a dev build, another workspaces folder) may
+      // own that worktree and still read its config.
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branches: ["theirs"],
+        worktrees: [{ name: "theirs", path: "/elsewhere/theirs", branch: "theirs" }],
+        branchConfigs: { theirs: { "codehydra.title": "Not ours" } },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
+        new Map([["branch.theirs.codehydra.title", "Not ours"]])
+      );
+    });
+
+    it("drops the config of a branch that no longer exists", async () => {
+      // `git branch -D` drops the branch but not our [branch "<n>.codehydra"] sections.
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branchConfigs: { "long-gone": { "codehydra.base": "main", "codehydra.tags.new": "{}" } },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(new Map());
+    });
+
+    it("keeps the config when the file cannot be written, and still serves the metadata", async () => {
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+      });
+      vi.spyOn(fs, "writeFile").mockRejectedValue(new Error("disk full"));
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ base: "main" });
+      expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
+        new Map([["branch.feature-x.codehydra.base", "main"]])
+      );
+    });
+
+    it("keeps an adoption recorded in config, now in the worktree's file", async () => {
+      const fs = createFileSystemMock();
+      const client = legacyRepo(fs, {
+        branches: ["feature/login"],
+        worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
+        branchConfigs: { "feature/login": { "codehydra.tags.external": "{}" } },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        client,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+
+      const restarted = await createProvider(
+        PROJECT_ROOT,
+        legacyRepo(fs, {
+          branches: ["feature/login"],
+          worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
+        }),
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+      expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toContain(
+        "feature/login"
+      );
+    });
+
+    it("keeps a workspace's metadata across a branch rename", async () => {
+      const fs = createFileSystemMock();
+      const before = legacyRepo(fs, {
+        branchConfigs: { "feature-x": { "codehydra.title": "Login flow" } },
+      });
+      await (
+        await createProvider(PROJECT_ROOT, before, WORKSPACES_DIR, fs, worktreeLogger)
+      ).discover(PROJECT_ROOT);
+
+      // `git branch -m feature-x renamed`: same worktree, same git directory
+      const after = legacyRepo(fs, { featureBranch: "renamed" });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        after,
+        WORKSPACES_DIR,
+        fs,
+        worktreeLogger
+      );
+      const [workspace] = await provider.discover(PROJECT_ROOT);
+
+      expect(workspace?.name).toBe("renamed");
+      expect(workspace?.metadata).toEqual({ title: "Login flow" });
     });
   });
 

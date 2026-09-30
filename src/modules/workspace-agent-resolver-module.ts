@@ -3,8 +3,10 @@
  *
  * On each workspace-scoped hook point, this module:
  *  1. Reads the per-workspace `agent` from worktree metadata (fallback: global default).
- *  2. For workspace:open: if the intent payload sets a non-default agent, writes it
- *     to metadata first so subsequent operations see the same resolution.
+ *  2. For workspace:open: records the workspace's agent in metadata unless it is
+ *     already there — the one the intent payload asks for, else the global default.
+ *     Recording the default too pins the workspace: changing the default later
+ *     never switches the agent of a workspace that already exists.
  *  3. Emits an `agent` capability so per-agent modules can gate via
  *     `requires: { agent: provider.type }`.
  */
@@ -66,6 +68,14 @@ async function resolveAgent(
   workspacePath: string,
   deps: WorkspaceAgentResolverDeps
 ): Promise<AgentType | null> {
+  return (await recordedAgent(workspacePath, deps)) ?? defaultAgent(deps);
+}
+
+/** The agent recorded in the workspace's metadata, if any. */
+async function recordedAgent(
+  workspacePath: string,
+  deps: WorkspaceAgentResolverDeps
+): Promise<AgentType | null> {
   try {
     const metadata = await deps.gitWorktreeProvider.getMetadata(new Path(workspacePath));
     const fromMetadata = metadata[AGENT_METADATA_KEY];
@@ -79,6 +89,11 @@ async function resolveAgent(
         error: error instanceof Error ? error.message : String(error),
       });
   }
+  return null;
+}
+
+/** The user's global agent selection, if one is made. */
+function defaultAgent(deps: WorkspaceAgentResolverDeps): AgentType | null {
   const fromConfig = deps.agentConfig.get();
   if (fromConfig === "claude" || fromConfig === "opencode") {
     return fromConfig;
@@ -116,33 +131,35 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       const { workspacePath } = setupCtx;
       if (!workspacePath) return {};
 
-      const defaultAgent = deps.agentConfig.get();
       // Only the typed arms ("claude"/"opencode") pin a backend; "default" and
       // absent defer to metadata/config.
       const requestedType = intent.payload.agent?.type;
       const requested =
-        requestedType === "claude" || requestedType === "opencode" ? requestedType : undefined;
+        requestedType === "claude" || requestedType === "opencode" ? requestedType : null;
+      const recorded = await recordedAgent(workspacePath, deps);
+      const agent = requested ?? recorded ?? defaultAgent(deps);
 
-      if (requested !== undefined && requested !== defaultAgent) {
-        // Persist a non-default agent choice so future operations resolve to it.
+      if (agent !== null && agent !== recorded) {
+        // Persist the choice so future operations resolve to it, whatever the
+        // default becomes. The workspace's finalize re-reads its metadata, so the
+        // workspace snapshot picks this up without a metadata-changed event.
         try {
           await deps.gitWorktreeProvider.setMetadata(
             new Path(workspacePath),
             AGENT_METADATA_KEY,
-            requested
+            agent
           );
         } catch (error) {
           deps.logger
             .scoped({ path: workspacePath })
             .warn("failed to persist workspace agent metadata", {
-              requested,
+              agent,
               error: error instanceof Error ? error.message : String(error),
             });
         }
       }
 
-      const openResolved = await resolveAgent(workspacePath, deps);
-      return openResolved !== null ? { provides: { agent: openResolved } } : {};
+      return agent !== null ? { provides: { agent } } : {};
     },
   };
 

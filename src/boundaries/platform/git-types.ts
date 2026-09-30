@@ -56,9 +56,8 @@ export interface Workspace {
   /** Branch checked out in workspace, null if detached HEAD */
   readonly branch: string | null;
   /**
-   * Metadata for the workspace stored in git config.
-   * Always contains `base` key (with fallback to branch ?? name if not explicitly set).
-   * Additional keys can be added for custom workspace metadata.
+   * The workspace's metadata, every tier included (see `utils/metadata-tier.ts`).
+   * Stored in the worktree's metadata file (`workspace-metadata-store.ts`).
    */
   readonly metadata: Readonly<Record<string, string>>;
 }
@@ -74,8 +73,6 @@ export interface UnmanagedWorktree {
   readonly path: Path;
   /** Branch checked out in the worktree, null if detached HEAD */
   readonly branch: string | null;
-  /** False for a detached HEAD: the adoption tag is stored per branch */
-  readonly adoptable: boolean;
 }
 
 /**
