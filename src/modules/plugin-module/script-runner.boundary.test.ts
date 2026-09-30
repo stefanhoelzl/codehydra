@@ -189,7 +189,7 @@ describe.runIf(isWindows)("cmd", () => {
 describe.runIf(hasPwsh())("powershell", () => {
   it("runs the body and reads stdin", async () => {
     const run = await runner.run(
-      request("powershell", '$line = [Console]::In.ReadToEnd(); Write-Output "got $line"')
+      request("powershell", '$line = [Console]::In.ReadToEnd(); "got $line"')
     );
 
     expect(run.result.exitCode).toBe(0);
