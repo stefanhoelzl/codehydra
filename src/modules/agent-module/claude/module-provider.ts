@@ -124,7 +124,11 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
 
       afterProviderReady: async (workspacePath, options) => {
         if (options?.initialPrompt) {
-          await serverManager.setInitialPrompt(workspacePath, options.initialPrompt);
+          await serverManager.setInitialPrompt(
+            workspacePath,
+            options.initialPrompt,
+            options.onInitialPromptDelivered
+          );
         }
         if (options?.isNewWorkspace) {
           await serverManager.setNoSessionMarker(workspacePath);

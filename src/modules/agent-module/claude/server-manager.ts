@@ -220,6 +220,11 @@ export interface WorkspaceState {
    */
   startupTimer?: ReturnType<typeof setTimeout>;
   /**
+   * Called by the first SessionStart after the initial prompt file was written:
+   * the session the wrapper launched with the prompt is up.
+   */
+  onInitialPromptDelivered?: () => void;
+  /**
    * True when the last Stop was suppressed because background tasks keep the
    * workspace busy — running shells and/or background sub-agents, read from the
    * Stop payload's background_tasks. Also suppresses the ~60s-lagging idle_prompt.
@@ -582,8 +587,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    *
    * @param workspacePath - Absolute path to the workspace
    * @param config - Resolved agent launch configuration
+   * @param onDelivered - Called on the first SessionStart after the file is written
    */
-  async setInitialPrompt(workspacePath: string, config: AgentPromptConfig): Promise<void> {
+  async setInitialPrompt(
+    workspacePath: string,
+    config: AgentPromptConfig,
+    onDelivered?: () => void
+  ): Promise<void> {
     const normalizedPath = new Path(workspacePath).toString();
     const state = this.workspaces.get(normalizedPath);
 
@@ -629,6 +639,10 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // works on the prompt); an empty prompt (e.g. only an agent or permission
       // mode was chosen) has nothing to run, so it starts "idle".
       state.busyOnWrapperStart = (config.prompt ?? "").trim() !== "";
+
+      if (onDelivered !== undefined) {
+        state.onInitialPromptDelivered = onDelivered;
+      }
 
       this.logger
         .scoped({ path: normalizedPath })
@@ -902,6 +916,11 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       this.inboxWaiters.notify();
     } else if (hookName === "SessionEnd" || hookName === "WrapperEnd") {
       delete state.inbox;
+    }
+    if (hookName === "SessionStart" && state.onInitialPromptDelivered !== undefined) {
+      const onDelivered = state.onInitialPromptDelivered;
+      delete state.onInitialPromptDelivered;
+      onDelivered();
     }
     if (hookName === "WrapperStart") {
       state.terminalOpen = true;

@@ -752,9 +752,14 @@ describe("createClaudeModuleProvider", () => {
       });
 
       const initialPrompt = { prompt: "Hello" };
-      await provider.startWorkspace(WS_PATH, { initialPrompt });
+      const onInitialPromptDelivered = vi.fn();
+      await provider.startWorkspace(WS_PATH, { initialPrompt, onInitialPromptDelivered });
 
-      expect(mockServerManager.setInitialPrompt).toHaveBeenCalledWith(WS_PATH, initialPrompt);
+      expect(mockServerManager.setInitialPrompt).toHaveBeenCalledWith(
+        WS_PATH,
+        initialPrompt,
+        onInitialPromptDelivered
+      );
     });
 
     it("calls setNoSessionMarker when isNewWorkspace option is true", async () => {

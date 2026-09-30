@@ -1721,6 +1721,22 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["busy", "idle", "none", "idle"]);
     });
 
+    it("reports the prompt delivered on the first SessionStart only", async () => {
+      const workspace = testPath("/workspace/feature-a").toNative();
+      const port = await serverManager.startServer(workspace);
+      const onDelivered = vi.fn();
+
+      await serverManager.setInitialPrompt(workspace, { prompt: "Build a feature" }, onDelivered);
+
+      // The terminal opening is not enough: the app could still quit before claude runs.
+      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      expect(onDelivered).not.toHaveBeenCalled();
+
+      await sendHook(port, "SessionStart", { workspacePath: workspace });
+      await sendHook(port, "SessionStart", { workspacePath: workspace });
+      expect(onDelivered).toHaveBeenCalledTimes(1);
+    });
+
     it("setInitialPrompt handles mkdtemp failure gracefully", async () => {
       await serverManager.startServer(testPath("/workspace/feature-a").toNative());
 

@@ -25,6 +25,11 @@ import type { DownloadProgressCallback } from "../../utils/binary-download";
  */
 export interface WorkspaceStartOptions {
   readonly initialPrompt?: AgentPromptConfig;
+  /**
+   * Called once the agent has taken `initialPrompt` over — from then on the
+   * agent session holds it, so it no longer needs to outlive a restart.
+   */
+  readonly onInitialPromptDelivered?: () => void;
   readonly isNewWorkspace?: boolean;
   /**
    * The workspace environment (from the repository's `before-workspace-opened`

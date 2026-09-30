@@ -137,6 +137,11 @@ export function createOpenCodeModuleProvider(
         });
       },
 
+      // onProviderRegistered has sent the prompt by now (startWorkspace awaits it).
+      afterProviderReady: async (_workspacePath, options) => {
+        options?.onInitialPromptDelivered?.();
+      },
+
       // --- Terminal lifecycle + TUI tracking ---
       wireExtraCallbacks: (ctx) => {
         serverManager.setMarkActiveHandler((wp) => {
