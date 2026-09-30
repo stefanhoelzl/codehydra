@@ -7,10 +7,12 @@
  * like `Config.load()`: FileSystemBoundary is async-only).
  *
  * Everything moves except source code: `remotes/` and every
- * `projects/<id>/workspaces/` stay where they are, and state.json is told so
- * (`paths.workspaces-current`), because moving a worktree costs its agent
- * conversations, its editor state and its git links. The workspaces-root module
- * then migrates them the way it does for a changed `paths.workspaces` setting.
+ * `projects/<id>/workspaces/` stay where they are, because moving a worktree costs
+ * its agent conversations, its editor state and its git links. state.json is told
+ * so: the old root is the workspaces root in use (`paths.workspaces`), and the new
+ * data root is requested (`paths.workspaces-pending`). The workspaces-root module
+ * then migrates the clones on the starting screen, as it does when the user moves
+ * the workspaces folder, and the worktrees stay where they are.
  *
  * All or nothing: when an entry cannot be moved — typically because an older
  * CodeHydra still runs from the old folder and holds its files open — the
@@ -22,8 +24,12 @@ import * as nodeFs from "node:fs";
 import { dirname, join } from "node:path";
 import { getErrorMessage } from "../../shared/error-utils";
 
-/** Must match the workspaces-root module's `CURRENT_ROOT_STATE_KEY`. */
-export const WORKSPACES_CURRENT_STATE_KEY = "paths.workspaces-current";
+/** Must match the workspaces-root module's `ROOT_STATE_KEY`. */
+export const WORKSPACES_ROOT_STATE_KEY = "paths.workspaces";
+/** Must match the workspaces-root module's `PENDING_ROOT_STATE_KEY`. */
+export const WORKSPACES_PENDING_STATE_KEY = "paths.workspaces-pending";
+/** Must match the workspaces-root module's `LEGACY_CURRENT_STATE_KEY`. */
+export const WORKSPACES_LEGACY_CURRENT_STATE_KEY = "paths.workspaces-current";
 
 export type RelocationFs = Pick<
   typeof nodeFs,
@@ -92,7 +98,7 @@ export function relocateDataRoot(
     }
     // Inside the transaction: without it the moved state would read "workspaces
     // under the data root" and every existing workspace would silently vanish.
-    if (sourceCodeKept) pinWorkspacesRoot(join(to, "state.json"), from, fs);
+    if (sourceCodeKept) pinWorkspacesRoot(join(to, "state.json"), from, to, fs);
   } catch (error) {
     for (const move of [...renamed].reverse()) {
       attempt(() => fs.renameSync(move.to, move.from));
@@ -182,11 +188,11 @@ function holdsSourceCode(from: string, fs: RelocationFs): boolean {
 }
 
 /**
- * Record `from` as the workspaces root in use, unless state.json already names one
- * (the user had moved workspaces elsewhere). An unreadable file starts fresh, as
- * the state service would.
+ * Record `from` as the workspaces root in use and request a move to `to`, unless
+ * state.json already names a root (the user had moved workspaces elsewhere). An
+ * unreadable file starts fresh, as the state service would.
  */
-function pinWorkspacesRoot(statePath: string, from: string, fs: RelocationFs): void {
+function pinWorkspacesRoot(statePath: string, from: string, to: string, fs: RelocationFs): void {
   let state: Record<string, unknown> = {};
   if (fs.existsSync(statePath)) {
     try {
@@ -198,9 +204,10 @@ function pinWorkspacesRoot(statePath: string, from: string, fs: RelocationFs): v
       // invalid JSON: start fresh
     }
   }
-  const current = state[WORKSPACES_CURRENT_STATE_KEY];
-  if (current !== undefined && current !== null) return;
-  state[WORKSPACES_CURRENT_STATE_KEY] = from;
+  const named = (key: string): boolean => state[key] !== undefined && state[key] !== null;
+  if (named(WORKSPACES_ROOT_STATE_KEY) || named(WORKSPACES_LEGACY_CURRENT_STATE_KEY)) return;
+  state[WORKSPACES_ROOT_STATE_KEY] = from;
+  state[WORKSPACES_PENDING_STATE_KEY] = to;
   fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
 }
 

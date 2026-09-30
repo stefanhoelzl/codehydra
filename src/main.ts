@@ -19,7 +19,6 @@
 import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
-import { Path } from "./utils/path/path";
 // Boundaries - Platform
 import {
   DefaultPathProvider,
@@ -539,6 +538,8 @@ const settingsModule = createSettingsModule({
   config: configService,
   app: appLayer,
   dialog: dialogLayer,
+  // Built further down; read only when the dialog opens.
+  extras: () => [workspacesRootModule.settingsRow],
   logger: loggingService.createLogger("settings"),
 });
 openSettings = settingsModule.openSettings;
@@ -775,7 +776,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
 });
 // State module — loads state.json in app:start/init.
 const stateModule = createStateModule({ stateService });
-// Where worktrees and managed clones live (`paths.workspaces`), settled at app:start.
+// Where worktrees and managed clones live (`paths.workspaces`); a requested move runs at app:start.
 const workspacesRootModule = createWorkspacesRootModule({
   config: configService,
   stateService,
@@ -783,10 +784,11 @@ const workspacesRootModule = createWorkspacesRootModule({
   fs: fileSystemLayer,
   gitClient,
   ui: presentationModule,
+  dialog: dialogLayer,
+  app: appLayer,
   dispatcher,
   // Built further down; read only when a migration runs.
   moveListeners: () => [pluginModule.moveProjects],
-  legacyDataRoot: legacyDataRoot === null ? null : new Path(legacyDataRoot),
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;

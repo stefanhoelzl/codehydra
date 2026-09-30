@@ -16,6 +16,10 @@
  * persist the buffer (Save & Restart then relaunches), Cancel discards. Live
  * validation disables Save while any field is invalid; per-row reset and "Reset
  * all to defaults" revert to defaults immediately.
+ *
+ * Modules may contribute extra rows (SettingsExtraRow) for values that are not
+ * config keys: shown read-only among the config rows, with one button that hands
+ * over to the contributing module.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -48,6 +52,8 @@ const ACTION_RESET_ALL = "reset-all";
 const RESET_PREFIX = "reset:";
 /** Per-row folder-picker action ids are `${PICK_PREFIX}${key}`. */
 const PICK_PREFIX = "pick:";
+/** Contributed rows' action ids (and read-only field ids) are `${EXTRA_PREFIX}${key}`. */
+const EXTRA_PREFIX = "extra:";
 /** Sub-field id suffix for a guarded-text control's on/off checkbox. */
 const GUARD_ON_SUFFIX = "::on";
 
@@ -60,7 +66,27 @@ export interface SettingsModuleDeps {
   readonly config: Config;
   readonly app: Pick<AppBoundary, "relaunch">;
   readonly dialog: Pick<DialogBoundary, "showDialog">;
+  /** Rows other modules contribute; read each time the dialog is built. */
+  readonly extras?: () => readonly SettingsExtraRow[];
   readonly logger: Logger;
+}
+
+/**
+ * A row a module contributes for a value that is not a config key (e.g. state
+ * only a flow of its own may change). Shown read-only, sorted and grouped like a
+ * config key of the same name, with one action button.
+ */
+export interface SettingsExtraRow {
+  /** Sorts and groups the row like a config key of this name. */
+  readonly key: string;
+  readonly description: string;
+  /** The value shown, read when the dialog is built. */
+  readonly value: () => string;
+  readonly action: {
+    readonly label: string;
+    readonly icon?: string;
+    readonly run: () => void;
+  };
 }
 
 interface SettingKey {
@@ -124,6 +150,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   openSettings: () => void;
 } {
   const { ui, config, app, dialog, logger } = deps;
+  const extras = (): readonly SettingsExtraRow[] => deps.extras?.() ?? [];
 
   let activeHandle: DialogHandle | null = null;
   /** Effective value per key when the dialog opened, for the restart-note diff. */
@@ -286,8 +313,14 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     let lastGroup: string | undefined;
     let lastSubheading: string | undefined;
 
-    for (const entry of settingKeys()) {
-      const { key, def } = entry;
+    const rows: ({ key: string; entry: SettingKey } | { key: string; extra: SettingsExtraRow })[] =
+      [
+        ...settingKeys().map((entry) => ({ key: entry.key, entry })),
+        ...extras().map((extra) => ({ key: extra.key, extra })),
+      ].sort((a, b) => a.key.localeCompare(b.key));
+
+    for (const item of rows) {
+      const { key } = item;
       const parts = keyParts(key);
       if (parts.group !== lastGroup) {
         sections.push({ type: "text", content: parts.group, style: "heading" });
@@ -303,7 +336,29 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         });
         lastSubheading = parts.subheading;
       }
+      const indent = parts.subheading !== undefined ? 2 : 1;
 
+      if ("extra" in item) {
+        const { extra } = item;
+        sections.push({
+          type: "setting-row",
+          label: parts.label,
+          fields: [
+            { type: "input", id: `${EXTRA_PREFIX}${key}`, value: extra.value(), disabled: true },
+          ],
+          indent,
+          description: extra.description,
+          action: {
+            id: `${EXTRA_PREFIX}${key}`,
+            label: extra.action.label,
+            ...(extra.action.icon !== undefined && { icon: extra.action.icon }),
+          },
+        });
+        continue;
+      }
+
+      const { entry } = item;
+      const { def } = entry;
       const current = key in pickedValues ? pickedValues[key] : config.getEffective()[key];
       const source = config.getSource(key);
 
@@ -336,7 +391,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         type: "setting-row",
         label: parts.label,
         fields: fieldsFor(entry, current, liveData, error),
-        indent: parts.subheading !== undefined ? 2 : 1,
+        indent,
         ...(def.description !== undefined && { description: def.description }),
         ...(badge !== undefined && { badge }),
         ...(note !== undefined && { note }),
@@ -488,6 +543,13 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
           openValues = { ...config.getEffective() };
           handle.update(buildConfig().config);
         })();
+        return;
+      }
+      if (event.actionId.startsWith(EXTRA_PREFIX)) {
+        const key = event.actionId.slice(EXTRA_PREFIX.length);
+        extras()
+          .find((extra) => extra.key === key)
+          ?.action.run();
         return;
       }
       if (event.actionId.startsWith(PICK_PREFIX)) {

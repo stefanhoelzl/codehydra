@@ -494,3 +494,61 @@ describe("SettingsModule — shortcut", () => {
     expect(dialogs.handles).toHaveLength(1);
   });
 });
+
+describe("SettingsModule — contributed rows", () => {
+  function setupWithExtra() {
+    const config = createMockConfig();
+    registerKeys(config);
+    const dialogs = createMockDialogManager();
+    const run = vi.fn();
+    const { openSettings } = createSettingsModule({
+      ui: dialogs.ui as unknown as UiPresenter,
+      config,
+      app: createAppBoundaryMock({ platform: "linux" }),
+      dialog: createBehavioralDialogBoundary(),
+      extras: () => [
+        {
+          key: "storage.moved",
+          description: "Where it is",
+          value: () => "/somewhere",
+          action: { label: "Change…", icon: "folder", run },
+        },
+      ],
+      logger: createMockLogger(),
+    });
+    return { openSettings, dialogs, config, run };
+  }
+
+  it("shows the value read-only, grouped like a config key, with its action", () => {
+    const { openSettings, dialogs } = setupWithExtra();
+    openSettings();
+
+    const cfg = dialogs.lastHandle!.config;
+    const row = rowByLabel(cfg, "moved")!;
+    expect(row.description).toBe("Where it is");
+    expect(row.fields).toEqual([
+      { type: "input", id: "extra:storage.moved", value: "/somewhere", disabled: true },
+    ]);
+    expect(row.action).toEqual({ id: "extra:storage.moved", label: "Change…", icon: "folder" });
+    // Sorted among the "storage" keys, under one heading.
+    const headings = cfg.sections.filter(
+      (section) => section.type === "text" && section.content === "storage"
+    );
+    expect(headings).toHaveLength(1);
+  });
+
+  it("hands the action to the contributing module and saves nothing for the row", async () => {
+    const { openSettings, dialogs, config, run } = setupWithExtra();
+    const setSpy = vi.spyOn(config, "set");
+    openSettings();
+
+    dialogs.lastHandle!.emitAction("extra:storage.moved", {});
+    expect(run).toHaveBeenCalledOnce();
+
+    dialogs.lastHandle!.emitAction("save", { "extra:storage.moved": "/elsewhere" });
+    await flush();
+    const keys = setSpy.mock.calls.map(([key]) => key);
+    expect(keys).not.toContain("storage.moved");
+    expect(keys).not.toContain("extra:storage.moved");
+  });
+});

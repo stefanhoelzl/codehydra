@@ -7,10 +7,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as nodeFs from "node:fs";
 import { join } from "node:path";
 import { createTempDir } from "../../utils/testing/test-utils";
-import { CURRENT_ROOT_STATE_KEY } from "../../modules/workspaces-root/module";
+import {
+  LEGACY_CURRENT_STATE_KEY,
+  PENDING_ROOT_STATE_KEY,
+  ROOT_STATE_KEY,
+} from "../../modules/workspaces-root/module";
 import {
   relocateDataRoot,
-  WORKSPACES_CURRENT_STATE_KEY,
+  WORKSPACES_LEGACY_CURRENT_STATE_KEY,
+  WORKSPACES_PENDING_STATE_KEY,
+  WORKSPACES_ROOT_STATE_KEY,
   type RelocationFs,
 } from "./data-root-relocation";
 
@@ -58,11 +64,13 @@ const INSTALL = {
 };
 
 describe("relocateDataRoot", () => {
-  it("uses the workspaces-root module's state key", () => {
-    expect(WORKSPACES_CURRENT_STATE_KEY).toBe(CURRENT_ROOT_STATE_KEY);
+  it("uses the workspaces-root module's state keys", () => {
+    expect(WORKSPACES_ROOT_STATE_KEY).toBe(ROOT_STATE_KEY);
+    expect(WORKSPACES_PENDING_STATE_KEY).toBe(PENDING_ROOT_STATE_KEY);
+    expect(WORKSPACES_LEGACY_CURRENT_STATE_KEY).toBe(LEGACY_CURRENT_STATE_KEY);
   });
 
-  it("moves everything but the source code, and records where that stayed", () => {
+  it("moves everything but the source code, records where that stayed, requests its move", () => {
     seed(from, INSTALL);
 
     const result = relocateDataRoot(from, to);
@@ -76,7 +84,8 @@ describe("relocateDataRoot", () => {
     expect(read(join(to, "projects/lib-5678/config.json"))).toContain("remoteUrl");
     expect(state(to)).toEqual({
       "sidebar.hide-hibernated": true,
-      [WORKSPACES_CURRENT_STATE_KEY]: from,
+      [WORKSPACES_ROOT_STATE_KEY]: from,
+      [WORKSPACES_PENDING_STATE_KEY]: to,
     });
 
     // Source code stays; the project that had none leaves no directory behind.
@@ -101,12 +110,23 @@ describe("relocateDataRoot", () => {
   it("keeps a workspaces folder the user had chosen", () => {
     seed(from, {
       ...INSTALL,
-      "state.json": JSON.stringify({ [WORKSPACES_CURRENT_STATE_KEY]: "D:/devdrive" }),
+      "state.json": JSON.stringify({ [WORKSPACES_ROOT_STATE_KEY]: "D:/devdrive" }),
     });
 
     relocateDataRoot(from, to);
 
-    expect(state(to)[WORKSPACES_CURRENT_STATE_KEY]).toBe("D:/devdrive");
+    expect(state(to)).toEqual({ [WORKSPACES_ROOT_STATE_KEY]: "D:/devdrive" });
+  });
+
+  it("keeps a workspaces folder an earlier release recorded", () => {
+    seed(from, {
+      ...INSTALL,
+      "state.json": JSON.stringify({ [WORKSPACES_LEGACY_CURRENT_STATE_KEY]: "D:/devdrive" }),
+    });
+
+    relocateDataRoot(from, to);
+
+    expect(state(to)).toEqual({ [WORKSPACES_LEGACY_CURRENT_STATE_KEY]: "D:/devdrive" });
   });
 
   it("writes a state file when there was none", () => {
@@ -115,7 +135,10 @@ describe("relocateDataRoot", () => {
 
     relocateDataRoot(from, to);
 
-    expect(state(to)).toEqual({ [WORKSPACES_CURRENT_STATE_KEY]: from });
+    expect(state(to)).toEqual({
+      [WORKSPACES_ROOT_STATE_KEY]: from,
+      [WORKSPACES_PENDING_STATE_KEY]: to,
+    });
   });
 
   it("does nothing once the new folder holds state", () => {
@@ -195,7 +218,7 @@ describe("relocateDataRoot", () => {
 
     expect(result).toMatchObject({ status: "moved", sourceCodeKept: true, warnings: [] });
     expect(read(join(to, "vscodium/1.0/bin"))).toBe("exe");
-    expect(state(to)[WORKSPACES_CURRENT_STATE_KEY]).toBe(from);
+    expect(state(to)[WORKSPACES_ROOT_STATE_KEY]).toBe(from);
     expect(nodeFs.readdirSync(from).sort()).toEqual(["projects", "remotes"]);
   });
 });

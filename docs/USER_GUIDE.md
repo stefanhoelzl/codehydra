@@ -376,7 +376,8 @@ the `logs/` folder (plugin run logs are in `logs/plugins/`):
 Windows versions before this one kept it in `%APPDATA%\Codehydra\` (the
 roaming profile). The first start of a newer version moves settings, state,
 logs and binaries to `%LOCALAPPDATA%` and then migrates the workspaces without
-asking, as **Migrate** below does: cloned repositories move, existing
+asking, as a [move of the workspaces folder](#where-workspaces-live) does:
+cloned repositories move, existing
 workspaces stay in the old folder and remain listed, new ones are created in
 the new one. While an older CodeHydra is still running from the old folder,
 nothing moves and the next start tries again.
@@ -401,29 +402,32 @@ An unknown key exits with 6, an invalid value with 2, and no running app with 3.
 
 ### Where workspaces live
 
-Worktrees and cloned repositories live in the data directory by default. Set
-`paths.workspaces` to an absolute folder to keep them elsewhere — for example
-on a Windows Dev Drive. The settings dialog has a **Browse…** button for it.
-Only source code moves there: binaries, logs and `state.json` stay in the data
-directory, and settings in your CodeHydra home.
+Worktrees and cloned repositories live in the data directory by default. To
+keep them elsewhere — for example on a Windows Dev Drive — use **Change…** on
+the `paths` → `workspaces` row of the settings dialog, which shows the folder in
+use. Only source code moves there: binaries, logs and `state.json` stay in the
+data directory, and settings in your CodeHydra home.
 
-The change applies at the next start, which asks what to do with what is
-already there:
+**Change…** asks for the new folder (type it, or **Browse…**; empty means the
+data directory), then **Migrate…** checks it: it must be empty, writable, and
+not inside a project or CodeHydra's own folders. A confirmation names what
+happens next and warns about workspaces whose agents are still working.
+**Migrate and restart** closes CodeHydra and starts it again, and the migration
+runs on the starting screen before anything opens:
 
-- **Migrate** moves cloned repositories to the new folder. Existing workspaces
-  are not moved: they stay in the old folder and remain in the sidebar as
-  ordinary workspaces, with their agent conversations and editor state, whatever
-  branch is later checked out in them. New workspaces are created in the new
-  folder. Offered only when the new folder is empty. If a step fails, the
-  migration is undone and you can retry, continue with the current folder, or
-  quit.
-- **Use as is** switches to the new folder without moving anything. Workspaces
-  in the old folder stay on disk but are no longer listed.
-- **Quit** leaves everything as it is.
+- Cloned repositories move to the new folder. Existing workspaces are not
+  moved: they stay in the old folder and remain in the sidebar as ordinary
+  workspaces, with their agent conversations and editor state, whatever branch
+  is later checked out in them. New workspaces are created in the new folder.
+- If the folder can no longer be used, or a step fails (the migration is then
+  undone), you can **Retry**, **Continue with current folder**, or **Quit**.
+  Quitting keeps the request, so the next start tries again; so does a start
+  after a crash in the middle of it.
 
-A folder that cannot be used — inside a project, or not writable — offers only
-**Continue with current folder** and **Quit**, and the question comes back at
-the next start until the setting is changed.
+The folder in use is not a setting: `ch config` does not list it, and it
+changes only through a migration. Earlier versions had a `paths.workspaces`
+setting; the first start of this version takes it over, and runs a change of
+it that was never applied as a migration.
 
 Earlier versions marked the workspaces a migration left behind with an
 `external` tag. The first start of this version removes that tag from them;
