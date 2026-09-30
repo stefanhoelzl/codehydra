@@ -17,11 +17,14 @@
  * - User clicks "Install" → the card is replaced by a progress bar while the
  *   download runs → on completion by "Update ready / Restart Now". A click
  *   closes a card, so each stage that asks something is a fresh question.
+ *   Without the click, a clean quit installs the download too (the
+ *   AutoUpdater's autoInstallOnAppQuit), so a manual restart lands on it.
  * - Download failures swap to an error notification with a Retry action.
  * - Re-checks (periodic timer, app:resume, immediately after a download
  *   completes) keep running. When a newer version is detected, the single
  *   notification refreshes to "Update available" for that version — including
- *   reverting a "ready" notification so one restart always lands on newest.
+ *   reverting a "ready" notification so one "Restart Now" always lands on
+ *   newest (a plain quit meanwhile still installs the older download).
  * - Dismiss = silent for that version, persisted via `update.dismissed-version`
  *   so it stays silent across restarts. A genuinely newer version re-surfaces.
  * - A check is skipped while a download is in progress; the check fired right
@@ -77,7 +80,7 @@ function readyConfig(version: string): NotificationConfig {
   return {
     type: "info",
     title: "Update ready",
-    message: `Version ${version} is ready to install.`,
+    message: `Version ${version} will be installed when CodeHydra quits.`,
     dismissible: false,
     actions: [{ id: "restart", label: "Restart Now" }],
   };
