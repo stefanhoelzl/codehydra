@@ -27,7 +27,7 @@ import { DESCRIBE_CHANNEL, describe, type DescribeTarget } from "./describe";
 import type { InputShaping } from "../registry";
 import { ApiError, categoryOf, type ApiErrorCategory } from "../errors";
 import type { OperationContext } from "../types";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import type { OperationName } from "../names";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -63,7 +63,7 @@ export interface ApiServerAdapterOptions {
   readonly socket: AdapterSocket;
   readonly registry: OperationRegistry;
   /** The client's own workspace, or null for a shell standing outside every one. */
-  readonly workspacePath: WorkspacePath | null;
+  readonly workspaceRef: WorkspaceRef | null;
   /** Directory the client is running in, when it is a shell that has one. */
   readonly cwd?: string | null;
   readonly logger: Logger;
@@ -153,7 +153,7 @@ function splitArgs(args: readonly unknown[]): {
 }
 
 export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiServerConnection {
-  const { socket, registry, workspacePath, logger, kind, map } = options;
+  const { socket, registry, workspaceRef, logger, kind, map } = options;
 
   // One per connection, not per call: a handler may tie state to its caller
   // beyond its own return (`lock.hold`), and a caller still waiting (a queued
@@ -162,7 +162,7 @@ export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiSer
   socket.on("disconnect", () => connection.abort());
 
   /** The target of each call in flight; null until (unless) it resolves one. */
-  const inFlight = new Set<{ target: WorkspacePath | null }>();
+  const inFlight = new Set<{ target: WorkspaceRef | null }>();
 
   // Describe is adapter infrastructure rather than an operation: it is how an
   // out-of-process client learns what exists, so it is mounted here rather than
@@ -196,12 +196,14 @@ export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiSer
     socket.on(mount.channel, (...args: unknown[]) => {
       const { request, ack } = splitArgs(args);
 
-      logger.scoped({ path: workspacePath }).debug("API call", { event: mount.channel });
+      logger
+        .scoped(workspaceRef === null ? {} : { workspace: workspaceRef })
+        .debug("API call", { event: mount.channel });
 
-      const call: { target: WorkspacePath | null } = { target: null };
+      const call: { target: WorkspaceRef | null } = { target: null };
       inFlight.add(call);
       const ctx: OperationContext = {
-        workspacePath,
+        workspaceRef,
         onTarget: (target) => {
           call.target = target;
         },
@@ -224,10 +226,12 @@ export function attachApiServerAdapter(options: ApiServerAdapterOptions): ApiSer
           // every bug report, for something working as designed.
           const category = categoryOf(error);
           const level = category === "failed" ? "error" : "warn";
-          logger.scoped({ path: workspacePath })[level]("API call failed", {
-            event: mount.channel,
-            error: message,
-          });
+          logger
+            .scoped(workspaceRef === null ? {} : { workspace: workspaceRef })
+            [level]("API call failed", {
+              event: mount.channel,
+              error: message,
+            });
           ack?.({ success: false, error: message, category });
         })
         // Only reachable if ack() itself throws; the caller is gone either way.

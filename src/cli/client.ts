@@ -125,7 +125,7 @@ export async function connect(options: ClientOptions): Promise<Client> {
       client: kind,
       token: connection.token,
       cwd,
-      ...(workspace !== undefined && { workspacePath: workspace }),
+      ...(workspace !== undefined && { workspace }),
       ...(project !== undefined && { project }),
     },
     reconnection: false,

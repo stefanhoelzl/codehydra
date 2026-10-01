@@ -479,20 +479,20 @@ const idempotencyModule = createIdempotencyModule([
   {
     intentType: INTENT_DELETE_WORKSPACE,
     getKey: (p) => {
-      const { workspacePath } = p as DeleteWorkspacePayload;
-      return workspacePath;
+      const { workspaceRef } = p as DeleteWorkspacePayload;
+      return workspaceRef;
     },
     resetOn: [EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_DELETE_FAILED],
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
   },
   {
     intentType: INTENT_HIBERNATE_WORKSPACE,
-    getKey: (p) => (p as HibernateWorkspacePayload).workspacePath,
+    getKey: (p) => (p as HibernateWorkspacePayload).workspaceRef,
     resetOn: [EVENT_WORKSPACE_HIBERNATED, EVENT_WORKSPACE_HIBERNATE_FAILED],
   },
   {
     intentType: INTENT_WAKE_WORKSPACE,
-    getKey: (p) => (p as WakeWorkspacePayload).workspacePath,
+    getKey: (p) => (p as WakeWorkspacePayload).workspaceRef,
     resetOn: [EVENT_WORKSPACE_WOKEN, EVENT_WORKSPACE_WAKE_FAILED],
   },
   {
@@ -509,7 +509,7 @@ const idempotencyModule = createIdempotencyModule([
     // An interactive close parks on its confirm dialog; the guard keeps a
     // second close gesture from opening a second dialog meanwhile.
     intentType: INTENT_CLOSE_PROJECT,
-    getKey: (p) => (p as CloseProjectPayload).projectPath,
+    getKey: (p) => (p as CloseProjectPayload).projectRef,
     resetOn: [EVENT_PROJECT_CLOSED, EVENT_PROJECT_CLOSE_FAILED],
   },
 ]);
@@ -639,7 +639,7 @@ const operationRegistry = createRegistry(
   {
     dispatcher,
     appLayer,
-    awaitDeletion: (workspacePath) => deletionWaiter.await(workspacePath),
+    awaitDeletion: (workspaceRef) => deletionWaiter.await(workspaceRef),
     locks: lockModule.locks,
     config: configService,
     readUserGuide: () => helpModule.readUserGuide(),
@@ -658,7 +658,6 @@ const apiServerModule = createApiServerModule({
   options: {
     isDevelopment: buildInfo.isDevelopment,
     extensionLogger: loggingService.createLogger("extension"),
-    logScope: loggingService.scope,
   },
 });
 
@@ -741,6 +740,8 @@ const pluginModule = createPluginModule({
     transport: apiServerModule,
     logger: loggingService.createLogger("plugins"),
   }),
+  // Built further down; read when app:start migrates.
+  projectRefs: () => localProjectModule.projectRefs(),
   workspaceConnected: (listener) => apiServerModule.onWorkspaceConnected(listener),
   registry: () => operationRegistry,
 });
@@ -793,8 +794,6 @@ const workspacesRootModule = createWorkspacesRootModule({
   dialog: dialogLayer,
   app: appLayer,
   dispatcher,
-  // Built further down; read only when a migration runs.
-  moveListeners: () => [pluginModule.moveProjects],
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
@@ -1024,7 +1023,7 @@ dispatcher.registerOperation(new VscodeCommandOperation());
 
 const terminalFocusModule = createTerminalFocusModule({
   dispatcher,
-  isConnected: (workspacePath) => apiServerModule.isConnected(workspacePath),
+  isConnected: (workspaceRef) => apiServerModule.isConnected(workspaceRef),
   viewManager,
 });
 

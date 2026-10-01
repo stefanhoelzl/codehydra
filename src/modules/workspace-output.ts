@@ -18,12 +18,13 @@
 
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { AppendOutputRequest, OutputLine } from "../shared/api-protocol";
+import type { WorkspaceRef } from "../intents/contract";
 
 /** How output reaches a workspace's IDE — the plugin server's side of `ui:appendOutput`. */
 export interface OutputTransport {
   /** Send to the workspace's IDE now; false when it is not connected. */
-  appendOutput(workspacePath: string, request: AppendOutputRequest): boolean;
-  onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
+  appendOutput(workspaceRef: WorkspaceRef, request: AppendOutputRequest): boolean;
+  onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void;
 }
 
 export interface WorkspaceOutputOptions {
@@ -43,20 +44,20 @@ export interface WorkspaceOutputOptions {
 }
 
 export interface WorkspaceOutput {
-  write(workspacePath: string, lines: readonly OutputLine[]): void;
+  write(workspaceRef: WorkspaceRef, lines: readonly OutputLine[]): void;
   /** The workspace is being opened: hold its output again if it was closed. */
-  opening(workspacePath: string): void;
+  opening(workspaceRef: WorkspaceRef): void;
   /** The workspace's editor is gone for good: drop its buffer, hold nothing more. */
-  closed(workspacePath: string): void;
+  closed(workspaceRef: WorkspaceRef): void;
 }
 
 export function createWorkspaceOutput(options: WorkspaceOutputOptions): WorkspaceOutput {
   const { transport, channel, maxBuffered } = options;
-  const buffered = new Map<string, OutputLine[]>();
+  const buffered = new Map<WorkspaceRef, OutputLine[]>();
   // One short string per deleted workspace; see the module comment.
-  const closed = new Set<string>();
+  const closed = new Set<WorkspaceRef>();
   /** Lines written this tick, per workspace, when batching. */
-  const pending = new Map<string, OutputLine[]>();
+  const pending = new Map<WorkspaceRef, OutputLine[]>();
   let flushScheduled = false;
 
   const request = (lines: readonly OutputLine[]): AppendOutputRequest => ({
@@ -65,69 +66,69 @@ export function createWorkspaceOutput(options: WorkspaceOutputOptions): Workspac
     lines,
   });
 
-  function hold(workspacePath: string, lines: readonly OutputLine[]): void {
-    if (closed.has(workspacePath)) return;
-    const held = buffered.get(workspacePath) ?? [];
+  function hold(workspaceRef: WorkspaceRef, lines: readonly OutputLine[]): void {
+    if (closed.has(workspaceRef)) return;
+    const held = buffered.get(workspaceRef) ?? [];
     held.push(...lines);
     if (held.length > maxBuffered) held.splice(0, held.length - maxBuffered);
-    buffered.set(workspacePath, held);
+    buffered.set(workspaceRef, held);
   }
 
-  function send(workspacePath: string, lines: readonly OutputLine[]): void {
-    if (closed.has(workspacePath)) return;
+  function send(workspaceRef: WorkspaceRef, lines: readonly OutputLine[]): void {
+    if (closed.has(workspaceRef)) return;
     // Anything still held goes first, so the channel reads in order.
-    const earlier = buffered.get(workspacePath);
+    const earlier = buffered.get(workspaceRef);
     const all = earlier ? [...earlier, ...lines] : lines;
-    if (transport.appendOutput(workspacePath, request(all))) {
-      buffered.delete(workspacePath);
+    if (transport.appendOutput(workspaceRef, request(all))) {
+      buffered.delete(workspaceRef);
       return;
     }
-    if (earlier) buffered.delete(workspacePath);
-    hold(workspacePath, all);
+    if (earlier) buffered.delete(workspaceRef);
+    hold(workspaceRef, all);
   }
 
   function flushPending(): void {
     flushScheduled = false;
     const batches = [...pending];
     pending.clear();
-    for (const [workspacePath, lines] of batches) send(workspacePath, lines);
+    for (const [workspaceRef, lines] of batches) send(workspaceRef, lines);
   }
 
-  transport.onWorkspaceConnected((workspacePath) => {
-    const held = buffered.get(workspacePath);
+  transport.onWorkspaceConnected((workspaceRef) => {
+    const held = buffered.get(workspaceRef);
     if (!held || held.length === 0) return;
-    buffered.delete(workspacePath);
-    if (!transport.appendOutput(workspacePath, request(held))) {
+    buffered.delete(workspaceRef);
+    if (!transport.appendOutput(workspaceRef, request(held))) {
       // Connected a moment ago and gone already. The log still has every line.
       options.logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .debug("Could not flush buffered output", { channel });
     }
   });
 
   return {
-    write(workspacePath, lines) {
+    write(workspaceRef, lines) {
       if (!options.batch) {
-        send(workspacePath, lines);
+        send(workspaceRef, lines);
         return;
       }
-      const queued = pending.get(workspacePath) ?? [];
+      const queued = pending.get(workspaceRef) ?? [];
       queued.push(...lines);
-      pending.set(workspacePath, queued);
+      pending.set(workspaceRef, queued);
       if (!flushScheduled) {
         flushScheduled = true;
         setImmediate(flushPending);
       }
     },
 
-    opening(workspacePath) {
-      closed.delete(workspacePath);
+    opening(workspaceRef) {
+      closed.delete(workspaceRef);
     },
 
-    closed(workspacePath) {
-      closed.add(workspacePath);
-      buffered.delete(workspacePath);
-      pending.delete(workspacePath);
+    closed(workspaceRef) {
+      closed.add(workspaceRef);
+      buffered.delete(workspaceRef);
+      pending.delete(workspaceRef);
     },
   };
 }

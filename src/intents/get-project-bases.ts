@@ -23,7 +23,13 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { baseInfoSchema, hookCtxSchema, projectIdSchema, projectPathSchema } from "./contract";
+import {
+  baseInfoSchema,
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  projectRefSchema,
+} from "./contract";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
@@ -37,7 +43,7 @@ export const GET_PROJECT_BASES_OPERATION_ID = "get-project-bases";
 
 export const getProjectBasesPayloadSchema = z
   .object({
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     refresh: z.boolean().optional(),
     /** When true (and refresh is true), await the refresh and return fresh data. */
     wait: z.boolean().optional(),
@@ -48,7 +54,7 @@ export const getProjectBasesResultSchema = z
   .object({
     bases: z.array(baseInfoSchema).readonly(),
     defaultBaseBranch: z.string().optional(),
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     projectId: projectIdSchema,
   })
   .readonly();
@@ -56,7 +62,7 @@ export const getProjectBasesResultSchema = z
 export const basesUpdatedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     bases: z.array(baseInfoSchema).readonly(),
     /** Fresh default base branch; absent when detection found none (authoritative). */
     defaultBaseBranch: z.string().optional(),
@@ -71,8 +77,11 @@ export const listBasesHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "list" / "refresh" hook points. */
-const listBasesEnrichmentSchema = z.object({ projectPath: projectPathSchema });
-const refreshBasesEnrichmentSchema = z.object({ projectPath: projectPathSchema });
+const listBasesEnrichmentSchema = z.object({
+  projectRef: projectRefSchema,
+  projectPath: projectPathSchema,
+});
+const refreshBasesEnrichmentSchema = listBasesEnrichmentSchema;
 
 export const listBasesHookInputSchema = hookCtxSchema(
   getProjectBasesPayloadSchema,
@@ -131,16 +140,16 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
   async execute(
     ctx: OperationContext<GetProjectBasesIntent, typeof schemas>
   ): Promise<GetProjectBasesResult> {
-    const { projectPath, refresh } = ctx.intent.payload;
+    const { projectRef, refresh } = ctx.intent.payload;
 
-    // 1. Dispatch project:resolve to get projectId
-    const { projectId } = await ctx.dispatch<ResolveProjectIntent>({
+    // 1. Dispatch project:resolve to get projectId and the clone's path
+    const { projectId, projectPath } = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
+      payload: { projectRef },
     });
 
     // 2. Collect "list" hook — fast local read
-    const listCtx: ListBasesHookInput = { intent: ctx.intent, projectPath };
+    const listCtx: ListBasesHookInput = { intent: ctx.intent, projectRef, projectPath };
     const { results: listResults, errors: listErrors } = await ctx.hooks.collect("list", listCtx);
 
     throwHookErrors(listErrors, "project:get-bases list hooks failed");
@@ -152,7 +161,7 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
     // 3. Refresh if requested
     if (refresh) {
       const refreshAndRelist = async (): Promise<GetProjectBasesResult | undefined> => {
-        const refreshCtx: RefreshBasesHookInput = { intent: ctx.intent, projectPath };
+        const refreshCtx: RefreshBasesHookInput = { intent: ctx.intent, projectRef, projectPath };
         const { errors: refreshErrors } = await ctx.hooks.collect("refresh", refreshCtx);
         if (refreshErrors.length > 0) return undefined;
 
@@ -164,7 +173,7 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
           ...(freshMerged.defaultBaseBranch !== undefined && {
             defaultBaseBranch: freshMerged.defaultBaseBranch,
           }),
-          projectPath,
+          projectRef,
           projectId,
         };
       };
@@ -187,7 +196,7 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
                 type: EVENT_BASES_UPDATED,
                 payload: {
                   projectId,
-                  projectPath,
+                  projectRef,
                   bases: freshResult.bases,
                   ...(freshResult.defaultBaseBranch !== undefined && {
                     defaultBaseBranch: freshResult.defaultBaseBranch,
@@ -207,7 +216,7 @@ export class GetProjectBasesOperation implements Operation<typeof schemas> {
     return {
       bases,
       ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-      projectPath,
+      projectRef,
       projectId,
     };
   }

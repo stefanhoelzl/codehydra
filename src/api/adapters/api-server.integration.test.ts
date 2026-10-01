@@ -18,7 +18,7 @@ import { createLockModule } from "../../modules/lock-module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
-import { workspacePathSchema } from "../../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { createRegistry } from "../entries";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { targetFields } from "../entries/target";
@@ -42,7 +42,7 @@ function realRegistry() {
   );
 }
 
-const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
+const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
 
 /** A socket that records handlers so a test can emit into them directly. */
 function fakeSocket() {
@@ -75,13 +75,13 @@ function fakeSocket() {
 function build(
   entries: readonly AnyOperationEntry[],
   map: Record<string, { channel: string; fireAndForget?: boolean } | null>,
-  workspacePath = WS as string | null
+  workspaceRef = WS as string | null
 ) {
   const harness = fakeSocket();
   attachApiServerAdapter({
     socket: harness.socket,
     registry: new OperationRegistry(entries),
-    workspacePath: workspacePath as never,
+    workspaceRef: workspaceRef as never,
     logger: SILENT_LOGGER,
     kind: "sidekick",
     map,
@@ -170,7 +170,7 @@ describe("API server adapter", () => {
           input: z.object({}),
           requiresWorkspace: true,
           handler: async (ctx) => {
-            seen.push(ctx.workspacePath);
+            seen.push(ctx.workspaceRef);
             return null;
           },
         }),
@@ -328,7 +328,7 @@ describe("API server adapter", () => {
           handler: async () => null,
         }),
       ]),
-      workspacePath: null as never,
+      workspaceRef: null as never,
       logger: logger as never,
       kind: "cli",
       map: { "workspace.status": { channel: "api:scoped" } },
@@ -369,7 +369,7 @@ describe("client kinds", () => {
     attachApiServerAdapter({
       socket: harness.socket,
       registry: realRegistry(),
-      workspacePath: WS,
+      workspaceRef: WS,
       logger: SILENT_LOGGER,
       kind,
     });
@@ -430,7 +430,7 @@ describe("client kinds", () => {
           },
         }),
       ]),
-      workspacePath: WS,
+      workspaceRef: WS,
       logger: SILENT_LOGGER,
       kind,
     });

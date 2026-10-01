@@ -86,7 +86,7 @@ function getSocket(): FakeSocket {
 
 const CONFIG = {
   isDevelopment: false,
-  env: { _CH_WORKSPACE_PATH: "/workspace/feature-a", _CH_BRIDGE_PORT: "9000" },
+  env: { _CH_WORKSPACE: "ch::local::/workspace::feature-a", _CH_BRIDGE_PORT: "9000" },
   workspaceEnv: null,
   agentType: "claude" as const,
   resetWorkspace: true,

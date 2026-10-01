@@ -624,6 +624,8 @@ Every entry receives this core, plus a field of its own:
   "workspaceName": "feature-x",
   "workspacePath": "/home/me/.local/share/codehydra/projects/my-app-1a2b3c4d/workspaces/feature-x",
   "projectPath": "/home/me/src/my-app",
+  "workspace": "ch::local::/home/me/src/my-app::feature-x",
+  "project": "ch::local::/home/me/src/my-app",
   "branch": "feature-x",
   "base": "main"
 }
@@ -635,7 +637,9 @@ absent when none is recorded, for example for a worktree adopted when the
 project was added. Neither is ever filled in with a stand-in. On Windows,
 `workspacePath` is lower-case with forward slashes (`c:/users/…`). For a
 project cloned from a URL, `projectPath` is CodeHydra's bare clone, which has no
-working files.
+working files. `workspace` and `project` are their [refs](#workspace-and-project-refs):
+pass them to `ch --workspace` / `--project` to name exactly this workspace or
+project.
 
 #### after-worktree-created
 
@@ -985,8 +989,8 @@ nothing is tracked:
 `log`.
 
 An operation that acts on a workspace needs `workspace` (a name, looked up in
-every open project, or an absolute path) and may add `project` to say where to
-look the name up. An action that waits for you (`notification.show` with
+every open project, `<project>::<name>`, or a [ref](#workspace-and-project-refs))
+and may add `project` to say where to look the name up. An action that waits for you (`notification.show` with
 `wait: true`, say) holds up the whole poll until it is answered.
 
 #### Templates
@@ -1263,14 +1267,16 @@ ch guide plugins
 ```
 
 - `ch` acts on the workspace containing the current directory.
-  `--workspace <name|path>` targets another, on every command that acts on a
-  workspace. Only an absolute path counts as a path. A name is looked up in
-  your own project first (the one the current directory's workspace belongs
-  to, or whose checkout you are in) and wins there; otherwise it must be unique
-  across the other open projects. `--project <name|path>` looks the name up in
-  that project only. A name that matches no open workspace fails the command
-  with exit 6; one that matches several fails it with exit 2 — add `--project`
-  or pass a path. `--project` without `--workspace` is exit 2 (except on
+  `--workspace <workspace>` targets another, on every command that acts on a
+  workspace: its name, `<project>::<name>`, or its full
+  [ref](#workspace-and-project-refs). A name is looked up in your own project
+  first (the one the current directory's workspace belongs to, or whose
+  checkout you are in) and wins there; otherwise it must be unique across the
+  other open projects. `--project <project>` (a name, the checkout's path, the
+  origin it was cloned from, or its ref) looks the name up in that project
+  only. A workspace's path is not accepted. A name that matches no open
+  workspace fails the command with exit 6; one that matches several fails it
+  with exit 2 — add `--project` or pass the ref. `--project` without `--workspace` is exit 2 (except on
   `ws create` and `ws switch`, whose own `--project` it is). On a command that
   acts on no workspace (`project`, `config`, `guide`, `log`, `lock ls`,
   `ws create`, …) `--workspace` is exit 2 rather than ignored.
@@ -1296,6 +1302,26 @@ ch guide plugins
   error. PDFs do not display: Simple Browser sandboxes its page, and Chromium's
   PDF viewer refuses to run in a sandboxed frame — open them with
   `ch ws open <path>` instead.
+
+### Workspace and project refs
+
+Every workspace and project has a ref: the one name that identifies it,
+whatever else changes.
+
+```
+ch::local::github.com/org/my-app                (a project cloned from a URL)
+ch::local::/home/me/src/my-app                  (a project opened from a folder)
+ch::local::/home/me/src/my-app::feature-x       (a workspace of it)
+```
+
+A project's ref names the machine (`local` for now), then the origin it was
+cloned from (normalized: no scheme, lower case) or the folder it was opened
+from. A workspace's ref adds its name. A ref survives CodeHydra moving its
+clones and worktrees, and a workspace switching branch. Every `--workspace` /
+`--project` (and MCP's `workspace` / `project`) accepts one; `ch project list`
+shows them, and plugins receive them. A project cannot be cloned from a path
+on this machine (or a `file:` URL): it would get the same ref as that folder
+opened directly — open the folder instead.
 
 ### Workspace metadata
 
@@ -1416,9 +1442,9 @@ agents launch):
 | Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                  |
 | Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                    |
 
-Tools that can act on another workspace take `workspace` (a name or an
-absolute path, looked up like `--workspace`: the agent's own project first) and
-`project`. They are the same fields as `ch`'s `--workspace` and `--project` and
+Tools that can act on another workspace take `workspace` (a name,
+`<project>::<name>` or a ref, looked up like `--workspace`: the agent's own
+project first) and `project`. They are the same fields as `ch`'s `--workspace` and `--project` and
 the API server's `workspace` and `project`, and mean the same thing on each.
 
 You don't need to learn any of it. Just describe what you want in plain

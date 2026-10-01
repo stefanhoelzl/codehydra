@@ -2,7 +2,7 @@
 /**
  * The `agent.message` registry entry, run through the real registry and the
  * real send-agent-message operation, with a test module standing in for the
- * agent's "send" hook — so targeting (by name or path, relative to the caller),
+ * agent's "send" hook — so targeting (by name or ref, relative to the caller),
  * the sender name and input validation are asserted as a caller sees them.
  */
 
@@ -26,7 +26,8 @@ import type {
   OperationSchemas,
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { WorkspacePath } from "../../intents/contract";
+import type { ProjectPath, WorkspaceRef } from "../../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { projPath, wsPath } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
@@ -35,18 +36,34 @@ import { createRegistry } from "./index";
 
 const APP = projPath("/projects/app");
 const LIB = projPath("/projects/lib");
-const FEAT = wsPath("/projects/app/workspaces/feat");
-const OTHER = wsPath("/projects/app/workspaces/other");
+/** A workspace of `project`: its directory, and its ref (named `name`). */
+function workspace(project: ProjectPath, dir: string, name = dir) {
+  return {
+    path: wsPath(`${project}/workspaces/${dir}`),
+    ref: makeWorkspaceRef(projectRefFor(project), name),
+    name,
+  };
+}
+
+const W_FEAT = workspace(APP, "feat");
+const W_OTHER = workspace(APP, "other");
 /** Branch `feature/x`, in the directory CodeHydra sanitizes it to. */
-const FEATURE_X = wsPath("/projects/app/workspaces/feature%x");
-const APP_SHARED = wsPath("/projects/app/workspaces/shared");
-const LIB_SHARED = wsPath("/projects/lib/workspaces/shared");
-const LIB_ONLY = wsPath("/projects/lib/workspaces/only-lib");
+const W_FEATURE_X = workspace(APP, "feature%x", "feature/x");
+const W_APP_SHARED = workspace(APP, "shared");
+const W_LIB_SHARED = workspace(LIB, "shared");
+const W_LIB_ONLY = workspace(LIB, "only-lib");
+
+const FEAT = W_FEAT.ref;
+const OTHER = W_OTHER.ref;
+const FEATURE_X = W_FEATURE_X.ref;
+const APP_SHARED = W_APP_SHARED.ref;
+const LIB_SHARED = W_LIB_SHARED.ref;
+const LIB_ONLY = W_LIB_ONLY.ref;
 
 /** Two open projects; `shared` exists in both. */
 const PROJECTS = [
-  { path: APP, name: "app", workspaces: [FEAT, OTHER, APP_SHARED] },
-  { path: LIB, name: "lib", workspaces: [LIB_SHARED, LIB_ONLY] },
+  { path: APP, name: "app", workspaces: [W_FEAT, W_OTHER, W_FEATURE_X, W_APP_SHARED] },
+  { path: LIB, name: "lib", workspaces: [W_LIB_SHARED, W_LIB_ONLY] },
 ];
 
 const listProjectsSchemas = {
@@ -60,17 +77,19 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   readonly schemas = listProjectsSchemas;
   async execute(): Promise<Project[]> {
     return PROJECTS.map((project) => ({
+      ref: projectRefFor(project.path),
       id: `${project.name}-1` as ProjectId,
       name: project.name,
       path: project.path,
-      workspaces: project.workspaces.map((path) => ({
+      workspaces: project.workspaces.map((w) => ({
+        ref: w.ref,
         projectId: `${project.name}-1` as ProjectId,
-        name: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-        path,
+        name: w.name as WorkspaceName,
+        path: w.path,
         branch: null,
         metadata: {},
       })),
-    })) as unknown as Project[];
+    }));
   }
 }
 
@@ -79,12 +98,14 @@ function setup() {
   dispatcher.registerOperation(new SendAgentMessageOperation());
   dispatcher.registerOperation(new ListProjectsOp());
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: WorkspacePath) => ({
-      projectPath: workspacePath.startsWith(LIB) ? LIB : APP,
-      workspaceName: workspacePath
-        .slice(workspacePath.lastIndexOf("/") + 1)
-        .replace("%", "/") as WorkspaceName,
-    }),
+    workspaces: Object.fromEntries(
+      PROJECTS.flatMap((project) =>
+        project.workspaces.map((w) => [
+          w.path,
+          { projectPath: project.path, workspaceName: w.name as WorkspaceName },
+        ])
+      )
+    ),
     projects: {
       [APP]: { projectId: "app-1" as ProjectId },
       [LIB]: { projectId: "lib-1" as ProjectId },
@@ -124,9 +145,9 @@ function setup() {
   );
 
   /** `caller` is the caller's own workspace; the target is the input's `workspace`. */
-  const call = (caller: WorkspacePath | null, input: Record<string, unknown>) => {
+  const call = (caller: WorkspaceRef | null, input: Record<string, unknown>) => {
     const ctx: OperationContext = {
-      workspacePath: caller,
+      workspaceRef: caller,
       cwd: null,
       signal: new AbortController().signal,
     };
@@ -153,7 +174,7 @@ describe("agent.message entry", () => {
 
     expect(result).toBeNull();
     expect(sent).toEqual([
-      { workspacePath: FEAT, text: "hello", from: "CodeHydra · workspace feat", wake: false },
+      { workspaceRef: FEAT, text: "hello", from: "CodeHydra · workspace feat", wake: false },
     ]);
   });
 
@@ -171,7 +192,7 @@ describe("agent.message entry", () => {
     await call(FEAT, { workspace: OTHER, text: "hello" });
 
     expect(sent).toEqual([
-      { workspacePath: OTHER, text: "hello", from: "CodeHydra · workspace feat", wake: false },
+      { workspaceRef: OTHER, text: "hello", from: "CodeHydra · workspace feat", wake: false },
     ]);
   });
 
@@ -189,7 +210,7 @@ describe("agent.message entry", () => {
 
       await call(inFeat, { workspace: "shared", text: "hello" });
 
-      expect(sent[0]!.workspacePath).toBe(APP_SHARED);
+      expect(sent[0]!.workspaceRef).toBe(APP_SHARED);
     });
 
     it("finds a name only another project has", async () => {
@@ -197,7 +218,7 @@ describe("agent.message entry", () => {
 
       await call(inFeat, { workspace: "only-lib", text: "hello" });
 
-      expect(sent[0]!.workspacePath).toBe(LIB_ONLY);
+      expect(sent[0]!.workspaceRef).toBe(LIB_ONLY);
     });
 
     it("takes a project to look the name up in", async () => {
@@ -205,15 +226,31 @@ describe("agent.message entry", () => {
 
       await call(inFeat, { workspace: "shared", project: "lib", text: "hello" });
 
-      expect(sent[0]!.workspacePath).toBe(LIB_SHARED);
+      expect(sent[0]!.workspaceRef).toBe(LIB_SHARED);
     });
 
-    it("takes an absolute path at its word", async () => {
+    it("takes a full ref", async () => {
       const { call, sent } = setup();
 
       await call(inFeat, { workspace: LIB_ONLY, text: "hello" });
 
-      expect(sent[0]!.workspacePath).toBe(LIB_ONLY);
+      expect(sent[0]!.workspaceRef).toBe(LIB_ONLY);
+    });
+
+    it("takes <project>::<name>", async () => {
+      const { call, sent } = setup();
+
+      await call(nowhere, { workspace: "lib::shared", text: "hello" });
+
+      expect(sent[0]!.workspaceRef).toBe(LIB_SHARED);
+    });
+
+    it("refuses a workspace named by its path, as a usage error", async () => {
+      const { call } = setup();
+
+      await expect(call(inFeat, { workspace: W_LIB_ONLY.path, text: "hello" })).rejects.toSatisfy(
+        (error) => error instanceof ApiError && error.category === "usage"
+      );
     });
 
     it("refuses a name several other projects have, as a usage error", async () => {

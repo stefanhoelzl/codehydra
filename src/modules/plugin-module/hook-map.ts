@@ -44,7 +44,8 @@ export const HOOKS_DIR = "hooks";
 /**
  * What every entry is handed, whichever moment it fires at.
  *
- * Deliberately small: a hook holds `workspacePath`, so anything else about the
+ * Deliberately small: a hook holds `workspacePath` (its directory) and
+ * `workspace` (its ref, for `ch`), so anything else about the
  * workspace is one `git` call away, and a field shipped here is a field we owe
  * stability. `branch` and `base` are the exceptions — CodeHydra knows them
  * authoritatively and a script would otherwise dig `base` out of git config.
@@ -60,6 +61,10 @@ export const coreInputSchema = z.object({
   workspaceName: z.string(),
   workspacePath: z.string(),
   projectPath: z.string(),
+  /** The workspace's ref (`ch::…`): what `ch --workspace` takes to name it exactly. */
+  workspace: z.string(),
+  /** The project's ref: what `ch --project` takes. */
+  project: z.string(),
   branch: z.string().optional(),
   base: z.string().optional(),
 });

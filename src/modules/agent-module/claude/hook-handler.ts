@@ -15,7 +15,7 @@
  *
  * Environment variables:
  * - _CH_BRIDGE_PORT: Port of the bridge server
- * - _CH_WORKSPACE_PATH: Workspace path to include in payload
+ * - _CH_WORKSPACE: Workspace ref to include in payload
  * - CLAUDE_CODE_MESSAGING_SOCKET / CLAUDE_CODE_MESSAGING_TOKEN: the session's
  *   inbox, exported by Claude itself. Forwarded with SessionStart as
  *   `_ch_messaging`, so the app can deliver messages into the session.
@@ -26,7 +26,7 @@
 
 const hookName = process.argv[2];
 const bridgePort = process.env._CH_BRIDGE_PORT;
-const workspacePath = process.env._CH_WORKSPACE_PATH;
+const workspaceRef = process.env._CH_WORKSPACE;
 
 // Validate required arguments and environment variables
 if (!hookName) {
@@ -34,7 +34,7 @@ if (!hookName) {
   process.exit(0);
 }
 
-if (!bridgePort || !workspacePath) {
+if (!bridgePort || !workspaceRef) {
   // Silent exit - environment not set up (running outside CodeHydra)
   process.exit(0);
 }
@@ -51,8 +51,8 @@ process.stdin.on("end", async () => {
     // Parse the hook payload
     const payload = input.trim() ? JSON.parse(input) : {};
 
-    // Add workspace path for routing
-    payload.workspacePath = workspacePath;
+    // Add the workspace's ref for routing
+    payload.workspaceRef = workspaceRef;
 
     // Only a hook knows the session's inbox: Claude exports it to its children.
     const inboxSocket = process.env.CLAUDE_CODE_MESSAGING_SOCKET;

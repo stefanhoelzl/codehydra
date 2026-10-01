@@ -39,9 +39,12 @@ import type { WorkspaceName } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "./contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
 
 interface Delivery {
   readonly workspacePath: WorkspacePath;
@@ -53,7 +56,7 @@ interface Delivery {
 interface Setup {
   readonly dispatcher: Dispatcher;
   readonly delivered: Delivery[];
-  readonly woken: WorkspacePath[];
+  readonly woken: WorkspaceRef[];
   readonly commands: string[];
 }
 
@@ -67,7 +70,7 @@ function createSetup(opts: {
   notSent?: string;
 }): Setup {
   const delivered: Delivery[] = [];
-  const woken: WorkspacePath[] = [];
+  const woken: WorkspaceRef[] = [];
   const commands: string[] = [];
   const dispatcher = createMockDispatcher();
 
@@ -90,7 +93,7 @@ function createSetup(opts: {
     id: "record-wake",
     async before(intent: Intent): Promise<Intent | null> {
       if (intent.type !== INTENT_WAKE_WORKSPACE) return intent;
-      woken.push((intent.payload as { workspacePath: WorkspacePath }).workspacePath);
+      woken.push((intent.payload as { workspaceRef: WorkspaceRef }).workspaceRef);
       return null;
     },
   });
@@ -146,7 +149,7 @@ function sendIntent(wake: boolean): SendAgentMessageIntent {
   return {
     type: INTENT_SEND_AGENT_MESSAGE,
     payload: {
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
       text: "the build is green",
       from: "CodeHydra · workspace other",
       wake,
@@ -198,7 +201,7 @@ describe("SendAgentMessage Operation", () => {
 
     await setup.dispatcher.dispatch(sendIntent(true));
 
-    expect(setup.woken).toEqual([WORKSPACE_PATH]);
+    expect(setup.woken).toEqual([WORKSPACE_REF]);
     expect(setup.delivered.map((d) => d.waitMs)).toEqual([AGENT_READY_TIMEOUT_MS]);
   });
 
@@ -251,7 +254,10 @@ describe("SendAgentMessage Operation", () => {
     await expect(
       setup.dispatcher.dispatch({
         ...sendIntent(false),
-        payload: { ...sendIntent(false).payload, workspacePath: wsPath("/nonexistent") },
+        payload: {
+          ...sendIntent(false).payload,
+          workspaceRef: makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"),
+        },
       })
     ).rejects.toThrow(/Workspace not found/);
   });

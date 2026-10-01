@@ -46,10 +46,12 @@ import {
   hookCtxSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   workspaceNameSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
+  workspaceTargetShape,
 } from "./contract";
-import type { ProjectPath } from "./contract";
+import type { ProjectRef } from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity, workspaceFailurePayload } from "./lib/workspace-identity";
@@ -68,7 +70,7 @@ export const HIBERNATED_METADATA_KEY = "hibernated";
 
 export const hibernateWorkspacePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
   })
   .readonly();
 
@@ -80,22 +82,23 @@ export const workspaceHibernatedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: workspacePathSchema,
-    projectPath: projectPathSchema,
+    workspaceRef: workspaceRefSchema,
+    projectRef: projectRefSchema,
   })
   .readonly();
 
 export const workspaceHibernateFailedPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     error: z.string(),
   })
   .readonly();
 
 /** Operation-added enrichment shared by every hibernate pipeline hook point. */
 const hibernatePipelineEnrichmentSchema = z.object({
+  ...workspaceTargetShape,
+  projectRef: projectRefSchema,
   projectPath: projectPathSchema,
-  workspacePath: workspacePathSchema,
   projectId: projectIdSchema,
   workspaceName: workspaceNameSchema,
   active: z.boolean(),
@@ -201,19 +204,21 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
 
     let hookCtx: HibernatePipelineHookInput;
     let projectId: ProjectId;
-    let projectPath: ProjectPath;
+    let projectRef: ProjectRef;
     let workspaceName: WorkspaceName;
 
     try {
       // ─── Foreground ──────────────────────────────────────────────────────
-      const identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspacePath);
-      ({ projectPath, workspaceName, projectId } = identity);
+      const identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
+      ({ projectRef, workspaceName, projectId } = identity);
       const { active } = identity;
 
       hookCtx = {
         intent: ctx.intent,
-        projectPath,
-        workspacePath: payload.workspacePath,
+        workspaceRef: payload.workspaceRef,
+        workspacePath: identity.workspacePath,
+        projectRef,
+        projectPath: identity.projectPath,
         projectId,
         workspaceName,
         active,
@@ -241,7 +246,7 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
       await ctx.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: {
-          workspacePath: payload.workspacePath,
+          workspaceRef: payload.workspaceRef,
           key: HIBERNATED_METADATA_KEY,
           value: "true",
         },
@@ -258,7 +263,7 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
             type: INTENT_SWITCH_WORKSPACE,
             payload: {
               auto: true,
-              currentPath: payload.workspacePath,
+              currentRef: payload.workspaceRef,
               focus: true,
               fallbackToCurrent: true,
             },
@@ -270,7 +275,7 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
     } catch (error) {
       ctx.emit({
         type: EVENT_WORKSPACE_HIBERNATE_FAILED,
-        payload: workspaceFailurePayload(payload.workspacePath, error),
+        payload: workspaceFailurePayload(payload.workspaceRef, error),
       });
       throw error;
     }
@@ -291,8 +296,8 @@ export class HibernateWorkspaceOperation implements Operation<typeof schemas> {
           payload: {
             projectId,
             workspaceName,
-            workspacePath: payload.workspacePath,
-            projectPath,
+            workspaceRef: payload.workspaceRef,
+            projectRef,
           },
         };
         void ctx.emit(event);

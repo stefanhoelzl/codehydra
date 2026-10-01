@@ -39,7 +39,8 @@ import { createMockConfig, createMockAccessor } from "../boundaries/platform/con
 import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
 import { z } from "zod/v4";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
+import { projPath, testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Helpers
@@ -66,8 +67,8 @@ function createMinimalOpenWorkspaceOperation(
 const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
   projectId: "project-1" as WorkspaceCreatedPayload["projectId"],
   workspaceName: "ws-1" as WorkspaceCreatedPayload["workspaceName"],
-  workspacePath: wsPath("/ws"),
-  projectPath: projPath("/proj"),
+  workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/proj")), "ws-1"),
+  projectRef: projectRefFor(projPath("/proj")),
   branch: "ws-1",
   metadata: {},
   workspaceUrl: "http://127.0.0.1:8080",

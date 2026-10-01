@@ -53,6 +53,7 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { SET_METADATA_OPERATION_ID, INTENT_SET_METADATA } from "../intents/set-metadata";
 import { createWorkspaceLifecycleModule } from "./workspace-lifecycle-module";
 import type { WorkspaceClosing } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Fixtures
@@ -61,6 +62,7 @@ import type { WorkspaceClosing } from "../intents/contract";
 const PROJECT_PATH = projPath("/test/project");
 const WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-1");
 const OTHER_WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-2");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_PATH), "feature-1");
 
 /**
  * Register the lifecycle module plus enough infrastructure for the real
@@ -167,7 +169,7 @@ function deleteIntent(
   return {
     type: INTENT_DELETE_WORKSPACE,
     payload: {
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
       keepBranch: true,
       force: false,
       removeWorktree: true,
@@ -263,7 +265,7 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH },
+        payload: { workspaceRef: WORKSPACE_REF },
       } as HibernateWorkspaceIntent);
       await hibernated;
 
@@ -280,7 +282,7 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH },
+        payload: { workspaceRef: WORKSPACE_REF },
       } as HibernateWorkspaceIntent);
       await hibernated;
 
@@ -326,7 +328,7 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+        payload: { workspaceRef: WORKSPACE_REF, focus: false },
       } as SwitchWorkspaceIntent);
 
       expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(true);
@@ -338,13 +340,13 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+        payload: { workspaceRef: WORKSPACE_REF, focus: false },
       } as SwitchWorkspaceIntent);
 
       expect(await activeRef(dispatcher)).toEqual({
+        ref: WORKSPACE_REF,
         projectId: "test-project-12345678",
         workspaceName: "feature-1",
-        path: WORKSPACE_PATH,
       });
     });
 
@@ -353,7 +355,7 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+        payload: { workspaceRef: WORKSPACE_REF, focus: false },
       } as SwitchWorkspaceIntent);
       expect(await isActive(dispatcher, WORKSPACE_PATH)).toBe(true);
 
@@ -368,12 +370,12 @@ describe("WorkspaceLifecycleModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH, focus: false },
+        payload: { workspaceRef: WORKSPACE_REF, focus: false },
       } as SwitchWorkspaceIntent);
 
       await dispatcher.dispatch({
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: WORKSPACE_PATH },
+        payload: { workspaceRef: WORKSPACE_REF },
       } as HibernateWorkspaceIntent);
       await hibernated;
 

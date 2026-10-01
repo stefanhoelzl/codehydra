@@ -41,6 +41,10 @@ import { COMMAND_TIMEOUT_MS } from "../shared/api-protocol";
 import { wsPath, testPath } from "../shared/test-fixtures";
 import { projPath } from "../shared/test-fixtures";
 import type { WorkspaceName } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+
+const PROJECT_REF = projectRefFor(projPath("/test/project"));
+const FEATURE_REF = makeWorkspaceRef(PROJECT_REF, "feature-1");
 
 // =============================================================================
 // Minimal Test Operations
@@ -88,6 +92,7 @@ function createMinimalFinalizeOperation(
     ): Promise<void> {
       const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
+        workspaceRef: FEATURE_REF,
         workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
         envVars: { OPENCODE_PORT: "8080" },
         agentType: "opencode" as const,
@@ -107,9 +112,11 @@ function createMinimalDeleteOperation() {
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
+        projectRef: PROJECT_REF,
         projectPath: projPath("/test/project"),
         workspaceName: "feature-1" as WorkspaceName,
-        workspacePath: (ctx.intent.payload as DeleteWorkspaceIntent["payload"]).workspacePath,
+        workspaceRef: (ctx.intent.payload as DeleteWorkspaceIntent["payload"]).workspaceRef,
+        workspacePath: wsPath("/test/project/.worktrees/feature-1"),
         active: false,
       }),
       defaultResult: {},
@@ -260,7 +267,7 @@ describe("ApiServerModule", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "feature-1",
-            projectPath: projPath("/test/project"),
+            projectRef: PROJECT_REF,
             base: "main",
           },
         })
@@ -286,7 +293,7 @@ describe("ApiServerModule", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "feature-1",
-            projectPath: projPath("/test/project"),
+            projectRef: PROJECT_REF,
             base: "main",
           },
         })
@@ -310,7 +317,7 @@ describe("ApiServerModule", () => {
           type: "workspace:open",
           payload: {
             workspaceName: "feature-1",
-            projectPath: projPath("/test/project"),
+            projectRef: PROJECT_REF,
             base: "main",
           },
         })
@@ -336,7 +343,7 @@ describe("ApiServerModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          workspaceRef: FEATURE_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -354,7 +361,7 @@ describe("ApiServerModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          workspaceRef: FEATURE_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -373,7 +380,7 @@ describe("ApiServerModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          workspaceRef: FEATURE_REF,
           keepBranch: false,
           force: true,
           removeWorktree: true,

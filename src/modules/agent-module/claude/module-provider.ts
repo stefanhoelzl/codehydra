@@ -118,8 +118,8 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       initialStatus: () => "none",
 
       // --- Workspace start ---
-      startServer: async (workspacePath) => {
-        await serverManager.startServer(workspacePath);
+      startServer: async (workspacePath, options) => {
+        await serverManager.startServer(workspacePath, { workspaceRef: options.workspaceRef });
       },
 
       afterProviderReady: async (workspacePath, options) => {

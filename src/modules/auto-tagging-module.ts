@@ -22,6 +22,7 @@
  * can never strand a tag the user has no way to clear.
  */
 
+import type { WorkspaceRef } from "../intents/contract";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
@@ -65,10 +66,10 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
     ...storeBoolean(),
   });
 
-  // Workspace paths currently carrying the tag. Lets a switch skip the git write for
+  // Workspaces currently carrying the tag. Lets a switch skip the git write for
   // the workspaces that aren't tagged — which is nearly all of them, on a path that
   // has to stay snappy (keyboard nav switches on every arrow key).
-  const tagged = new Set<string>();
+  const tagged = new Set<WorkspaceRef>();
 
   return {
     name: "auto-tagging",
@@ -80,23 +81,23 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
             const isFreshCreate = payload.existingWorkspace === undefined;
             if (!isFreshCreate || !newTagConfig.get()) return {};
 
-            const { workspacePath } = ctx as SetupHookInput;
+            const { workspaceRef } = ctx as SetupHookInput;
             try {
               await deps.dispatcher.dispatch<SetMetadataIntent>({
                 type: INTENT_SET_METADATA,
-                payload: { workspacePath, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
+                payload: { workspaceRef, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
               });
             } catch (error) {
               // Cosmetic — never fail a workspace creation over a tag.
               deps.logger
-                .scoped({ path: workspacePath })
+                .scoped({ workspace: workspaceRef })
                 .warn("Failed to tag background workspace", {
                   error: error instanceof Error ? error.message : String(error),
                 });
               return {};
             }
 
-            tagged.add(workspacePath);
+            tagged.add(workspaceRef);
             return { result: { metadata: { [NEW_TAG_KEY]: NEW_TAG_VALUE } } };
           },
         },
@@ -107,18 +108,18 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
       // run still clears on the next switch rather than sticking forever.
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, metadata } = (event as WorkspaceCreatedEvent).payload;
-          if (metadata[NEW_TAG_KEY] !== undefined) tagged.add(workspacePath);
+          const { workspaceRef, metadata } = (event as WorkspaceCreatedEvent).payload;
+          if (metadata[NEW_TAG_KEY] !== undefined) tagged.add(workspaceRef);
         },
       },
       // Keeps the set honest when the tag is added or removed out from under us
       // (sidekick, MCP, or our own writes below).
       [EVENT_METADATA_CHANGED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, key, value } = (event as MetadataChangedEvent).payload;
+          const { workspaceRef, key, value } = (event as MetadataChangedEvent).payload;
           if (key !== NEW_TAG_KEY) return;
-          if (value === null) tagged.delete(workspacePath);
-          else tagged.add(workspacePath);
+          if (value === null) tagged.delete(workspaceRef);
+          else tagged.add(workspaceRef);
         },
       },
       [EVENT_WORKSPACE_SWITCHED]: {
@@ -127,18 +128,20 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
           const payload = (event as WorkspaceSwitchedEvent).payload as
             WorkspaceSwitchedEvent["payload"] | null;
           if (payload === null) return;
-          if (!tagged.has(payload.path)) return;
+          if (!tagged.has(payload.workspaceRef)) return;
 
           try {
             await deps.dispatcher.dispatch<SetMetadataIntent>({
               type: INTENT_SET_METADATA,
-              payload: { workspacePath: payload.path, key: NEW_TAG_KEY, value: null },
+              payload: { workspaceRef: payload.workspaceRef, key: NEW_TAG_KEY, value: null },
             });
           } catch (error) {
             // Leave it in the set — the next switch retries.
-            deps.logger.scoped({ path: payload.path }).warn("Failed to clear new tag", {
-              error: error instanceof Error ? error.message : String(error),
-            });
+            deps.logger
+              .scoped({ workspace: payload.workspaceRef })
+              .warn("Failed to clear new tag", {
+                error: error instanceof Error ? error.message : String(error),
+              });
           }
         },
       },

@@ -12,7 +12,8 @@ import { z } from "zod/v4";
 import { createApiServerEnv, waitForConnect, waitForDisconnect } from "./api-server.test-utils";
 import { OperationRegistry } from "../api/registry";
 import { defineEntry } from "../api/types";
-import { workspacePathSchema, type WorkspacePath } from "../intents/contract";
+import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
+import { asWorkspaceRef, makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { ClientEvent } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -20,17 +21,21 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { lockEntries } from "../api/entries/lock";
 import { createLockModule } from "./lock-module";
-import { IntentHandle } from "../intents/lib/dispatcher";
 import type { ProjectLocation } from "../api/workspace-lookup";
 import { targetFields } from "../api/entries/target";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 
 const WS = workspacePathSchema.parse("/repo/wt/feature") as WorkspacePath;
+const REPO = projectRefFor("/repo");
+const OTHER = projectRefFor("/other");
+const THIRD = projectRefFor("/third");
+const WS_REF = makeWorkspaceRef(REPO, "feature");
+const SHARED = makeWorkspaceRef(OTHER, "shared");
 const TOKEN = "test-token";
 
 /** What a test operation saw: the caller, and the input it was handed. */
 interface Seen {
-  readonly workspacePath: unknown;
+  readonly workspaceRef: unknown;
   readonly input?: unknown;
 }
 
@@ -61,7 +66,7 @@ function testRegistry(seen: Seen[] = [], hold = gate()) {
       input: z.object({}),
       requiresWorkspace: true,
       handler: async (ctx) => {
-        seen.push({ workspacePath: ctx.workspacePath });
+        seen.push({ workspaceRef: ctx.workspaceRef });
         return { dirty: false };
       },
     }),
@@ -72,7 +77,7 @@ function testRegistry(seen: Seen[] = [], hold = gate()) {
       input: z.object({}),
       requiresWorkspace: false,
       handler: async (ctx) => {
-        seen.push({ workspacePath: ctx.workspacePath });
+        seen.push({ workspaceRef: ctx.workspaceRef });
         return [];
       },
     }),
@@ -83,7 +88,7 @@ function testRegistry(seen: Seen[] = [], hold = gate()) {
       input: z.object({ ...targetFields, title: z.string().nullable() }),
       requiresWorkspace: true,
       handler: async (ctx, input) => {
-        seen.push({ workspacePath: ctx.workspacePath, input });
+        seen.push({ workspaceRef: ctx.workspaceRef, input });
         return null;
       },
     }),
@@ -94,7 +99,10 @@ function testRegistry(seen: Seen[] = [], hold = gate()) {
       input: z.object(targetFields),
       requiresWorkspace: true,
       handler: async (ctx, input) => {
-        ctx.onTarget?.(workspacePathSchema.parse(input.workspace ?? ctx.workspacePath));
+        const target = input.workspace === undefined ? null : asWorkspaceRef(input.workspace);
+        const own: WorkspaceRef | null = ctx.workspaceRef;
+        if (target !== null) ctx.onTarget?.(target);
+        else if (own !== null) ctx.onTarget?.(own);
         hold.enter();
         await hold.opened;
         return null;
@@ -140,27 +148,33 @@ function call(
   });
 }
 
-/** Answer the server's project listing — what a named workspace resolves against. */
+/** Answer the server's project listing — what a caller's folder resolves against. */
 function listProjectsReturns(projects: readonly ProjectLocation[]): void {
-  env!.mockDispatch.mockImplementation(() => {
-    const handle = new IntentHandle();
-    handle.signalAccepted(true);
-    handle.resolve(projects);
-    return handle;
-  });
+  env!.setProjects(projects);
 }
 
 const PROJECTS: readonly ProjectLocation[] = [
-  { name: "repo", path: "/repo", workspaces: [{ name: "feature", path: WS }] },
   {
+    ref: REPO,
+    name: "repo",
+    path: "/repo",
+    workspaces: [{ ref: WS_REF, name: "feature", path: WS }],
+  },
+  {
+    ref: OTHER,
     name: "other",
     path: "/other",
     workspaces: [
-      { name: "shared", path: "/other/wt/shared" },
-      { name: "twin", path: "/other/wt/twin" },
+      { ref: SHARED, name: "shared", path: "/other/wt/shared" },
+      { ref: makeWorkspaceRef(OTHER, "twin"), name: "twin", path: "/other/wt/twin" },
     ],
   },
-  { name: "third", path: "/third", workspaces: [{ name: "twin", path: "/third/wt/twin" }] },
+  {
+    ref: THIRD,
+    name: "third",
+    path: "/third",
+    workspaces: [{ ref: makeWorkspaceRef(THIRD, "twin"), name: "twin", path: "/third/wt/twin" }],
+  },
 ];
 
 describe("CLI clients on the API server wire", () => {
@@ -264,7 +278,7 @@ describe("CLI clients on the API server wire", () => {
       const result = await call(cli, "api:operation:workspace.status");
 
       expect(result).toEqual({ success: true, data: { dirty: false } });
-      expect(seen).toMatchObject([{ workspacePath: WS }]);
+      expect(seen).toMatchObject([{ workspaceRef: WS_REF }]);
     });
 
     it("does not answer the extension-facing channel names", async () => {
@@ -324,7 +338,7 @@ describe("CLI clients on the API server wire", () => {
       const result = await call(cli, "api:operation:project.list");
 
       expect(result).toEqual({ success: true, data: [] });
-      expect(seen).toMatchObject([{ workspacePath: null }]);
+      expect(seen).toMatchObject([{ workspaceRef: null }]);
     });
 
     it("refuses workspace-scoped operations with a message naming the reason", async () => {
@@ -355,7 +369,7 @@ describe("CLI clients on the API server wire", () => {
       });
 
       expect(result).toMatchObject({ success: true });
-      expect(seen).toEqual([{ workspacePath: null, input: { workspace: "feature", title: "t" } }]);
+      expect(seen).toEqual([{ workspaceRef: null, input: { workspace: "feature", title: "t" } }]);
     });
   });
 
@@ -373,7 +387,7 @@ describe("CLI clients on the API server wire", () => {
 
       await call(cli, "api:operation:workspace.status");
 
-      expect(seen).toEqual([{ workspacePath: WS }]);
+      expect(seen).toEqual([{ workspaceRef: WS_REF }]);
     });
 
     it("tags the work a call dispatches with the client kind, the caller and the operation", async () => {
@@ -392,7 +406,28 @@ describe("CLI clients on the API server wire", () => {
       });
     });
 
-    it("is the workspace the MCP shim presents, wherever it runs", async () => {
+    it("is the workspace the MCP shim presents by ref, wherever it runs", async () => {
+      const seen: Seen[] = [];
+      env = await createApiServerEnv(undefined, {
+        registry: testRegistry(seen),
+        cliToken: TOKEN,
+      });
+      listProjectsReturns(PROJECTS);
+      const mcp = env.createCliClient({
+        client: "mcp",
+        token: TOKEN,
+        workspace: WS_REF,
+        cwd: "/other/wt/shared",
+      });
+      mcp.connect();
+      await waitForConnect(mcp);
+
+      await call(mcp, "api:operation:workspace.status");
+
+      expect(seen).toEqual([{ workspaceRef: WS_REF }]);
+    });
+
+    it("is the workspace an older MCP shim presents by path", async () => {
       const seen: Seen[] = [];
       env = await createApiServerEnv(undefined, {
         registry: testRegistry(seen),
@@ -410,7 +445,7 @@ describe("CLI clients on the API server wire", () => {
 
       await call(mcp, "api:operation:workspace.status");
 
-      expect(seen).toEqual([{ workspacePath: WS }]);
+      expect(seen).toEqual([{ workspaceRef: WS_REF }]);
     });
 
     it("is never a workspace a shell's handshake names", async () => {
@@ -433,7 +468,7 @@ describe("CLI clients on the API server wire", () => {
 
       await call(cli, "api:operation:workspace.status");
 
-      expect(seen).toEqual([{ workspacePath: WS }]);
+      expect(seen).toEqual([{ workspaceRef: WS_REF }]);
     });
   });
 
@@ -442,7 +477,7 @@ describe("CLI clients on the API server wire", () => {
     // every tool's `workspace` to the CLI's shaping and acted on its caller.
     it.each([
       ["a shell", { client: "cli", token: TOKEN, cwd: WS }],
-      ["the MCP shim", { client: "mcp", token: TOKEN, workspacePath: WS }],
+      ["the MCP shim", { client: "mcp", token: TOKEN, workspace: WS_REF }],
     ])("reaches the operation from %s", async (_kind, auth) => {
       const seen: Seen[] = [];
       env = await createApiServerEnv(undefined, {
@@ -456,7 +491,7 @@ describe("CLI clients on the API server wire", () => {
 
       await call(client, "api:operation:workspace.title", { workspace: "shared", title: "t" });
 
-      expect(seen).toEqual([{ workspacePath: WS, input: { workspace: "shared", title: "t" } }]);
+      expect(seen).toEqual([{ workspaceRef: WS_REF, input: { workspace: "shared", title: "t" } }]);
     });
   });
 });
@@ -472,10 +507,10 @@ describe("forwarded events", () => {
     return received;
   }
 
-  const deletion = (workspacePath: string) =>
+  const deletion = (workspaceRef: string) =>
     ({
       type: "workspace:deletion-progress",
-      payload: { workspacePath, completed: false, operations: [] },
+      payload: { workspaceRef, completed: false, operations: [] },
     }) as DomainEvent;
 
   const clone = {
@@ -505,7 +540,7 @@ describe("forwarded events", () => {
     // without this it sees nothing until the pipeline finishes.
     const { received, hold, done } = await callInFlight("api:operation:workspace.delete");
 
-    env!.emitDomainEvent(deletion(WS));
+    env!.emitDomainEvent(deletion(WS_REF));
 
     await vi.waitFor(() => expect(received).toHaveLength(1));
     expect(received[0]!.type).toBe("workspace:deletion-progress");
@@ -515,16 +550,15 @@ describe("forwarded events", () => {
 
   it("follows the target a call names, not where the caller stands", async () => {
     // `ch ws delete --workspace other`, run from inside WS.
-    const other = "/other/wt/shared";
     const { received, hold, done } = await callInFlight("api:operation:workspace.delete", {
-      workspace: other,
+      workspace: SHARED,
     });
 
-    env!.emitDomainEvent(deletion(WS));
-    env!.emitDomainEvent(deletion(other));
+    env!.emitDomainEvent(deletion(WS_REF));
+    env!.emitDomainEvent(deletion(SHARED));
 
     await vi.waitFor(() => expect(received).toHaveLength(1));
-    expect(received[0]!.payload).toMatchObject({ workspacePath: other });
+    expect(received[0]!.payload).toMatchObject({ workspaceRef: SHARED });
     hold.open();
     await done;
   });
@@ -545,7 +579,7 @@ describe("forwarded events", () => {
     // `ch ws create` cannot say which workspace its progress will be about.
     const { received, hold, done } = await callInFlight("api:operation:workspace.create");
 
-    env!.emitDomainEvent(deletion("/other/wt/twin"));
+    env!.emitDomainEvent(deletion(makeWorkspaceRef(OTHER, "twin")));
 
     await vi.waitFor(() => expect(received).toHaveLength(1));
     hold.open();
@@ -560,7 +594,7 @@ describe("forwarded events", () => {
     await waitForConnect(cli);
     const received = collect(cli);
 
-    env.emitDomainEvent(deletion(WS));
+    env.emitDomainEvent(deletion(WS_REF));
     env.emitDomainEvent(clone);
 
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -577,7 +611,7 @@ describe("forwarded events", () => {
 
     env.emitDomainEvent({
       type: "workspace:deletion-progress",
-      payload: { workspacePath: WS, completed: false, operations: [] },
+      payload: { workspaceRef: WS_REF, completed: false, operations: [] },
     } as DomainEvent);
 
     await new Promise((resolve) => setTimeout(resolve, 200));

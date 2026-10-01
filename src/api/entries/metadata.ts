@@ -13,7 +13,7 @@ import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
 import { createTargetResolver, targetFields } from "./target";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import { extractTags, isValidMetadataKey } from "../../shared/api/types";
 import { metadataTier, visibleMetadata } from "../../utils/metadata-tier";
 
@@ -30,15 +30,15 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
 
   // Every read and write here comes from outside CodeHydra, so internal keys are
   // hidden and only public ones can be written (see utils/metadata-tier.ts).
-  const read = async (workspacePath: WorkspacePath) => {
+  const read = async (workspaceRef: WorkspaceRef) => {
     const metadata = await dispatcher.dispatch<GetMetadataIntent>({
       type: INTENT_GET_METADATA,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     });
     return metadata && visibleMetadata(metadata);
   };
 
-  const write = async (workspacePath: WorkspacePath, key: string, value: string | null) => {
+  const write = async (workspaceRef: WorkspaceRef, key: string, value: string | null) => {
     if (!isValidMetadataKey(key)) {
       throw new ApiError(
         "usage",
@@ -51,7 +51,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     }
     await dispatcher.dispatch<SetMetadataIntent>({
       type: INTENT_SET_METADATA,
-      payload: { workspacePath, key, value },
+      payload: { workspaceRef, key, value },
     });
     return null;
   };

@@ -86,7 +86,7 @@ export class OperationRegistry {
     rawInput: unknown,
     shaping: InputShaping = {}
   ): Promise<unknown> {
-    if (entry.requiresWorkspace && ctx.workspacePath === null && !namesWorkspace(rawInput)) {
+    if (entry.requiresWorkspace && ctx.workspaceRef === null && !namesWorkspace(rawInput)) {
       throw new ApiError(
         "no-workspace",
         `"${entry.name}" acts on a workspace, but no workspace was given. ` +

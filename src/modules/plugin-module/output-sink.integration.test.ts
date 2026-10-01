@@ -7,34 +7,36 @@
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createHookOutputSink, HOOK_OUTPUT_CHANNEL } from "./output-sink";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import type { WorkspaceRef } from "../../intents/contract";
 
-const WS = "/workspaces/feature-x";
+const WS = makeWorkspaceRef(projectRefFor("/workspaces"), "feature-x");
 
 /** A API server stand-in: workspaces are connected or not, and appends land in `shown`. */
 function createTransport() {
-  const connected = new Set<string>();
-  const shown: Array<{ workspacePath: string; channel: string; lines: string[] }> = [];
-  let onConnected: (workspacePath: string) => void = () => {};
+  const connected = new Set<WorkspaceRef>();
+  const shown: Array<{ workspaceRef: WorkspaceRef; channel: string; lines: string[] }> = [];
+  let onConnected: (workspaceRef: WorkspaceRef) => void = () => {};
   return {
     shown,
-    connect(workspacePath: string): void {
-      connected.add(workspacePath);
-      onConnected(workspacePath);
+    connect(workspaceRef: WorkspaceRef): void {
+      connected.add(workspaceRef);
+      onConnected(workspaceRef);
     },
     transport: {
       appendOutput(
-        workspacePath: string,
+        workspaceRef: WorkspaceRef,
         request: { channel: string; lines: readonly { source: string; text: string }[] }
       ): boolean {
-        if (!connected.has(workspacePath)) return false;
+        if (!connected.has(workspaceRef)) return false;
         shown.push({
-          workspacePath,
+          workspaceRef,
           channel: request.channel,
           lines: request.lines.map((line) => `${line.source}: ${line.text}`),
         });
         return true;
       },
-      onWorkspaceConnected(listener: (workspacePath: string) => void): () => void {
+      onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void {
         onConnected = listener;
         return () => {};
       },
@@ -54,7 +56,7 @@ describe("hook output sink", () => {
     host.connect(WS);
     expect(host.shown).toEqual([
       {
-        workspacePath: WS,
+        workspaceRef: WS,
         channel: HOOK_OUTPUT_CHANNEL,
         lines: ["after-worktree-created: installing"],
       },

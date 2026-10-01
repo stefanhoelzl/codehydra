@@ -2,7 +2,7 @@
  * SetMetadataOperation - Orchestrates workspace metadata writes.
  *
  * Runs three steps:
- * 1. Dispatch workspace:resolve — validates workspacePath, returns projectPath + workspaceName
+ * 1. Dispatch workspace:resolve — turns workspaceRef into the workspace (path, project, name)
  * 2. Dispatch project:resolve — resolves projectPath to projectId (for domain events)
  * 3. "set" hook — each handler performs the actual provider write
  *
@@ -17,7 +17,8 @@ import {
   hookCtxSchema,
   projectIdSchema,
   workspaceNameSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
+  workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 
@@ -31,7 +32,7 @@ export const SET_METADATA_OPERATION_ID = "set-metadata";
 
 export const setMetadataPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     key: z.string(),
     value: z.string().nullable(),
   })
@@ -41,14 +42,14 @@ export const metadataChangedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     key: z.string(),
     value: z.string().nullable(),
   })
   .readonly();
 
 /** Operation-added enrichment for the "set" hook point (beyond the base HookContext). */
-const setEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const setEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for the "set" hook point. */
 export const setHookInputSchema = hookCtxSchema(
@@ -97,7 +98,7 @@ export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas>
   constructor() {
     super(SET_METADATA_OPERATION_ID, {
       hookPoint: "set",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       resolveProject: true,
       errorLabel: "set-metadata set hooks failed",
       extract: () => undefined,
@@ -107,7 +108,7 @@ export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas>
           payload: {
             projectId: project!.projectId,
             workspaceName: resolved.workspaceName,
-            workspacePath: intent.payload.workspacePath,
+            workspaceRef: resolved.workspaceRef,
             key: intent.payload.key,
             value: intent.payload.value,
           },

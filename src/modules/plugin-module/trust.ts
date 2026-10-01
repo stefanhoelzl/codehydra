@@ -25,7 +25,7 @@
  * `ch ws delete`.
  *
  * Stored in state.json as `plugins.state`: `local:<name>` for a local plugin,
- * `workspace:<projectPath>:<name>` for a repository's. The per-project answers
+ * `workspace:<projectRef>:<name>` for a repository's. The per-project answers
  * of the hooks that came before plugins (`hooks.trusted`) still count: a
  * workspace plugin with no answer of its own takes its project's.
  */
@@ -39,7 +39,8 @@ import type { DialogHandle } from "../presentation/sessions";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
-import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
+import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
+import { isRef } from "../../utils/ref";
 import type { PluginOrigin } from "./discovery";
 
 // =============================================================================
@@ -54,9 +55,7 @@ export interface TrustDialogOpener {
     config: DialogConfig,
     options?: {
       kind?: "modal" | "modeless" | "panel";
-      workspacePath?: string;
-      projectPath?: string;
-      workspaceName?: string;
+      workspaceRef?: WorkspaceRef;
     }
   ): DialogHandle;
 }
@@ -69,26 +68,35 @@ export interface PluginTrustDeps {
   readonly logger: Logger;
 }
 
+/** A project, as trust needs it: its ref for the answers, its path for the pre-plugin ones. */
+export interface TrustProject {
+  readonly ref: ProjectRef;
+  readonly path: string;
+}
+
 export interface TrustRequest {
-  readonly projectPath: string;
-  readonly workspacePath: string;
-  readonly workspaceName: string;
+  readonly project: TrustProject;
+  readonly workspaceRef: WorkspaceRef;
   /** The workspace plugins about to run, by name. */
   readonly plugins: readonly string[];
 }
 
 export interface PluginTrust {
-  /** A plugin's current state. `projectPath` is required for a workspace plugin. */
-  state(origin: PluginOrigin, name: string, projectPath?: string): EnabledState;
+  /** A plugin's current state. `project` is required for a workspace plugin. */
+  state(origin: PluginOrigin, name: string, project?: TrustProject): EnabledState;
   /** Set a plugin's state; `ask` forgets the stored answer. */
-  set(origin: PluginOrigin, name: string, state: EnabledState, projectPath?: string): Promise<void>;
+  set(origin: PluginOrigin, name: string, state: EnabledState, project?: ProjectRef): Promise<void>;
   /**
    * Which of a project's workspace plugins may run now: the enabled ones, plus
    * whatever the user allows when asked about those at `ask`.
    */
   check(request: TrustRequest): Promise<ReadonlySet<string>>;
-  /** Carry answers over to projects whose path changed. */
-  readonly moveProjects: ProjectMoveListener;
+  /**
+   * Rename the answers stored by project path, as versions before refs did, to
+   * their project's ref. An answer whose project is unknown keeps its key and
+   * is never read again: its project asks afresh.
+   */
+  migrateKeys(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void>;
 }
 
 // =============================================================================
@@ -96,19 +104,19 @@ export interface PluginTrust {
 // =============================================================================
 
 /** The state.json key of one plugin's answer. */
-export function trustKey(origin: PluginOrigin, name: string, projectPath?: string): string {
+export function trustKey(origin: PluginOrigin, name: string, project?: ProjectRef): string {
   if (origin === "local") return `local:${name}`;
-  if (projectPath === undefined) throw new Error("A workspace plugin's trust needs its project");
-  return `workspace:${new Path(projectPath).toString()}:${name}`;
+  if (project === undefined) throw new Error("A workspace plugin's trust needs its project");
+  return `workspace:${project}:${name}`;
 }
 
-/** The project path in a workspace key; names never contain `:`, paths may. */
-function projectOfKey(key: string): { projectPath: string; name: string } | undefined {
+/** The project in a workspace key; names never contain `:`, refs and paths may. */
+function projectOfKey(key: string): { project: string; name: string } | undefined {
   if (!key.startsWith("workspace:")) return undefined;
   const rest = key.slice("workspace:".length);
   const cut = rest.lastIndexOf(":");
   if (cut <= 0) return undefined;
-  return { projectPath: rest.slice(0, cut), name: rest.slice(cut + 1) };
+  return { project: rest.slice(0, cut), name: rest.slice(cut + 1) };
 }
 
 // =============================================================================
@@ -180,11 +188,11 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     return undefined;
   }
 
-  function state(origin: PluginOrigin, name: string, projectPath?: string): EnabledState {
-    const answer = stored()[trustKey(origin, name, projectPath)];
+  function state(origin: PluginOrigin, name: string, project?: TrustProject): EnabledState {
+    const answer = stored()[trustKey(origin, name, project?.ref)];
     if (answer !== undefined) return answer ? "enabled" : "disabled";
     if (origin === "local") return "enabled";
-    const legacy = projectPath === undefined ? undefined : legacyAnswer(projectPath);
+    const legacy = project === undefined ? undefined : legacyAnswer(project.path);
     if (legacy !== undefined) return legacy ? "enabled" : "disabled";
     return "ask";
   }
@@ -210,13 +218,11 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     request: TrustRequest,
     plugins: readonly string[]
   ): Promise<ReadonlyMap<string, boolean>> {
-    const handle = deps.ui.dialog(buildDialog(basename(request.projectPath), plugins), {
+    const handle = deps.ui.dialog(buildDialog(basename(request.project.path), plugins), {
       kind: "modal",
-      workspacePath: request.workspacePath,
-      // The first question usually comes from after-worktree-created, while
-      // the row is still a pathless placeholder the project + name identify.
-      projectPath: request.projectPath,
-      workspaceName: request.workspaceName,
+      // The first question usually comes from after-worktree-created, while the
+      // row is still a placeholder; it has its ref already.
+      workspaceRef: request.workspaceRef,
     });
 
     try {
@@ -233,7 +239,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
         await persist(
           Object.fromEntries(
             plugins.map((name) => [
-              trustKey("workspace", name, request.projectPath),
+              trustKey("workspace", name, request.project.ref),
               answers.get(name) === true,
             ])
           )
@@ -249,12 +255,12 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     const allowed = new Set<string>();
     let pending: string[] = [];
     for (const name of request.plugins) {
-      const current = state("workspace", name, request.projectPath);
+      const current = state("workspace", name, request.project);
       if (current === "enabled") allowed.add(name);
       else if (current === "ask") pending.push(name);
     }
 
-    const projectKey = new Path(request.projectPath).toString();
+    const projectKey = request.project.ref;
     while (pending.length > 0) {
       const inFlight = asking.get(projectKey);
       if (inFlight !== undefined) {
@@ -264,7 +270,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
           const answer = answers.get(name);
           if (answer === undefined) {
             // Not in that question: maybe answered durably meanwhile, else ask.
-            const current = state("workspace", name, request.projectPath);
+            const current = state("workspace", name, request.project);
             if (current === "enabled") allowed.add(name);
             else if (current === "ask") rest.push(name);
           } else if (answer) {
@@ -286,27 +292,36 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
 
   return {
     state,
-    async set(origin, name, next, projectPath) {
+    async set(origin, name, next, project) {
       await persist({
-        [trustKey(origin, name, projectPath)]: next === "ask" ? undefined : next === "enabled",
+        [trustKey(origin, name, project)]: next === "ask" ? undefined : next === "enabled",
       });
     },
     check,
-    async moveProjects(moves) {
+    async migrateKeys(refsByPath) {
       const current = stored();
       let changed = false;
       const next: Record<string, boolean> = {};
       for (const [key, value] of Object.entries(current)) {
         const parsed = projectOfKey(key);
-        const to = parsed === undefined ? undefined : movedPath(moves, parsed.projectPath);
-        if (to !== undefined && parsed !== undefined) {
+        const ref =
+          parsed === undefined || isRef(parsed.project) ? undefined : refOf(parsed.project);
+        if (ref !== undefined && parsed !== undefined) {
           changed = true;
-          next[trustKey("workspace", parsed.name, to)] = value;
+          next[trustKey("workspace", parsed.name, ref)] = value;
         } else {
           next[key] = value;
         }
       }
       if (changed) await deps.enabled.set(next);
+
+      function refOf(path: string): ProjectRef | undefined {
+        try {
+          return refsByPath.get(new Path(path).toString());
+        } catch {
+          return undefined;
+        }
+      }
     },
   };
 }

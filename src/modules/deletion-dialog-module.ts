@@ -49,7 +49,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
 
 /** The progress row the repository's `before-worktree-deleted` hook owns. */
 const REPO_HOOK_OPERATION_ID = "repo-hook";
@@ -263,19 +263,20 @@ function dispatchDelete(dispatcher: Dispatcher, payload: DeleteWorkspaceIntent["
 export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): IntentModule {
   // Currently visible dialog (only one at a time — the active workspace's).
   // Deletion progress itself is owned by the presenter (single source of
-  // truth); this module reads it via deps.ui.deletionProgress(path).
-  let activeDialog: { path: string; handle: DialogHandle } | null = null;
-  // Currently active workspace path
-  let activeWorkspacePath: string | null = null;
+  // truth); this module reads it via deps.ui.deletionProgress(ref).
+  let activeDialog: { ref: WorkspaceRef; handle: DialogHandle } | null = null;
+  // Currently active workspace
+  let activeWorkspaceRef: WorkspaceRef | null = null;
 
   /** Wire retry/dismiss event handlers on a dialog handle. */
-  function wireEvents(handle: DialogHandle, workspacePath: WorkspacePath): void {
+  function wireEvents(handle: DialogHandle, workspaceRef: WorkspaceRef): void {
+    const logger = deps.logger.scoped({ workspace: workspaceRef });
     function dismiss(keepBranch: boolean): void {
-      deps.logger.scoped({ path: workspacePath }).debug("Deletion dismiss");
+      logger.debug("Deletion dismiss");
       handle.close();
       activeDialog = null;
       dispatchDelete(deps.dispatcher, {
-        workspacePath,
+        workspaceRef,
         keepBranch,
         force: true,
         removeWorktree: true,
@@ -284,17 +285,17 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     }
 
     handle.onEvent((evt) => {
-      const progress = deps.ui.deletionProgress(workspacePath);
+      const progress = deps.ui.deletionProgress(workspaceRef);
       if (!progress) return;
 
       if (evt.actionId === "cancel-hook") {
-        deps.logger.scoped({ path: workspacePath }).debug("Deletion hook cancel");
-        deps.ui.cancelRunningHooks(workspacePath);
+        logger.debug("Deletion hook cancel");
+        deps.ui.cancelRunningHooks(workspaceRef);
       } else if (evt.actionId === "retry") {
-        deps.logger.scoped({ path: workspacePath }).debug("Deletion retry");
+        logger.debug("Deletion retry");
         const pids = progress.blockingProcesses?.map((p) => p.pid);
         dispatchDelete(deps.dispatcher, {
-          workspacePath,
+          workspaceRef,
           keepBranch: progress.keepBranch,
           force: false,
           removeWorktree: true,
@@ -314,10 +315,10 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   }
 
   /** Open the deletion dialog for a workspace from its current progress. */
-  function showDialog(path: WorkspacePath, progress: DeletionProgress): void {
-    const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel", workspacePath: path });
-    activeDialog = { path, handle };
-    wireEvents(handle, path);
+  function showDialog(ref: WorkspaceRef, progress: DeletionProgress): void {
+    const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel", workspaceRef: ref });
+    activeDialog = { ref, handle };
+    wireEvents(handle, ref);
   }
 
   /** Close the active dialog if it exists. */
@@ -334,18 +335,18 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         // Render from the event payload directly; the presenter stores the
         // canonical copy off the same event (single source of truth).
         const progress = (event as WorkspaceDeletionProgressEvent).payload;
-        const key = progress.workspacePath;
+        const key = progress.workspaceRef;
 
         // If this workspace's dialog is currently showing, update it
-        if (activeDialog && activeDialog.path === key) {
+        if (activeDialog && activeDialog.ref === key) {
           activeDialog.handle.update(buildConfig(progress));
-        } else if (key === activeWorkspacePath && !activeDialog) {
+        } else if (key === activeWorkspaceRef && !activeDialog) {
           // Active workspace just started deletion — open dialog
           showDialog(key, progress);
         }
 
         // Auto-close on successful completion (the presenter clears its copy).
-        if (progress.completed && !progress.hasErrors && activeDialog?.path === key) {
+        if (progress.completed && !progress.hasErrors && activeDialog?.ref === key) {
           closeActiveDialog();
         }
       },
@@ -353,27 +354,27 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     [EVENT_WORKSPACE_SWITCHED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
-        const newPath = payload?.path ?? null;
+        const newRef = payload?.workspaceRef ?? null;
 
         // Close dialog if switching away from the workspace with deletion
-        if (activeDialog && activeDialog.path !== newPath) {
+        if (activeDialog && activeDialog.ref !== newRef) {
           closeActiveDialog();
         }
 
-        activeWorkspacePath = newPath;
+        activeWorkspaceRef = newRef;
 
         // Open dialog if the new workspace has deletion progress (read from the
         // presenter, the single source of truth).
-        const progress = newPath ? deps.ui.deletionProgress(newPath) : undefined;
-        if (newPath && progress && !activeDialog) {
-          showDialog(newPath, progress);
+        const progress = newRef ? deps.ui.deletionProgress(newRef) : undefined;
+        if (newRef && progress && !activeDialog) {
+          showDialog(newRef, progress);
         }
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
       handler: async (event: DomainEvent): Promise<void> => {
-        const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        if (activeDialog?.path === workspacePath) {
+        const { workspaceRef } = (event as WorkspaceDeletedEvent).payload;
+        if (activeDialog?.ref === workspaceRef) {
           closeActiveDialog();
         }
       },
@@ -408,11 +409,11 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         const [status, metadata] = await Promise.all([
           deps.dispatcher.dispatch<GetWorkspaceStatusIntent>({
             type: INTENT_GET_WORKSPACE_STATUS,
-            payload: { workspacePath: input.workspacePath, refresh: true },
+            payload: { workspaceRef: input.workspaceRef, refresh: true },
           }),
           deps.dispatcher.dispatch<GetMetadataIntent>({
             type: INTENT_GET_METADATA,
-            payload: { workspacePath: input.workspacePath },
+            payload: { workspaceRef: input.workspaceRef },
           }),
         ]);
         state = {

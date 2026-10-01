@@ -71,7 +71,7 @@ async function createdAgentSpec(
   // `project` explicitly, so the handler skips resolving one from the caller.
   await create.handler(
     {
-      workspacePath: null,
+      workspaceRef: null,
       cwd: null,
       signal: new AbortController().signal,
     },

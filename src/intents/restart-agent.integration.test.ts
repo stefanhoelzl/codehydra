@@ -32,8 +32,9 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "./contract";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspacePath, WorkspaceRef } from "./contract";
 
 // =============================================================================
 // Test Constants
@@ -41,6 +42,7 @@ import type { WorkspacePath } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -114,10 +116,10 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
 // Helpers
 // =============================================================================
 
-function restartIntent(workspacePath: WorkspacePath): RestartAgentIntent {
+function restartIntent(workspaceRef: WorkspaceRef): RestartAgentIntent {
   return {
     type: INTENT_RESTART_AGENT,
-    payload: { workspacePath },
+    payload: { workspaceRef },
   };
 }
 
@@ -141,7 +143,7 @@ describe("RestartAgent Operation", () => {
     it("returns port number from restart", async () => {
       const { dispatcher } = setup;
 
-      const result = await dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
+      const result = await dispatcher.dispatch(restartIntent(WORKSPACE_REF));
 
       expect(result).toBe(9090);
     });
@@ -156,7 +158,7 @@ describe("RestartAgent Operation", () => {
         }),
       });
 
-      await expect(setup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH))).rejects.toThrow(
+      await expect(setup.dispatcher.dispatch(restartIntent(WORKSPACE_REF))).rejects.toThrow(
         "Server process exited unexpectedly"
       );
     });
@@ -182,14 +184,14 @@ describe("RestartAgent Operation", () => {
         receivedEvents.push(event);
       });
 
-      await dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
+      await dispatcher.dispatch(restartIntent(WORKSPACE_REF));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentRestartedEvent;
       expect(event.type).toBe("agent:restarted");
       expect(event.payload.projectId).toBe(projectId);
       expect(event.payload.workspaceName).toBe(workspaceName);
-      expect(event.payload.path).toBe(WORKSPACE_PATH);
+      expect(event.payload.workspaceRef).toBe(WORKSPACE_REF);
       expect(event.payload.port).toBe(9090);
     });
 
@@ -206,7 +208,7 @@ describe("RestartAgent Operation", () => {
         receivedEvents.push(event);
       });
 
-      await expect(failSetup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH))).rejects.toThrow();
+      await expect(failSetup.dispatcher.dispatch(restartIntent(WORKSPACE_REF))).rejects.toThrow();
 
       expect(receivedEvents).toHaveLength(0);
     });
@@ -219,8 +221,12 @@ describe("RestartAgent Operation", () => {
       });
 
       await expect(
-        setup.dispatcher.dispatch(restartIntent(wsPath("/nonexistent/path")))
-      ).rejects.toThrow(`Workspace not found: ${testPath("/nonexistent/path").toString()}`);
+        setup.dispatcher.dispatch(
+          restartIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"))
+        )
+      ).rejects.toThrow(
+        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
+      );
     });
   });
 
@@ -243,7 +249,7 @@ describe("RestartAgent Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(restartIntent(WORKSPACE_PATH));
+      const result = await setup.dispatcher.dispatch(restartIntent(WORKSPACE_REF));
 
       expect(result).toBeUndefined();
       expect(receivedEvents).toHaveLength(0);

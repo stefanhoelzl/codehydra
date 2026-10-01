@@ -6,6 +6,7 @@
  * keeping the module itself a thin adapter between the intent system and the provider.
  */
 
+import type { WorkspaceRef } from "../../intents/contract";
 import type { AgentType, AgentLifecycleEvent } from "../../shared/api-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type {
@@ -24,6 +25,11 @@ import type { DownloadProgressCallback } from "../../utils/binary-download";
  * Options for starting a workspace.
  */
 export interface WorkspaceStartOptions {
+  /**
+   * The workspace's ref. The agent learns it as `_CH_WORKSPACE` (its MCP server
+   * and every `ch` it runs name their workspace by it), and its hooks report by it.
+   */
+  readonly workspaceRef: WorkspaceRef;
   readonly initialPrompt?: AgentPromptConfig;
   /**
    * Called once the agent has taken `initialPrompt` over — from then on the

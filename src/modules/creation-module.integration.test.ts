@@ -79,9 +79,9 @@ function switchedPayload(project: Project): Record<string, unknown> {
   return {
     projectId: project.id,
     projectName: project.name,
-    projectPath: project.path,
+    projectRef: project.ref,
     workspaceName: "active" as WorkspaceName,
-    path: `${project.path}/.worktrees/active`,
+    workspaceRef: makeWorkspaceRef(project.ref, "active"),
   };
 }
 
@@ -182,13 +182,13 @@ function setup(options?: {
   const projects = options?.projects ?? [PROJECT_A];
   dispatcher.results.set(INTENT_LIST_PROJECTS, () => projects);
   dispatcher.results.set(INTENT_GET_PROJECT_BASES, (payload) => {
-    const p = payload as { projectPath: string };
+    const p = payload as { projectRef: string };
     return {
       bases: options?.bases ?? BASES_A,
       ...(options?.defaultBaseBranch !== undefined && {
         defaultBaseBranch: options.defaultBaseBranch,
       }),
-      projectPath: p.projectPath,
+      projectRef: p.projectRef,
       projectId: PROJECT_A.id,
     };
   });
@@ -262,8 +262,8 @@ describe("CreationModule", () => {
 
       expect(panel.kind).toBe("modeless");
       const project = field(panel.config, "project");
-      expect(project["value"]).toBe(PROJECT_A.path);
-      expect(suggestionValues(project)).toEqual([PROJECT_B.path, PROJECT_A.path]);
+      expect(project["value"]).toBe(PROJECT_A.ref);
+      expect(suggestionValues(project)).toEqual([PROJECT_B.ref, PROJECT_A.ref]);
       // Heading + form layout
       expect(panel.config.layout).toBe("form");
       expect(panel.config.sections[0]).toEqual({
@@ -276,7 +276,7 @@ describe("CreationModule", () => {
     it("falls back to the first project when no workspace is active", async () => {
       const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: null });
       const panel = await s.start();
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("keeps seeding the last active project across the panel-open deselect", async () => {
@@ -284,7 +284,7 @@ describe("CreationModule", () => {
       // active workspace, not the list head.
       const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: PROJECT_A.id });
       const panel = await s.start();
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
 
       // Showing the panel deselects the active workspace (workspace:switched
       // null). The next open must not collapse to projects[0] (PROJECT_B).
@@ -292,13 +292,13 @@ describe("CreationModule", () => {
       currentPanel(s).emitDismiss();
       await flush();
 
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("re-seeds an untouched form with the project of the workspace the panel was opened from", async () => {
       const s = setup({ projects: [PROJECT_A, PROJECT_B], activeWorkspaceProjectId: PROJECT_A.id });
       const panel = await s.start();
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
 
       // Work in a PROJECT_B workspace, then show the panel (the deselect).
       await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_B));
@@ -306,9 +306,9 @@ describe("CreationModule", () => {
 
       // Same session (nothing reset it), now on PROJECT_B with its bases fetched.
       expect(currentPanel(s)).toBe(panel);
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
       const fetched = s.dispatcher.byType(INTENT_GET_PROJECT_BASES).at(-1);
-      expect((fetched?.payload as { projectPath: string }).projectPath).toBe(PROJECT_B.path);
+      expect((fetched?.payload as { projectRef: string }).projectRef).toBe(PROJECT_B.ref);
     });
 
     it("keeps a touched form's project when the panel is opened from another project", async () => {
@@ -320,7 +320,7 @@ describe("CreationModule", () => {
       await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_B));
       await s.emit(EVENT_WORKSPACE_SWITCHED, null);
 
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
       expect(field(panel.config, "name")["initialValue"]).toBe("half-typed");
     });
 
@@ -338,7 +338,7 @@ describe("CreationModule", () => {
     it("falls back to the first project when the last active project is no longer open", async () => {
       const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: PROJECT_A.id });
       const panel = await s.start();
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
 
       // PROJECT_A closed: the remembered path is no longer in the list, so the
       // reset must fall back to projects[0] rather than seeding a dead project.
@@ -346,7 +346,7 @@ describe("CreationModule", () => {
       currentPanel(s).emitDismiss();
       await flush();
 
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("renders the no-project placeholder (disabled fields, disabled Create) without projects", async () => {
@@ -450,7 +450,7 @@ describe("CreationModule", () => {
 
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: BASES_A,
         defaultBaseBranch: "main",
       });
@@ -502,7 +502,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_B.id,
-        projectPath: PROJECT_B.path,
+        projectRef: PROJECT_B.ref,
         bases: [],
       });
       expect(field(panel.config, "base")["loading"]).toBe(true);
@@ -513,7 +513,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: [],
       });
       const base = field(panel.config, "base");
@@ -526,15 +526,15 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await flush();
 
-      panel.emitChange("project", { project: PROJECT_B.path });
+      panel.emitChange("project", { project: PROJECT_B.ref });
       await flush();
 
       const calls = s.dispatcher.byType(INTENT_GET_PROJECT_BASES);
-      expect(calls.map((c) => (c.payload as { projectPath: string }).projectPath)).toEqual([
-        PROJECT_A.path,
-        PROJECT_B.path,
+      expect(calls.map((c) => (c.payload as { projectRef: string }).projectRef)).toEqual([
+        PROJECT_A.ref,
+        PROJECT_B.ref,
       ]);
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
       expect(field(panel.config, "base")["loading"]).toBe(true);
     });
   });
@@ -544,7 +544,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: BASES_A,
         defaultBaseBranch: "main",
       });
@@ -600,7 +600,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: BASES_A,
         defaultBaseBranch: "main",
       });
@@ -615,7 +615,7 @@ describe("CreationModule", () => {
       // renderer's snapshot carries no "agent" key (see the single-backend
       // regression test below).
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "new-feature",
         base: "main",
         prompt: "",
@@ -627,7 +627,7 @@ describe("CreationModule", () => {
       // The form always emits a typed arm for the selected backend; the
       // resolver only persists it as the workspace agent when != default.
       expect(opens[0]!.payload).toEqual({
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         workspaceName: "new-feature",
         base: "main",
         agent: { type: "claude" },
@@ -644,7 +644,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "origin/feature-x",
         base: "origin/feature-x",
         prompt: "",
@@ -667,7 +667,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "with-prompt",
         base: "main",
         prompt: "  do things  ",
@@ -697,7 +697,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "with-prompt",
         base: "main",
         prompt: "do things",
@@ -717,7 +717,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "plain",
         base: "main",
         prompt: "   ",
@@ -748,7 +748,7 @@ describe("CreationModule", () => {
       expect(sectionById(currentPanel(s).config, "agent")).toBeUndefined();
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "planned",
         base: "main",
         prompt: "do things",
@@ -772,7 +772,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "mode-only",
         base: "main",
         prompt: "",
@@ -790,7 +790,7 @@ describe("CreationModule", () => {
       const panel = await readyPanel(s);
 
       panel.emitAction("create", {
-        project: PROJECT_A.path,
+        project: PROJECT_A.ref,
         name: "existing",
         base: "main",
         prompt: "",
@@ -829,7 +829,7 @@ describe("CreationModule", () => {
       await flush();
 
       expect(field(panel.config, "open-folder")["busy"]).toBe(false);
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("handles a cancelled picker (null result)", async () => {
@@ -842,7 +842,7 @@ describe("CreationModule", () => {
       await flush();
 
       expect(field(panel.config, "open-folder")["busy"]).toBe(false);
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("re-arms the name autofocus after a folder-open selects the project", async () => {
@@ -938,7 +938,7 @@ describe("CreationModule", () => {
       await flush();
 
       expect(clone.closed).toBe(true);
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("shows the GitHub create-on-error flow for a GitHub-shaped URL", async () => {
@@ -1156,11 +1156,11 @@ describe("CreationModule", () => {
 
       await s.emit(EVENT_PROJECT_OPENED, { project: PROJECT_B });
       // Live selection unchanged; the new project joined the suggestions.
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
 
       panel.emitDismiss();
       await flush();
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("seeds the next reset with the freshly opened project when it is still open", async () => {
@@ -1173,7 +1173,7 @@ describe("CreationModule", () => {
 
       panel.emitDismiss();
       await flush();
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("workspace:switched clears the pending opened-project seed", async () => {
@@ -1187,19 +1187,19 @@ describe("CreationModule", () => {
 
       panel.emitDismiss();
       await flush();
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("falls back when the selected project is closed", async () => {
       const projects: Project[] = [PROJECT_A, PROJECT_B];
       const s = setup({ projects, activeWorkspaceProjectId: null });
       const panel = await s.start();
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
 
       projects.splice(0, 1); // PROJECT_A closed
-      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectPath: PROJECT_A.path });
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectRef: PROJECT_A.ref });
 
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.ref);
     });
 
     it("clears to the placeholder when the last project is closed", async () => {
@@ -1208,7 +1208,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
 
       projects.splice(0, 1);
-      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectPath: PROJECT_A.path });
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id, projectRef: PROJECT_A.ref });
 
       expect(sectionById(panel.config, "project")).toBeUndefined();
       expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
@@ -1221,7 +1221,7 @@ describe("CreationModule", () => {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: BASES_A,
         defaultBaseBranch: "main",
       });
@@ -1246,7 +1246,7 @@ describe("CreationModule", () => {
       expect(field(panel.config, "prompt")["initialValue"]).toBe("do the thing");
       expect(field(panel.config, "agent-name")["initialValue"]).toBe("reviewer");
       expect(field(panel.config, "base")["value"]).toBe("main");
-      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("keeps the session open (no reset) when nothing asks for one", async () => {
@@ -1281,16 +1281,16 @@ describe("CreationModule", () => {
       });
       const panel = await s.start();
 
-      panel.emitChange("project", { project: PROJECT_B.path });
+      panel.emitChange("project", { project: PROJECT_B.ref });
       await flush();
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.ref);
 
       currentPanel(s).emitAction("reset", {});
       await flush();
 
       // Reset is the only thing that re-seeds; a plain reopen would have kept
       // the manual pick.
-      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.ref);
     });
 
     it("clears the remembered fields after a successful create", async () => {
@@ -1356,7 +1356,7 @@ describe("CreationModule", () => {
       await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
-        projectPath: PROJECT_A.path,
+        projectRef: PROJECT_A.ref,
         bases: BASES_A,
         defaultBaseBranch: "main",
       });

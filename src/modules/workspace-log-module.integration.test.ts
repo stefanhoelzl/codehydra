@@ -10,7 +10,9 @@ import type { LogLine, LogScope } from "../boundaries/platform/logging-types";
 import type { AppendOutputRequest } from "../shared/api-protocol";
 import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "../intents/contract";
 import { testPath } from "../shared/test-fixtures";
 import {
   createWorkspaceLogModule,
@@ -18,14 +20,18 @@ import {
   WORKSPACE_LOG_CHANNEL,
 } from "./workspace-log-module";
 
-const PROJECT = testPath("/repos/proj").toString();
-const WS = testPath("/workspaces/feat").toString();
-const TARGET: LogScope = { project: "proj", ws: "feat", path: WS };
+const PROJECT = projectRefFor(testPath("/repos/proj").toString());
+const WS = makeWorkspaceRef(PROJECT, "feat");
+const TARGET: LogScope = {
+  project: "proj",
+  ws: "feat",
+  path: testPath("/workspaces/feat").toString(),
+};
 
 function setup() {
-  const connected = new Set<string>();
-  const shown: Array<{ workspacePath: string; request: AppendOutputRequest }> = [];
-  let onConnected: (workspacePath: string) => void = () => {};
+  const connected = new Set<WorkspaceRef>();
+  const shown: Array<{ workspaceRef: WorkspaceRef; request: AppendOutputRequest }> = [];
+  let onConnected: (workspaceRef: WorkspaceRef) => void = () => {};
   let emit: (line: LogLine) => void = () => {};
   const { module } = createWorkspaceLogModule({
     logging: {
@@ -35,9 +41,9 @@ function setup() {
       },
     },
     transport: {
-      appendOutput: (workspacePath, request) => {
-        if (!connected.has(workspacePath)) return false;
-        shown.push({ workspacePath, request });
+      appendOutput: (workspaceRef, request) => {
+        if (!connected.has(workspaceRef)) return false;
+        shown.push({ workspaceRef, request });
         return true;
       },
       onWorkspaceConnected: (listener) => {
@@ -67,9 +73,15 @@ function setup() {
     texts,
     tick,
     fire,
-    connect(path = WS): void {
-      connected.add(path);
-      onConnected(path);
+    /** The workspace finished opening: from here on its lines are routed to it. */
+    open: (): Promise<void> =>
+      fire({
+        type: EVENT_WORKSPACE_CREATED,
+        payload: { workspaceRef: WS, projectRef: PROJECT, workspaceName: "feat" },
+      }),
+    connect(ref = WS): void {
+      connected.add(ref);
+      onConnected(ref);
     },
   };
 }
@@ -77,6 +89,7 @@ function setup() {
 describe("workspace log", () => {
   it("sends a workspace's lines to its log channel, levelled, batched per tick", async () => {
     const t = setup();
+    await t.open();
     t.connect();
 
     t.log({ scope: { trace: "7f3a01", ...TARGET }, message: "one" });
@@ -84,7 +97,7 @@ describe("workspace log", () => {
     await t.tick();
 
     expect(t.shown).toHaveLength(1);
-    expect(t.shown[0]!.workspacePath).toBe(WS);
+    expect(t.shown[0]!.workspaceRef).toBe(WS);
     expect(t.shown[0]!.request).toEqual({
       channel: WORKSPACE_LOG_CHANNEL,
       log: true,
@@ -97,6 +110,7 @@ describe("workspace log", () => {
 
   it("sends nothing for lines about no workspace, and nothing at silly", async () => {
     const t = setup();
+    await t.open();
     t.connect();
 
     t.log({ scope: undefined });
@@ -109,6 +123,7 @@ describe("workspace log", () => {
 
   it("holds lines until the workspace's IDE connects", async () => {
     const t = setup();
+    await t.open();
 
     t.log({ scope: TARGET, message: "early" });
     await t.tick();
@@ -118,33 +133,35 @@ describe("workspace log", () => {
     expect(t.texts()).toEqual(["(git) early"]);
   });
 
-  it("holds a creation's lines by name until a line brings the path", async () => {
+  it("holds an opening workspace's lines by name until it has opened", async () => {
     const t = setup();
     t.connect();
 
     t.log({ scope: { project: "proj", ws: "feat" }, message: "before the worktree" });
+    t.log({ scope: TARGET, message: "path known, still opening" });
     await t.tick();
     expect(t.shown).toEqual([]);
 
-    t.log({ scope: TARGET, message: "after" });
-    t.log({ scope: { project: "proj", ws: "feat" }, message: "later, path now known" });
+    await t.open();
+    t.log({ scope: { project: "proj", ws: "feat" }, message: "opened" });
     await t.tick();
 
     expect(t.texts()).toEqual([
       "(git) before the worktree",
-      "(git) after",
-      "(git) later, path now known",
+      "(git) path known, still opening",
+      "(git) opened",
     ]);
   });
 
   it("drops what it held for a deleted workspace, and holds nothing more", async () => {
     const t = setup();
+    await t.open();
     t.log({ scope: TARGET, message: "held" });
     await t.tick();
 
     await t.fire({
       type: EVENT_WORKSPACE_DELETED,
-      payload: { workspacePath: WS, projectPath: PROJECT, workspaceName: "feat" },
+      payload: { workspaceRef: WS, projectRef: PROJECT, workspaceName: "feat" },
     });
     t.log({ scope: TARGET, message: "straggler" });
     await t.tick();
@@ -153,14 +170,16 @@ describe("workspace log", () => {
     expect(t.shown).toEqual([]);
   });
 
-  it("holds again for a deleted path that is opened again", async () => {
+  it("holds again for a deleted workspace that is opened again", async () => {
     const t = setup();
+    await t.open();
     await t.fire({
       type: EVENT_WORKSPACE_DELETED,
-      payload: { workspacePath: WS, projectPath: PROJECT, workspaceName: "feat" },
+      payload: { workspaceRef: WS, projectRef: PROJECT, workspaceName: "feat" },
     });
 
     t.log({ scope: { ...TARGET, intent: "workspace:open" }, message: "reopened" });
+    await t.open();
     await t.tick();
     t.connect();
 
@@ -174,9 +193,10 @@ describe("workspace log", () => {
 
     await t.fire({
       type: EVENT_WORKSPACE_CREATE_FAILED,
-      payload: { projectPath: PROJECT, workspaceName: "feat", error: "boom" },
+      payload: { projectRef: PROJECT, workspaceName: "feat", error: "boom" },
     });
     t.log({ scope: TARGET, message: "a new workspace of that name" });
+    await t.open();
     await t.tick();
 
     expect(t.texts()).toEqual(["(git) a new workspace of that name"]);

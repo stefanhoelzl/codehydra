@@ -10,7 +10,7 @@
  */
 
 import type { z } from "zod/v4";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
 import type { OperationName } from "./names";
 
 // =============================================================================
@@ -39,7 +39,7 @@ export type EntryKind = "command" | "event";
  *
  * Who is calling, never what the call acts on: the target is always the
  * input's `workspace` field (see `targetFields`), defaulting to the caller's own
- * workspace. `workspacePath` is null for app-global callers — a `ch` invocation
+ * workspace. `workspaceRef` is null for app-global callers — a `ch` invocation
  * from outside any worktree, which is legitimate for `project.list` and
  * `report.issue`. Entries that need a workspace declare `requiresWorkspace`,
  * and the registry rejects a call that neither stands in one nor names one.
@@ -50,7 +50,7 @@ export interface OperationContext {
    * extension's own. It is what a workspace name is looked up relative to, and
    * who a message is signed by.
    */
-  readonly workspacePath: WorkspacePath | null;
+  readonly workspaceRef: WorkspaceRef | null;
   /**
    * Told the workspace a call acts on, once the handler has resolved it.
    *
@@ -58,7 +58,7 @@ export interface OperationContext {
    * runs (see `FORWARDED_EVENTS`). Optional: a caller that watches nothing
    * leaves it out.
    */
-  readonly onTarget?: (workspacePath: WorkspacePath) => void;
+  readonly onTarget?: (workspaceRef: WorkspaceRef) => void;
   /**
    * Directory the caller is standing in, when it told us.
    *

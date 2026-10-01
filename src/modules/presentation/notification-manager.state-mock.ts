@@ -36,7 +36,7 @@ export interface MockNotification {
   /** True once the card has closed. */
   closed: boolean;
   /** The workspace the card is attached to, if any. */
-  readonly workspacePath: string | undefined;
+  readonly workspaceRef: string | undefined;
 }
 
 export interface MockNotificationManager {
@@ -88,7 +88,7 @@ export function createMockNotificationManager(): MockNotificationManager {
           latestConfig: card.config,
           count: card.count,
           closed: false,
-          workspacePath: card.workspacePath,
+          workspaceRef: card.workspaceRef,
         };
         records.push(created);
         byId.set(card.id, created);

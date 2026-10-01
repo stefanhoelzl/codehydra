@@ -30,24 +30,6 @@ export interface WorkspacesRoot {
   previousWorkspacesDirs(): readonly Path[];
 }
 
-/** A project whose path changed: a managed project's clone moved to a new root. */
-export interface ProjectMove {
-  readonly from: string;
-  readonly to: string;
-}
-
-/**
- * Rewrites a module's own persisted references to moved project paths. Modules
- * whose state is keyed by project path expose one (they own the accessor).
- */
-export type ProjectMoveListener = (moves: readonly ProjectMove[]) => Promise<void>;
-
-/** The path a project now has, when one of the moves names it. */
-export function movedPath(moves: readonly ProjectMove[], path: string): string | undefined {
-  const target = new Path(path);
-  return moves.find((move) => target.equals(move.from))?.to;
-}
-
 /** Worktree directory of a project under a given root. */
 export function workspacesDirUnder(root: Path, projectPath: string | Path): Path {
   return new Path(root, "projects", projectDirName(new Path(projectPath).toString()), "workspaces");

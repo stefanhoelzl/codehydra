@@ -35,7 +35,8 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -49,12 +50,24 @@ const WS_A = wsPath("/projects/app/workspaces/alpha");
 const WS_B = wsPath("/projects/app/workspaces/beta");
 const WS_C = wsPath("/projects/app/workspaces/gamma");
 
+const PROJECT_REF = projectRefFor(PROJECT_PATH);
+
+/** The name of the test workspace at `workspacePath`: its directory. */
+function nameOf(workspacePath: WorkspacePath): string {
+  return workspacePath.slice(workspacePath.lastIndexOf("/") + 1);
+}
+
+/** The ref of the test workspace at `workspacePath`. */
+function refOf(workspacePath: WorkspacePath): WorkspaceRef {
+  return makeWorkspaceRef(PROJECT_REF, nameOf(workspacePath));
+}
+
 function candidate(workspacePath: WorkspacePath): WorkspaceCandidate {
   return {
-    projectPath: PROJECT_PATH,
+    projectRef: PROJECT_REF,
     projectName: PROJECT_NAME,
-    workspacePath,
-    workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1),
+    workspaceRef: refOf(workspacePath),
+    workspaceName: nameOf(workspacePath),
   };
 }
 
@@ -85,14 +98,14 @@ function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup 
   const { viewManager, activeWorkspace } = createTestViewManager();
 
   registerTestInfrastructure(dispatcher, {
-    workspaces: (wsPath) => {
-      const found = opts.candidates.find((c) => c.workspacePath === wsPath);
-      if (!found) return undefined;
-      return {
-        projectPath: found.projectPath,
-        workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
-      };
-    },
+    workspaces: Object.fromEntries(
+      [WS_A, WS_B, WS_C]
+        .filter((path) => opts.candidates.some((c) => c.workspaceRef === refOf(path)))
+        .map((path) => [
+          path,
+          { projectPath: PROJECT_PATH, workspaceName: nameOf(path) as WorkspaceName },
+        ])
+    ),
     projects: {
       [PROJECT_PATH]: {
         projectId: Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId,
@@ -142,7 +155,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: WS_A },
+        payload: { auto: true, currentRef: refOf(WS_A) },
       };
       await setup.dispatcher.dispatch(autoIntent);
 
@@ -159,7 +172,7 @@ describe("WorkspaceSelectionModule", () => {
       // Populate the module's internal status cache via its event handler
       const statusHandler = setup.selectionModule.events![EVENT_AGENT_STATUS_UPDATED]!;
       const projectId = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
-      for (const [wsPath, status] of [
+      for (const [path, status] of [
         [WS_A, noneStatus()],
         [WS_B, busyStatus()],
         [WS_C, idleStatus()],
@@ -168,9 +181,9 @@ describe("WorkspaceSelectionModule", () => {
           type: EVENT_AGENT_STATUS_UPDATED,
           payload: {
             workspace: {
-              path: wsPath as WorkspacePath,
+              ref: refOf(path),
               projectId,
-              name: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+              name: nameOf(path) as WorkspaceName,
               active: false,
             },
             status,
@@ -181,7 +194,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: WS_A },
+        payload: { auto: true, currentRef: refOf(WS_A) },
       };
       await setup.dispatcher.dispatch(autoIntent);
 
@@ -201,7 +214,7 @@ describe("WorkspaceSelectionModule", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: wsPath("/nonexistent") },
+        payload: { auto: true, currentRef: makeWorkspaceRef(PROJECT_REF, "nonexistent") },
       };
       await setup.dispatcher.dispatch(autoIntent);
 

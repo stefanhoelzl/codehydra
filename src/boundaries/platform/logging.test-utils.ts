@@ -18,7 +18,8 @@ import { AsyncLogScopeStore } from "./log-scope";
 
 /**
  * A test logger's `scoped`: a logger writing to the same `target`, with the
- * hint folded into each line's context as `scope.path` / `scope.origin` — so a
+ * hint folded into each line's context as `scope.path` / `scope.workspace` /
+ * `scope.origin` — so a
  * test asserts what a line was scoped to the way it asserts its context:
  * `expect(logger.warn).toHaveBeenCalledWith("…", expect.objectContaining({ "scope.path": ws }))`.
  */
@@ -26,6 +27,7 @@ function scopedTestLogger(target: Logger, hint: LogScopeHint): Logger {
   const fold = (context: LogContext | undefined): LogContext =>
     ({
       ...(hint.path !== undefined && hint.path !== null && { "scope.path": hint.path }),
+      ...(hint.workspace !== undefined && { "scope.workspace": hint.workspace }),
       ...(hint.origin !== undefined && { "scope.origin": hint.origin }),
       ...context,
     }) as LogContext;

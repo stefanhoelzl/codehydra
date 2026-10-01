@@ -99,7 +99,7 @@ export function reconnecting(first: Client, connect: () => Promise<Client>): Cli
  *
  * It presents itself as the MCP shim, which is what makes the app answer its
  * calls as MCP's tools, with MCP's defaults. And it presents who it is: the
- * agent's own workspace — `_CH_WORKSPACE_PATH`, which the agent config passes
+ * agent's own workspace — its ref, `_CH_WORKSPACE`, which the agent config passes
  * explicitly, since an MCP server has no meaningful working directory. What a
  * tool call acts on is its own `workspace` argument, never the connection.
  */
@@ -108,7 +108,7 @@ export function connectMcp(
   env: NodeJS.ProcessEnv,
   cwd: string
 ): Promise<Client> {
-  const own = env._CH_WORKSPACE_PATH;
+  const own = env._CH_WORKSPACE;
   return connect({ connection, kind: "mcp", cwd, ...(own !== undefined && { workspace: own }) });
 }
 

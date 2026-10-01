@@ -23,7 +23,7 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { WorkspaceRef, AggregatedAgentStatus } from "../shared/ipc";
 import { createWorkspaceStatusCache } from "./workspace-status-cache";
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { Logger } from "../boundaries/platform/logging";
@@ -42,7 +42,7 @@ import type { Logger } from "../boundaries/platform/logging";
  * @param statuses - Map of workspace paths to their aggregated statuses
  * @returns true if sleep should be prevented
  */
-function shouldPreventSleep(statuses: ReadonlyMap<WorkspacePath, AggregatedAgentStatus>): boolean {
+function shouldPreventSleep(statuses: ReadonlyMap<WorkspaceRef, AggregatedAgentStatus>): boolean {
   for (const status of statuses.values()) {
     if (status.status === "busy" || status.status === "mixed") {
       return true;

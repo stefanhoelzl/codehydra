@@ -18,8 +18,9 @@ import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
   workspaceClosingSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
   workspaceStatusSchema,
+  workspaceTargetShape,
 } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
@@ -36,7 +37,7 @@ export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
 
 export const getWorkspaceStatusPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /**
      * If true, fetch remotes (via project:get-bases with refresh+wait) before
      * reading status. Best-effort: fetch failures are swallowed and the status
@@ -78,7 +79,7 @@ export const getStatusHookResultSchema = z
  * the workspace directory must honour it.
  */
 const getStatusEnrichmentSchema = z.object({
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
   closing: workspaceClosingSchema.nullable(),
 });
 
@@ -126,9 +127,9 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     // 1. Dispatch shared workspace resolution
-    const { projectPath } = await ctx.dispatch<ResolveWorkspaceIntent>({
+    const { projectRef } = await ctx.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
+      payload: { workspaceRef: payload.workspaceRef },
     });
 
     // 2. Optional refresh — fetch remotes so unmerged-commit counts reflect
@@ -137,7 +138,7 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
       try {
         await ctx.dispatch<GetProjectBasesIntent>({
           type: INTENT_GET_PROJECT_BASES,
-          payload: { projectPath, refresh: true, wait: true },
+          payload: { projectRef, refresh: true, wait: true },
         });
       } catch {
         // Fall through to status read with possibly-stale refs.
@@ -153,14 +154,15 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     // remove` fail on Windows with "Permission denied" on the directory. The
     // freshness has to sit here, where the operation knows how long it just
     // spent, rather than being each handler's problem to remember.
-    const { closing } = await ctx.dispatch<ResolveWorkspaceIntent>({
+    const { workspacePath, closing } = await ctx.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
+      payload: { workspaceRef: payload.workspaceRef },
     });
 
     const getCtx: GetStatusHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath,
       closing,
     };
     const { results, errors } = await ctx.hooks.collect("get", getCtx);

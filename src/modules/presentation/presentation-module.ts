@@ -176,8 +176,8 @@ import {
 } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { ProjectPath, WorkspacePath } from "../../intents/contract";
-import { Path } from "../../utils/path/path";
+import type { ProjectPath, ProjectRef, WorkspaceRef } from "../../intents/contract";
+import { makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
@@ -229,8 +229,7 @@ const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
  * Cancel to offer.
  */
 export interface RunningHook {
-  readonly workspacePath: string;
-  readonly projectPath: string;
+  readonly workspaceRef: WorkspaceRef;
   readonly workspaceName: string;
   /** The hook's on-disk entry name — what the user sees. */
   readonly entry: string;
@@ -257,7 +256,7 @@ export interface UiPresenter extends IntentModule {
   /**
    * Open a dialog (modal, modeless, or panel — see DialogKind). Returns a handle.
    *
-   * Pass `workspacePath` when the dialog is about one workspace: together with
+   * Pass `workspaceRef` when the dialog is about one workspace: together with
    * `DialogConfig.needsAttention` it marks that workspace's sidebar row while
    * the dialog is waiting on an answer.
    */
@@ -265,23 +264,23 @@ export interface UiPresenter extends IntentModule {
   /** True while a blocking modal dialog (kind === "modal") is open (the shortcut-module Alt+X guard). */
   isModalOpen(): boolean;
   /**
-   * The current full deletion progress for a workspace path, or undefined when
+   * The current full deletion progress for a workspace, or undefined when
    * it is not deleting. The presenter is the single owner of deletion progress
    * (it tracks it for row status); the deletion-dialog module reads it here for
    * its modal and retry/dismiss dispatch inputs rather than tracking its own.
    */
-  deletionProgress(workspacePath: string): DeletionProgress | undefined;
+  deletionProgress(workspaceRef: WorkspaceRef): DeletionProgress | undefined;
   /**
    * Reload a workspace's IDE frame, if it is mounted. Returns false when there
    * is no frame to reload: unknown workspace, hibernated, still being created,
    * or released for deletion. The presenter owns frame identity, so callers
    * name the workspace and never see a frame key.
    */
-  reloadFrame(workspacePath: string): boolean;
+  reloadFrame(workspaceRef: WorkspaceRef): boolean;
   /** Offer a Cancel for a running plugin hook until the returned function is called. */
   trackRunningHook(hook: RunningHook): () => void;
   /** Cancel every running plugin hook of a workspace (the deletion panel's Cancel). */
-  cancelRunningHooks(workspacePath: string): void;
+  cancelRunningHooks(workspaceRef: WorkspaceRef): void;
 }
 
 /**
@@ -303,14 +302,14 @@ function toLoggerName(name: string): LoggerName {
  * tags) and raw metadata is never stored.
  */
 interface WorkspaceModel {
+  /** The workspace's identity; known from the start, a creation's placeholder included. */
+  readonly ref: WorkspaceRef;
   readonly name: string;
   /**
    * User-given display title (metadata `title`); undefined when unset, so the
    * row falls back to `name`. Display-only — `name` stays the identity.
    */
   title: string | undefined;
-  /** Real worktree path; null while the workspace is still being created. */
-  path: WorkspacePath | null;
   hibernated: boolean;
   tags: WorkspaceTag[];
   url: string | undefined;
@@ -340,7 +339,7 @@ function fromMetadata(
 /**
  * Distill the domain DeletionProgress into the render-ready row field: keep
  * only what a renderer shows (per-operation display status, completion/error
- * flags, blocking-process count) — never the WorkspacePath/ProjectId/PIDs.
+ * flags, blocking-process count) — never the WorkspaceRef/ProjectId/PIDs.
  */
 function toUiDeletionProgress(progress: DeletionProgress): UiDeletionProgress {
   return {
@@ -357,6 +356,7 @@ function toUiDeletionProgress(progress: DeletionProgress): UiDeletionProgress {
 }
 
 interface ProjectModel {
+  readonly ref: ProjectRef;
   readonly id: string;
   readonly name: string;
   readonly path: ProjectPath;
@@ -614,10 +614,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   /** Keyed by projectId; insertion-ordered. */
   const projects = new Map<string, ProjectModel>();
-  /** Agent status keyed by workspace path. */
-  const agentStatuses = new Map<string, AgentStatus>();
+  /** Agent status keyed by workspace ref. */
+  const agentStatuses = new Map<WorkspaceRef, AgentStatus>();
   /**
-   * Deletion lifecycle keyed by workspace path (absent = not deleting). The
+   * Deletion lifecycle keyed by workspace ref (absent = not deleting). The
    * single source of truth for deletion progress: the row's render-ready
    * `deletionProgress` + `status` derive from it, and the deletion-dialog
    * module reads it (via the `deletionProgress` accessor) for its modal +
@@ -625,10 +625,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * full domain `DeletionProgress` because the modal needs fields the
    * render-ready row view omits (blocking-process pids, keepBranch).
    */
-  const deletions = new Map<string, DeletionProgress>();
+  const deletions = new Map<WorkspaceRef, DeletionProgress>();
   /**
    * Workspaces whose IDE frame may be dropped from the `frames` region, keyed
-   * by workspace path.
+   * by workspace ref.
    *
    * Populated by the delete "shutdown" handler below, which the dispatcher
    * defers until the agent has been stopped. Deletion progress alone is NOT
@@ -636,7 +636,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * runs, so unmounting on it tears down the IDE connection the graceful agent
    * exit is still talking over.
    */
-  const framesReleased = new Set<string>();
+  const framesReleased = new Set<WorkspaceRef>();
   /** Hibernation screenshot data URLs keyed by workspace key (null = missing). */
   const screenshots = new Map<string, string | null>();
   const screenshotLoads = new Set<string>();
@@ -771,14 +771,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
   function isFrameMounted(workspace: WorkspaceModel): boolean {
-    const released = workspace.path !== null && framesReleased.has(workspace.path);
+    const released = framesReleased.has(workspace.ref);
     return workspace.url !== undefined && !workspace.hibernated && !released;
   }
 
-  function reloadFrame(workspacePath: string): boolean {
+  function reloadFrame(workspaceRef: WorkspaceRef): boolean {
     for (const project of projects.values()) {
       for (const workspace of project.workspaces.values()) {
-        if (workspace.path !== workspacePath) continue;
+        if (workspace.ref !== workspaceRef) continue;
         if (!isFrameMounted(workspace)) return false;
         deps.viewManager.reloadFrame(workspaceKey(project.id, workspace.name));
         return true;
@@ -787,9 +787,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return false;
   }
 
-  function findProjectByPath(projectPath: string): ProjectModel | undefined {
+  function findProjectByRef(projectRef: ProjectRef): ProjectModel | undefined {
     for (const project of projects.values()) {
-      if (project.path === projectPath) return project;
+      if (project.ref === projectRef) return project;
     }
     return undefined;
   }
@@ -827,7 +827,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
 
   function rowStatus(workspace: WorkspaceModel): UiWorkspaceRow["status"] {
-    const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
+    const progress = deletions.get(workspace.ref);
     if (progress) return progress.completed && progress.hasErrors ? "delete-failed" : "deleting";
     return workspace.phase;
   }
@@ -870,16 +870,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
     const key = workspaceKey(project.id, workspace.name);
-    const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
-    const agent =
-      workspace.path === null ? AGENT_NONE : (agentStatuses.get(workspace.path) ?? AGENT_NONE);
-    // A workspace still being created has no path yet — its placeholder row is
-    // matched by project + name, which is what the first hook-trust question
-    // (raised during after-worktree-created) is asked against.
-    const waitingOnUser =
-      workspace.path !== null
-        ? dialogs.needsAttentionFor(workspace.path)
-        : dialogs.needsAttentionForPending(project.path, workspace.name);
+    const progress = deletions.get(workspace.ref);
+    const agent = agentStatuses.get(workspace.ref) ?? AGENT_NONE;
+    // A workspace still being created has its ref already, so the first
+    // hook-trust question (raised during after-worktree-created) marks its
+    // placeholder row too.
+    const waitingOnUser = dialogs.needsAttentionFor(workspace.ref);
     return {
       key,
       name: workspace.name,
@@ -1076,12 +1072,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   async function endStartup(): Promise<void> {
     if (startupPhase !== "running") return;
     const top = currentRows().find((entry) => !entry.workspace.hibernated);
-    const topPath = top?.workspace.path ?? null;
-    if (top !== undefined && topPath !== null && !top.row.active) {
+    if (top !== undefined && top.workspace.phase !== "creating" && !top.row.active) {
       try {
         await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspacePath: topPath },
+          payload: { workspaceRef: top.workspace.ref },
         });
       } catch (error: unknown) {
         logger.debug("Startup landing switch failed", { error: getErrorMessage(error) });
@@ -1116,11 +1111,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return [...runningHooks].filter(([, hook]) => hook.phase === "open");
   }
 
-  /** Is this hook for the workspace behind `key`? By project + name: a creating placeholder has no path yet. */
+  /** Is this hook for the workspace behind `key`? A creating placeholder has its ref already. */
   function hookBelongsTo(hook: RunningHook, key: string | null): boolean {
     if (key === null) return false;
-    const project = findProjectByPath(hook.projectPath);
-    return project !== undefined && workspaceKey(project.id, hook.workspaceName) === key;
+    const found = findByKey(key);
+    return found !== undefined && found.workspace.ref === hook.workspaceRef;
   }
 
   /**
@@ -1180,8 +1175,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     for (const [id, hook] of openHooks()) {
       if (hookNotifications.has(id) || !notifiableHooks.has(id) || covered(hook)) continue;
-      const projectName =
-        findProjectByPath(hook.projectPath)?.name ?? new Path(hook.projectPath).basename;
+      const projectRef = projectRefOf(hook.workspaceRef);
+      const projectName = findProjectByRef(projectRef)?.name ?? projectNameOf(projectRef);
       const config: NotificationConfig = {
         type: "spinner",
         title: `Running ${hook.entry}`,
@@ -1221,9 +1216,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     };
   }
 
-  function cancelRunningHooks(workspacePath: string): void {
+  function cancelRunningHooks(workspaceRef: WorkspaceRef): void {
     for (const hook of runningHooks.values()) {
-      if (hook.workspacePath === workspacePath) hook.cancel();
+      if (hook.workspaceRef === workspaceRef) hook.cancel();
     }
   }
 
@@ -1368,8 +1363,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         if (activeKey !== null) retryOpen(activeKey);
         return;
       case DELETE_FAILED_ACTION: {
-        const path = activeKey === null ? null : (findByKey(activeKey)?.workspace.path ?? null);
-        if (path !== null) dispatchInteractiveDelete(path);
+        const found = activeKey === null ? undefined : findByKey(activeKey);
+        if (found !== undefined && found.workspace.phase !== "creating") {
+          dispatchInteractiveDelete(found.workspace.ref);
+        }
         return;
       }
       case "continue": {
@@ -1511,16 +1508,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
-   * Render-ready card: the attached workspace's path becomes its row key and
+   * Render-ready card: the attached workspace's ref becomes its row key and
    * display name. A card whose workspace has no row (mid-teardown) renders as
    * unattached rather than carrying a key nothing would answer to.
    */
   function toUiNotification(card: NotificationSnapshot): UiNotification {
     const base: UiNotification = { id: card.id, config: card.config, count: card.count };
-    if (card.workspacePath === undefined) return base;
+    if (card.workspaceRef === undefined) return base;
     for (const project of projects.values()) {
       for (const workspace of project.workspaces.values()) {
-        if (workspace.path === card.workspacePath) {
+        if (workspace.ref === card.workspaceRef) {
           return {
             ...base,
             workspace: {
@@ -1591,22 +1588,23 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function retryOpen(key: string): void {
     const found = findByKey(key);
-    if (!found || found.workspace.path === null || found.workspace.phase !== "open-failed") return;
+    if (!found || found.workspace.phase === "creating" || found.workspace.phase !== "open-failed")
+      return;
     found.workspace.phase = "loading";
     delete found.workspace.openError;
     scheduleUpdate();
     dispatchDetached({
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: found.workspace.path, source: "ui-ipc" },
+      payload: { workspaceRef: found.workspace.ref, source: "ui-ipc" },
     });
   }
 
   /** The interactive remove flow (shared by the ui:event and shortcut delete). */
-  function dispatchInteractiveDelete(workspacePath: WorkspacePath): void {
+  function dispatchInteractiveDelete(workspaceRef: WorkspaceRef): void {
     dispatchDetached({
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        workspacePath,
+        workspaceRef,
         keepBranch: false,
         force: false,
         removeWorktree: true,
@@ -1651,17 +1649,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // workspace vanished since the snapshot) is dropped, like stale
       // metadata. Placeholders (path null) have nothing to delete yet.
       const found = findByKey(event.key);
-      if (!found || found.workspace.path === null) {
+      if (!found || found.workspace.phase === "creating") {
         logger.warn("Dropped remove-workspace for unknown key", { key: event.key });
         return;
       }
-      dispatchInteractiveDelete(found.workspace.path);
+      dispatchInteractiveDelete(found.workspace.ref);
       return;
     }
     if (event.kind === "switch-workspace") {
       // key null = deselect (the creation panel becomes the main view).
       if (event.key === null) {
-        dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspacePath: null } });
+        dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: null } });
         return;
       }
       // Resolve the echoed key; a stale key has nothing to switch to. focus
@@ -1674,20 +1672,20 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       }
       // A still-creating placeholder has no path to switch to yet: only the
       // view moves to its loading panel, and workspace:created makes it active.
-      if (found.workspace.path === null) {
+      if (found.workspace.phase === "creating") {
         applyActiveKey(event.key);
         scheduleUpdate();
         return;
       }
       dispatchDetached({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: found.workspace.path },
+        payload: { workspaceRef: found.workspace.ref },
       });
       return;
     }
     if (event.kind === "wake-workspace") {
       const found = findByKey(event.key);
-      if (!found || found.workspace.path === null) {
+      if (!found || found.workspace.phase === "creating") {
         logger.warn("Dropped wake-workspace for unknown key", { key: event.key });
         return;
       }
@@ -1698,19 +1696,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       }
       dispatchDetached({
         type: INTENT_WAKE_WORKSPACE,
-        payload: { workspacePath: found.workspace.path, source: "ui-ipc" },
+        payload: { workspaceRef: found.workspace.ref, source: "ui-ipc" },
       });
       return;
     }
     if (event.kind === "hibernate-workspace") {
       const found = findByKey(event.key);
-      if (!found || found.workspace.path === null) {
+      if (!found || found.workspace.phase === "creating") {
         logger.warn("Dropped hibernate-workspace for unknown key", { key: event.key });
         return;
       }
       dispatchDetached({
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: found.workspace.path },
+        payload: { workspaceRef: found.workspace.ref },
       });
       return;
     }
@@ -1787,7 +1785,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       }
       dispatchDetached({
         type: INTENT_CLOSE_PROJECT,
-        payload: { projectPath: project.path, interactive: true },
+        payload: { projectRef: project.ref, interactive: true },
       });
     }
   };
@@ -1813,11 +1811,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return ((index % length) + length) % length;
   }
 
-  /** Switch to a workspace by its real path (placeholders are skipped upstream). */
-  function navigateSwitch(workspacePath: WorkspacePath): void {
+  /** Switch to a workspace (placeholders are skipped upstream). */
+  function navigateSwitch(workspaceRef: WorkspaceRef): void {
     dispatchDetached({
       type: INTENT_SWITCH_WORKSPACE,
-      payload: { workspacePath, focus: false },
+      payload: { workspaceRef, focus: false },
     });
   }
 
@@ -1843,8 +1841,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // Wrapped back to where we started: nothing else is navigable.
       if (index === currentIndex) return;
       const target = entries[index];
-      if (target && target.workspace.path !== null) {
-        navigateSwitch(target.workspace.path);
+      if (target && target.workspace.phase !== "creating") {
+        navigateSwitch(target.workspace.ref);
         return;
       }
     }
@@ -1897,8 +1895,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     if (targetIndex === -1) return;
     const target = entries[targetIndex];
-    if (!target || target.workspace.path === null) return;
-    navigateSwitch(target.workspace.path);
+    if (!target || target.workspace.phase === "creating") return;
+    navigateSwitch(target.workspace.ref);
   }
 
   /**
@@ -1912,26 +1910,26 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   function handleJump(key: JumpKey): void {
     const index = jumpKeyToIndex(key);
     const target = currentRows().filter((e) => !e.row.hibernated)[index];
-    if (!target || target.workspace.path === null) return;
-    navigateSwitch(target.workspace.path);
+    if (!target || target.workspace.phase === "creating") return;
+    navigateSwitch(target.workspace.ref);
   }
 
   /** Toggle hibernation on the active workspace (h key). */
   function handleHibernateToggle(): void {
     if (activeKey === null) return;
     const active = findByKey(activeKey);
-    if (!active || active.workspace.path === null) return;
+    if (!active || active.workspace.phase === "creating") return;
     // Hibernating needs a running workspace; one still opening has nothing to stop.
     if (active.workspace.phase !== "ready") return;
     if (active.workspace.hibernated) {
       dispatchDetached({
         type: INTENT_WAKE_WORKSPACE,
-        payload: { workspacePath: active.workspace.path, source: "ui-ipc" },
+        payload: { workspaceRef: active.workspace.ref, source: "ui-ipc" },
       });
     } else {
       dispatchDetached({
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: active.workspace.path },
+        payload: { workspaceRef: active.workspace.ref },
       });
     }
   }
@@ -1949,16 +1947,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       if (activeKey === null) return; // creation panel already showing
       dispatchDetached({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: null },
+        payload: { workspaceRef: null },
       });
       return;
     }
     if (activeKey === null) return;
     const active = findByKey(activeKey);
-    if (!active || active.workspace.path === null) return;
+    if (!active || active.workspace.phase === "creating") return;
     const status = rowStatus(active.workspace);
     if (status === "creating" || status === "loading" || status === "deleting") return;
-    dispatchInteractiveDelete(active.workspace.path);
+    dispatchInteractiveDelete(active.workspace.ref);
   }
 
   /**
@@ -2031,8 +2029,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     [EVENT_PROJECT_OPENED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const { project } = (event as ProjectOpenedEvent).payload;
-        if (findProjectByPath(project.path)) return;
+        if (findProjectByRef(project.ref)) return;
         projects.set(project.id, {
+          ref: project.ref,
           id: project.id,
           name: project.name,
           path: project.path,
@@ -2041,8 +2040,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             project.workspaces.map((workspace) => [
               workspace.name as string,
               {
+                ref: workspace.ref,
                 name: workspace.name,
-                path: workspace.path,
                 ...fromMetadata(workspace.metadata),
                 url: workspace.url,
                 // project:open opens every awake workspace after announcing
@@ -2092,8 +2091,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         if (project) {
           // Setting by name replaces a creating placeholder in place.
           project.workspaces.set(p.workspaceName as string, {
+            ref: p.workspaceRef,
             name: p.workspaceName,
-            path: p.workspacePath,
             ...fromMetadata(p.metadata),
             url: p.workspaceUrl,
             phase: "ready",
@@ -2112,13 +2111,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           applyActiveKey(key);
         } else if (activeKey === key && !p.reopened) {
           // The view is on this placeholder — the user may have clicked it,
-          // which only moves the view (a placeholder has no path to switch
-          // to): make it the active workspace main-side too, which the
+          // which only moves the view (a placeholder has no workspace to switch
+          // to yet): make it the active workspace main-side too, which the
           // operation declines once the user has moved. A no-op when the
           // operation switches itself.
           dispatchDetached({
             type: INTENT_SWITCH_WORKSPACE,
-            payload: { workspacePath: p.workspacePath },
+            payload: { workspaceRef: p.workspaceRef },
           });
         }
         scheduleUpdate();
@@ -2127,7 +2126,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     [EVENT_WORKSPACE_LOADING]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as WorkspaceLoadingEvent).payload;
-        const project = findProjectByPath(p.projectPath);
+        const project = findProjectByRef(p.projectRef);
         if (!project) return;
         // Name-guarded: loading also fires for wakes/reopens of existing
         // workspaces, which must not create a duplicate entry.
@@ -2136,9 +2135,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           if (workspace.name.toLowerCase() === nameLower) return;
         }
         project.workspaces.set(p.workspaceName, {
+          ref: makeWorkspaceRef(project.ref, p.workspaceName),
           name: p.workspaceName,
           title: undefined,
-          path: null,
           hibernated: false,
           tags: [],
           url: undefined,
@@ -2158,7 +2157,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     [EVENT_WORKSPACE_CREATE_FAILED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as WorkspaceCreateFailedEvent).payload;
-        const project = findProjectByPath(p.projectPath);
+        const project = findProjectByRef(p.projectRef);
         const workspace = project?.workspaces.get(p.workspaceName);
         if (!project || !workspace) return;
         if (workspace.phase === "loading") {
@@ -2184,7 +2183,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const p = (event as WorkspaceWakeFailedEvent).payload;
         for (const project of projects.values()) {
           for (const workspace of project.workspaces.values()) {
-            if (workspace.path !== p.workspacePath || workspace.phase !== "loading") continue;
+            if (workspace.ref !== p.workspaceRef || workspace.phase !== "loading") continue;
             workspace.phase = "open-failed";
             workspace.openError = p.error;
             scheduleUpdate();
@@ -2196,12 +2195,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as WorkspaceDeletedEvent).payload;
         projects.get(p.projectId)?.workspaces.delete(p.workspaceName as string);
-        deletions.delete(p.workspacePath);
-        framesReleased.delete(p.workspacePath);
-        agentStatuses.delete(p.workspacePath);
+        deletions.delete(p.workspaceRef);
+        framesReleased.delete(p.workspaceRef);
+        agentStatuses.delete(p.workspaceRef);
         screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
         // A card about a workspace that is gone has nothing left to point at.
-        notifications.closeWorkspace(p.workspacePath);
+        notifications.closeWorkspace(p.workspaceRef);
         scheduleUpdate();
       },
     },
@@ -2210,9 +2209,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         const progress = (event as WorkspaceDeletionProgressEvent).payload as DeletionProgress;
         if (progress.completed && !progress.hasErrors) {
           // Auto-clear on successful completion (workspace:deleted removes the row).
-          deletions.delete(progress.workspacePath);
+          deletions.delete(progress.workspaceRef);
         } else {
-          deletions.set(progress.workspacePath, progress);
+          deletions.set(progress.workspaceRef, progress);
         }
         scheduleUpdate();
       },
@@ -2249,7 +2248,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       handler: async (event: DomainEvent): Promise<void> => {
         const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
         agentStatuses.set(
-          workspace.path,
+          workspace.ref,
           status.status === "none"
             ? AGENT_NONE
             : {
@@ -2513,8 +2512,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     dialog: (config: DialogConfig, options?: DialogOpenOptions): DialogHandle =>
       dialogs.open(config, options),
     isModalOpen: (): boolean => dialogs.isModalOpen(),
-    deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
-      deletions.get(workspacePath),
+    deletionProgress: (workspaceRef: WorkspaceRef): DeletionProgress | undefined =>
+      deletions.get(workspaceRef),
     reloadFrame,
     trackRunningHook,
     cancelRunningHooks,
@@ -2571,8 +2570,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         shutdown: {
           requires: { "agent-stopped": ANY_VALUE },
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspacePath } = ctx as DeletePipelineHookInput;
-            framesReleased.add(workspacePath);
+            const { workspaceRef } = ctx as DeletePipelineHookInput;
+            framesReleased.add(workspaceRef);
             scheduleUpdate();
             return { result: {} };
           },

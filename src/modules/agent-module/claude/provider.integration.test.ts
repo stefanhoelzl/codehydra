@@ -31,6 +31,9 @@ import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesy
 import type { AgentStatus } from "../types";
 import { testPath } from "../../../shared/test-fixtures";
 
+/** The ref every workspace in these tests is started with. */
+const WORKSPACE_REF = "ch::local::/test::workspace";
+
 /**
  * Send a hook to the bridge server.
  */
@@ -106,7 +109,7 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("connect/disconnect/reconnect", () => {
     it("connect subscribes to status changes", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];
@@ -122,7 +125,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("disconnect stops receiving status changes", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];
@@ -139,7 +142,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("reconnect resubscribes to status changes", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];
@@ -156,7 +159,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("connect is idempotent", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
 
       await provider.connect(port);
       await provider.connect(port); // Second call should be no-op
@@ -180,7 +183,7 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("status change forwarding", () => {
     it("forwards status changes from ServerManager", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];
@@ -196,7 +199,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("multiple subscribers receive changes", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges1: AgentStatus[] = [];
@@ -211,7 +214,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("unsubscribe stops notifications", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];
@@ -233,14 +236,14 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("returns null before session starts", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       expect(provider.getSession()).toBeNull();
     });
 
     it("returns session info after SessionStart hook", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       await sendHook(port, "SessionStart", {
@@ -261,7 +264,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("returns environment variables after connect", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -271,14 +274,15 @@ describe("ClaudeCodeProvider integration", () => {
       expect(env).toHaveProperty("_CH_CLAUDE_SYSTEM_PROMPT");
       expect(env).toHaveProperty("_CH_BRIDGE_PORT");
       expect(env).toHaveProperty("_CH_API_TOKEN");
-      expect(env).toHaveProperty("_CH_WORKSPACE_PATH");
+      expect(env).toHaveProperty("_CH_WORKSPACE");
+      expect(env).not.toHaveProperty("_CH_WORKSPACE_PATH");
 
       // Check values
       expect(env._CH_BRIDGE_PORT).toBe(String(port));
       // The token lets `ch` in this terminal reach CodeHydra; the MCP server has
       // no port of its own any more, being a stdio subprocess.
       expect(env._CH_API_TOKEN).toBe("test-token");
-      expect(env._CH_WORKSPACE_PATH).toBe(workspacePath);
+      expect(env._CH_WORKSPACE).toBe(WORKSPACE_REF);
       expect(env._CH_CLAUDE_SETTINGS).toContain("codehydra-hooks.json");
       expect(env._CH_CLAUDE_MCP_CONFIG).toContain("codehydra-mcp.json");
       // Shared across workspaces: the runtime bin dir, not the per-workspace config dir
@@ -302,7 +306,9 @@ describe("ClaudeCodeProvider integration", () => {
         logger: SILENT_LOGGER,
       });
 
-      const port = await serverManagerNoMcp.startServer(workspacePath);
+      const port = await serverManagerNoMcp.startServer(workspacePath, {
+        workspaceRef: WORKSPACE_REF,
+      });
       await providerNoMcp.connect(port);
 
       const env = providerNoMcp.getEnvironmentVariables();
@@ -313,7 +319,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("includes initial prompt file path when prompt is set", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
 
       // Set initial prompt before connecting
       await serverManager.setInitialPrompt(workspacePath, { prompt: "Hello!" });
@@ -326,7 +332,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("omits initial prompt file path when no prompt is set", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -334,7 +340,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("includes no-session marker path when marker is set", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
 
       await serverManager.setNoSessionMarker(workspacePath);
 
@@ -346,7 +352,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("omits no-session marker path when no marker is set", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -356,7 +362,7 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("dispose", () => {
     it("clears all state", async () => {
-      const port = await serverManager.startServer(workspacePath);
+      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
       await provider.connect(port);
 
       const statusChanges: AgentStatus[] = [];

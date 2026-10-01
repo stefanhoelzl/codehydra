@@ -24,6 +24,7 @@
  * - app-shutdown/stop: unsubscribes and clears timers
  */
 
+import type { WorkspaceRef } from "../intents/contract";
 import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
@@ -40,7 +41,7 @@ import type { UiPresenter } from "./presentation/presentation-module";
 export const RECONNECT_GRACE_MS = 15_000;
 
 interface WatchdogTransport {
-  onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
+  onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void;
   onWorkspaceDisconnected(listener: (disconnect: WorkspaceDisconnect) => void): () => void;
 }
 
@@ -59,69 +60,69 @@ interface Watch {
 
 export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): IntentModule {
   const { transport, frames, logger } = deps;
-  const watches = new Map<string, Watch>();
+  const watches = new Map<WorkspaceRef, Watch>();
 
-  function forget(workspacePath: string): Watch | undefined {
-    const watch = watches.get(workspacePath);
+  function forget(workspaceRef: WorkspaceRef): Watch | undefined {
+    const watch = watches.get(workspaceRef);
     if (watch) {
       clearTimeout(watch.timer);
-      watches.delete(workspacePath);
+      watches.delete(workspaceRef);
     }
     return watch;
   }
 
   function forgetAll(): void {
-    for (const workspacePath of [...watches.keys()]) forget(workspacePath);
+    for (const workspaceRef of [...watches.keys()]) forget(workspaceRef);
   }
 
-  function arm(workspacePath: string, phase: Watch["phase"], reason: string): void {
+  function arm(workspaceRef: WorkspaceRef, phase: Watch["phase"], reason: string): void {
     const timer = setTimeout(() => {
-      watches.delete(workspacePath);
+      watches.delete(workspaceRef);
       if (phase === "waiting") {
-        judgeDead(workspacePath, reason);
+        judgeDead(workspaceRef, reason);
       } else {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .warn("Workspace IDE still disconnected after reloading its frame; leaving it", {
             reason,
           });
       }
     }, RECONNECT_GRACE_MS);
-    watches.set(workspacePath, { phase, reason, timer });
+    watches.set(workspaceRef, { phase, reason, timer });
   }
 
-  function judgeDead(workspacePath: string, reason: string): void {
+  function judgeDead(workspaceRef: WorkspaceRef, reason: string): void {
     // The presenter decides whether there is a frame at all: one hibernated,
     // released for deletion, or closed since the disconnect has nothing to
     // reload, and its IDE is supposed to be gone.
-    if (!frames.reloadFrame(workspacePath)) {
+    if (!frames.reloadFrame(workspaceRef)) {
       logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .debug("Workspace IDE disconnected but its frame is gone; nothing to reload", { reason });
       return;
     }
     logger
-      .scoped({ path: workspacePath })
+      .scoped({ workspace: workspaceRef })
       .warn("Workspace IDE disconnected and did not come back; reloaded its frame", {
         reason,
         graceMs: RECONNECT_GRACE_MS,
       });
-    arm(workspacePath, "reloaded", reason);
+    arm(workspaceRef, "reloaded", reason);
   }
 
   const unsubscribes = [
-    transport.onWorkspaceDisconnected(({ workspacePath, reason, initiatedByUs }) => {
-      forget(workspacePath);
+    transport.onWorkspaceDisconnected(({ workspaceRef, reason, initiatedByUs }) => {
+      forget(workspaceRef);
       // Our own hang-ups (hibernate, delete, project close, quit) mean the IDE
       // is meant to be gone.
       if (initiatedByUs) return;
-      arm(workspacePath, "waiting", reason);
+      arm(workspaceRef, "waiting", reason);
     }),
-    transport.onWorkspaceConnected((workspacePath) => {
-      const watch = forget(workspacePath);
+    transport.onWorkspaceConnected((workspaceRef) => {
+      const watch = forget(workspaceRef);
       if (watch?.phase === "reloaded") {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .info("Workspace IDE reconnected after its frame was reloaded");
       }
     }),

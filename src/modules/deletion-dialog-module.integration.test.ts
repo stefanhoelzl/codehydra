@@ -28,10 +28,10 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DeletionProgress } from "../shared/api/types";
-import type { WorkspacePath } from "../shared/ipc";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
 import type { DialogConfig } from "../shared/dialog-types";
 import { testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -64,8 +64,9 @@ function cancelRoleButtonId(config: DialogConfig): string | undefined {
 // Test Constants
 // =============================================================================
 
-const WS_PATH_A = testPath("/projects/workspace-a").toNative() as WorkspacePath;
-const WS_PATH_B = testPath("/projects/workspace-b").toNative() as WorkspacePath;
+const PROJECT_REF = projectRefFor(testPath("/projects").toString());
+const WS_PATH_A = makeWorkspaceRef(PROJECT_REF, "workspace-a");
+const WS_PATH_B = makeWorkspaceRef(PROJECT_REF, "workspace-b");
 const WS_NAME_A = "workspace-a" as WorkspaceName;
 const WS_NAME_B = "workspace-b" as WorkspaceName;
 const PROJECT_ID = "test-project-12345678" as ProjectId;
@@ -91,7 +92,7 @@ function createMockDispatcher() {
 
 function makeProgress(overrides?: Partial<DeletionProgress>): DeletionProgress {
   return {
-    workspacePath: WS_PATH_A,
+    workspaceRef: WS_PATH_A,
     workspaceName: WS_NAME_A,
     projectId: PROJECT_ID,
     keepBranch: false,
@@ -113,7 +114,7 @@ interface TestSetup {
   dispatcher: ReturnType<typeof createMockDispatcher>;
   fireProgress(progress: DeletionProgress): Promise<void>;
   fireSwitched(path: string | null): Promise<void>;
-  fireDeleted(workspacePath: string): Promise<void>;
+  fireDeleted(workspaceRef: string): Promise<void>;
   /** Workspace paths `ui.cancelRunningHooks` was called with, in order. */
   canceledHooks: string[];
 }
@@ -131,7 +132,7 @@ function createTestSetup(): TestSetup {
   const module = createDeletionDialogModule({
     ui: {
       ...dialogManager.ui,
-      deletionProgress: (path: string) => progressStore.get(path),
+      deletionProgress: (ref: string) => progressStore.get(ref),
       cancelRunningHooks: (path: string) => canceledHooks.push(path),
     },
     dispatcher: dispatcher as unknown as Dispatcher,
@@ -140,9 +141,9 @@ function createTestSetup(): TestSetup {
 
   const fireProgress = async (progress: DeletionProgress): Promise<void> => {
     if (progress.completed && !progress.hasErrors) {
-      progressStore.delete(progress.workspacePath);
+      progressStore.delete(progress.workspaceRef);
     } else {
-      progressStore.set(progress.workspacePath, progress);
+      progressStore.set(progress.workspaceRef, progress);
     }
     await module.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler({
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
@@ -153,15 +154,15 @@ function createTestSetup(): TestSetup {
   const fireSwitched = async (path: string | null): Promise<void> => {
     await module.events![EVENT_WORKSPACE_SWITCHED]!.handler({
       type: EVENT_WORKSPACE_SWITCHED,
-      payload: path !== null ? { path } : null,
+      payload: path !== null ? { workspaceRef: path } : null,
     });
   };
 
-  const fireDeleted = async (workspacePath: string): Promise<void> => {
-    progressStore.delete(workspacePath);
+  const fireDeleted = async (workspaceRef: string): Promise<void> => {
+    progressStore.delete(workspaceRef);
     await module.events![EVENT_WORKSPACE_DELETED]!.handler({
       type: EVENT_WORKSPACE_DELETED,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     });
   };
 
@@ -208,7 +209,7 @@ describe("DeletionDialogModule", () => {
     await fireSwitched(WS_PATH_A);
 
     // Fire deletion progress for workspace B (not active)
-    await fireProgress(makeProgress({ workspacePath: WS_PATH_B, workspaceName: WS_NAME_B }));
+    await fireProgress(makeProgress({ workspaceRef: WS_PATH_B, workspaceName: WS_NAME_B }));
 
     expect(dialogManager.manager.open).not.toHaveBeenCalled();
   });
@@ -321,7 +322,7 @@ describe("DeletionDialogModule", () => {
     expect(handleA.closed).toBe(false);
 
     // Also track deletion for workspace B
-    await fireProgress(makeProgress({ workspacePath: WS_PATH_B, workspaceName: WS_NAME_B }));
+    await fireProgress(makeProgress({ workspaceRef: WS_PATH_B, workspaceName: WS_NAME_B }));
 
     // Switch to workspace B (which also has deletion progress)
     await fireSwitched(WS_PATH_B);
@@ -394,7 +395,7 @@ describe("DeletionDialogModule", () => {
     const retryIntent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
     expect(retryIntent).toBeDefined();
     const payload = retryIntent!.payload as Record<string, unknown>;
-    expect(payload.workspacePath).toBe(WS_PATH_A);
+    expect(payload.workspaceRef).toBe(WS_PATH_A);
     expect(payload.keepBranch).toBe(true);
     expect(payload.ignoreWarnings).toBe(true);
     expect(payload.blockingPids).toEqual([1234]);
@@ -435,7 +436,7 @@ describe("DeletionDialogModule", () => {
     const forceIntent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
     expect(forceIntent).toBeDefined();
     const payload = forceIntent!.payload as Record<string, unknown>;
-    expect(payload.workspacePath).toBe(WS_PATH_A);
+    expect(payload.workspaceRef).toBe(WS_PATH_A);
     expect(payload.force).toBe(true);
     expect(payload.ignoreWarnings).toBe(true);
   });
@@ -646,15 +647,17 @@ describe("DeletionDialogModule - remove confirm", () => {
         intent: {
           type: INTENT_DELETE_WORKSPACE,
           payload: {
-            workspacePath: WS_PATH_A,
+            workspaceRef: WS_PATH_A,
             keepBranch: false,
             force: false,
             removeWorktree: true,
             interactive: true,
           },
         },
+        projectRef: PROJECT_REF,
         projectPath: testPath("/projects").toNative(),
-        workspacePath: WS_PATH_A,
+        workspaceRef: WS_PATH_A,
+        workspacePath: testPath("/projects/workspace-a").toNative(),
         workspaceName: WS_NAME_A,
         active: true,
       } as unknown as HookContext)) as HookOutput<ConfirmHookResult>;

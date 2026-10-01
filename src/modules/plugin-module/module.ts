@@ -45,7 +45,6 @@
  * removed.
  */
 
-import type { ProjectMoveListener } from "../workspaces-root/workspaces-root";
 import type { z } from "zod/v4";
 import type { IntentModule, EventDeclarations, HookDeclarations } from "../../intents/lib/module";
 import type { DomainEvent } from "../../intents/lib/types";
@@ -93,12 +92,13 @@ import {
   INTENT_RESOLVE_WORKSPACE,
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import { projectRefSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 import {
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
 } from "../../intents/vscode-show-message";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
 import type { PluginListing, Plugins } from "../../api/entries/deps";
@@ -126,7 +126,7 @@ import {
 } from "./discovery";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
-import { createPluginTrust, type PluginTrust } from "./trust";
+import { createPluginTrust, type PluginTrust, type TrustProject } from "./trust";
 import { createShellResolver, ShellUnavailableError } from "./shells";
 import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
 import type { HookOutputSink } from "./output-sink";
@@ -168,7 +168,12 @@ export interface PluginModuleDeps {
    * migration offer for old `.codehydra/hooks` is shown there, so it needs an
    * editor to show in.
    */
-  readonly workspaceConnected: (listener: (workspacePath: string) => void) => () => void;
+  readonly workspaceConnected: (listener: (workspaceRef: WorkspaceRef) => void) => () => void;
+  /**
+   * The ref of every project with a record, by its path — what the startup
+   * migration turns stored project paths into.
+   */
+  readonly projectRefs: () => Promise<ReadonlyMap<string, ProjectRef>>;
   /**
    * The operation registry, for automations' actions. A getter: the registry's
    * `plugin.*` entries reach this module, so it is built after it.
@@ -185,8 +190,6 @@ export interface PluginModuleDeps {
 // =============================================================================
 
 export interface PluginModule extends IntentModule {
-  /** Carry stored answers over to projects whose path changed. */
-  readonly moveProjects: ProjectMoveListener;
   /** What the `plugin.*` registry entries reach (`ch plugin`). */
   readonly api: Plugins;
 }
@@ -285,9 +288,11 @@ interface HookScript {
   readonly script: string;
 }
 
-/** The workspace a hook is about. */
+/** The workspace a hook is about: by ref, and by the paths its scripts run in. */
 interface HookTarget {
+  readonly workspaceRef: WorkspaceRef;
   readonly workspacePath: string;
+  readonly projectRef: ProjectRef;
   readonly projectPath: string;
   readonly workspaceName: string;
 }
@@ -467,13 +472,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         ...local,
         ...workspace.filter(
           (script) =>
-            trust.state("workspace", script.plugin.name, target.projectPath) !== "disabled"
+            trust.state("workspace", script.plugin.name, trustProject(target)) !== "disabled"
         ),
       ];
     }
 
     const names = [...new Set(workspace.map((script) => script.plugin.name))];
-    const allowed = await trust.check({ ...target, plugins: names });
+    const allowed = await trust.check({
+      project: trustProject(target),
+      workspaceRef: target.workspaceRef,
+      plugins: names,
+    });
     return [...local, ...workspace.filter((script) => allowed.has(script.plugin.name))];
   }
 
@@ -590,7 +599,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     ] as const) {
       for (const line of text.split(/\r?\n/)) {
         if (line.trim() !== "") {
-          deps.sink.write(target.workspacePath, `${script.plugin.id} ${entry} ${stream}`, line);
+          deps.sink.write(target.workspaceRef, `${script.plugin.id} ${entry} ${stream}`, line);
         }
       }
     }
@@ -637,7 +646,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   ): Promise<T> {
     const controller = new AbortController();
     const untrack = deps.ui.trackRunningHook({
-      ...target,
+      workspaceRef: target.workspaceRef,
+      workspaceName: target.workspaceName,
       entry: label(script, entry),
       phase,
       cancel: () => controller.abort(),
@@ -663,7 +673,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     schema: S
   ): Promise<z.infer<S>[]> {
     // Whatever happened to this workspace's editor before, it is coming now.
-    deps.sink.opening(target.workspacePath);
+    deps.sink.opening(target.workspaceRef);
     if (!allowed()) return [];
 
     const outputs: z.infer<S>[] = [];
@@ -707,7 +717,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       if (output.tags !== undefined) merged.tags = { ...merged.tags, ...output.tags };
     }
     const metadata = toMetadata(merged);
-    await persistMetadata(input.workspacePath, metadata);
+    await persistMetadata(input.workspaceRef, metadata);
     return { result: Object.keys(metadata).length > 0 ? { metadata } : {} };
   }
 
@@ -750,16 +760,34 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       workspaceName: intent.payload.existingWorkspace?.name ?? intent.payload.workspaceName,
       workspacePath: input.workspacePath,
       projectPath: input.projectPath,
+      workspace: input.workspaceRef,
+      project: input.projectRef,
       ...(input.branch !== undefined && { branch: input.branch }),
       ...(input.base !== undefined && { base: input.base }),
     };
   }
 
   function targetOf(
-    input: { workspacePath: string; projectPath: string },
+    input: {
+      workspaceRef: WorkspaceRef;
+      workspacePath: string;
+      projectRef: ProjectRef;
+      projectPath: string;
+    },
     workspaceName: string
   ): HookTarget {
-    return { workspacePath: input.workspacePath, projectPath: input.projectPath, workspaceName };
+    return {
+      workspaceRef: input.workspaceRef,
+      workspacePath: input.workspacePath,
+      projectRef: input.projectRef,
+      projectPath: input.projectPath,
+      workspaceName,
+    };
+  }
+
+  /** A target's project, as trust asks about it. */
+  function trustProject(target: HookTarget): TrustProject {
+    return { ref: target.projectRef, path: target.projectPath };
   }
 
   // ---------------------------------------------------------------------------
@@ -785,17 +813,19 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const scripts = await hookScripts(entry, target, { ask: true });
     if (scripts.length === 0) return { result: {} };
 
-    const identity = await resolveBranchAndBase(input.workspacePath);
+    const identity = await resolveBranchAndBase(input.workspaceRef);
 
     // The editor was torn down at "shutdown" and is not coming back: whatever
     // these scripts print belongs in their run logs, not in a buffer nobody
     // will flush.
-    deps.sink.closed(input.workspacePath);
+    deps.sink.closed(input.workspaceRef);
 
     const stdin = {
       workspaceName: input.workspaceName,
       workspacePath: input.workspacePath,
       projectPath: input.projectPath,
+      workspace: input.workspaceRef,
+      project: input.projectRef,
       ...identity,
       keepBranch: intent.payload.keepBranch,
     };
@@ -850,15 +880,22 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   function onWorkspaceOpened(event: DomainEvent): void {
     const payload = (event as WorkspaceCreatedEvent).payload;
     const entry = ON_WORKSPACE_OPENED.name;
-    const target = targetOf(payload, payload.workspaceName);
 
     void (async (): Promise<void> => {
       try {
         if (!allowed()) return;
+        // The event names the workspace by ref; its scripts run in its directory.
+        const resolved = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
+          type: INTENT_RESOLVE_WORKSPACE,
+          payload: { workspaceRef: payload.workspaceRef },
+        });
+        const target = targetOf(resolved, payload.workspaceName);
         const stdin = {
           workspaceName: payload.workspaceName,
-          workspacePath: payload.workspacePath,
-          projectPath: payload.projectPath,
+          workspacePath: resolved.workspacePath,
+          projectPath: resolved.projectPath,
+          workspace: payload.workspaceRef,
+          project: payload.projectRef,
           ...(payload.branch !== undefined && { branch: payload.branch }),
           ...(payload.base !== undefined && { base: payload.base }),
           reopened: payload.reopened === true,
@@ -889,14 +926,14 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * title, and none of it should cost the workspace.
    */
   async function persistMetadata(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     metadata: Record<string, string>
   ): Promise<void> {
     for (const [key, value] of Object.entries(metadata)) {
       try {
         await deps.dispatcher.dispatch<SetMetadataIntent>({
           type: INTENT_SET_METADATA,
-          payload: { workspacePath, key, value },
+          payload: { workspaceRef, key, value },
         });
       } catch (error) {
         deps.logger.warn("Could not persist metadata from a hook", {
@@ -924,12 +961,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * without the two optional fields.
    */
   async function resolveBranchAndBase(
-    workspacePath: WorkspacePath
+    workspaceRef: WorkspaceRef
   ): Promise<{ branch?: string; base?: string }> {
     try {
       const resolved = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath },
+        payload: { workspaceRef },
       });
       const base = resolved.metadata["base"];
       return {
@@ -938,7 +975,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       };
     } catch (error) {
       deps.logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .debug("Could not resolve branch/base for a hook", { error: getErrorMessage(error) });
       return {};
     }
@@ -1209,7 +1246,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // ---------------------------------------------------------------------------
 
   /** Workspaces with an offer on screen, so a reconnect does not stack a second. */
-  const offering = new Set<string>();
+  const offering = new Set<WorkspaceRef>();
 
   /**
    * Offer to migrate a worktree's old `.codehydra/hooks`, which no longer run.
@@ -1219,10 +1256,14 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * a setup step that no longer happens is easy to miss. Migrate writes
    * `.codehydra/plugins/hooks.yaml` (legacy-hooks.ts) for the user to commit.
    */
-  async function offerHookMigration(workspacePath: string): Promise<void> {
-    if (offering.has(workspacePath)) return;
-    offering.add(workspacePath);
+  async function offerHookMigration(workspaceRef: WorkspaceRef): Promise<void> {
+    if (offering.has(workspaceRef)) return;
+    offering.add(workspaceRef);
     try {
+      const { workspacePath } = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
+        type: INTENT_RESOLVE_WORKSPACE,
+        payload: { workspaceRef },
+      });
       const worktree = new Path(workspacePath);
       const files = await listLegacyHooks(deps.fileSystem, worktree);
       if (files.length === 0) return;
@@ -1231,11 +1272,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         return;
       }
 
-      const target = workspacePathSchema.parse(workspacePath);
       const answer = await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath: target,
+          workspaceRef,
           type: "warning",
           message:
             `This repository's ${LEGACY_HOOKS_DIR.join("/")} (${files.join(", ")}) no longer ` +
@@ -1261,7 +1301,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath: target,
+          workspaceRef,
           type: "info",
           message:
             `Wrote .codehydra/plugins/${MIGRATED_PLUGIN_FILE}: commit it. The hooks run again ` +
@@ -1273,40 +1313,41 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       });
     } catch (error) {
       deps.logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .warn("Could not offer to migrate .codehydra/hooks", { error: getErrorMessage(error) });
     } finally {
-      offering.delete(workspacePath);
+      offering.delete(workspaceRef);
     }
   }
 
-  deps.workspaceConnected((workspacePath) => {
-    void offerHookMigration(workspacePath);
+  deps.workspaceConnected((workspaceRef) => {
+    void offerHookMigration(workspaceRef);
   });
 
   // ---------------------------------------------------------------------------
   // `ch plugin`
   // ---------------------------------------------------------------------------
 
-  function listing(plugin: LoadedPlugin, projectPath?: string): PluginListing {
+  function listing(plugin: LoadedPlugin, project?: TrustProject): PluginListing {
     return {
       id: plugin.id,
       name: plugin.name,
       origin: plugin.origin,
-      state: trust.state(plugin.origin, plugin.name, projectPath),
+      state: trust.state(plugin.origin, plugin.name, project),
       platforms: plugin.platforms,
       path: (plugin.pluginDir ?? plugin.manifestPath).toNative(),
-      ...(plugin.origin === "workspace" && projectPath !== undefined && { project: projectPath }),
+      ...(plugin.origin === "workspace" && project !== undefined && { project: project.ref }),
     };
   }
 
   const api: Plugins = {
     async list(scope) {
       const listings = (await loadLocal()).map((plugin) => listing(plugin));
-      if (scope.workspacePath !== null && scope.projectPath !== null) {
-        const workspace = await loadWorkspace(new Path(scope.workspacePath), scope.projectPath);
+      if (scope.workspace !== null) {
+        const { workspacePath, projectRef, projectPath } = scope.workspace;
+        const workspace = await loadWorkspace(new Path(workspacePath), projectPath);
         listings.push(
-          ...workspace.map((plugin) => listing(plugin, scope.projectPath ?? undefined))
+          ...workspace.map((plugin) => listing(plugin, { ref: projectRef, path: projectPath }))
         );
       }
       return listings;
@@ -1314,7 +1355,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     async setState(scope, id, state) {
       const found = (await api.list(scope)).find((plugin) => plugin.id === id);
       if (found === undefined) {
-        if (id.startsWith("workspace:") && scope.workspacePath === null) {
+        if (id.startsWith("workspace:") && scope.workspace === null) {
           throw new ApiError(
             "no-workspace",
             `${id}: a repository's plugins are named from inside one of its workspaces (or with --workspace)`
@@ -1322,7 +1363,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         }
         throw new ApiError("not-found", `No plugin ${id}. \`ch plugin list\` shows them.`);
       }
-      await trust.set(found.origin, found.name, state, found.project);
+      await trust.set(
+        found.origin,
+        found.name,
+        state,
+        found.project === undefined ? undefined : projectRefSchema.parse(found.project)
+      );
       return { ...found, state };
     },
     errors: () => errors.list(),
@@ -1353,7 +1399,28 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Declarations
   // ---------------------------------------------------------------------------
 
+  /**
+   * Turn what versions before refs stored by project path — trust answers and
+   * automation tracking entries — into project refs. Before anything reads
+   * them; best-effort, since an entry left behind only costs a question or a
+   * looser match, never the start.
+   */
+  async function migrateProjectKeys(): Promise<void> {
+    try {
+      const refs = await deps.projectRefs();
+      await trust.migrateKeys(refs);
+      await automations.migrateEntries(refs);
+    } catch (error) {
+      deps.logger.warn("Could not move plugin state from project paths to refs", {
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   const hooks: HookDeclarations = {
+    [APP_START_OPERATION_ID]: {
+      migrations: { handler: migrateProjectKeys },
+    },
     [APP_SHUTDOWN_OPERATION_ID]: {
       stop: {
         handler: async () => {
@@ -1389,15 +1456,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     [EVENT_WORKSPACE_DELETED]: {
       // Its editor is never coming back, so neither is a reason to hold its output.
       handler: async (event: DomainEvent): Promise<void> => {
-        deps.sink.closed((event as WorkspaceDeletedEvent).payload.workspacePath);
+        deps.sink.closed((event as WorkspaceDeletedEvent).payload.workspaceRef);
       },
     },
   };
 
-  const moveProjects: ProjectMoveListener = async (moves) => {
-    await trust.moveProjects(moves);
-    await automations.moveProjects(moves);
-  };
-
-  return { name: "plugins", hooks, events, moveProjects, api };
+  return { name: "plugins", hooks, events, api };
 }

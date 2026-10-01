@@ -25,8 +25,9 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "../intents/contract";
+import { projPath, testPath } from "../shared/test-fixtures";
+import type { WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -44,7 +45,7 @@ interface TestSetup {
   mockClient: ReturnType<typeof createMockGitClient>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
-  workspacePath: WorkspacePath;
+  workspaceRef: WorkspaceRef;
 }
 
 function createTestSetup(): TestSetup {
@@ -101,7 +102,7 @@ function createTestSetup(): TestSetup {
     mockClient,
     projectId,
     workspaceName,
-    workspacePath: wsPath(workspacePath.toString()),
+    workspaceRef: makeWorkspaceRef(projectRefFor(PROJECT_ROOT.toString()), workspaceName),
   };
 }
 
@@ -111,17 +112,17 @@ function createTestSetup(): TestSetup {
 
 describe("MetadataModule Integration", () => {
   it("set then get returns correct metadata (round-trip)", async () => {
-    const { dispatcher, workspacePath } = createTestSetup();
+    const { dispatcher, workspaceRef } = createTestSetup();
 
     const setIntent: SetMetadataIntent = {
       type: INTENT_SET_METADATA,
-      payload: { workspacePath, key: "description", value: "my workspace" },
+      payload: { workspaceRef, key: "description", value: "my workspace" },
     };
     await dispatcher.dispatch(setIntent);
 
     const getIntent: GetMetadataIntent = {
       type: INTENT_GET_METADATA,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     };
     const metadata = await dispatcher.dispatch(getIntent);
 
@@ -129,24 +130,24 @@ describe("MetadataModule Integration", () => {
   });
 
   it("set with null value deletes key", async () => {
-    const { dispatcher, workspacePath } = createTestSetup();
+    const { dispatcher, workspaceRef } = createTestSetup();
 
     // Set a value first
     await dispatcher.dispatch({
       type: INTENT_SET_METADATA,
-      payload: { workspacePath, key: "description", value: "to be deleted" },
+      payload: { workspaceRef, key: "description", value: "to be deleted" },
     } satisfies SetMetadataIntent);
 
     // Delete it
     await dispatcher.dispatch({
       type: INTENT_SET_METADATA,
-      payload: { workspacePath, key: "description", value: null },
+      payload: { workspaceRef, key: "description", value: null },
     } satisfies SetMetadataIntent);
 
     // Get should not contain the deleted key
     const metadata = await dispatcher.dispatch({
       type: INTENT_GET_METADATA,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     } satisfies GetMetadataIntent);
 
     expect(metadata).not.toHaveProperty("description");

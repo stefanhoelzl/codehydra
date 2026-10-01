@@ -9,9 +9,10 @@ import { z } from "zod/v4";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
-import type { Logger, LogContext } from "../../boundaries/platform/logging";
+import type { Logger } from "../../boundaries/platform/logging";
 import { logAtLevel } from "../../boundaries/platform/logging";
 import type { LogLevel } from "../../boundaries/platform/logging-types";
+import { toLogContext } from "../../boundaries/platform/logging-types";
 
 import { ApiError } from "../errors";
 import { projectPathSchema } from "../../intents/contract";
@@ -35,7 +36,8 @@ export function appEntries(deps: EntryDeps, logger: Logger): readonly AnyOperati
     kind: "command",
     description: "List all open projects with their workspaces.",
     instructions:
-      "Call this to discover projectPath values before creating a workspace in another project.",
+      "Call this to discover project refs (and each workspace's ref) before acting on " +
+      "another project or workspace.",
     input: z.object({}),
     requiresWorkspace: false,
     handler: async () => {
@@ -93,13 +95,13 @@ export function appEntries(deps: EntryDeps, logger: Logger): readonly AnyOperati
     description: "Close a project and tear down its workspaces.",
     instructions:
       "Closing releases the project's workspaces at runtime; it does not delete their worktrees. " +
-      "Accepts a project name or path. Pass removeLocalRepo to also delete the project's own " +
+      "Accepts a project's name, path, origin or ref. Pass removeLocalRepo to also delete the project's own " +
       "directory — the clone for a project opened from a URL, the working copy for a local one. " +
       "That fails unless the project has no workspaces left, because deleting the directory " +
       "would orphan their worktrees and nothing here can confirm removing them; delete the " +
       "workspaces first, or close the project from the app's Close Project dialog.",
     input: z.object({
-      project: z.string().min(1).describe("Project name or path to close"),
+      project: z.string().min(1).describe("Project to close: its name, path, origin or ref"),
       removeLocalRepo: z
         .boolean()
         .optional()
@@ -123,7 +125,7 @@ export function appEntries(deps: EntryDeps, logger: Logger): readonly AnyOperati
       await dispatcher.dispatch<CloseProjectIntent>({
         type: INTENT_CLOSE_PROJECT,
         payload: {
-          projectPath: projectPathSchema.parse(resolved.path),
+          projectRef: resolved.ref,
           removeLocalRepo: input.removeLocalRepo,
           // Never interactive: a programmatic caller must not be parked on a
           // confirmation dialog nobody is watching.
@@ -150,11 +152,10 @@ export function appEntries(deps: EntryDeps, logger: Logger): readonly AnyOperati
     // log line, just without the workspace tag.
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const context: LogContext = {
-        ...(input.context ?? {}),
-        ...(ctx.workspacePath !== null && { workspace: ctx.workspacePath }),
-      };
-      logAtLevel(logger, input.level as LogLevel, input.message, context);
+      const context = toLogContext(input.context ?? {});
+      const target =
+        ctx.workspaceRef === null ? logger : logger.scoped({ workspace: ctx.workspaceRef });
+      logAtLevel(target, input.level as LogLevel, input.message, context);
       return null;
     },
   });

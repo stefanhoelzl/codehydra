@@ -16,6 +16,8 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType } from "../../shared/api-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
+import type { WorkspaceRef } from "../../intents/contract";
+import { Path } from "../../utils/path/path";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 
@@ -180,15 +182,24 @@ export function createAgentModule(
   /** Cleanup function for onStatusChange subscription. */
   let statusChangeCleanup: (() => void) | null = null;
 
+  /**
+   * Each workspace's ref by its path, learned when its agent is set up. The
+   * provider runs the agent in the workspace's directory and knows it by that
+   * path; the status it reports leaves this module named by ref.
+   */
+  const refsByPath = new Map<string, WorkspaceRef>();
+
   /** Initialize the provider on demand. Idempotent. */
   function ensureInitialized(): void {
     if (initialized) return;
     provider.initialize(capturedMcpConfig);
     statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
+      const workspaceRef = refsByPath.get(new Path(workspacePath).toString());
+      if (workspaceRef === undefined) return;
       void deps.dispatcher.dispatch<UpdateAgentStatusIntent>(
         {
           type: INTENT_UPDATE_AGENT_STATUS,
-          payload: { workspacePath, status },
+          payload: { workspaceRef, status },
         },
         { origin: "agent-hook" }
       );
@@ -223,14 +234,14 @@ export function createAgentModule(
    * Write (or, with null, clear) the pending prompt. Best-effort: a failure
    * only loses the restart safety net, never the workspace.
    */
-  async function setPendingPrompt(workspacePath: WorkspacePath, value: string | null) {
+  async function setPendingPrompt(workspaceRef: WorkspaceRef, value: string | null) {
     try {
       await deps.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
-        payload: { workspacePath, key: PENDING_PROMPT_METADATA_KEY, value },
+        payload: { workspaceRef, key: PENDING_PROMPT_METADATA_KEY, value },
       });
     } catch (error) {
-      logger.scoped({ path: workspacePath }).warn("Failed to update pending initial prompt", {
+      logger.scoped({ workspace: workspaceRef }).warn("Failed to update pending initial prompt", {
         error: getErrorMessage(error),
       });
     }
@@ -428,7 +439,8 @@ export function createAgentModule(
 
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
-            const workspacePath = setupCtx.workspacePath;
+            const { workspaceRef, workspacePath } = setupCtx;
+            refsByPath.set(new Path(workspacePath).toString(), workspaceRef);
 
             // A reopened workspace whose agent never took its prompt over (the app
             // quit first) gets it again, and starts as fresh as a new one.
@@ -439,16 +451,17 @@ export function createAgentModule(
             const initialPrompt = agentPromptConfigFor(spec, provider.type);
 
             if (existing === undefined && initialPrompt !== undefined) {
-              await setPendingPrompt(workspacePath, JSON.stringify(spec));
+              await setPendingPrompt(workspaceRef, JSON.stringify(spec));
             } else if (hasPending && initialPrompt === undefined) {
               // Unreadable, or nothing this agent can use: drop it rather than keep it forever.
-              await setPendingPrompt(workspacePath, null);
+              await setPendingPrompt(workspaceRef, null);
             }
 
             const result = await provider.startWorkspace(workspacePath, {
+              workspaceRef,
               ...(initialPrompt !== undefined && {
                 initialPrompt,
-                onInitialPromptDelivered: () => void setPendingPrompt(workspacePath, null),
+                onInitialPromptDelivered: () => void setPendingPrompt(workspaceRef, null),
               }),
               isNewWorkspace: existing === undefined || initialPrompt !== undefined,
               env: setupCtx.workspaceEnv,
@@ -468,6 +481,7 @@ export function createAgentModule(
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const result = await stopAgentForWorkspace(workspacePath, "delete shutdown");
+            refsByPath.delete(new Path(workspacePath).toString());
             if (result.error && !payload.force) {
               throw new Error(result.error);
             }

@@ -23,21 +23,22 @@
  * disk, and the next project open brings its editor back.
  */
 
+import type { WorkspaceRef } from "../../intents/contract";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { createWorkspaceOutput, type OutputTransport } from "../workspace-output";
 
 /** Where a hook's output should be shown, beyond its run log. */
 export interface HookOutputSink {
   /** One line of a hook's output, tagged with the plugin and entry that produced it. */
-  write(workspacePath: string, source: string, line: string): void;
+  write(workspaceRef: WorkspaceRef, source: string, line: string): void;
   /** The workspace is opening: its editor is on the way, so hold output for it. */
-  opening(workspacePath: string): void;
+  opening(workspaceRef: WorkspaceRef): void;
   /**
    * The workspace's editor is gone and is not coming back (torn down for a
    * deletion, or the workspace is deleted): drop what is held for it, and hold
    * nothing more until it opens again. The run log keeps every line regardless.
    */
-  closed(workspacePath: string): void;
+  closed(workspaceRef: WorkspaceRef): void;
 }
 
 /** The channel plugin hook output appears in. */
@@ -72,10 +73,10 @@ export function createHookOutputSink(deps: HookOutputSinkDeps): HookOutputSink {
     logger: deps.logger,
   });
   return {
-    write(workspacePath: string, source: string, line: string): void {
-      output.write(workspacePath, [{ source, text: line }]);
+    write(workspaceRef: WorkspaceRef, source: string, line: string): void {
+      output.write(workspaceRef, [{ source, text: line }]);
     },
-    opening: (workspacePath) => output.opening(workspacePath),
-    closed: (workspacePath) => output.closed(workspacePath),
+    opening: (workspaceRef) => output.opening(workspaceRef),
+    closed: (workspaceRef) => output.closed(workspaceRef),
   };
 }

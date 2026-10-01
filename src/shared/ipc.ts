@@ -11,7 +11,7 @@
 // type-only re-export, erased at build, so this browser-safe module pulls no zod at runtime
 // and renderer/preload keep importing ProjectPath/WorkspacePath from here unchanged.
 
-export type { ProjectPath, WorkspacePath } from "../intents/contract";
+export type { ProjectPath, ProjectRef, WorkspacePath, WorkspaceRef } from "../intents/contract";
 
 // ============ Domain Types ============
 

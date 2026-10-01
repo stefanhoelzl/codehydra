@@ -1,18 +1,28 @@
 /**
  * Shared preamble helpers for the workspace-lifecycle operations
- * (delete / hibernate / wake). Each begins by resolving a workspace path to its
+ * (delete / hibernate / wake). Each begins by resolving a workspace ref to its
  * full identity via two nested dispatches, and hibernate/wake share the same
- * "emit a {workspacePath, error} failure event, then rethrow" catch block.
+ * "emit a {workspaceRef, error} failure event, then rethrow" catch block.
  */
 
 import type { DispatchFn } from "./operation";
-import type { ProjectId, WorkspaceName, ProjectPath, WorkspacePath } from "../contract";
+import type {
+  ProjectId,
+  ProjectPath,
+  ProjectRef,
+  WorkspaceName,
+  WorkspacePath,
+  WorkspaceRef,
+} from "../contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "../resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "../resolve-project";
 import { getErrorMessage } from "../../shared/error-utils";
 
-/** A workspace's full identity, resolved from its path. */
+/** A workspace's full identity, resolved from its ref. */
 export interface ResolvedWorkspaceIdentity {
+  readonly workspaceRef: WorkspaceRef;
+  readonly workspacePath: WorkspacePath;
+  readonly projectRef: ProjectRef;
   readonly projectPath: ProjectPath;
   readonly workspaceName: WorkspaceName;
   readonly projectId: ProjectId;
@@ -22,29 +32,38 @@ export interface ResolvedWorkspaceIdentity {
 }
 
 /**
- * Resolve a workspace path to its full identity: dispatch workspace:resolve
- * (→ projectPath, workspaceName, active, branch) then project:resolve
- * (projectPath → projectId).
+ * Resolve a workspace ref to its full identity: dispatch workspace:resolve
+ * (→ path, project, workspaceName, active, branch) then project:resolve
+ * (projectRef → projectId).
  */
 export async function resolveWorkspaceIdentity(
   dispatch: DispatchFn,
-  workspacePath: WorkspacePath
+  workspaceRef: WorkspaceRef
 ): Promise<ResolvedWorkspaceIdentity> {
-  const { projectPath, workspaceName, active, branch } = await dispatch<ResolveWorkspaceIntent>({
+  const resolved = await dispatch<ResolveWorkspaceIntent>({
     type: INTENT_RESOLVE_WORKSPACE,
-    payload: { workspacePath },
+    payload: { workspaceRef },
   });
 
   const { projectId } = await dispatch<ResolveProjectIntent>({
     type: INTENT_RESOLVE_PROJECT,
-    payload: { projectPath },
+    payload: { projectRef: resolved.projectRef },
   });
 
-  return { projectPath, workspaceName, projectId, active, branch };
+  return {
+    workspaceRef: resolved.workspaceRef,
+    workspacePath: resolved.workspacePath,
+    projectRef: resolved.projectRef,
+    projectPath: resolved.projectPath,
+    workspaceName: resolved.workspaceName,
+    projectId,
+    active: resolved.active,
+    branch: resolved.branch,
+  };
 }
 
 /**
- * Build the `{workspacePath, error}` payload the hibernate/wake failure events carry.
+ * Build the `{workspaceRef, error}` payload the hibernate/wake failure events carry.
  *
  * Returns the payload rather than emitting it: `ctx.emit` is now typed to the events its own
  * operation declares, so a shared helper cannot emit on the operation's behalf without either
@@ -52,8 +71,8 @@ export async function resolveWorkspaceIdentity(
  * names is validated against its own bundle.
  */
 export function workspaceFailurePayload(
-  workspacePath: WorkspacePath,
+  workspaceRef: WorkspaceRef,
   error: unknown
-): { readonly workspacePath: WorkspacePath; readonly error: string } {
-  return { workspacePath, error: getErrorMessage(error) };
+): { readonly workspaceRef: WorkspaceRef; readonly error: string } {
+  return { workspaceRef, error: getErrorMessage(error) };
 }

@@ -2,7 +2,7 @@
  * VscodeCommandOperation - Execute a VS Code command in a workspace.
  *
  * Runs two steps:
- * 1. Dispatch workspace:resolve to validate workspacePath
+ * 1. Dispatch workspace:resolve to turn workspaceRef into the workspace
  * 2. "execute" hook — handler performs the actual command execution
  *
  * No provider dependencies - hook handlers do the actual work.
@@ -18,7 +18,7 @@ import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined } from "./lib/hook-helpers";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 
 export const INTENT_VSCODE_COMMAND = "vscode:command" as const;
 export const VSCODE_COMMAND_OPERATION_ID = "vscode-command";
@@ -29,7 +29,7 @@ export const VSCODE_COMMAND_OPERATION_ID = "vscode-command";
 
 export const vscodeCommandPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     command: z.string(),
     args: z.array(z.unknown()).readonly().optional(),
   })
@@ -46,7 +46,7 @@ export const executeHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "execute" hook point (beyond the base HookContext). */
-const executeEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const executeEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for "execute". */
 export const executeHookInputSchema = hookCtxSchema(
@@ -88,7 +88,7 @@ export class VscodeCommandOperation extends WorkspaceHookOperation<typeof schema
   constructor() {
     super(VSCODE_COMMAND_OPERATION_ID, {
       hookPoint: "execute",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "vscode-command execute hooks failed",
       // No required result — a command may legitimately return undefined.
       extract: (results) => lastDefined(results, (r) => r.result),

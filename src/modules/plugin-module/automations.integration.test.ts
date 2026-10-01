@@ -23,7 +23,7 @@ import type {
   HookContext,
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspacePath, WorkspaceRef } from "../../intents/contract";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -71,11 +71,16 @@ import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { makeWorkspaceRef, projectRefFor, workspaceNameOf } from "../../utils/ref";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
-type StateEntry = { workspaceName: string; createdAt: string; projectPath?: string };
+type StateEntry = {
+  workspaceName: string;
+  createdAt: string;
+  projectRef?: string;
+  projectPath?: string;
+};
 function entriesOf(state: MockStateService): Record<string, StateEntry> {
   return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry>;
 }
@@ -178,7 +183,7 @@ class GetBasesOp implements Operation<typeof getBasesSchemas> {
     this.dispatched.push(ctx.intent);
     return {
       bases: [],
-      projectPath: ctx.intent.payload.projectPath,
+      projectRef: ctx.intent.payload.projectRef,
       projectId: "project-1" as ProjectId,
     };
   }
@@ -203,6 +208,11 @@ class SetMetaOp implements Operation<typeof setMetaSchemas> {
 const PROJECT_PATH = testPath("/home/user/projects/repo").toNative();
 
 /** The branded path a workspace of this project gets — normalized, as production mints it. */
+/** The ref of this project's workspace `name`. */
+function refOf(name: string): WorkspaceRef {
+  return makeWorkspaceRef(projectRefFor(projPath(PROJECT_PATH)), name);
+}
+
 function workspacePathOf(name: string): WorkspacePath {
   return wsPath(`${PROJECT_PATH}/${name}`);
 }
@@ -287,11 +297,11 @@ class WakeWorkspaceOp implements Operation<typeof wakeSchemas> {
     ctx: OperationContext<IntentOf<typeof wakeSchemas>, typeof wakeSchemas>
   ): Promise<WsResult> {
     this.dispatched.push(ctx.intent);
-    const path = ctx.intent.payload.workspacePath;
+    const name = workspaceNameOf(ctx.intent.payload.workspaceRef);
     return {
       projectId: "project-1",
-      name: path.split("/").pop() ?? "ws",
-      path,
+      name,
+      path: workspacePathOf(name),
       branch: "feature",
       metadata: {},
     };
@@ -453,9 +463,8 @@ function createSetup(options?: {
         dismissible: true,
       }),
   });
-  const module: IntentModule & { moveProjects: typeof automations.moveProjects } = {
+  const module: IntentModule = {
     name: "automations",
-    moveProjects: automations.moveProjects,
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: { handler: async () => automations.stop() },
@@ -584,11 +593,9 @@ describe("automations: workspace.create", () => {
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)["gh/1"]).toMatchObject({
       workspaceName: "ws-1",
-      // The entry serializes a ProjectPath, i.e. Path.toString() — forward slashes on
-      // every platform. PROJECT_PATH is toNative(), which is the same string on POSIX
-      // and backslash-separated on Windows, so asserting it here passes locally and
-      // fails in CI.
-      projectPath: projPath(PROJECT_PATH),
+      // The project's ref: PROJECT_PATH is toNative(), so it goes through projPath
+      // (Path.toString(), forward slashes on every platform) as production does.
+      projectRef: projectRefFor(projPath(PROJECT_PATH)),
     });
   });
 
@@ -614,7 +621,7 @@ describe("automations: workspace.create", () => {
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
-  it("keeps a legacy entry with no projectPath while some project has that workspace", async () => {
+  it("keeps a legacy entry with no project while some project has that workspace", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, listProjectsOp } = createSetup({
       sources: sourceYaml(),
@@ -638,7 +645,7 @@ describe("automations: workspace.create", () => {
         "gh/1": {
           workspaceName: "ws-1",
           createdAt: "2020-01-01T00:00:00Z",
-          projectPath: testPath("/home/user/projects/closed").toNative(),
+          projectRef: projectRefFor(testPath("/home/user/projects/closed").toString()),
         },
       },
     });
@@ -660,11 +667,9 @@ describe("automations: workspace.create", () => {
 
     expect(entriesOf(state)["gh/1"]).toMatchObject({
       workspaceName: "ws-1",
-      // The entry serializes a ProjectPath, i.e. Path.toString() — forward slashes on
-      // every platform. PROJECT_PATH is toNative(), which is the same string on POSIX
-      // and backslash-separated on Windows, so asserting it here passes locally and
-      // fails in CI.
-      projectPath: projPath(PROJECT_PATH),
+      // The project's ref: PROJECT_PATH is toNative(), so it goes through projPath
+      // (Path.toString(), forward slashes on every platform) as production does.
+      projectRef: projectRefFor(projPath(PROJECT_PATH)),
     });
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
     expect(getBasesOp.dispatched).toHaveLength(0); // no git fetch on the adopt path
@@ -957,7 +962,7 @@ template:
 
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(wakeOp.dispatched).toHaveLength(1);
-      expect(wakeOp.dispatched[0]!.payload.workspacePath).toBe(workspacePathOf("ws-1"));
+      expect(wakeOp.dispatched[0]!.payload.workspaceRef).toBe(refOf("ws-1"));
       expect(wakeOp.dispatched[0]!.payload.stealFocus).toBe(false);
       expect(
         setMetaOp.dispatched.some((d) => d.payload.key === "title" && d.payload.value === "Event 1")
@@ -994,7 +999,7 @@ template:
 
       expect(switchOp.dispatched).toHaveLength(1);
       expect(switchOp.dispatched[0]!.payload).toEqual({
-        workspacePath: workspacePathOf("ws-1"),
+        workspaceRef: refOf("ws-1"),
         focus: true,
       });
     });
@@ -1012,7 +1017,7 @@ template:
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(sendMessageOp.dispatched.map((d) => d.payload)).toEqual([
         {
-          workspacePath: workspacePathOf("ws-1"),
+          workspaceRef: refOf("ws-1"),
           text: "Work on 1",
           from: "CodeHydra · automation gh",
           // Also reopens an agent terminal the user closed.
@@ -1148,29 +1153,40 @@ ${sourceYaml("good")}`,
   });
 });
 
-describe("moveProjects", () => {
-  it("points tracking entries at a project's new path, leaving others alone", async () => {
-    const { module, state } = createSetup({
+describe("migrateEntries", () => {
+  it("turns each entry's project path into its project's ref, leaving unknown ones as they are", async () => {
+    const lib = testPath("/code/lib").toString();
+    const libRef = projectRefFor(lib);
+    const { automations, state } = createSetup({
       existingEntries: {
-        "gh/1": {
-          workspaceName: "one",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          projectPath: "/old/lib",
-        },
+        "gh/1": { workspaceName: "one", createdAt: "2026-01-01T00:00:00.000Z", projectPath: lib },
         "gh/2": {
           workspaceName: "two",
           createdAt: "2026-01-01T00:00:00.000Z",
-          projectPath: "/code/app",
+          projectPath: testPath("/code/gone").toString(),
         },
         "gh/3": { workspaceName: "three", createdAt: "2026-01-01T00:00:00.000Z" },
       },
     });
 
-    await module.moveProjects([{ from: "/old/lib", to: "/new/lib" }]);
+    await automations.migrateEntries(new Map([[lib, libRef]]));
 
-    expect(entriesOf(state)["gh/1"]?.projectPath).toBe("/new/lib");
-    expect(entriesOf(state)["gh/2"]?.projectPath).toBe("/code/app");
-    expect(entriesOf(state)["gh/3"]?.projectPath).toBeUndefined();
+    expect(entriesOf(state)["gh/1"]).toEqual({
+      workspaceName: "one",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      projectRef: libRef,
+    });
+    // An unknown project keeps its path, which nothing reads: the entry falls
+    // back like one with no project.
+    expect(entriesOf(state)["gh/2"]).toEqual({
+      workspaceName: "two",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      projectPath: testPath("/code/gone").toString(),
+    });
+    expect(entriesOf(state)["gh/3"]).toEqual({
+      workspaceName: "three",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
   });
 });
 

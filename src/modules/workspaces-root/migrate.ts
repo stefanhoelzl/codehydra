@@ -37,12 +37,7 @@ import {
   saveProject,
   type StoreDirs,
 } from "../local-project-module";
-import {
-  remotesDirUnder,
-  workspacesDirUnder,
-  type ProjectMove,
-  type ProjectMoveListener,
-} from "./workspaces-root";
+import { remotesDirUnder, workspacesDirUnder } from "./workspaces-root";
 
 export interface MigrationDeps {
   readonly fs: Pick<
@@ -54,8 +49,6 @@ export interface MigrationDeps {
   readonly projectsDir: string;
   /** Directory of hibernation screenshots, one subdirectory per project id. */
   readonly screenshotsDir: Path;
-  /** Owners of path-keyed state, told about moved projects after the switch. */
-  readonly moveListeners: readonly ProjectMoveListener[];
   /**
    * Record the new root as the one in use, and the workspaces directories with
    * worktrees left under the old one. The commit point.
@@ -67,8 +60,6 @@ export interface MigrationDeps {
 export interface MigrationReport {
   /** Old clones that could not be deleted. */
   readonly leftovers: readonly string[];
-  /** Steps after the switch that failed (state rewrites, screenshots). */
-  readonly warnings: readonly string[];
 }
 
 const STEP_LABELS = {
@@ -213,7 +204,7 @@ export async function migrateWorkspacesRoot(
       if (holds) left.push(oldWorkspacesDir);
     }
     await deps.commit(left);
-    const warnings = await afterSwitch(deps, managed);
+    await moveScreenshots(deps, managed);
     progress.set("switch", "done");
 
     // 5. cleanup -------------------------------------------------------------
@@ -231,38 +222,24 @@ export async function migrateWorkspacesRoot(
     }
     progress.set("cleanup", leftovers.length === 0 ? "done" : "error");
 
-    return { leftovers, warnings };
+    return { leftovers };
   } catch (error) {
     await undo();
     throw error;
   }
 }
 
-/** Best-effort follow-ups once the new root is in use. Returns what failed. */
-async function afterSwitch(
+/**
+ * Best-effort, once the new root is in use: a project's id hashes its path, and
+ * screenshots of hibernated workspaces are filed under it.
+ */
+async function moveScreenshots(
   deps: MigrationDeps,
   managed: readonly ManagedProject[]
-): Promise<string[]> {
-  const warnings: string[] = [];
-  const moves: ProjectMove[] = managed.map((project) => ({
-    from: project.from.toString(),
-    to: project.to.toString(),
-  }));
-  if (moves.length === 0) return warnings;
-
-  for (const listener of deps.moveListeners) {
-    try {
-      await listener(moves);
-    } catch (error) {
-      warnings.push(`Could not update saved settings: ${getErrorMessage(error)}`);
-    }
-  }
-
-  // A project's id hashes its path, and screenshots of hibernated workspaces are
-  // filed under it.
-  for (const move of moves) {
-    const from = new Path(deps.screenshotsDir, generateProjectId(move.from));
-    const to = new Path(deps.screenshotsDir, generateProjectId(move.to));
+): Promise<void> {
+  for (const project of managed) {
+    const from = new Path(deps.screenshotsDir, generateProjectId(project.from.toString()));
+    const to = new Path(deps.screenshotsDir, generateProjectId(project.to.toString()));
     try {
       await deps.fs.rename(from, to);
     } catch {
@@ -270,7 +247,6 @@ async function afterSwitch(
       // hibernated workspace then shows no preview until it is next hibernated.
     }
   }
-  return warnings;
 }
 
 async function attempt(logger: Logger, what: string, run: () => Promise<unknown>): Promise<void> {

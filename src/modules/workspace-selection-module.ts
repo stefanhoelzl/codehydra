@@ -16,15 +16,15 @@ import type {
   SelectNextHookResult,
   AgentStatusScorer,
 } from "../intents/switch-workspace";
-import type { WorkspacePath } from "../shared/ipc";
+import type { WorkspaceRef } from "../intents/contract";
 import { createWorkspaceStatusCache } from "./workspace-status-cache";
 
 export function createWorkspaceSelectionModule(): IntentModule {
   // Reads the cache lazily on each selection, so no onChange callback is needed.
   const cache = createWorkspaceStatusCache();
 
-  const scorer: AgentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const status = cache.statuses.get(workspacePath);
+  const scorer: AgentStatusScorer = (workspaceRef: WorkspaceRef): number => {
+    const status = cache.statuses.get(workspaceRef);
     if (!status || status.status === "none") return 2;
     if (status.status === "busy") return 1;
     return 0;
@@ -36,8 +36,8 @@ export function createWorkspaceSelectionModule(): IntentModule {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {
           handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
-            const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-            const result = selectNextWorkspace(currentPath, candidates, scorer);
+            const { currentRef, candidates } = ctx as unknown as SelectNextHookInput;
+            const result = selectNextWorkspace(currentRef, candidates, scorer);
             return result ? { result: { selected: result } } : { result: {} };
           },
         },

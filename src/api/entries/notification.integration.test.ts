@@ -12,7 +12,8 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { registerTestInfrastructure } from "../../intents/operations.test-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { projPath, wsPath } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { createMockNotificationManager } from "../../modules/presentation/notification-manager.state-mock";
@@ -30,7 +31,7 @@ const listProjectsSchemas = {
   result: z.unknown(),
 } satisfies OperationSchemas;
 
-/** Nothing is listed: a workspace named by path is taken at its word. */
+/** Nothing is listed: a workspace named by its full ref is taken at its word. */
 class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
   readonly id = "list-projects";
   readonly schemas = listProjectsSchemas;
@@ -40,16 +41,16 @@ class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
 }
 
 const PROJECT = projPath("/projects/app");
-const FEAT = wsPath("/projects/app/workspaces/feat");
+const FEAT_PATH = wsPath("/projects/app/workspaces/feat");
+const FEAT = makeWorkspaceRef(projectRefFor(PROJECT), "feat");
 
 function setup() {
   const dispatcher = createMockDispatcher();
   dispatcher.registerOperation(new ListNoProjectsOp());
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: WorkspacePath) => ({
-      projectPath: PROJECT,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
-    }),
+    workspaces: {
+      [FEAT_PATH]: { projectPath: PROJECT, workspaceName: "feat" as WorkspaceName },
+    },
     projects: { [PROJECT]: { projectId: "app-1" as ProjectId } },
   });
   const cards = createMockNotificationManager();
@@ -71,12 +72,12 @@ function setup() {
 
   const call = (
     name: OperationName,
-    workspace: WorkspacePath | null,
+    workspace: WorkspaceRef | null,
     input: Record<string, unknown>,
     signal: AbortSignal = new AbortController().signal
   ): Promise<unknown> => {
     const ctx: OperationContext = {
-      workspacePath: workspace,
+      workspaceRef: workspace,
       cwd: null,
       signal,
     };
@@ -98,7 +99,7 @@ describe("notification entries", () => {
       type: "info",
       dismissible: true,
     });
-    expect(cards.lastNotification!.workspacePath).toBeUndefined();
+    expect(cards.lastNotification!.workspaceRef).toBeUndefined();
   });
 
   it("updates the card named by id", async () => {
@@ -138,7 +139,7 @@ describe("notification entries", () => {
 
     await call("notification.show", FEAT, { title: "Tests green", attach: true });
 
-    expect(cards.lastNotification!.workspacePath).toBe(FEAT);
+    expect(cards.lastNotification!.workspaceRef).toBe(FEAT);
   });
 
   it("attaches to an explicit workspace from anywhere", async () => {
@@ -146,7 +147,7 @@ describe("notification entries", () => {
 
     await call("notification.show", null, { title: "Tests green", workspace: FEAT });
 
-    expect(cards.lastNotification!.workspacePath).toBe(FEAT);
+    expect(cards.lastNotification!.workspaceRef).toBe(FEAT);
   });
 
   it("needs a workspace to attach to", async () => {

@@ -35,6 +35,8 @@ import type { Intent } from "./lib/types";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspacePath } from "./contract";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "./contract";
 
 // =============================================================================
 // Test Constants
@@ -132,6 +134,14 @@ function createTestSetup(): TestSetup {
 // Helpers
 // =============================================================================
 
+/** The ref of a workspace of the test project, by its path. */
+function refOf(workspacePath: WorkspacePath): WorkspaceRef {
+  return makeWorkspaceRef(
+    projectRefFor(projPath(PROJECT_ROOT.toString())),
+    new Path(workspacePath).basename
+  );
+}
+
 function setMetadataIntent(
   workspacePath: WorkspacePath,
   key: string,
@@ -139,14 +149,14 @@ function setMetadataIntent(
 ): SetMetadataIntent {
   return {
     type: INTENT_SET_METADATA,
-    payload: { workspacePath, key, value },
+    payload: { workspaceRef: refOf(workspacePath), key, value },
   };
 }
 
 function getMetadataIntent(workspacePath: WorkspacePath): GetMetadataIntent {
   return {
     type: INTENT_GET_METADATA,
-    payload: { workspacePath },
+    payload: { workspaceRef: refOf(workspacePath) },
   };
 }
 

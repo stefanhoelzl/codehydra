@@ -46,12 +46,20 @@ import type { DomainEvent } from "../intents/lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createAutoTaggingModule } from "./auto-tagging-module";
 import { projPath, wsPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const OTHER_WORKSPACE_PATH = wsPath("/workspaces/feature-y");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
+const OTHER_WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-y");
+
+/** The ref of the test workspace at `path`. */
+function refOf(path: string): WorkspaceRef {
+  return path === WORKSPACE_PATH ? WORKSPACE_REF : OTHER_WORKSPACE_REF;
+}
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const NEW_TAG_KEY = "tags.new";
 const NEW_TAG_VALUE = JSON.stringify({ color: "#3498db" });
@@ -61,13 +69,13 @@ interface TestSetup {
   /** Metadata written through the real SetMetadataOperation's "set" hook. */
   readonly metadata: Map<string, Map<string, string>>;
   /** Every set-metadata intent that reached the operation, in order. */
-  readonly writes: Array<{ workspacePath: WorkspacePath; key: string; value: string | null }>;
+  readonly writes: Array<{ workspaceRef: WorkspaceRef; key: string; value: string | null }>;
   readonly createdEvents: WorkspaceCreatedEvent[];
   readonly views: TestViewManagerHarness;
 }
 
 function metadataFor(setup: TestSetup, workspacePath: WorkspacePath): Record<string, string> {
-  return Object.fromEntries(setup.metadata.get(workspacePath) ?? new Map());
+  return Object.fromEntries(setup.metadata.get(refOf(workspacePath)) ?? new Map());
 }
 
 function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string }): TestSetup {
@@ -78,10 +86,13 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
   const views = createTestViewManager(options?.activeWorkspace ?? null);
 
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: WorkspacePath) => ({
-      projectPath: PROJECT_ROOT,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
-    }),
+    workspaces: {
+      [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName: "feature-x" as WorkspaceName },
+      [OTHER_WORKSPACE_PATH]: {
+        projectPath: PROJECT_ROOT,
+        workspaceName: "feature-y" as WorkspaceName,
+      },
+    },
     projects: { [PROJECT_ROOT]: { projectId: PROJECT_ID } },
     viewManager: views.viewManager,
   });
@@ -104,9 +115,9 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
                   path === null
                     ? null
                     : {
+                        ref: refOf(path),
                         projectId: PROJECT_ID,
                         workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-                        path: wsPath(path),
                       },
               },
             };
@@ -125,10 +136,10 @@ function createTestSetup(options?: { enabled?: boolean; activeWorkspace?: string
           handler: async (ctx: HookContext): Promise<void> => {
             const { payload } = ctx.intent as SetMetadataIntent;
             writes.push({ ...payload });
-            const store = metadata.get(payload.workspacePath) ?? new Map<string, string>();
+            const store = metadata.get(payload.workspaceRef) ?? new Map<string, string>();
             if (payload.value === null) store.delete(payload.key);
             else store.set(payload.key, payload.value);
-            metadata.set(payload.workspacePath, store);
+            metadata.set(payload.workspaceRef, store);
           },
         },
       },
@@ -201,7 +212,7 @@ async function flushEvents(): Promise<void> {
 async function switchTo(setup: TestSetup, workspacePath: WorkspacePath | null): Promise<void> {
   await setup.dispatcher.dispatch<SwitchWorkspaceIntent>({
     type: INTENT_SWITCH_WORKSPACE,
-    payload: { workspacePath },
+    payload: { workspaceRef: workspacePath === null ? null : refOf(workspacePath) },
   });
   await flushEvents();
 }
@@ -210,7 +221,7 @@ function openIntent(payload: Partial<OpenWorkspacePayload> = {}): OpenWorkspaceI
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
-      projectPath: PROJECT_ROOT,
+      projectRef: projectRefFor(PROJECT_ROOT),
       workspaceName: "feature-x",
       base: "main",
       ...payload,
@@ -326,7 +337,7 @@ describe("AutoTaggingModule", () => {
 
       expect(metadataFor(setup, WORKSPACE_PATH)[NEW_TAG_KEY]).toBeUndefined();
       expect(setup.writes.at(-1)).toEqual({
-        workspacePath: WORKSPACE_PATH,
+        workspaceRef: WORKSPACE_REF,
         key: NEW_TAG_KEY,
         value: null,
       });
@@ -403,7 +414,7 @@ describe("AutoTaggingModule", () => {
       await expect(
         setup.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspacePath: null },
+          payload: { workspaceRef: null },
         })
       ).resolves.not.toThrow();
     });
@@ -417,7 +428,7 @@ describe("AutoTaggingModule", () => {
       // Simulates sidekick/MCP deleting the tag.
       await setup.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
-        payload: { workspacePath: WORKSPACE_PATH, key: NEW_TAG_KEY, value: null },
+        payload: { workspaceRef: WORKSPACE_REF, key: NEW_TAG_KEY, value: null },
       });
       await flushEvents();
       const writesBeforeSwitch = setup.writes.length;
@@ -432,7 +443,7 @@ describe("AutoTaggingModule", () => {
 
       await setup.dispatcher.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
-        payload: { workspacePath: WORKSPACE_PATH, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
+        payload: { workspaceRef: WORKSPACE_REF, key: NEW_TAG_KEY, value: NEW_TAG_VALUE },
       });
       await flushEvents();
 

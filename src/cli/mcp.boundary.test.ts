@@ -27,7 +27,7 @@ import { assertCompiledScript } from "../modules/agent-module/wrapper-boundary-t
 
 const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../dist/bin/ch.cjs");
 const TOKEN = "test-token";
-const WORKSPACE = "/repo/wt/feature";
+const WORKSPACE = "ch::local::/repo::feature";
 
 /**
  * The `ws` server engine, loaded by file: engine.io's own `require("ws")` gets
@@ -95,13 +95,13 @@ describe("ch mcp", () => {
   it("connects as the MCP shim, from its agent's own workspace", async () => {
     const server = await recordingServer();
 
-    startMcp(server.port, { _CH_WORKSPACE_PATH: WORKSPACE }, process.cwd());
+    startMcp(server.port, { _CH_WORKSPACE: WORKSPACE }, process.cwd());
 
     expect(await firstHandshake(server.auths)).toEqual({
       client: "mcp",
       token: TOKEN,
       cwd: process.cwd(),
-      workspacePath: WORKSPACE,
+      workspace: WORKSPACE,
     });
   });
 

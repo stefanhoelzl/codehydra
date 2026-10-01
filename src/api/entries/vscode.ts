@@ -14,7 +14,7 @@ import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
 import { createTargetResolver, targetFields } from "./target";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import type { OperationName } from "../names";
 import { Path } from "../../utils/path/path";
 
@@ -50,10 +50,10 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher, appLayer } = deps;
   const targetOf = createTargetResolver(dispatcher);
 
-  const run = (workspacePath: WorkspacePath, command: string, args?: readonly unknown[]) =>
+  const run = (workspaceRef: WorkspaceRef, command: string, args?: readonly unknown[]) =>
     dispatcher.dispatch<VscodeCommandIntent>({
       type: INTENT_VSCODE_COMMAND,
-      payload: { workspacePath, command, args: args as unknown[] | undefined },
+      payload: { workspaceRef, command, args: args as unknown[] | undefined },
     });
 
   const raw = defineEntry({
@@ -101,7 +101,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const result = await dispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath: await targetOf(ctx, input),
+          workspaceRef: await targetOf(ctx, input),
           type: input.type,
           message: input.message,
           ...(input.hint !== undefined && { hint: input.hint }),
@@ -146,7 +146,7 @@ export function vscodeEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         const result = await dispatcher.dispatch<VscodeShowMessageIntent>({
           type: INTENT_VSCODE_SHOW_MESSAGE,
           payload: {
-            workspacePath: await targetOf(ctx, input),
+            workspaceRef: await targetOf(ctx, input),
             type: build(input.level),
             message: input.message,
             ...(input.hint !== undefined && { hint: input.hint }),

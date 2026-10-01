@@ -13,8 +13,8 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
-import { createTargetResolver, createWorkspaceNamer, targetFields } from "./target";
-import type { WorkspacePath } from "../../intents/contract";
+import { createTargetResolver, targetFields, workspaceNameOf } from "./target";
+import type { WorkspaceRef } from "../../intents/contract";
 
 import { INTENT_GET_AGENT_SESSION } from "../../intents/get-agent-session";
 import type { GetAgentSessionIntent } from "../../intents/get-agent-session";
@@ -32,7 +32,6 @@ import type { SendAgentMessageIntent } from "../../intents/send-agent-message";
 export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
   const targetOf = createTargetResolver(dispatcher);
-  const nameOf = createWorkspaceNamer(dispatcher);
 
   /**
    * Who a message is from, as the receiving agent sees it: the caller's own
@@ -40,15 +39,15 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
    * outside any workspace. Taken from the connection, never from the input, so a
    * caller cannot sign as someone else.
    */
-  const messageSender = async (ctx: OperationContext): Promise<string> =>
-    ctx.workspacePath === null
+  const messageSender = (ctx: OperationContext): string =>
+    ctx.workspaceRef === null
       ? "CodeHydra · ch"
-      : `CodeHydra · workspace ${await nameOf(ctx.workspacePath)}`;
+      : `CodeHydra · workspace ${workspaceNameOf(ctx.workspaceRef)}`;
 
-  const runVscodeCommand = (workspacePath: WorkspacePath, command: string) =>
+  const runVscodeCommand = (workspaceRef: WorkspaceRef, command: string) =>
     dispatcher.dispatch<VscodeCommandIntent>({
       type: INTENT_VSCODE_COMMAND,
-      payload: { workspacePath, command, args: undefined },
+      payload: { workspaceRef, command, args: undefined },
     });
 
   const session = defineEntry({
@@ -64,7 +63,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     handler: async (ctx, input) =>
       dispatcher.dispatch<GetAgentSessionIntent>({
         type: INTENT_GET_AGENT_SESSION,
-        payload: { workspacePath: await targetOf(ctx, input) },
+        payload: { workspaceRef: await targetOf(ctx, input) },
       }),
   });
 
@@ -77,7 +76,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     handler: async (ctx, input) => {
       const result = await dispatcher.dispatch<RestartAgentIntent>({
         type: INTENT_RESTART_AGENT,
-        payload: { workspacePath: await targetOf(ctx, input) },
+        payload: { workspaceRef: await targetOf(ctx, input) },
       });
       if (result === undefined) throw new Error("Restart agent returned no result");
       return result;
@@ -138,9 +137,9 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const result = await dispatcher.dispatch<SendAgentMessageIntent>({
         type: INTENT_SEND_AGENT_MESSAGE,
         payload: {
-          workspacePath: await targetOf(ctx, input),
+          workspaceRef: await targetOf(ctx, input),
           text: input.text,
-          from: await messageSender(ctx),
+          from: messageSender(ctx),
           wake: input.wake,
         },
       });
@@ -171,7 +170,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       await dispatcher.dispatch<UpdateAgentStatusIntent>({
         type: INTENT_UPDATE_AGENT_STATUS,
         payload: {
-          workspacePath: await targetOf(ctx, input),
+          workspaceRef: await targetOf(ctx, input),
           status: {
             status: input.status,
             counts: { idle: busy ? 0 : 1, busy: busy ? 1 : 0 },
@@ -195,7 +194,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     handler: async (ctx, input) => {
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
-        payload: { workspacePath: await targetOf(ctx, {}), event: input.event },
+        payload: { workspaceRef: await targetOf(ctx, {}), event: input.event },
       };
       void dispatcher.dispatch(intent);
       return null;

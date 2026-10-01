@@ -2,7 +2,7 @@
  * GitWorktreeWorkspaceModule - Manages workspace-related git worktree operations.
  *
  * Consolidates worktree lifecycle hooks across multiple operations:
- * - resolve-workspace: shared workspace resolution (workspacePath → projectPath + workspaceName)
+ * - resolve-workspace: shared workspace resolution (ref or path → the workspace's identity)
  * - open-project: register project, discover workspaces, fire-and-forget cleanup
  * - close-project: unregister project, clear state
  * - open-workspace: resolve caller, create worktree
@@ -55,13 +55,13 @@ import type {
 import type {
   CloseHookInput,
   CloseResolveHookResult,
-  CloseProjectIntent,
+  CloseResolveHookInput,
 } from "../intents/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
-import type { FindCandidatesHookResult } from "../intents/switch-workspace";
+import type { FindCandidatesHookResult, WorkspaceCandidate } from "../intents/switch-workspace";
 import { HIBERNATED_METADATA_KEY } from "../intents/hibernate-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
@@ -195,6 +195,12 @@ export function createGitWorktreeWorkspaceModule(
       branch: best.ws.branch,
       metadata: best.ws.metadata,
     };
+  }
+
+  /** A workspace's ref, or undefined while its project's ref is not known. */
+  function refOf(projectPath: ProjectPath, ws: Workspace): WorkspaceRef | undefined {
+    const projectRef = projectRefs.get(projectPath);
+    return projectRef === undefined ? undefined : makeWorkspaceRef(projectRef, ws.name);
   }
 
   function unregisterWorkspaceFromState(
@@ -552,17 +558,15 @@ export function createGitWorktreeWorkspaceModule(
         // confirmed removeAll, and the confirm dialog shows the count.
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
-            const intent = ctx.intent as CloseProjectIntent;
-            const key = projectKey(intent.payload.projectPath);
-            const list = workspaces.get(key) ?? [];
-            // The contract carries paths as plain branded data, not `Path` instances.
-            return {
-              result: {
-                workspaces: list.map((workspace) => ({
-                  path: workspaceKey(workspace.path.toString()),
-                })),
-              },
-            };
+            const key = projectKey((ctx as CloseResolveHookInput).projectPath);
+            const list: { workspaceRef: WorkspaceRef; workspacePath: WorkspacePath }[] = [];
+            for (const workspace of workspaces.get(key) ?? []) {
+              const workspaceRef = refOf(key, workspace);
+              if (workspaceRef === undefined) continue;
+              // The contract carries paths as plain branded data, not `Path` instances.
+              list.push({ workspaceRef, workspacePath: workspaceKey(workspace.path.toString()) });
+            }
+            return { result: { workspaces: list } };
           },
         },
         close: {
@@ -858,21 +862,17 @@ export function createGitWorktreeWorkspaceModule(
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {
           handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
-            const candidates: Array<{
-              projectPath: ProjectPath;
-              projectName: string;
-              workspacePath: WorkspacePath;
-              workspaceName: string;
-              hibernated?: boolean;
-            }> = [];
+            const candidates: WorkspaceCandidate[] = [];
             for (const [key, wsList] of getMergedWorkspaces()) {
+              const projectRef = projectRefs.get(key);
+              if (projectRef === undefined) continue;
               const projectName = new Path(key).basename;
               for (const ws of wsList) {
                 const hibernated = ws.metadata[HIBERNATED_METADATA_KEY] === "true";
                 candidates.push({
-                  projectPath: key,
+                  projectRef,
                   projectName,
-                  workspacePath: workspaceKey(ws.path.toString()),
+                  workspaceRef: makeWorkspaceRef(projectRef, ws.name),
                   workspaceName: ws.name,
                   ...(hibernated && { hibernated: true }),
                 });
@@ -940,10 +940,10 @@ export function createGitWorktreeWorkspaceModule(
     events: {
       [EVENT_METADATA_CHANGED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, key, value } = (event as MetadataChangedEvent).payload;
+          const { workspaceRef, key, value } = (event as MetadataChangedEvent).payload;
 
           for (const [projectKey, wsList] of workspaces) {
-            const index = wsList.findIndex((ws) => ws.path.toString() === workspacePath);
+            const index = wsList.findIndex((ws) => refOf(projectKey, ws) === workspaceRef);
             if (index === -1) continue;
 
             const ws = wsList[index]!;

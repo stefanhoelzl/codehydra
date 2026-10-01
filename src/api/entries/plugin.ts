@@ -43,13 +43,19 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   /** The workspace the input names, else the caller's — and its project; none outside one. */
   const scopeOf = async (ctx: OperationContext, input: TargetInput): Promise<PluginScope> => {
     const named = input.workspace !== undefined || input.project !== undefined;
-    if (!named && ctx.workspacePath === null) return { workspacePath: null, projectPath: null };
-    const workspacePath = await resolveTarget(ctx, input);
+    if (!named && ctx.workspaceRef === null) return { workspace: null };
+    const workspaceRef = await resolveTarget(ctx, input);
     const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     });
-    return { workspacePath, projectPath: resolved.projectPath };
+    return {
+      workspace: {
+        workspacePath: resolved.workspacePath,
+        projectRef: resolved.projectRef,
+        projectPath: resolved.projectPath,
+      },
+    };
   };
 
   const list = defineEntry({

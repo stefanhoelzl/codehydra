@@ -12,7 +12,7 @@ import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
 import { ApiError } from "../errors";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import { createReferenceResolver, targetFields } from "./target";
 import {
   INTENT_SHOW_NOTIFICATION,
@@ -36,7 +36,7 @@ async function attachmentOf(
     readonly workspace?: string | undefined;
     readonly project?: string | undefined;
   }
-): Promise<WorkspacePath | undefined> {
+): Promise<WorkspaceRef | undefined> {
   if (input.workspace !== undefined) {
     return resolveReference(ctx, input.workspace, input.project);
   }
@@ -44,10 +44,10 @@ async function attachmentOf(
     throw new ApiError("usage", "project only says where to look a workspace name up: name one.");
   }
   if (!input.attach) return undefined;
-  if (ctx.workspacePath === null) {
+  if (ctx.workspaceRef === null) {
     throw new ApiError("no-workspace", "No workspace to attach the notification to.");
   }
-  return ctx.workspacePath;
+  return ctx.workspaceRef;
 }
 
 export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
@@ -109,7 +109,7 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
     }),
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const workspacePath = await attachmentOf(resolveReference, ctx, input);
+      const workspaceRef = await attachmentOf(resolveReference, ctx, input);
       const config = {
         title: input.title,
         type: input.type,
@@ -123,7 +123,7 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
       const payload = {
         config,
         ...(input.id !== undefined && { id: input.id }),
-        ...(workspacePath !== undefined && { workspacePath }),
+        ...(workspaceRef !== undefined && { workspaceRef }),
       };
 
       /** A card that is gone reaches the caller as not-found (CLI exit 6). */

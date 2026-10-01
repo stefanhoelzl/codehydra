@@ -10,6 +10,13 @@ import { describe, it, expect, vi } from "vitest";
 import { NotificationManager } from "./sessions";
 import { ApiError } from "../../api/errors";
 import type { NotificationConfig } from "../../shared/notification-types";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath } from "../../shared/test-fixtures";
+
+const PROJECT_REF = projectRefFor(projPath("/project"));
+const WS_FEAT = makeWorkspaceRef(PROJECT_REF, "feat");
+const WS_A = makeWorkspaceRef(PROJECT_REF, "a");
+const WS_B = makeWorkspaceRef(PROJECT_REF, "b");
 
 const CONFIG: NotificationConfig = {
   type: "info",
@@ -102,10 +109,10 @@ describe("NotificationManager", () => {
   it("carries the attached workspace in the snapshot", () => {
     const { manager } = createManager();
 
-    const id = manager.show({ config: CONFIG, workspacePath: "/ws/feat" });
+    const id = manager.show({ config: CONFIG, workspaceRef: WS_FEAT });
 
     expect(manager.getSnapshot()).toEqual([
-      { id, config: CONFIG, count: 1, workspacePath: "/ws/feat" },
+      { id, config: CONFIG, count: 1, workspaceRef: WS_FEAT },
     ]);
   });
 
@@ -248,12 +255,12 @@ describe("NotificationManager", () => {
   describe("attached to a workspace", () => {
     it("closes the workspace's cards and answers their waiters null", async () => {
       const { manager } = createManager();
-      const answer = manager.showAndWait({ config: QUESTION, workspacePath: "/ws/a" }, {});
-      manager.show({ config: CONFIG, workspacePath: "/ws/a" });
-      const other = manager.show({ config: CONFIG, workspacePath: "/ws/b" });
+      const answer = manager.showAndWait({ config: QUESTION, workspaceRef: WS_A }, {});
+      manager.show({ config: CONFIG, workspaceRef: WS_A });
+      const other = manager.show({ config: CONFIG, workspaceRef: WS_B });
       const global = manager.show({ config: { ...CONFIG, title: "Global" } });
 
-      manager.closeWorkspace("/ws/a");
+      manager.closeWorkspace(WS_A);
 
       expect(await answer).toBeNull();
       expect(manager.getSnapshot().map((n) => n.id)).toEqual([other, global]);
@@ -262,8 +269,8 @@ describe("NotificationManager", () => {
     it("keeps the same text from two workspaces on two cards", () => {
       const { manager } = createManager();
 
-      manager.show({ config: CONFIG, workspacePath: "/ws/a" });
-      manager.show({ config: CONFIG, workspacePath: "/ws/b" });
+      manager.show({ config: CONFIG, workspaceRef: WS_A });
+      manager.show({ config: CONFIG, workspaceRef: WS_B });
 
       expect(manager.getSnapshot()).toHaveLength(2);
     });
@@ -271,7 +278,7 @@ describe("NotificationManager", () => {
     it("keeps an attached card apart from the same text unattached", () => {
       const { manager } = createManager();
 
-      manager.show({ config: CONFIG, workspacePath: "/ws/a" });
+      manager.show({ config: CONFIG, workspaceRef: WS_A });
       manager.show({ config: CONFIG });
 
       expect(manager.getSnapshot()).toHaveLength(2);

@@ -16,8 +16,8 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, workspaceNameSchema, workspacePathSchema } from "./contract";
-import type { ProjectPath } from "./contract";
+import { projectIdSchema, workspaceNameSchema, workspaceRefSchema } from "./contract";
+import type { ProjectRef } from "./contract";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
@@ -57,14 +57,14 @@ const aggregatedAgentStatusSchema = z.discriminatedUnion("status", [
 
 export const updateAgentStatusPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     status: aggregatedAgentStatusSchema,
   })
   .readonly();
 
 const agentStatusUpdatedWorkspaceRefSchema = z
   .object({
-    path: workspacePathSchema,
+    ref: workspaceRefSchema,
     projectId: projectIdSchema,
     name: workspaceNameSchema,
     active: z.boolean(),
@@ -116,18 +116,18 @@ export class UpdateAgentStatusOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     // Resolve workspace + project, silently bail if unknown
-    let projectPath: ProjectPath;
+    let projectRef: ProjectRef;
     let workspaceName: WorkspaceName;
     let projectId: ProjectId;
     let active: boolean;
     try {
-      ({ projectPath, workspaceName, active } = await ctx.dispatch<ResolveWorkspaceIntent>({
+      ({ projectRef, workspaceName, active } = await ctx.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath: payload.workspacePath },
+        payload: { workspaceRef: payload.workspaceRef },
       }));
       ({ projectId } = await ctx.dispatch<ResolveProjectIntent>({
         type: INTENT_RESOLVE_PROJECT,
-        payload: { projectPath },
+        payload: { projectRef },
       }));
     } catch {
       return; // silently bail — unknown workspace/project
@@ -138,7 +138,7 @@ export class UpdateAgentStatusOperation implements Operation<typeof schemas> {
       type: EVENT_AGENT_STATUS_UPDATED,
       payload: {
         workspace: {
-          path: payload.workspacePath,
+          ref: payload.workspaceRef,
           projectId,
           name: workspaceName,
           active,

@@ -40,6 +40,12 @@ import {
 import type { ImageHandle } from "../boundaries/shell/image-types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "../intents/contract";
+
+/** The ref of test workspace `name` (at `/workspace/<name>`). */
+const ref = (name: string): WorkspaceRef =>
+  makeWorkspaceRef(projectRefFor(projPath("/projects/test")), name);
 
 // =============================================================================
 // BadgeManager Direct Tests
@@ -439,12 +445,14 @@ function createModuleTestSetup(): ModuleTestSetup {
   dispatcher.registerOperation(new UpdateAgentStatusOperation());
   dispatcher.registerOperation(createDeleteEventOperation());
 
-  // Every workspace path resolves; workspaceName derives from the path basename.
+  // The two workspaces the tests report on, named after their directories.
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath) => ({
-      projectPath: projPath("/projects/test"),
-      workspaceName: workspacePath.split("/").pop() as WorkspaceName,
-    }),
+    workspaces: Object.fromEntries(
+      ["1", "2"].map((name) => [
+        wsPath(`/workspace/${name}`),
+        { projectPath: projPath("/projects/test"), workspaceName: name as WorkspaceName },
+      ])
+    ),
     projects: () => ({ projectId: "test-project" as ProjectId }),
   });
 
@@ -471,7 +479,7 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 2 },
         })
@@ -485,7 +493,7 @@ describe("BadgeModule Integration", () => {
 
       // First make busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -494,7 +502,7 @@ describe("BadgeModule Integration", () => {
 
       // Then become idle
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "idle",
           counts: { idle: 1, busy: 0 },
         })
@@ -508,13 +516,13 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "idle",
           counts: { idle: 2, busy: 0 },
         })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), {
+        updateStatusIntent(ref("2"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -528,13 +536,13 @@ describe("BadgeModule Integration", () => {
 
       // Mixed state
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "idle",
           counts: { idle: 1, busy: 0 },
         })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), {
+        updateStatusIntent(ref("2"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -543,7 +551,7 @@ describe("BadgeModule Integration", () => {
 
       // Workspace 1 becomes busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -556,13 +564,13 @@ describe("BadgeModule Integration", () => {
 
       // All working
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), {
+        updateStatusIntent(ref("2"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -571,7 +579,7 @@ describe("BadgeModule Integration", () => {
 
       // Workspace 1 becomes idle
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "idle",
           counts: { idle: 1, busy: 0 },
         })
@@ -586,7 +594,7 @@ describe("BadgeModule Integration", () => {
 
       // One busy workspace
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -597,7 +605,7 @@ describe("BadgeModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: wsPath("/workspace/1"),
+          workspaceRef: ref("1"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -613,13 +621,13 @@ describe("BadgeModule Integration", () => {
 
       // Mixed state: one idle, one busy
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "idle",
           counts: { idle: 1, busy: 0 },
         })
       );
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/2"), {
+        updateStatusIntent(ref("2"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })
@@ -630,7 +638,7 @@ describe("BadgeModule Integration", () => {
       const deleteIntent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: wsPath("/workspace/2"),
+          workspaceRef: ref("2"),
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -649,7 +657,7 @@ describe("BadgeModule Integration", () => {
 
       // Set a busy badge first
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/workspace/1"), {
+        updateStatusIntent(ref("1"), {
           status: "busy",
           counts: { idle: 0, busy: 1 },
         })

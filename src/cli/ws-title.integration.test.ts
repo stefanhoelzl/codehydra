@@ -19,10 +19,10 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../modules/lock-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { schemas as setMetadataSchemas, type SetMetadataPayload } from "../intents/set-metadata";
-import { workspacePathSchema } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import { testPath } from "../shared/test-fixtures";
 
-const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
+const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
 
 /** A `ch` client wired straight into a CLI connection, recording metadata writes. */
 function wire(): { client: Client; writes: SetMetadataPayload[] } {
@@ -54,7 +54,7 @@ function wire(): { client: Client; writes: SetMetadataPayload[] } {
   attachApiServerAdapter({
     socket: { on: (event, listener) => void handlers.set(event, listener) },
     registry,
-    workspacePath: WS,
+    workspaceRef: WS,
     logger: SILENT_LOGGER,
     kind: "cli",
   });
@@ -84,7 +84,7 @@ describe("ch ws title", () => {
     const result = await ch(["ws", "title", "Auth rework"], client);
 
     expect(result).toMatchObject({ exitCode: EXIT.OK, stdout: "" });
-    expect(writes).toEqual([{ workspacePath: WS, key: "title", value: "Auth rework" }]);
+    expect(writes).toEqual([{ workspaceRef: WS, key: "title", value: "Auth rework" }]);
   });
 
   it("clears the title when given none", async () => {
@@ -93,7 +93,7 @@ describe("ch ws title", () => {
     const result = await ch(["ws", "title"], client);
 
     expect(result).toMatchObject({ exitCode: EXIT.OK, stdout: "", stderr: "" });
-    expect(writes).toEqual([{ workspacePath: WS, key: "title", value: null }]);
+    expect(writes).toEqual([{ workspaceRef: WS, key: "title", value: null }]);
   });
 
   it("clears the title given an empty one", async () => {
@@ -101,7 +101,7 @@ describe("ch ws title", () => {
 
     await ch(["ws", "title", ""], client);
 
-    expect(writes).toEqual([{ workspacePath: WS, key: "title", value: null }]);
+    expect(writes).toEqual([{ workspaceRef: WS, key: "title", value: null }]);
   });
 
   it("clears the title given a null through --input", async () => {
@@ -109,7 +109,7 @@ describe("ch ws title", () => {
 
     await ch(["ws", "title", "--input", '{"title":null}'], client);
 
-    expect(writes).toEqual([{ workspacePath: WS, key: "title", value: null }]);
+    expect(writes).toEqual([{ workspaceRef: WS, key: "title", value: null }]);
   });
 
   it("says in its help how to clear, and offers no null the shell cannot pass", async () => {

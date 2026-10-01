@@ -99,7 +99,7 @@ function call(registry: OperationRegistry, name: OperationName, input: unknown):
   return registry.invoke(
     registry.get(name),
     {
-      workspacePath: null,
+      workspaceRef: null,
       cwd: null,
       signal: new AbortController().signal,
     },

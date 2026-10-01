@@ -20,6 +20,7 @@ import {
 } from "../module-provider.test-utils";
 import type { ResolvedAgentBinary } from "../binary-resolver";
 import { wsPath, testPath } from "../../../shared/test-fixtures";
+import { workspaceRefSchema } from "../../../intents/contract";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -104,6 +105,7 @@ vi.mock("./provider", () => ({
 // Minted the way production does — normalized — because the provider registry is
 // keyed on `new Path(...).toString()`, so a raw native path would never match.
 const WS_PATH = wsPath("/workspace/feature-a");
+const WS_REF = workspaceRefSchema.parse("ch::local::/workspace::feature-a");
 const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
 
 type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
@@ -119,6 +121,7 @@ function createMockServerManager(): OpenCodeServerManager & {
   return createServerManagerBase({
     setMarkActiveHandler: vi.fn(),
     triggerWrapperStart: vi.fn(),
+    getWorkspaceRef: vi.fn(),
   }) as unknown as OpenCodeServerManager & {
     _triggerStarted: ServerStartedHandler;
     _triggerStopped: ServerStoppedHandler;
@@ -546,7 +549,9 @@ describe("OpenCode module provider", () => {
         logger: SILENT_LOGGER,
       });
 
-      await expect(provider.startWorkspace(WS_PATH)).rejects.toThrow("No opencode binary");
+      await expect(provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF })).rejects.toThrow(
+        "No opencode binary"
+      );
       expect(serverManager.startServer).not.toHaveBeenCalled();
     });
 
@@ -560,9 +565,10 @@ describe("OpenCode module provider", () => {
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, { initialPrompt });
+      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF, initialPrompt });
 
       expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
+        workspaceRef: WS_REF,
         initialPrompt,
         binary: BINARY,
       });
@@ -579,6 +585,7 @@ describe("OpenCode module provider", () => {
       });
 
       await provider.startWorkspace(WS_PATH, {
+        workspaceRef: WS_REF,
         initialPrompt: { prompt: "build feature X" },
         onInitialPromptDelivered,
       });
@@ -594,9 +601,12 @@ describe("OpenCode module provider", () => {
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH);
+      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, { binary: BINARY });
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
+        workspaceRef: WS_REF,
+        binary: BINARY,
+      });
     });
 
     it("passes the workspace environment to the server", async () => {
@@ -607,9 +617,13 @@ describe("OpenCode module provider", () => {
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, { env: { DATABASE_URL: "postgres://x" } });
+      await provider.startWorkspace(WS_PATH, {
+        workspaceRef: WS_REF,
+        env: { DATABASE_URL: "postgres://x" },
+      });
 
       expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
+        workspaceRef: WS_REF,
         env: { DATABASE_URL: "postgres://x" },
         binary: BINARY,
       });
@@ -623,7 +637,7 @@ describe("OpenCode module provider", () => {
         return 8080;
       });
 
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(result.envVars).toEqual({
         _CH_OPENCODE_PORT: "8080",
@@ -637,7 +651,7 @@ describe("OpenCode module provider", () => {
       // startServer does not trigger callback
       vi.mocked(serverManager.startServer).mockResolvedValue(8080);
 
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(result.envVars).toEqual({ _CH_OPENCODE_BIN: "/bundles/opencode/1.0.223/opencode" });
     });

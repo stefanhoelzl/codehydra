@@ -99,6 +99,9 @@ import {
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
 import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+
+const FEATURE_REF = makeWorkspaceRef(projectRefFor(projPath("/test/project")), "feature-1");
 
 // =============================================================================
 // Minimal Test Operations
@@ -299,9 +302,11 @@ function createMinimalDeleteOperation() {
     {
       hookContext: (ctx): DeletePipelineHookInput => ({
         intent: ctx.intent,
+        projectRef: projectRefFor(projPath("/test/project")),
         projectPath: projPath("/test/project"),
         workspaceName: "feature-1" as WorkspaceName,
-        workspacePath: (ctx.intent as DeleteWorkspaceIntent).payload.workspacePath,
+        workspaceRef: (ctx.intent as DeleteWorkspaceIntent).payload.workspaceRef,
+        workspacePath: wsPath("/test/project/.worktrees/feature-1"),
         active: false,
       }),
       defaultResult: {},
@@ -1228,7 +1233,7 @@ describe("IdeServerModule", () => {
         type: "workspace:open",
         payload: {
           workspaceName: "feature-1",
-          projectPath: projPath("/test/project"),
+          projectRef: projectRefFor(projPath("/test/project")),
           base: "main",
         },
       })) as unknown as string | undefined;
@@ -1269,7 +1274,10 @@ describe("IdeServerModule", () => {
       );
       await dispatcher.dispatch<OpenWorkspaceIntent>({
         type: "workspace:open",
-        payload: { workspaceName: "feature-1", projectPath: projPath("/test/project") },
+        payload: {
+          workspaceName: "feature-1",
+          projectRef: projectRefFor(projPath("/test/project")),
+        },
       });
 
       // The environment is delivered in memory (the sidekick's config); a
@@ -1321,7 +1329,7 @@ describe("IdeServerModule", () => {
         type: "workspace:open",
         payload: {
           workspaceName: "feature-1",
-          projectPath: projPath("/test/project"),
+          projectRef: projectRefFor(projPath("/test/project")),
           base: "main",
         },
       })) as unknown as string | undefined;
@@ -1344,7 +1352,7 @@ describe("IdeServerModule", () => {
       await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          workspaceRef: FEATURE_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1379,7 +1387,7 @@ describe("IdeServerModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+          workspaceRef: FEATURE_REF,
           keepBranch: false,
           force: true,
           removeWorktree: true,
@@ -1411,7 +1419,7 @@ describe("IdeServerModule", () => {
         dispatcher.dispatch<DeleteWorkspaceIntent>({
           type: "workspace:delete",
           payload: {
-            workspacePath: wsPath("/test/project/.worktrees/feature-1"),
+            workspaceRef: FEATURE_REF,
             keepBranch: false,
             force: false,
             removeWorktree: true,

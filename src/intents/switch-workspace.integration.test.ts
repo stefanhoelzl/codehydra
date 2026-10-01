@@ -32,6 +32,7 @@ import type {
   WorkspaceSwitchedEvent,
   FindCandidatesHookResult,
   SelectNextHookInput,
+  WorkspaceCandidate,
   SelectNextHookResult,
 } from "./switch-workspace";
 import {
@@ -43,8 +44,10 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath, ProjectPath } from "./contract";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath, ProjectPath, WorkspaceRef } from "./contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { Path } from "../utils/path/path";
 
 // =============================================================================
 // Behavioral Mocks
@@ -184,18 +187,13 @@ function createTestSetup(opts?: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "find-candidates": {
             handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
-              const candidates: Array<{
-                projectPath: ProjectPath;
-                projectName: string;
-                workspacePath: WorkspacePath;
-                workspaceName: string;
-              }> = [];
+              const candidates: WorkspaceCandidate[] = [];
               for (const project of appState.projects) {
                 for (const ws of project.workspaces) {
                   candidates.push({
-                    projectPath: projPath(project.path),
+                    projectRef: projectRefFor(project.path),
                     projectName: project.name,
-                    workspacePath: wsPath(ws.path),
+                    workspaceRef: wsRef(ws.path),
                     workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
                   });
                 }
@@ -214,8 +212,8 @@ function createTestSetup(opts?: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "select-next": {
             handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
-              const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-              const result = selectNextWorkspace(currentPath, candidates, () => 2);
+              const { currentRef, candidates } = ctx as unknown as SelectNextHookInput;
+              const result = selectNextWorkspace(currentRef, candidates, () => 2);
               return { result: result ? { selected: result } : {} };
             },
           },
@@ -243,11 +241,17 @@ function generateProjectId(path: string): ProjectId {
   return Buffer.from(path).toString("base64url") as ProjectId;
 }
 
+/** The ref of a workspace at `<project>/workspaces/<name>`. */
+function wsRef(workspacePath: string): WorkspaceRef {
+  const path = new Path(workspacePath);
+  return makeWorkspaceRef(projectRefFor(path.dirname.dirname.toString()), path.basename);
+}
+
 function switchIntent(workspacePath?: WorkspacePath, focus?: boolean): SwitchWorkspaceIntent {
   return {
     type: INTENT_SWITCH_WORKSPACE,
     payload: {
-      workspacePath: workspacePath ?? TEST_WORKSPACE_PATH,
+      workspaceRef: wsRef(workspacePath ?? TEST_WORKSPACE_PATH),
       ...(focus !== undefined && { focus }),
     },
   };
@@ -292,9 +296,9 @@ describe("SwitchWorkspace Operation", () => {
       expect(event.payload).toEqual({
         projectId: generateProjectId(TEST_PROJECT_PATH),
         projectName: TEST_PROJECT_NAME,
-        projectPath: TEST_PROJECT_PATH,
+        projectRef: projectRefFor(TEST_PROJECT_PATH),
         workspaceName: TEST_WORKSPACE_NAME,
-        path: TEST_WORKSPACE_PATH,
+        workspaceRef: wsRef(TEST_WORKSPACE_PATH),
         metadata: {},
       });
     });
@@ -344,7 +348,7 @@ describe("SwitchWorkspace Operation", () => {
       await expect(
         dispatcher.dispatch(switchIntent(wsPath("/projects/my-app/workspaces/nonexistent")))
       ).rejects.toThrow(
-        `Workspace not found: ${testPath("/projects/my-app/workspaces/nonexistent").toString()}`
+        `Workspace not found: ${wsRef(wsPath("/projects/my-app/workspaces/nonexistent"))}`
       );
 
       expect(getActivePath()).toBeNull();
@@ -357,7 +361,7 @@ describe("SwitchWorkspace Operation", () => {
       await expect(
         dispatcher.dispatch(switchIntent(wsPath("/nonexistent/workspaces/feature-login")))
       ).rejects.toThrow(
-        `Workspace not found: ${testPath("/nonexistent/workspaces/feature-login").toString()}`
+        `Workspace not found: ${wsRef(wsPath("/nonexistent/workspaces/feature-login"))}`
       );
 
       expect(getActivePath()).toBeNull();
@@ -381,7 +385,7 @@ describe("SwitchWorkspace Operation", () => {
     });
   });
 
-  describe("deselect (workspacePath: null)", () => {
+  describe("deselect (workspaceRef: null)", () => {
     it("clears the active workspace and emits workspace:switched(null)", async () => {
       const setup = createTestSetup({ initialActive: TEST_WORKSPACE_PATH });
       const { dispatcher, getActivePath } = setup;
@@ -393,7 +397,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: null },
+        payload: { workspaceRef: null },
       });
 
       expect(getActivePath()).toBeNull();
@@ -412,7 +416,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: null },
+        payload: { workspaceRef: null },
       });
 
       expect(getActivePath()).toBeNull();
@@ -430,7 +434,7 @@ describe("SwitchWorkspace Operation", () => {
       const intent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: TEST_WORKSPACE_PATH,
+          workspaceRef: wsRef(TEST_WORKSPACE_PATH),
         },
       };
       await dispatcher.dispatch(intent);
@@ -475,7 +479,7 @@ describe("SwitchWorkspace Operation", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: TEST_WORKSPACE_PATH, focus: true },
+        payload: { auto: true, currentRef: wsRef(TEST_WORKSPACE_PATH), focus: true },
       };
       await dispatcher.dispatch(autoIntent);
 
@@ -498,7 +502,7 @@ describe("SwitchWorkspace Operation", () => {
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { auto: true, currentPath: TEST_WORKSPACE_PATH, focus: true },
+        payload: { auto: true, currentRef: wsRef(TEST_WORKSPACE_PATH), focus: true },
       };
       await dispatcher.dispatch(autoIntent);
 
@@ -525,7 +529,7 @@ describe("SwitchWorkspace Operation", () => {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
           auto: true,
-          currentPath: wsPath("/nonexistent"),
+          currentRef: wsRef(wsPath("/projects/my-app/workspaces/nonexistent")),
           focus: true,
         },
       };
@@ -537,20 +541,20 @@ describe("SwitchWorkspace Operation", () => {
     });
   });
 
-  describe("auto-select when currentPath not in candidates", () => {
-    it("selects best candidate even when currentPath is already de-registered", async () => {
+  describe("auto-select when the current workspace is not a candidate", () => {
+    it("selects best candidate even when the current one is already de-registered", async () => {
       const setup = createTestSetup({
         withAutoSelect: true,
         projects: [createMultiWorkspaceProject()],
       });
       const { dispatcher, getActivePath } = setup;
 
-      // currentPath doesn't match any candidate (workspace already de-registered)
+      // The current one matches no candidate (workspace already de-registered)
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
           auto: true,
-          currentPath: wsPath("/nonexistent"),
+          currentRef: wsRef(wsPath("/projects/my-app/workspaces/nonexistent")),
           focus: true,
         },
       };

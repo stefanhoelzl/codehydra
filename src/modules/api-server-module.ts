@@ -24,19 +24,15 @@ import {
   OPERATION_CHANNEL_PREFIX,
   type ApiServerConnection,
 } from "../api/adapters/api-server";
-import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspacePath } from "../api/events";
+import { EVENT_CHANNEL, FORWARDED_EVENTS, eventWorkspaceRef } from "../api/events";
 import type { DomainEvent } from "../intents/lib/types";
-import {
-  allWorkspaces,
-  findWorkspaceContaining,
-  type ProjectLocation,
-} from "../api/workspace-lookup";
+import { workspaceAtPath, type ProjectLocation } from "../api/workspace-lookup";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import type { ListProjectsIntent } from "../intents/list-projects";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { LogContext, Logger, LogScopeStore } from "../boundaries/platform/logging-types";
+import type { LogContext, Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel, toLogContext } from "../boundaries/platform/logging";
 import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
@@ -89,7 +85,6 @@ import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import type { RestartAgentIntent } from "../intents/restart-agent";
 import type { GetMetadataIntent } from "../intents/get-metadata";
 import type { SetMetadataIntent } from "../intents/set-metadata";
-import type { ResolveWorkspaceIntent } from "../intents/resolve-workspace";
 import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
 import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
@@ -108,7 +103,6 @@ import type { AgentLifecycleIntent } from "../intents/agent-lifecycle";
 import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
-import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/vscode-show-message";
 import {
   INTENT_VSCODE_MODAL_CHANGED,
@@ -118,10 +112,15 @@ import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
-import { Path } from "../utils/path/path";
 import { metadataTier, visibleMetadata } from "../utils/metadata-tier";
-import { workspacePathSchema } from "../intents/contract";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
+import {
+  asWorkspaceRef,
+  isRef,
+  parseWorkspaceRef,
+  projectNameOf,
+  projectRefOf,
+} from "../utils/ref";
 
 // =============================================================================
 // Types
@@ -187,11 +186,6 @@ export interface ApiServerOptions {
   readonly isDevelopment?: boolean;
   /** Logger for extension-side logs. Default: SILENT_LOGGER */
   readonly extensionLogger?: Logger;
-  /**
-   * The logging service's scope store, where a connection's workspace is
-   * looked up by name for the `caller` of the work it dispatches.
-   */
-  readonly logScope?: LogScopeStore;
 }
 
 // =============================================================================
@@ -236,7 +230,7 @@ export interface ApiServerModuleHandle {
    * window that matters, which is the wide one where the workspace was never
    * connected or is being torn down.
    */
-  isConnected(workspacePath: string): boolean;
+  isConnected(workspaceRef: WorkspaceRef): boolean;
   /** The bound port, or null before the server has started. */
   port(): number | null;
   /**
@@ -247,9 +241,9 @@ export interface ApiServerModuleHandle {
    * awaited: the payload is human-readable text, and a lost line must never
    * hold anything up.
    */
-  appendOutput(workspacePath: string, request: AppendOutputRequest): boolean;
+  appendOutput(workspaceRef: WorkspaceRef, request: AppendOutputRequest): boolean;
   /** Called whenever a workspace's extension connects. Returns an unsubscribe. */
-  onWorkspaceConnected(listener: (workspacePath: string) => void): () => void;
+  onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void;
   /**
    * Called when a workspace's current socket drops. Returns an unsubscribe.
    *
@@ -262,7 +256,7 @@ export interface ApiServerModuleHandle {
 
 /** A workspace's sidekick socket dropping, and whether we are the ones who dropped it. */
 export interface WorkspaceDisconnect {
-  readonly workspacePath: string;
+  readonly workspaceRef: WorkspaceRef;
   /** The Socket.IO disconnect reason, verbatim. */
   readonly reason: string;
   /**
@@ -287,7 +281,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   ];
   const isDevelopment = deps.options?.isDevelopment ?? false;
   const extensionLogger: Logger = deps.options?.extensionLogger ?? SILENT_LOGGER;
-  const logScope = deps.options?.logScope;
 
   // ---------------------------------------------------------------------------
   // Closure state (replaces ApiServer class fields)
@@ -296,9 +289,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   let httpServer: HttpServer | null = null;
   let io: TypedServer | null = null;
   let port: number | null = null;
-  const connections = new Map<string, TypedSocket>();
+  const connections = new Map<WorkspaceRef, TypedSocket>();
   const workspaceConfigs = new Map<
-    string,
+    WorkspaceRef,
     {
       env: Record<string, string>;
       workspaceEnv: Record<string, string>;
@@ -326,7 +319,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * unlike a teardown-wide flag it cannot strand a workspace as permanently
    * unconnectable if a terminal event is ever missed.
    */
-  const closingWorkspaces = new Set<string>();
+  const closingWorkspaces = new Set<WorkspaceRef>();
 
   // ---------------------------------------------------------------------------
   // Server lifecycle functions
@@ -403,12 +396,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // ---------------------------------------------------------------------------
 
   async function sendCommand(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     command: string,
     args?: readonly unknown[],
     timeoutMs: number = COMMAND_TIMEOUT_MS
   ): Promise<ApiResult<unknown>> {
-    const normalized = new Path(workspacePath).toString();
+    const normalized = workspaceRef;
     const socket = connections.get(normalized);
 
     if (!socket) {
@@ -424,14 +417,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     return new Promise((resolve) => {
       const timeoutId = setTimeout(() => {
-        logger.scoped({ path: normalized }).warn("Command timeout", { command, timeoutMs });
+        logger.scoped({ workspace: normalized }).warn("Command timeout", { command, timeoutMs });
         resolve({ success: false, error: "Command timed out" });
       }, timeoutMs);
 
       socket.emit("command", request, (result: ApiResult<unknown>) => {
         clearTimeout(timeoutId);
         logger
-          .scoped({ path: normalized })
+          .scoped({ workspace: normalized })
           .debug("Command result", { command, success: result.success });
         resolve(result);
       });
@@ -466,7 +459,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * so `ch ws delete --workspace other` shows the other workspace's teardown.
    */
   function forwardEvent(event: DomainEvent): void {
-    const eventWorkspace = eventWorkspacePath(event.payload);
+    const eventWorkspace = eventWorkspaceRef(event.payload);
 
     for (const client of eventClients) {
       if (!client.connection.concerns(eventWorkspace)) continue;
@@ -480,11 +473,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   }
 
   /** Waiters for `api:workspace:agentLifecycle {event: "close"}`, by workspace. */
-  const agentClosedWaiters = new Map<string, Set<() => void>>();
+  const agentClosedWaiters = new Map<WorkspaceRef, Set<() => void>>();
 
   /** Wake anything waiting for this workspace's agent terminal to close. */
-  function resolveAgentClosed(workspacePath: WorkspacePath): void {
-    const normalized = new Path(workspacePath).toString();
+  function resolveAgentClosed(workspaceRef: WorkspaceRef): void {
+    const normalized = workspaceRef;
     const waiters = agentClosedWaiters.get(normalized);
     if (!waiters) return;
     agentClosedWaiters.delete(normalized);
@@ -509,8 +502,8 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * a wedged extension host must not block the teardown. The Windows CWD scan
    * remains as the backstop for whatever this does not reach.
    */
-  async function closeAgentTerminal(workspacePath: WorkspacePath): Promise<void> {
-    const normalized = new Path(workspacePath).toString();
+  async function closeAgentTerminal(workspaceRef: WorkspaceRef): Promise<void> {
+    const normalized = workspaceRef;
     const socket = connections.get(normalized);
     if (!socket?.connected) return;
 
@@ -526,7 +519,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     try {
       const result = await sendCommand(
-        workspacePath,
+        workspaceRef,
         CLOSE_AGENT_COMMAND,
         undefined,
         AGENT_CLOSE_TIMEOUT_MS
@@ -538,7 +531,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       // full timeout for nothing.
       const data = result.success ? (result.data as { closed?: boolean } | undefined) : undefined;
       if (!result.success || data?.closed !== true) {
-        logger.scoped({ path: normalized }).debug("No agent terminal to close", {
+        logger.scoped({ workspace: normalized }).debug("No agent terminal to close", {
           ...(result.success ? {} : { error: result.error }),
         });
         return;
@@ -552,12 +545,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         const outcome = await Promise.race([closed.then(() => "closed" as const), timedOut]);
         if (outcome === "timeout") {
           logger
-            .scoped({ path: normalized })
+            .scoped({ workspace: normalized })
             .warn("Agent terminal did not close in time; falling back to process cleanup", {
               timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
             });
         } else {
-          logger.scoped({ path: normalized }).debug("Agent terminal closed");
+          logger.scoped({ workspace: normalized }).debug("Agent terminal closed");
         }
       } finally {
         clearTimeout(timeoutId!);
@@ -585,13 +578,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * fails a call still waiting on one.
    */
   async function sendUiEvent<TReq, TRes>(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     event: keyof ServerToClientEvents,
     request: TReq,
     timeoutMs: number = COMMAND_TIMEOUT_MS,
     options?: { readonly modal?: boolean }
   ): Promise<ApiResult<TRes>> {
-    const normalized = workspacePathSchema.parse(new Path(workspacePath).toString());
+    const normalized = workspaceRef;
     const socket = connections.get(normalized);
 
     if (!socket) {
@@ -626,7 +619,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       if (timeoutMs > 0) {
         timeoutId = setTimeout(() => {
-          logger.scoped({ path: normalized }).warn("UI event timeout", { event, timeoutMs });
+          logger.scoped({ workspace: normalized }).warn("UI event timeout", { event, timeoutMs });
           resolve({ success: false, error: "UI event timed out" });
         }, timeoutMs);
       }
@@ -636,7 +629,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         if (timeoutId !== undefined) clearTimeout(timeoutId);
         closeModal();
         logger
-          .scoped({ path: normalized })
+          .scoped({ workspace: normalized })
           .debug("UI event result", { event, success: result.success });
         resolve(result);
       });
@@ -657,87 +650,87 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * a call that timed out, or a notification without actions whose call returned
    * at once, still holds the workspace until the user dismisses it.
    */
-  const openModals = new Map<WorkspacePath, number>();
+  const openModals = new Map<WorkspaceRef, number>();
 
   /**
    * The last edge report per workspace. Each report waits for the previous one,
    * so an open and its close cannot overtake each other in the dispatcher and
    * leave the workspace parked.
    */
-  const modalReports = new Map<WorkspacePath, Promise<void>>();
+  const modalReports = new Map<WorkspaceRef, Promise<void>>();
 
-  function reportModalEdge(workspacePath: WorkspacePath, open: boolean): void {
-    const previous = modalReports.get(workspacePath) ?? Promise.resolve();
+  function reportModalEdge(workspaceRef: WorkspaceRef, open: boolean): void {
+    const previous = modalReports.get(workspaceRef) ?? Promise.resolve();
     const report = previous.then(async () => {
       try {
         await dispatcher.dispatch<VscodeModalChangedIntent>({
           type: INTENT_VSCODE_MODAL_CHANGED,
-          payload: { workspacePath, open },
+          payload: { workspaceRef, open },
         });
       } catch (error) {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .warn("Failed to report modal change", { open, error: getErrorMessage(error) });
       }
     });
-    modalReports.set(workspacePath, report);
+    modalReports.set(workspaceRef, report);
     void report.finally(() => {
-      if (modalReports.get(workspacePath) === report) modalReports.delete(workspacePath);
+      if (modalReports.get(workspaceRef) === report) modalReports.delete(workspaceRef);
     });
   }
 
-  function modalOpened(workspacePath: WorkspacePath): void {
-    const count = (openModals.get(workspacePath) ?? 0) + 1;
-    openModals.set(workspacePath, count);
-    if (count === 1) reportModalEdge(workspacePath, true);
+  function modalOpened(workspaceRef: WorkspaceRef): void {
+    const count = (openModals.get(workspaceRef) ?? 0) + 1;
+    openModals.set(workspaceRef, count);
+    if (count === 1) reportModalEdge(workspaceRef, true);
   }
 
-  function modalClosed(workspacePath: WorkspacePath): void {
-    const count = (openModals.get(workspacePath) ?? 0) - 1;
+  function modalClosed(workspaceRef: WorkspaceRef): void {
+    const count = (openModals.get(workspaceRef) ?? 0) - 1;
     if (count > 0) {
-      openModals.set(workspacePath, count);
+      openModals.set(workspaceRef, count);
       return;
     }
-    openModals.delete(workspacePath);
-    reportModalEdge(workspacePath, false);
+    openModals.delete(workspaceRef);
+    reportModalEdge(workspaceRef, false);
   }
 
   async function showNotification(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     request: ShowNotificationRequest,
     timeoutMs: number = 0
   ): Promise<ApiResult<ShowNotificationResponse>> {
-    return sendUiEvent(workspacePath, "ui:showNotification", request, timeoutMs, { modal: true });
+    return sendUiEvent(workspaceRef, "ui:showNotification", request, timeoutMs, { modal: true });
   }
 
   async function updateStatusBar(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     request: StatusBarUpdateRequest
   ): Promise<ApiResult<void>> {
-    return sendUiEvent(workspacePath, "ui:statusBarUpdate", request);
+    return sendUiEvent(workspaceRef, "ui:statusBarUpdate", request);
   }
 
   async function disposeStatusBar(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     request: StatusBarDisposeRequest
   ): Promise<ApiResult<void>> {
-    return sendUiEvent(workspacePath, "ui:statusBarDispose", request);
+    return sendUiEvent(workspaceRef, "ui:statusBarDispose", request);
   }
 
   async function showQuickPick(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     request: ShowQuickPickRequest,
     timeoutMs: number = 0
   ): Promise<ApiResult<ShowQuickPickResponse>> {
-    return sendUiEvent(workspacePath, "ui:showQuickPick", request, timeoutMs, { modal: true });
+    return sendUiEvent(workspaceRef, "ui:showQuickPick", request, timeoutMs, { modal: true });
   }
 
   async function showInputBox(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     request: ShowInputBoxRequest,
     timeoutMs: number = 0
   ): Promise<ApiResult<ShowInputBoxResponse>> {
-    return sendUiEvent(workspacePath, "ui:showInputBox", request, timeoutMs, { modal: true });
+    return sendUiEvent(workspaceRef, "ui:showInputBox", request, timeoutMs, { modal: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -745,18 +738,18 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // ---------------------------------------------------------------------------
 
   function setWorkspaceConfig(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     env: Record<string, string>,
     workspaceEnv: Record<string, string>,
     agentType: AgentType,
     resetWorkspace: boolean
   ): void {
-    const normalized = new Path(workspacePath).toString();
+    const normalized = workspaceRef;
     workspaceConfigs.set(normalized, { env, workspaceEnv, agentType, resetWorkspace });
   }
 
-  function removeWorkspaceConfig(workspacePath: WorkspacePath): void {
-    const normalized = new Path(workspacePath).toString();
+  function removeWorkspaceConfig(workspaceRef: WorkspaceRef): void {
+    const normalized = workspaceRef;
     workspaceConfigs.delete(normalized);
   }
 
@@ -775,10 +768,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   interface Handshake {
     readonly kind: ClientKind;
     /**
-     * The caller's own workspace, when it knows it: a sidekick's, and the MCP
-     * shim's (its agent's). A shell does not — it presents where it stands.
+     * The caller's own workspace, when it knows it: a sidekick's folder path,
+     * and the MCP shim's (its agent's) ref. A shell does not — it presents where
+     * it stands.
      */
-    readonly workspacePath?: string;
+    readonly ownWorkspace?: string;
     /** Working directory: a shell's own workspace is the one containing it. */
     readonly cwd?: string;
   }
@@ -792,11 +786,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     // No client kind: the sidekick's original handshake.
     if (kind === undefined) {
-      const workspacePath = record.workspacePath;
-      if (typeof workspacePath !== "string" || workspacePath.length === 0) {
+      const workspaceRef = record.workspacePath;
+      if (typeof workspaceRef !== "string" || workspaceRef.length === 0) {
         return { error: "invalid auth" };
       }
-      return { kind: "sidekick", workspacePath };
+      return { kind: "sidekick", ownWorkspace: workspaceRef };
     }
 
     if (kind !== "cli" && kind !== "mcp") {
@@ -814,46 +808,48 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       return { error: "invalid token" };
     }
 
+    const own = mcpOwnWorkspace(record);
     return {
       kind,
-      // Only the MCP shim knows its workspace. A shell's `workspacePath` would
-      // be a target from a `ch` older than the app; it is a call's field now.
-      ...(kind === "mcp" &&
-        typeof record.workspacePath === "string" &&
-        record.workspacePath.length > 0 && { workspacePath: record.workspacePath }),
+      // Only the MCP shim knows its workspace: its ref as `workspace`, or the
+      // path a shim older than refs presented as `workspacePath`. A shell's
+      // `workspacePath` would be a target from a `ch` older than the app; it is
+      // a call's field now.
+      ...(kind === "mcp" && own !== undefined && { ownWorkspace: own }),
       ...(typeof record.cwd === "string" && record.cwd.length > 0 && { cwd: record.cwd }),
     };
   }
 
-  /** A path a client presented as its own workspace, normalized; null if it is none. */
-  function ownWorkspace(path: string): WorkspacePath | null {
-    try {
-      return workspacePathSchema.parse(new Path(path).toString());
-    } catch {
-      return null;
+  /** The workspace an MCP shim presented as its own, if any. */
+  function mcpOwnWorkspace(record: Record<string, unknown>): string | undefined {
+    for (const value of [record.workspace, record.workspacePath]) {
+      if (typeof value === "string" && value.length > 0) return value;
     }
+    return undefined;
   }
 
   /**
    * The caller's own workspace, or null when it has none.
    *
-   * A sidekick and the MCP shim present theirs and are taken at their word — it
-   * may be a workspace still being opened. A shell presents a working directory,
-   * matched to the deepest workspace containing it; resolving to nothing is not
-   * an error — that is simply a shell standing outside any worktree, and
-   * app-global commands still work there.
+   * An MCP shim presents its ref and is taken at its word. A sidekick presents
+   * its folder, matched to the workspace there — one still being opened is
+   * listed already, from the moment its worktree exists. A shell presents a
+   * working directory, matched to the deepest workspace containing it;
+   * resolving to nothing is not an error — that is simply a shell standing
+   * outside any worktree, and app-global commands still work there.
    */
   async function resolveCaller(
     handshake: Handshake,
     listProjects: () => Promise<readonly ProjectLocation[] | null>
-  ): Promise<WorkspacePath | null> {
-    if (handshake.workspacePath !== undefined) return ownWorkspace(handshake.workspacePath);
-    if (handshake.cwd === undefined) return null;
+  ): Promise<WorkspaceRef | null> {
+    const own = handshake.ownWorkspace;
+    if (own !== undefined && isRef(own)) return asWorkspaceRef(own);
+    const directory = own ?? handshake.cwd;
+    if (directory === undefined) return null;
 
     const projects = await listProjects();
     if (projects === null) return null;
-    const here = findWorkspaceContaining(allWorkspaces(projects), handshake.cwd);
-    return here === null ? null : workspacePathSchema.parse(here);
+    return workspaceAtPath(projects, directory);
   }
 
   /**
@@ -880,41 +876,23 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     }
   }
 
-  /** A workspace's project and name as listed, for log scopes; undefined when not listed. */
-  function nameWorkspace(
-    projects: readonly ProjectLocation[] | null,
-    workspacePath: WorkspacePath
-  ): { readonly project: string; readonly ws: string } | undefined {
-    const target = new Path(workspacePath);
-    for (const project of projects ?? []) {
-      const found = project.workspaces.find((w) => new Path(w.path).equals(target));
-      if (found) return { project: new Path(project.path).basename, ws: found.name };
-    }
-    return undefined;
-  }
-
   /**
    * Tag a connection's work with who it is, for the log scope: every dispatch
    * its packets start carries its client kind, its own workspace (`caller`) and
    * the channel called (`api`); every line its extension forwards is scoped to
    * its workspace.
    *
-   * The caller is named when each packet arrives — from the workspaces the app
-   * has named (a sidekick's is named when it is opened), else from the listing
-   * that found a shell's workspace — so no lookup holds up the connection.
+   * The caller is named by its ref, which carries its project and name, so no
+   * lookup holds up the connection.
    */
   function tagConnection(
     socket: TypedSocket,
     kind: ClientKind,
-    workspacePath: WorkspacePath | null,
-    projects: readonly ProjectLocation[] | null
+    workspaceRef: WorkspaceRef | null
   ): Logger {
-    const listed = workspacePath === null ? undefined : nameWorkspace(projects, workspacePath);
-    const callerName = (): string | undefined => {
-      if (workspacePath === null) return undefined;
-      const name = logScope?.workspaceAt(workspacePath) ?? listed;
-      return name === undefined ? undefined : `${name.project}/${name.ws}`;
-    };
+    const named = workspaceRef === null ? null : parseWorkspaceRef(workspaceRef);
+    const callerName = (): string | undefined =>
+      named === null ? undefined : `${projectNameOf(named.projectRef)}/${named.name}`;
 
     socket.use(([event], next) => {
       const api = event.startsWith(OPERATION_CHANNEL_PREFIX)
@@ -936,7 +914,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     });
 
     return extensionLogger.scoped({
-      ...(workspacePath !== null && { path: workspacePath }),
+      ...(workspaceRef !== null && { workspace: workspaceRef }),
       origin: kind,
     });
   }
@@ -966,21 +944,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       return;
     }
 
-    // One listing per connection, shared by resolving and naming the caller.
-    let listed: Promise<readonly ProjectLocation[] | null> | undefined;
-    const listing = (): Promise<readonly ProjectLocation[] | null> =>
-      (listed ??= listProjects(handshake.kind));
-    const resolved = await resolveCaller(handshake, listing);
+    const resolved = await resolveCaller(handshake, () => listProjects(handshake.kind));
 
     // The socket may have gone while we were resolving.
     if (socket.disconnected) return;
 
-    const connectionLogger = tagConnection(
-      socket,
-      handshake.kind,
-      resolved,
-      listed === undefined ? null : await listed
-    );
+    const connectionLogger = tagConnection(socket, handshake.kind, resolved);
 
     // Registry operations are mounted for every kind of client. Which operations
     // that is, and what they are called, follows the client kind.
@@ -988,7 +957,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       ? attachApiServerAdapter({
           socket: socket as unknown as Parameters<typeof attachApiServerAdapter>[0]["socket"],
           registry: deps.registry,
-          workspacePath: resolved,
+          workspaceRef: resolved,
           cwd: handshake.cwd ?? null,
           logger,
           kind: handshake.kind,
@@ -1007,12 +976,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         // Most guests are one-shot commands, but `ch mcp` holds its connection
         // for a whole agent session; when it drops, this is the only trace.
         logger
-          .scoped({ path: resolved })
+          .scoped(resolved === null ? {} : { workspace: resolved })
           .debug("Client disconnected", { kind: handshake.kind, socketId: socket.id, reason });
       });
 
       logger
-        .scoped({ path: resolved })
+        .scoped(resolved === null ? {} : { workspace: resolved })
         .debug("Client connected", { kind: handshake.kind, socketId: socket.id });
       return;
     }
@@ -1022,45 +991,45 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       socket.disconnect(true);
       return;
     }
-    const workspacePath = resolved;
+    const workspaceRef = resolved;
 
     {
       // This workspace's teardown is mid-flight and is waiting on its current
       // socket for the agent to report that it closed. Accepting would displace
       // that socket (see the duplicate-connection handling below) and strand the
       // wait.
-      if (closingWorkspaces.has(workspacePath)) {
+      if (closingWorkspaces.has(workspaceRef)) {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .info("Connection rejected: workspace teardown in progress", { socketId: socket.id });
         socket.disconnect(true);
         return;
       }
 
-      socket.data.workspacePath = workspacePath;
+      socket.data.workspaceRef = workspaceRef;
 
-      const existingSocket = connections.get(workspacePath);
+      const existingSocket = connections.get(workspaceRef);
       if (existingSocket) {
-        logger.scoped({ path: workspacePath }).info("Disconnecting duplicate connection", {
+        logger.scoped({ workspace: workspaceRef }).info("Disconnecting duplicate connection", {
           oldSocketId: existingSocket.id,
           newSocketId: socket.id,
         });
         existingSocket.disconnect(true);
       }
 
-      connections.set(workspacePath, socket);
+      connections.set(workspaceRef, socket);
       for (const listener of connectListeners) {
         try {
-          listener(workspacePath);
+          listener(workspaceRef);
         } catch (error) {
-          logger.scoped({ path: workspacePath }).warn("A workspace-connected listener threw", {
+          logger.scoped({ workspace: workspaceRef }).warn("A workspace-connected listener threw", {
             error: error instanceof Error ? error.message : String(error),
           });
         }
       }
-      logger.scoped({ path: workspacePath }).info("Client connected", { socketId: socket.id });
+      logger.scoped({ workspace: workspaceRef }).info("Client connected", { socketId: socket.id });
 
-      const storedConfig = workspaceConfigs.get(workspacePath);
+      const storedConfig = workspaceConfigs.get(workspaceRef);
       const env: Record<string, string> | null = storedConfig?.env ?? null;
       const workspaceEnv: Record<string, string> | null = storedConfig?.workspaceEnv ?? null;
       const agentTypeValue: AgentType | null = storedConfig?.agentType ?? null;
@@ -1081,26 +1050,26 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         storedConfig.resetWorkspace = false;
       }
       logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .debug("Config sent", { isDevelopment, hasEnv: env !== null, agentType: agentTypeValue });
 
       socket.on("disconnect", (reason) => {
-        const currentSocket = connections.get(workspacePath);
+        const currentSocket = connections.get(workspaceRef);
         if (currentSocket === socket) {
-          connections.delete(workspacePath);
-          logger.scoped({ path: workspacePath }).info("Client disconnected", { reason });
+          connections.delete(workspaceRef);
+          logger.scoped({ workspace: workspaceRef }).info("Client disconnected", { reason });
           const disconnect: WorkspaceDisconnect = {
-            workspacePath,
+            workspaceRef,
             reason,
             initiatedByUs:
-              SERVER_DISCONNECT_REASONS.has(reason) || closingWorkspaces.has(workspacePath),
+              SERVER_DISCONNECT_REASONS.has(reason) || closingWorkspaces.has(workspaceRef),
           };
           for (const listener of disconnectListeners) {
             try {
               listener(disconnect);
             } catch (error) {
               logger
-                .scoped({ path: workspacePath })
+                .scoped({ workspace: workspaceRef })
                 .warn("A workspace-disconnected listener threw", {
                   error: error instanceof Error ? error.message : String(error),
                 });
@@ -1109,7 +1078,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         }
       });
 
-      setupApiHandlers(socket, workspacePath, connectionLogger);
+      setupApiHandlers(socket, workspaceRef, connectionLogger);
     }
   }
 
@@ -1121,19 +1090,19 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * Wrap a dispatcher call with error handling, returning a ApiResult.
    */
   async function handleApiCall<T>(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     operation: string,
     fn: () => Promise<T>,
     logContext?: LogContext
   ): Promise<ApiResult<T>> {
     try {
       const result = await fn();
-      logger.scoped({ path: workspacePath }).debug(`${operation} success`, logContext);
+      logger.scoped({ workspace: workspaceRef }).debug(`${operation} success`, logContext);
       return { success: true, data: result };
     } catch (error) {
       const message = getErrorMessage(error);
       logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .error(`${operation} error`, { error: message, ...logContext });
       return { success: false, error: message };
     }
@@ -1144,15 +1113,15 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    */
   function createNoArgHandler<R>(
     eventName: string,
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     dispatchFn: () => Promise<R>
   ): (ack: (result: ApiResult<R>) => void) => void {
     return (ack) => {
-      logger.scoped({ path: workspacePath }).debug("API call", { event: eventName });
+      logger.scoped({ workspace: workspaceRef }).debug("API call", { event: eventName });
 
       // handleApiCall never rejects (it converts all errors into a
       // ApiResult), so this guard only covers ack() itself throwing.
-      handleApiCall(workspacePath, eventName, dispatchFn)
+      handleApiCall(workspaceRef, eventName, dispatchFn)
         .then((result) => ack(result))
         .catch(() => {});
     };
@@ -1163,7 +1132,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    */
   function createValidatedHandler<TReq, TValidated, R>(
     eventName: string,
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     validator: (
       payload: unknown
     ) => { valid: true; request?: TValidated } | { valid: false; error: string },
@@ -1174,7 +1143,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       const validation = validator(request);
       if (!validation.valid) {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .warn("API call validation failed", { event: eventName, error: validation.error });
         ack({ success: false, error: validation.error });
         return;
@@ -1182,7 +1151,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       const validatedRequest = validation.request ?? (request as unknown as TValidated);
       logger
-        .scoped({ path: workspacePath })
+        .scoped({ workspace: workspaceRef })
         .debug("API call", { event: eventName, ...logContext?.(request) });
 
       // Every dispatchFn resolves through handleApiCall, which never
@@ -1199,7 +1168,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
   function setupApiHandlers(
     socket: TypedSocket,
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     connectionLogger: Logger
   ): void {
     // No-arg handlers
@@ -1209,12 +1178,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         GetWorkspaceStatusRequest | undefined,
         GetWorkspaceStatusRequest,
         WorkspaceStatus
-      >("api:workspace:getStatus", workspacePath, validateGetWorkspaceStatusRequest, (req) =>
-        handleApiCall(workspacePath, "getStatus", async () => {
+      >("api:workspace:getStatus", workspaceRef, validateGetWorkspaceStatusRequest, (req) =>
+        handleApiCall(workspaceRef, "getStatus", async () => {
           const intent: GetWorkspaceStatusIntent = {
             type: INTENT_GET_WORKSPACE_STATUS,
             payload: {
-              workspacePath,
+              workspaceRef,
               ...(req.refresh !== undefined && { refresh: req.refresh }),
             },
           };
@@ -1229,10 +1198,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     socket.on(
       "api:workspace:getAgentSession",
-      createNoArgHandler("api:workspace:getAgentSession", workspacePath, async () => {
+      createNoArgHandler("api:workspace:getAgentSession", workspaceRef, async () => {
         const intent: GetAgentSessionIntent = {
           type: INTENT_GET_AGENT_SESSION,
-          payload: { workspacePath },
+          payload: { workspaceRef },
         };
         return dispatcher.dispatch(intent);
       })
@@ -1240,10 +1209,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     socket.on(
       "api:workspace:restartAgentServer",
-      createNoArgHandler("api:workspace:restartAgentServer", workspacePath, async () => {
+      createNoArgHandler("api:workspace:restartAgentServer", workspaceRef, async () => {
         const intent: RestartAgentIntent = {
           type: INTENT_RESTART_AGENT,
-          payload: { workspacePath },
+          payload: { workspaceRef },
         };
         const result = await dispatcher.dispatch(intent);
         if (result === undefined) {
@@ -1255,10 +1224,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
     socket.on(
       "api:workspace:getMetadata",
-      createNoArgHandler("api:workspace:getMetadata", workspacePath, async () => {
+      createNoArgHandler("api:workspace:getMetadata", workspaceRef, async () => {
         const intent: GetMetadataIntent = {
           type: INTENT_GET_METADATA,
-          payload: { workspacePath },
+          payload: { workspaceRef },
         };
         const result = await dispatcher.dispatch(intent);
         if (!result) {
@@ -1274,17 +1243,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       "api:workspace:setMetadata",
       createValidatedHandler<SetMetadataRequest, SetMetadataRequest, void>(
         "api:workspace:setMetadata",
-        workspacePath,
+        workspaceRef,
         validateSetMetadataRequest,
         (req) =>
-          handleApiCall(workspacePath, "setMetadata", async () => {
+          handleApiCall(workspaceRef, "setMetadata", async () => {
             if (metadataTier(req.key) !== "public") {
               throw new Error(`Metadata key "${req.key}" is managed by CodeHydra and read-only.`);
             }
             const intent: SetMetadataIntent = {
               type: INTENT_SET_METADATA,
               payload: {
-                workspacePath,
+                workspaceRef,
                 key: req.key,
                 value: req.value,
               },
@@ -1304,14 +1273,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         DeleteWorkspaceResponse
       >(
         "api:workspace:delete",
-        workspacePath,
+        workspaceRef,
         validateDeleteWorkspaceRequest,
         (req) =>
-          handleApiCall(workspacePath, "delete", async () => {
+          handleApiCall(workspaceRef, "delete", async () => {
             const intent: DeleteWorkspaceIntent = {
               type: INTENT_DELETE_WORKSPACE,
               payload: {
-                workspacePath,
+                workspaceRef,
                 keepBranch: req.keepBranch ?? true,
                 force: false,
                 removeWorktree: true,
@@ -1332,14 +1301,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       "api:workspace:executeCommand",
       createValidatedHandler<ExecuteCommandRequest, ExecuteCommandRequest, unknown>(
         "api:workspace:executeCommand",
-        workspacePath,
+        workspaceRef,
         validateExecuteCommandRequest,
         (req) =>
-          handleApiCall(workspacePath, "executeCommand", async () => {
+          handleApiCall(workspaceRef, "executeCommand", async () => {
             const intent: VscodeCommandIntent = {
               type: INTENT_VSCODE_COMMAND,
               payload: {
-                workspacePath,
+                workspaceRef,
                 command: req.command,
                 args: req.args,
               },
@@ -1354,10 +1323,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       "api:workspace:openSystemPath",
       createValidatedHandler<OpenSystemPathRequest, OpenSystemPathRequest, void>(
         "api:workspace:openSystemPath",
-        workspacePath,
+        workspaceRef,
         validateOpenSystemPathRequest,
         (req) =>
-          handleApiCall(workspacePath, "openSystemPath", async () => {
+          handleApiCall(workspaceRef, "openSystemPath", async () => {
             if (req.app === "explorer") {
               const isDir = await isDirectory(req.path);
               const target = isDir ? req.path : dirname(req.path);
@@ -1374,19 +1343,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       "api:workspace:create",
       createValidatedHandler<WorkspaceCreateRequest, WorkspaceCreateRequest, Workspace>(
         "api:workspace:create",
-        workspacePath,
+        workspaceRef,
         validateWorkspaceCreateRequest,
         (req) =>
-          handleApiCall(workspacePath, "create", async () => {
-            const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
-              type: INTENT_RESOLVE_WORKSPACE,
-              payload: { workspacePath },
-            });
-
+          handleApiCall(workspaceRef, "create", async () => {
             const intent: OpenWorkspaceIntent = {
               type: INTENT_OPEN_WORKSPACE,
               payload: {
-                projectPath: resolved.projectPath,
+                projectRef: projectRefOf(workspaceRef),
                 workspaceName: req.name,
                 base: req.base,
                 ...(req.agent !== undefined && {
@@ -1425,18 +1389,18 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       const validation = validateAgentLifecycleRequest(request);
       if (!validation.valid) {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .warn("Invalid agentLifecycle request", { error: validation.error });
         return;
       }
 
       if (request.event === "close") {
-        resolveAgentClosed(workspacePath);
+        resolveAgentClosed(workspaceRef);
       }
 
       const intent: AgentLifecycleIntent = {
         type: INTENT_AGENT_LIFECYCLE,
-        payload: { workspacePath, event: request.event },
+        payload: { workspaceRef, event: request.event },
       };
       void dispatcher.dispatch(intent);
     });
@@ -1447,7 +1411,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // ---------------------------------------------------------------------------
 
   async function handleShowMessage(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     type: string,
     message: string | null,
     hint: string | undefined,
@@ -1456,11 +1420,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   ): Promise<string | null> {
     if (type === "status") {
       if (message === null) {
-        const result = await disposeStatusBar(workspacePath, { id: STATUS_BAR_ID });
+        const result = await disposeStatusBar(workspaceRef, { id: STATUS_BAR_ID });
         if (!result.success) throw new Error(result.error);
         return null;
       }
-      const result = await updateStatusBar(workspacePath, {
+      const result = await updateStatusBar(workspaceRef, {
         id: STATUS_BAR_ID,
         text: message,
         ...(hint !== undefined && { tooltip: hint }),
@@ -1473,12 +1437,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       if (options === undefined || options.length === 0) {
         // Nothing to answer, so the caller is not held up. The sidekick still
         // acks only on dismissal, which is what the modal tracking waits for.
-        if (!isConnected(workspacePath)) throw new Error("Workspace not connected");
-        void showNotification(workspacePath, { severity: type, message: message! }).then(
+        if (!isConnected(workspaceRef)) throw new Error("Workspace not connected");
+        void showNotification(workspaceRef, { severity: type, message: message! }).then(
           (result) => {
             if (!result.success) {
               logger
-                .scoped({ path: workspacePath })
+                .scoped({ workspace: workspaceRef })
                 .debug("Notification ended without dismissal", { error: result.error });
             }
           }
@@ -1486,7 +1450,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         return null;
       }
       const result = await showNotification(
-        workspacePath,
+        workspaceRef,
         {
           severity: type,
           message: message!,
@@ -1501,7 +1465,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     if (type === "select") {
       if (options !== undefined) {
         const result = await showQuickPick(
-          workspacePath,
+          workspaceRef,
           {
             items: options.map((label) => ({ label })),
             ...(hint !== undefined && { placeholder: hint }),
@@ -1514,7 +1478,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       // No options = free text input
       const result = await showInputBox(
-        workspacePath,
+        workspaceRef,
         {
           ...(message !== null && { prompt: message }),
           ...(hint !== undefined && { placeholder: hint }),
@@ -1533,7 +1497,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // ---------------------------------------------------------------------------
 
   /** Notified when a workspace's extension connects, so buffered work can flush. */
-  const connectListeners = new Set<(workspacePath: string) => void>();
+  const connectListeners = new Set<(workspaceRef: WorkspaceRef) => void>();
   /** Notified when a workspace's current socket drops. */
   const disconnectListeners = new Set<(disconnect: WorkspaceDisconnect) => void>();
 
@@ -1544,14 +1508,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * to a disconnect is not worth a caller's error path. A workspace that is not
    * connected simply answers false.
    */
-  /** True when `workspacePath` has a live socket. See ApiServerModuleHandle. */
-  function isConnected(workspacePath: string): boolean {
-    const socket = connections.get(new Path(workspacePath).toString());
+  /** True when `workspaceRef` has a live socket. See ApiServerModuleHandle. */
+  function isConnected(workspaceRef: WorkspaceRef): boolean {
+    const socket = connections.get(workspaceRef);
     return socket?.connected === true;
   }
 
-  function appendOutput(workspacePath: string, request: AppendOutputRequest): boolean {
-    const normalized = new Path(workspacePath).toString();
+  function appendOutput(workspaceRef: WorkspaceRef, request: AppendOutputRequest): boolean {
+    const normalized = workspaceRef;
     const socket = connections.get(normalized);
     if (!socket?.connected) return false;
     socket.emit("ui:appendOutput", request);
@@ -1599,7 +1563,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               const intent = ctx.intent as OpenWorkspaceIntent;
               const resetWs = intent.payload.existingWorkspace === undefined;
               setWorkspaceConfig(
-                finalizeCtx.workspacePath,
+                finalizeCtx.workspaceRef,
                 finalizeCtx.envVars,
                 finalizeCtx.workspaceEnv,
                 finalizeCtx.agentType,
@@ -1616,8 +1580,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         // about to disappear, and stop the agent that is already running in it.
         shutdown: {
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
-            const normalized = workspacePathSchema.parse(new Path(wsPath).toString());
+            const { workspaceRef: normalized } = ctx as DeletePipelineHookInput;
 
             closingWorkspaces.add(normalized);
             // "agent-stopped" is provided on EVERY path — including the early
@@ -1667,7 +1630,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         },
         delete: {
           handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
-            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
+            const { workspaceRef: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
@@ -1693,14 +1656,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               throw new Error("API server not available");
             }
 
-            const { workspacePath } = ctx as ShowHookInput;
+            const { workspaceRef } = ctx as ShowHookInput;
             const intent = ctx.intent as VscodeShowMessageIntent;
             const { type, message, hint, options: msgOptions, timeoutMs } = intent.payload;
 
             return {
               result: {
                 result: await handleShowMessage(
-                  workspacePath,
+                  workspaceRef,
                   type,
                   message,
                   hint,
@@ -1720,11 +1683,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               throw new Error("API server not available");
             }
 
-            const { workspacePath } = ctx as ExecuteHookInput;
+            const { workspaceRef } = ctx as ExecuteHookInput;
             const intent = ctx.intent as VscodeCommandIntent;
             const { command, args } = intent.payload;
 
-            const commandResult = await sendCommand(workspacePath, command, args);
+            const commandResult = await sendCommand(workspaceRef, command, args);
             if (!commandResult.success) {
               throw new Error(commandResult.error);
             }

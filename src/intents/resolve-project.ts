@@ -1,7 +1,7 @@
 /**
  * ResolveProjectOperation - Shared project resolution.
  *
- * Centralizes the projectPath → (projectId, projectName) lookup
+ * Centralizes the projectRef → (projectId, projectPath, projectName) lookup
  * used by multiple operations. Each consuming operation dispatches this
  * intent instead of running its own resolve-project hook.
  *
@@ -31,7 +31,7 @@ export const RESOLVE_PROJECT_OPERATION_ID = "resolve-project";
 
 export const resolveProjectPayloadSchema = z
   .object({
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
   })
   .readonly();
 
@@ -39,6 +39,7 @@ export const resolveProjectResultSchema = z
   .object({
     projectId: projectIdSchema,
     projectRef: projectRefSchema,
+    projectPath: projectPathSchema,
     projectName: z.string(),
   })
   .readonly();
@@ -47,13 +48,13 @@ export const resolveProjectResultSchema = z
 export const resolveHookResultSchema = z
   .object({
     projectId: projectIdSchema.optional(),
-    projectRef: projectRefSchema.optional(),
+    projectPath: projectPathSchema.optional(),
     projectName: z.string().optional(),
   })
   .readonly();
 
 /** Operation-added enrichment for the "resolve" hook point (beyond the base HookContext). */
-const resolveEnrichmentSchema = z.object({ projectPath: projectPathSchema });
+const resolveEnrichmentSchema = z.object({ projectRef: projectRefSchema });
 
 /** Runtime whole-context validation schema for "resolve" (its inferred type isn't the ctx type). */
 export const resolveHookInputSchema = hookCtxSchema(
@@ -101,26 +102,31 @@ export class ResolveProjectOperation implements Operation<typeof schemas> {
 
     const resolveCtx: ResolveHookInput = {
       intent: ctx.intent,
-      projectPath: payload.projectPath,
+      projectRef: payload.projectRef,
     };
     const { results, errors } = await ctx.hooks.collect("resolve", resolveCtx);
     throwHookErrors(errors, "project:resolve hooks failed");
 
     let projectId: ResolveProjectResult["projectId"] | undefined;
-    let projectRef: ResolveProjectResult["projectRef"] | undefined;
+    let projectPath: ResolveProjectResult["projectPath"] | undefined;
     let projectName: string | undefined;
     for (const r of results) {
       if (r.projectId !== undefined) projectId = r.projectId;
-      if (r.projectRef !== undefined) projectRef = r.projectRef;
+      if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.projectName !== undefined) projectName = r.projectName;
     }
 
-    if (!projectId || !projectRef) {
-      throw new Error(`Project not found for path: ${payload.projectPath}`);
+    if (!projectId || !projectPath) {
+      throw new Error(`Project not found: ${payload.projectRef}`);
     }
 
-    ctx.setLogTarget({ project: new Path(payload.projectPath).basename });
+    ctx.setLogTarget({ project: new Path(projectPath).basename });
 
-    return { projectId, projectRef, projectName: projectName ?? "" };
+    return {
+      projectId,
+      projectRef: payload.projectRef,
+      projectPath,
+      projectName: projectName ?? "",
+    };
   }
 }

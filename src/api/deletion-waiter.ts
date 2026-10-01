@@ -19,11 +19,11 @@ import {
   type WorkspaceDeletionProgressEvent,
 } from "../intents/delete-workspace";
 import type { DeletionProgress } from "../shared/api/types";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
 
 export interface DeletionWaiter {
   /** Start waiting before dispatching the delete, so the event cannot be missed. */
-  await(workspacePath: WorkspacePath): {
+  await(workspaceRef: WorkspaceRef): {
     readonly outcome: Promise<DeletionProgress>;
     readonly release: () => void;
   };
@@ -41,31 +41,31 @@ export function createDeletionWaiter(dispatcher: Dispatcher): DeletionWaiter {
       // carries the outcome.
       if (!progress.completed) return;
 
-      const pending = waiters.get(progress.workspacePath);
+      const pending = waiters.get(progress.workspaceRef);
       if (!pending) return;
-      waiters.delete(progress.workspacePath);
+      waiters.delete(progress.workspaceRef);
       for (const resolve of pending) resolve(progress);
     }
   );
 
   return {
-    await(workspacePath) {
+    await(workspaceRef) {
       let resolveOutcome!: (progress: DeletionProgress) => void;
       const outcome = new Promise<DeletionProgress>((resolve) => {
         resolveOutcome = resolve;
       });
 
-      const pending = waiters.get(workspacePath) ?? new Set();
+      const pending = waiters.get(workspaceRef) ?? new Set();
       pending.add(resolveOutcome);
-      waiters.set(workspacePath, pending);
+      waiters.set(workspaceRef, pending);
 
       return {
         outcome,
         release: () => {
-          const current = waiters.get(workspacePath);
+          const current = waiters.get(workspaceRef);
           if (!current) return;
           current.delete(resolveOutcome);
-          if (current.size === 0) waiters.delete(workspacePath);
+          if (current.size === 0) waiters.delete(workspaceRef);
         },
       };
     },

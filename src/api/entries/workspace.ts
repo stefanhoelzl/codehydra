@@ -26,10 +26,9 @@ import { INTENT_OPEN_WORKSPACE } from "../../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../../intents/open-workspace";
 import { INTENT_DELETE_WORKSPACE } from "../../intents/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
-import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import { INTENT_SWITCH_WORKSPACE } from "../../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
-import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
+import { projectRefOf } from "../../utils/ref";
 
 /** The agent options `workspace.create` accepts, as the caller typed them. */
 export interface AgentInput {
@@ -161,7 +160,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       const result = await dispatcher.dispatch<GetWorkspaceStatusIntent>({
         type: INTENT_GET_WORKSPACE_STATUS,
         payload: {
-          workspacePath: await targetOf(ctx, input),
+          workspaceRef: await targetOf(ctx, input),
           ...(typeof input.refresh === "boolean" && { refresh: input.refresh }),
         },
       });
@@ -183,7 +182,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     handler: async (ctx, input) => {
       const intent: HibernateWorkspaceIntent = {
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspacePath: await targetOf(ctx, input) },
+        payload: { workspaceRef: await targetOf(ctx, input) },
       };
       const handle = dispatcher.dispatch(intent);
       if (!(await handle.accepted)) return { started: false };
@@ -205,7 +204,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       const result = await dispatcher.dispatch<WakeWorkspaceIntent>({
         type: INTENT_WAKE_WORKSPACE,
         payload: {
-          workspacePath: await targetOf(ctx, input),
+          workspaceRef: await targetOf(ctx, input),
           stealFocus: false,
           source: "mcp",
         },
@@ -220,9 +219,9 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     kind: "command",
     description: "Create a new workspace in a project.",
     instructions:
-      "Creates a git worktree and brings the workspace online. Omit projectPath to create the " +
+      "Creates a git worktree and brings the workspace online. Omit project to create the " +
       "workspace in the caller's own project; pass one to target another (use project list to " +
-      "discover paths).",
+      "discover their refs).",
     input: z.object({
       // Divergence 4: optional, inferred from the caller when absent, so the MCP
       // caller can target a project and the API server caller can stay implicit.
@@ -231,7 +230,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
         .min(1)
         .optional()
         .describe(
-          "Project: an open project's name, a local path, or a git URL. " +
+          "Project: an open project's name or ref, a local path, or a git URL. " +
             "Opened (or cloned) if it is not open yet. Omit to use the caller's own project."
         ),
       name: z.string().min(1).describe("Name for the new workspace (becomes the branch name)"),
@@ -274,20 +273,13 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       // opening or cloning a project that is not open — belongs to the
       // operation, so every surface gets the same behavior rather than each
       // adapter reimplementing it.
-      let project = input.project;
-      if (project === undefined) {
-        if (ctx.workspacePath === null) {
-          throw new ApiError(
-            "usage",
-            "No project given, and no workspace to infer one from. " +
-              "Run this from inside a workspace, or name a project."
-          );
-        }
-        const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
-          type: INTENT_RESOLVE_WORKSPACE,
-          payload: { workspacePath: ctx.workspacePath },
-        });
-        project = resolved.projectPath;
+      const project = input.project;
+      if (project === undefined && ctx.workspaceRef === null) {
+        throw new ApiError(
+          "usage",
+          "No project given, and no workspace to infer one from. " +
+            "Run this from inside a workspace, or name a project."
+        );
       }
 
       const agentSpec = buildAgentSpec(input);
@@ -295,7 +287,10 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          project,
+          // The caller's own project is the one its ref extends.
+          ...(project !== undefined
+            ? { project }
+            : ctx.workspaceRef !== null && { projectRef: projectRefOf(ctx.workspaceRef) }),
           workspaceName: input.name,
           // Omitted means "the project's default branch", which the worktree
           // module detects — the same default the creation panel offers.
@@ -333,14 +328,14 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
-      const workspacePath = await targetOf(ctx, input);
-      const waiter = input.wait ? deps.awaitDeletion(workspacePath) : undefined;
+      const workspaceRef = await targetOf(ctx, input);
+      const waiter = input.wait ? deps.awaitDeletion(workspaceRef) : undefined;
 
       try {
         const intent: DeleteWorkspaceIntent = {
           type: INTENT_DELETE_WORKSPACE,
           payload: {
-            workspacePath,
+            workspaceRef,
             keepBranch: input.keepBranch,
             force: false,
             removeWorktree: true,
@@ -376,21 +371,23 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
       workspace: z
         .string()
         .min(1)
-        .describe("Workspace to switch to: a name (your own project first) or a path"),
+        .describe(
+          "Workspace to switch to: its name (your own project first), <project>::<name>, or its ref"
+        ),
       project: z
         .string()
         .min(1)
         .optional()
-        .describe("Project to look the workspace name up in: a name or a path"),
+        .describe("Project to look the workspace name up in: its name, path, origin or ref"),
       focus: z.boolean().optional().default(true).describe("Take window focus as well"),
     }),
     // The target is named outright, so this works from anywhere.
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const workspacePath = await resolveReference(ctx, input.workspace, input.project);
+      const workspaceRef = await resolveReference(ctx, input.workspace, input.project);
       await dispatcher.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath, focus: input.focus },
+        payload: { workspaceRef, focus: input.focus },
       });
       return { switched: true };
     },

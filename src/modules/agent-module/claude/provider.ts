@@ -164,10 +164,12 @@ export class ClaudeCodeProvider implements AgentProvider {
       // without reading state.json. The MCP server no longer has a port of its
       // own: it is a stdio subprocess the agent launches from its config.
       _CH_API_TOKEN: mcpConfig?.token ?? "",
-      // Also how the sidekick recognises a running agent terminal after an
-      // extension host restart (findRunningAgentTerminal) — keep it set.
-      _CH_WORKSPACE_PATH: this.workspacePath,
     };
+    // The workspace's ref, for every `ch` the agent runs. Also how the sidekick
+    // recognises a running agent terminal after an extension host restart
+    // (findRunningAgentTerminal) — keep it set.
+    const workspaceRef = this.serverManager.getWorkspaceRef(this.workspacePath);
+    if (workspaceRef !== undefined) envVars._CH_WORKSPACE = workspaceRef;
 
     // Only include initial prompt file path if it was set
     if (initialPromptPath !== undefined) {

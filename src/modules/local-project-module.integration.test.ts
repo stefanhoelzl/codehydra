@@ -40,6 +40,7 @@ import {
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
   type CloseHookInput,
+  type CloseResolveHookInput,
 } from "../intents/close-project";
 import type { CloseProjectIntent } from "../intents/close-project";
 import type { schemas as closeProjectSchemas } from "../intents/close-project";
@@ -166,6 +167,7 @@ function resolveHooksFromModule<S extends OperationSchemas>(
 }
 
 interface TestSetup {
+  module: ReturnType<typeof createLocalProjectModule>;
   openHooks: ResolvedHooks<typeof openProjectSchemas>;
   closeHooks: ResolvedHooks<typeof closeProjectSchemas>;
   readyHooks: ResolvedHooks<typeof appReadySchemas>;
@@ -183,6 +185,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
   const module = createLocalProjectModule(deps);
 
   return {
+    module,
     openHooks: resolveHooksFromModule<typeof openProjectSchemas>(module, OPEN_PROJECT_OPERATION_ID),
     closeHooks: resolveHooksFromModule<typeof closeProjectSchemas>(
       module,
@@ -241,7 +244,16 @@ function openGitIntent(url: string): OpenProjectIntent {
 function closeIntent(projectPath: ProjectPath): CloseProjectIntent {
   return {
     type: INTENT_CLOSE_PROJECT,
-    payload: { projectPath },
+    payload: { projectRef: projectRefFor(projectPath) },
+  };
+}
+
+/** The context project:close hands its "resolve" handlers, for the project at `projectPath`. */
+function closeResolveCtx(projectPath: ProjectPath): CloseResolveHookInput {
+  return {
+    intent: closeIntent(projectPath),
+    projectRef: projectRefFor(projectPath),
+    projectPath,
   };
 }
 
@@ -501,9 +513,10 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", registerCtx);
 
       // Now resolve by projectPath - should return config data (empty for local projects without remoteUrl)
-      const { results, errors } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(PROJECT_PATH),
-      });
+      const { results, errors } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(PROJECT_PATH)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -514,9 +527,10 @@ describe("LocalProjectModule Integration", () => {
     it("returns empty for unknown project path (#8)", async () => {
       const { closeHooks } = createTestSetup();
 
-      const { results, errors } = await closeHooks.collect("resolve", {
-        intent: closeIntent(projPath("/unknown/project")),
-      });
+      const { results, errors } = await closeHooks.collect(
+        "resolve",
+        closeResolveCtx(projPath("/unknown/project"))
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -539,9 +553,10 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", registerCtx);
 
       // Resolve — should include remoteUrl from config
-      const { results, errors } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(PROJECT_PATH),
-      });
+      const { results, errors } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(PROJECT_PATH)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -568,6 +583,7 @@ describe("LocalProjectModule Integration", () => {
       // Close the project
       const closeCtx: CloseHookInput = {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
         removeLocalRepo: false,
       };
@@ -576,9 +592,10 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
 
       // Verify it's gone from internal state (close resolve should return empty)
-      const { results: resolveResults } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(PROJECT_PATH),
-      });
+      const { results: resolveResults } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(PROJECT_PATH)
+      );
       expect(resolveResults[0]).toEqual({});
     });
 
@@ -600,6 +617,7 @@ describe("LocalProjectModule Integration", () => {
       // Close with remoteUrl present
       const closeCtx: CloseHookInput = {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
         remoteUrl: "https://github.com/user/repo.git",
         removeLocalRepo: false,
@@ -609,9 +627,10 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
 
       // Verify it's gone from internal state
-      const { results: resolveResults } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(PROJECT_PATH),
-      });
+      const { results: resolveResults } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(PROJECT_PATH)
+      );
       expect(resolveResults[0]).toEqual({});
     });
 
@@ -633,6 +652,7 @@ describe("LocalProjectModule Integration", () => {
       // Close with removeLocalRepo=true and remoteUrl
       const closeCtx: CloseHookInput = {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
         remoteUrl: "https://github.com/user/repo.git",
         removeLocalRepo: true,
@@ -659,6 +679,7 @@ describe("LocalProjectModule Integration", () => {
 
       const { errors } = await setup.closeHooks.collect("close", {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
         removeLocalRepo: true,
       } satisfies CloseHookInput);
@@ -684,6 +705,7 @@ describe("LocalProjectModule Integration", () => {
 
       await setup.closeHooks.collect("close", {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
         removeLocalRepo: false,
       } satisfies CloseHookInput);
@@ -705,6 +727,7 @@ describe("LocalProjectModule Integration", () => {
 
       const { errors } = await setup.closeHooks.collect("close", {
         intent: closeIntent(PROJECT_PATH),
+        projectRef: projectRefFor(PROJECT_PATH),
         projectPath: projPath(projectPathStr),
         removeLocalRepo: true,
       } satisfies CloseHookInput);
@@ -768,9 +791,10 @@ describe("LocalProjectModule Integration", () => {
 
       // load-projects should NOT populate internal state — resolve reads config from disk,
       // so it returns {} for a local project (no remoteUrl)
-      const { results, errors } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(PROJECT_PATH),
-      });
+      const { results, errors } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(PROJECT_PATH)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -788,6 +812,24 @@ describe("LocalProjectModule Integration", () => {
       const entry = fs.$.entries.get(new Path(file).toString());
       return entry?.type === "file" ? JSON.parse(String(entry.content)) : undefined;
     }
+
+    it("names each recorded project by its ref: a checkout by path, a clone by origin", async () => {
+      const setup = createTestSetup();
+      writeConfig(setup.fs, PROJECT_PATH);
+      setup.fs.$.setEntry(nodePath.dirname(MANAGED_RECORD), { type: "directory" });
+      setup.fs.$.setEntry(MANAGED_RECORD, {
+        type: "file",
+        content: JSON.stringify({ remoteUrl: REPO_URL }),
+      });
+
+      const refs = await setup.module.projectRefs();
+
+      expect(Object.fromEntries(refs)).toEqual({
+        [new Path(PROJECT_PATH).toString()]: projectRefFor(PROJECT_PATH),
+        [new Path(MANAGED_PATH).toString()]: projectRefFor(MANAGED_PATH, REPO_URL),
+      });
+      expect(refs.get(new Path(MANAGED_PATH).toString())).not.toBe(projectRefFor(MANAGED_PATH));
+    });
 
     it("stores only the URL, in the URL-named directory", async () => {
       const setup = createTestSetup();
@@ -835,9 +877,10 @@ describe("LocalProjectModule Integration", () => {
       expect(results[0]!.projectPaths).toEqual([MANAGED_PATH]);
 
       // ...and knows it is managed when asked by that path.
-      const { results: resolved } = await setup.closeHooks.collect("resolve", {
-        intent: closeIntent(MANAGED_PATH),
-      });
+      const { results: resolved } = await setup.closeHooks.collect(
+        "resolve",
+        closeResolveCtx(MANAGED_PATH)
+      );
       expect(resolved[0]).toEqual({ remoteUrl: REPO_URL });
     });
 
@@ -874,6 +917,7 @@ describe("LocalProjectModule Integration", () => {
 
       await setup.closeHooks.collect("close", {
         intent: closeIntent(MANAGED_PATH),
+        projectRef: projectRefFor(MANAGED_PATH),
         projectPath: MANAGED_PATH,
         remoteUrl: REPO_URL,
         removeLocalRepo: false,

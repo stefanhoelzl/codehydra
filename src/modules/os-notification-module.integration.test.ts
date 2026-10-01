@@ -44,6 +44,20 @@ import type { Config } from "../boundaries/platform/config";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "../intents/contract";
+
+/** The ref of test workspace `name` (at `/ws/<name>`). */
+const ref = (name: string): WorkspaceRef =>
+  makeWorkspaceRef(projectRefFor(projPath("/projects/test")), name);
+
+/** Every workspace the tests report on, by the path the resolve mock knows it at. */
+const WORKSPACES = Object.fromEntries(
+  ["alpha", "beta", "gamma", "sleeping"].map((name) => [
+    wsPath(`/ws/${name}`),
+    { projectPath: projPath("/projects/test"), workspaceName: name as WorkspaceName },
+  ])
+);
 
 const TITLE = "CodeHydra agent needs your attention";
 
@@ -85,10 +99,7 @@ function createSetup(mode: NotificationMode = "each-workspace", focused = false)
   dispatcher.registerOperation(new AppShutdownOperation());
 
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath) => ({
-      projectPath: projPath("/projects/test"),
-      workspaceName: workspacePath.split("/").pop() as WorkspaceName,
-    }),
+    workspaces: WORKSPACES,
     projects: () => ({ projectId: "test-project" as ProjectId }),
   });
 
@@ -125,7 +136,7 @@ describe("OsNotificationModule", () => {
     it("notifies when the window does not have focus", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("each-workspace", false);
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ title: TITLE, body: "alpha" }]);
     });
@@ -133,7 +144,7 @@ describe("OsNotificationModule", () => {
     it("stays silent while the user is looking at CodeHydra", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("each-workspace", true);
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -145,7 +156,7 @@ describe("OsNotificationModule", () => {
       );
 
       windowManager.setFocused(false);
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -155,7 +166,7 @@ describe("OsNotificationModule", () => {
     it("notifies on the first report when it already has idle agents", async () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -163,7 +174,7 @@ describe("OsNotificationModule", () => {
     it("does not notify when a workspace first reports as busy", async () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -171,8 +182,8 @@ describe("OsNotificationModule", () => {
     it("notifies on busy -> idle", async () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -181,12 +192,12 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/ws/alpha"), {
+        updateStatusIntent(ref("alpha"), {
           status: "busy",
           counts: { idle: 0, busy: 2 },
         })
       );
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), MIXED));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), MIXED));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -194,8 +205,8 @@ describe("OsNotificationModule", () => {
     it("does not notify when the idle count is unchanged", async () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -204,12 +215,12 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
       await dispatcher.dispatch(
-        updateStatusIntent(wsPath("/ws/alpha"), {
+        updateStatusIntent(ref("alpha"), {
           status: "idle",
           counts: { idle: 2, busy: 0 },
         })
       );
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -217,8 +228,8 @@ describe("OsNotificationModule", () => {
     it("does not notify when the agent goes away", async () => {
       const { dispatcher, osNotificationLayer } = createSetup();
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), NONE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), NONE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -228,8 +239,8 @@ describe("OsNotificationModule", () => {
     it("never notifies", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("disabled");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -238,10 +249,10 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer, configService } = createSetup("disabled");
       const mode = modeAccessor(configService);
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
       await mode.set("each-workspace");
       // Same counts as before: nothing new became idle.
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -251,10 +262,10 @@ describe("OsNotificationModule", () => {
     it("notifies once per workspace that goes idle", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("each-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }, { body: "beta" }]);
     });
@@ -262,9 +273,9 @@ describe("OsNotificationModule", () => {
     it("notifies even when other workspaces were already idle", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("each-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }, { body: "beta" }]);
     });
@@ -274,8 +285,8 @@ describe("OsNotificationModule", () => {
     it("notifies when the only workspace finishes", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("first-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -283,13 +294,13 @@ describe("OsNotificationModule", () => {
     it("notifies for the first of several busy workspaces, then goes quiet", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("first-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/gamma"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("gamma"), BUSY));
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/gamma"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("gamma"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "beta" }]);
     });
@@ -297,15 +308,15 @@ describe("OsNotificationModule", () => {
     it("re-arms once every workspace is busy again", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("first-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
 
       // Everything busy again...
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
       // ...so the next one to finish is once again the first one free.
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }, { body: "beta" }]);
     });
@@ -315,9 +326,9 @@ describe("OsNotificationModule", () => {
 
       // alpha arrives idle with nothing busy, so it is not a "first one free"
       // moment either — and it then keeps beta from being one.
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -327,9 +338,9 @@ describe("OsNotificationModule", () => {
 
       // A hibernated workspace reports "none" and must neither count as work in
       // progress nor block the notification forever.
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/sleeping"), NONE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("sleeping"), NONE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -339,7 +350,7 @@ describe("OsNotificationModule", () => {
 
       // A lone workspace whose agent connects idle: nothing was in progress, so
       // there is no "first one free" moment to report.
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });
@@ -350,9 +361,9 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer, configService } = createSetup("disabled");
       const mode = modeAccessor(configService);
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), BUSY));
       await mode.set("each-workspace");
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "alpha" }]);
     });
@@ -363,7 +374,7 @@ describe("OsNotificationModule", () => {
       const { dispatcher, osNotificationLayer, windowManager } = createSetup();
       const dispatchSpy = vi.spyOn(dispatcher, "dispatch");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
       osNotificationLayer.$.click(0);
 
       expect(windowManager.focus).toHaveBeenCalledOnce();
@@ -371,7 +382,7 @@ describe("OsNotificationModule", () => {
       expect(dispatchSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "workspace:switch",
-          payload: { workspacePath: wsPath("/ws/alpha"), focus: true },
+          payload: { workspaceRef: ref("alpha"), focus: true },
         }),
         { origin: "notification" }
       );
@@ -382,14 +393,14 @@ describe("OsNotificationModule", () => {
     it("forgets a deleted workspace, so a same-named successor starts fresh", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("first-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), BUSY));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), BUSY));
       // While alpha exists and is idle, beta finishing is not "the first free".
       await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: INTENT_DELETE_WORKSPACE,
-        payload: { workspacePath: wsPath("/ws/alpha") },
+        payload: { workspaceRef: ref("alpha") },
       } as DeleteWorkspaceIntent);
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/beta"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("beta"), IDLE));
 
       expect(osNotificationLayer).toHaveShownNotifications([{ body: "beta" }]);
     });
@@ -399,7 +410,7 @@ describe("OsNotificationModule", () => {
     it("closes notifications still on screen", async () => {
       const { dispatcher, osNotificationLayer } = createSetup("each-workspace");
 
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE));
+      await dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE));
       expect(osNotificationLayer).toHaveOpenNotificationCount(1);
 
       await dispatcher.dispatch<AppShutdownIntent>({
@@ -417,10 +428,7 @@ describe("OsNotificationModule", () => {
       const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(new UpdateAgentStatusOperation());
       registerTestInfrastructure(dispatcher, {
-        workspaces: (workspacePath) => ({
-          projectPath: projPath("/projects/test"),
-          workspaceName: workspacePath.split("/").pop() as WorkspaceName,
-        }),
+        workspaces: WORKSPACES,
         projects: () => ({ projectId: "test-project" as ProjectId }),
       });
       dispatcher.registerModule(
@@ -434,7 +442,7 @@ describe("OsNotificationModule", () => {
       );
 
       await expect(
-        dispatcher.dispatch(updateStatusIntent(wsPath("/ws/alpha"), IDLE))
+        dispatcher.dispatch(updateStatusIntent(ref("alpha"), IDLE))
       ).resolves.not.toThrow();
       expect(osNotificationLayer).toHaveShownNotifications([]);
     });

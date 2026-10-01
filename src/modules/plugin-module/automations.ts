@@ -45,7 +45,6 @@
  * settings dialog applies once the current wait elapses.
  */
 
-import { movedPath, type ProjectMoveListener } from "../workspaces-root/workspaces-root";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
@@ -88,7 +87,7 @@ import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import { looksLikeGitUrl, matchOpenProject } from "../../utils/project-reference";
 import { CREATE_ACTION, type AutomationItem, type CreateItem } from "./items";
-import { projectPathSchema, type ProjectPath, type WorkspacePath } from "../../intents/contract";
+import { projectPathSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 
 // =============================================================================
 // State
@@ -98,11 +97,17 @@ interface StateEntry {
   readonly workspaceName: string;
   readonly createdAt: string;
   /**
-   * Project the workspace lives in, so the entry can be dereferenced when its
-   * item disappears (see entryWorkspaceExists). Optional: entries written before
-   * this field existed carry none, and a downgrade drops it again — both land in
-   * the same any-project fallback, and both are repaired the next time the entry
-   * is written.
+   * Ref of the project the workspace lives in, so the entry can be dereferenced
+   * when its item disappears (see entryWorkspaceExists). Optional: entries
+   * written before projects were recorded carry none, and a downgrade drops it
+   * again — both land in the same any-project fallback, and both are repaired the
+   * next time the entry is written.
+   */
+  readonly projectRef?: string;
+  /**
+   * The project by path, as versions before refs recorded it. Turned into
+   * `projectRef` at startup (`migrateEntries`); one whose project is unknown is
+   * left, and never read: the entry falls back like one with no project.
    */
   readonly projectPath?: string;
 }
@@ -114,7 +119,10 @@ function isStateEntry(value: unknown): value is StateEntry {
   if (typeof value !== "object" || value === null) return false;
   const o = value as Record<string, unknown>;
   if (typeof o.workspaceName !== "string" || typeof o.createdAt !== "string") return false;
-  return o.projectPath === undefined || typeof o.projectPath === "string";
+  return (
+    (o.projectRef === undefined || typeof o.projectRef === "string") &&
+    (o.projectPath === undefined || typeof o.projectPath === "string")
+  );
 }
 
 function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
@@ -125,6 +133,7 @@ function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
       out[key] = {
         workspaceName: entry.workspaceName,
         createdAt: entry.createdAt,
+        ...(entry.projectRef !== undefined && { projectRef: entry.projectRef }),
         ...(entry.projectPath !== undefined && { projectPath: entry.projectPath }),
       };
     }
@@ -212,8 +221,8 @@ function stateKey(sourceId: string, itemKey: string): string {
   return `${sourceId}/${itemKey}`;
 }
 
-function newEntry(workspaceName: string, projectPath: ProjectPath): StateEntry {
-  return { workspaceName, createdAt: new Date().toISOString(), projectPath };
+function newEntry(workspaceName: string, projectRef: ProjectRef): StateEntry {
+  return { workspaceName, createdAt: new Date().toISOString(), projectRef };
 }
 
 /** `metadata` as the workspace's flat keys: a tag becomes `tags.<name>` holding its JSON. */
@@ -265,8 +274,11 @@ export interface Automations {
   start(): Promise<void>;
   /** Stop polling. */
   stop(): void;
-  /** Point tracking entries at projects whose path changed. */
-  readonly moveProjects: ProjectMoveListener;
+  /**
+   * Turn the projects tracking entries recorded by path, as versions before
+   * refs did, into refs. Before `start`.
+   */
+  migrateEntries(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void>;
   /**
    * Rename tracking keys (`undefined` keeps a key as it is). For moving the
    * entries of the pre-plugin setting over to its automations, before `start`.
@@ -337,11 +349,11 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * reported. A failed clone is not: the clone's own card already turns into
    * "Clone failed".
    */
-  async function resolveProjectPath(
+  async function resolveProject(
     source: AutomationSource,
     definition: WorkspaceDefinition,
     key: string
-  ): Promise<ProjectPath | null> {
+  ): Promise<ProjectRef | null> {
     const reference = definition.project;
     try {
       const projects = await deps.dispatcher.dispatch<ListProjectsIntent>({
@@ -351,7 +363,8 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       const matched = matchOpenProject(projects ?? [], reference);
       if (matched !== undefined) {
         if ("error" in matched) throw new Error(matched.error);
-        return projectPathSchema.parse(matched.path);
+        const open = (projects ?? []).find((project) => project.path === matched.path);
+        if (open !== undefined) return open.ref;
       }
     } catch (error) {
       deps.logger.warn("Could not look the automation's project up", {
@@ -389,7 +402,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         deps.logger.warn("project:open returned null for an automation", { key });
         return null;
       }
-      return project.path;
+      return project.ref;
     } catch (error) {
       deps.logger.warn("Failed to open project for an automation", {
         key,
@@ -415,7 +428,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    */
   async function applyMetadata(
     source: AutomationSource,
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     definition: WorkspaceDefinition,
     key: string
   ): Promise<void> {
@@ -427,7 +440,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       try {
         await deps.dispatcher.dispatch<SetMetadataIntent>({
           type: INTENT_SET_METADATA,
-          payload: { workspacePath, key: metaKey, value },
+          payload: { workspaceRef, key: metaKey, value },
         });
       } catch (error) {
         deps.logger.warn("Failed to set workspace metadata", {
@@ -448,12 +461,12 @@ export function createAutomations(deps: AutomationsDeps): Automations {
     source: AutomationSource,
     key: string,
     definition: WorkspaceDefinition,
-    projectPath: ProjectPath
+    projectRef: ProjectRef
   ): Promise<StateEntry | null> {
     try {
       await deps.dispatcher.dispatch<GetProjectBasesIntent>({
         type: INTENT_GET_PROJECT_BASES,
-        payload: { projectPath, refresh: true, wait: true },
+        payload: { projectRef, refresh: true, wait: true },
       });
 
       const agent: AgentSpec = definition.agent ?? { type: "default" };
@@ -465,20 +478,20 @@ export function createAutomations(deps: AutomationsDeps): Automations {
           ...(definition.base !== undefined && { base: definition.base }),
           ...(definition.tracking !== undefined && { tracking: definition.tracking }),
           stealFocus: definition.focus,
-          projectPath,
+          projectRef,
           agent,
           source: "auto-workspace",
         },
       });
 
-      await applyMetadata(source, wsResult.path, definition, key);
+      await applyMetadata(source, wsResult.ref, definition, key);
 
       deps.logger.info("Automation created a workspace", {
         source: source.id,
         key,
         workspaceName: definition.name,
       });
-      return newEntry(definition.name, projectPath);
+      return newEntry(definition.name, projectRef);
     } catch (error) {
       // No entry written → retried next tick in workspaces mode. A name that is
       // already taken no longer reaches here — the caller adopts instead — so
@@ -496,7 +509,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   }
 
   /**
-   * Find a workspace of `projectPath` whose name is exactly `name`.
+   * Find a workspace of the project whose name is exactly `name`.
    *
    * Name is the whole match identity for events mode: it is the worktree and
    * branch identity, and the thing a create would collide on anyway. Nothing is
@@ -504,21 +517,15 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * Comparison is case-sensitive, like every other workspace-name match.
    */
   async function findWorkspaceByName(
-    projectPath: ProjectPath,
+    projectRef: ProjectRef,
     name: string
-  ): Promise<WorkspacePath | null> {
+  ): Promise<WorkspaceRef | null> {
     const projects = await deps.dispatcher.dispatch<ListProjectsIntent>({
       type: INTENT_LIST_PROJECTS,
       payload: {},
     });
-    const target = new Path(projectPath);
-    for (const project of projects) {
-      if (!target.equals(new Path(project.path))) continue;
-      for (const workspace of project.workspaces) {
-        if (workspace.name === name) return workspace.path;
-      }
-    }
-    return null;
+    const project = projects.find((candidate) => candidate.ref === projectRef);
+    return project?.workspaces.find((workspace) => workspace.name === name)?.ref ?? null;
   }
 
   /**
@@ -545,13 +552,12 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       type: INTENT_LIST_PROJECTS,
       payload: {},
     });
-    if (entry.projectPath === undefined) {
+    if (entry.projectRef === undefined) {
       return projects.some((project) =>
         project.workspaces.some((workspace) => workspace.name === entry.workspaceName)
       );
     }
-    const target = new Path(entry.projectPath);
-    const project = projects.find((candidate) => target.equals(new Path(candidate.path)));
+    const project = projects.find((candidate) => candidate.ref === entry.projectRef);
     if (!project) return true;
     return project.workspaces.some((workspace) => workspace.name === entry.workspaceName);
   }
@@ -568,18 +574,18 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   ): Promise<void> {
     const key = stateKey(source.id, definition.name);
     try {
-      const projectPath = await resolveProjectPath(source, definition, key);
-      if (!projectPath) return;
+      const projectRef = await resolveProject(source, definition, key);
+      if (!projectRef) return;
 
-      const workspacePath = await findWorkspaceByName(projectPath, definition.name);
-      if (!workspacePath) {
-        await createWorkspace(source, key, definition, projectPath);
+      const workspaceRef = await findWorkspaceByName(projectRef, definition.name);
+      if (!workspaceRef) {
+        await createWorkspace(source, key, definition, projectRef);
         return;
       }
 
       const resolved = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath },
+        payload: { workspaceRef },
       });
       if (resolved.closing !== null) {
         // A teardown pipeline owns it: waking fights the deletion, and creating
@@ -593,14 +599,14 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         return;
       }
 
-      await applyMetadata(source, workspacePath, definition, key);
+      await applyMetadata(source, workspaceRef, definition, key);
 
       const hibernated = resolved.metadata[HIBERNATED_METADATA_KEY] === "true";
       if (hibernated) {
         await deps.dispatcher.dispatch<WakeWorkspaceIntent>({
           type: INTENT_WAKE_WORKSPACE,
           payload: {
-            workspacePath,
+            workspaceRef,
             stealFocus: definition.focus,
             source: "auto-workspace",
           },
@@ -608,7 +614,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       } else if (definition.focus) {
         await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspacePath, focus: true },
+          payload: { workspaceRef, focus: true },
         });
       }
 
@@ -619,7 +625,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         const message = await deps.dispatcher.dispatch<SendAgentMessageIntent>({
           type: INTENT_SEND_AGENT_MESSAGE,
           payload: {
-            workspacePath,
+            workspaceRef,
             text: definition.prompt,
             from: `CodeHydra · automation ${source.id}`,
             wake: true,
@@ -734,8 +740,8 @@ export function createAutomations(deps: AutomationsDeps): Automations {
 
     // Create workspaces for new items — or adopt, when the name is already taken.
     for (const { key, definition } of newItems) {
-      const projectPath = await resolveProjectPath(source, definition, key);
-      if (!projectPath) continue;
+      const projectRef = await resolveProject(source, definition, key);
+      if (!projectRef) continue;
 
       // An entry can go missing while its workspace stays: a legacy entry the
       // any-project fallback missed, or a workspace made by hand under an
@@ -743,9 +749,9 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       // cycle, forever, so take ownership of what is already there instead.
       // Adopting writes the entry and nothing else — no metadata, no wake, no
       // focus, and no prompt: it is bookkeeping, not news for the agent.
-      const existing = await findWorkspaceByName(projectPath, definition.name);
+      const existing = await findWorkspaceByName(projectRef, definition.name);
       if (existing) {
-        entries[key] = newEntry(definition.name, projectPath);
+        entries[key] = newEntry(definition.name, projectRef);
         changed = true;
         deps.logger.info("Adopted existing workspace for an automation item", {
           source: source.id,
@@ -755,7 +761,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         continue;
       }
 
-      const entry = await createWorkspace(source, key, definition, projectPath);
+      const entry = await createWorkspace(source, key, definition, projectRef);
       if (entry) {
         entries[key] = entry;
         changed = true;
@@ -837,22 +843,38 @@ export function createAutomations(deps: AutomationsDeps): Automations {
 
   // ------ Module definition ------
 
-  const moveProjects: ProjectMoveListener = async (moves) => {
+  async function migrateEntries(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void> {
     const current = stateAccessor.get();
     let changed = false;
     const next: AutoWorkspaceEntries = {};
     for (const [key, entry] of Object.entries(current)) {
-      const to = entry.projectPath === undefined ? undefined : movedPath(moves, entry.projectPath);
-      if (to !== undefined) changed = true;
-      next[key] = to === undefined ? entry : { ...entry, projectPath: to };
+      const ref = entry.projectPath === undefined ? undefined : refOfPath(entry.projectPath);
+      if (ref === undefined) {
+        next[key] = entry;
+        continue;
+      }
+      changed = true;
+      next[key] = {
+        workspaceName: entry.workspaceName,
+        createdAt: entry.createdAt,
+        projectRef: ref,
+      };
     }
     if (!changed) return;
     entries = next;
     await stateAccessor.set(next);
-  };
+
+    function refOfPath(path: string): ProjectRef | undefined {
+      try {
+        return refsByPath.get(new Path(path).toString());
+      } catch {
+        return undefined;
+      }
+    }
+  }
 
   return {
-    moveProjects,
+    migrateEntries,
     async renameTracking(rename): Promise<void> {
       const current = stateAccessor.get();
       let changed = false;

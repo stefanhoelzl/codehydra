@@ -16,12 +16,10 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps, LockKey, LockSnapshot } from "./deps";
-import type { ProjectPath, WorkspacePath } from "../../intents/contract";
-import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
-import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
-import { Path } from "../../utils/path/path";
+import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { formatAge } from "../../utils/age";
-import { createTargetResolver, createWorkspaceNamer, targetFields } from "./target";
+import { projectNameOf, projectRefOf } from "../../utils/ref";
+import { createTargetResolver, targetFields, workspaceNameOf } from "./target";
 
 const lockName = z
   .string()
@@ -34,34 +32,27 @@ const SCOPE_DESCRIPTION =
   "Who contends for this name: every workspace of every open project, or only this project's";
 
 /** The caller's own workspace, for a listing scoped to its project. */
-function callerOf(ctx: OperationContext): WorkspacePath {
-  if (ctx.workspacePath === null) {
+function callerOf(ctx: OperationContext): WorkspaceRef {
+  if (ctx.workspaceRef === null) {
     throw new ApiError("no-workspace", "No workspace to act on.");
   }
-  return ctx.workspacePath;
+  return ctx.workspaceRef;
 }
 
 export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher, locks } = deps;
-  const nameOf = createWorkspaceNamer(dispatcher);
   const targetOf = createTargetResolver(dispatcher);
 
-  /** The project a workspace belongs to. */
-  const projectOf = async (workspacePath: WorkspacePath): Promise<ProjectPath> => {
-    const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath },
-    });
-    return resolved.projectPath;
-  };
+  /** The project a workspace belongs to: the project its ref extends. */
+  const projectOf = (workspaceRef: WorkspaceRef): ProjectRef => projectRefOf(workspaceRef);
 
-  const keyOf = async (holder: WorkspacePath, name: string, scope: Scope): Promise<LockKey> => ({
+  const keyOf = (holder: WorkspaceRef, name: string, scope: Scope): LockKey => ({
     name,
-    project: scope === "project" ? await projectOf(holder) : null,
+    project: scope === "project" ? projectOf(holder) : null,
   });
 
   /** Whether a lock falls in the namespace a `--scope` filter names. */
-  const inScope = (lock: LockSnapshot, scope: Scope | undefined, project: ProjectPath | null) =>
+  const inScope = (lock: LockSnapshot, scope: Scope | undefined, project: ProjectRef | null) =>
     scope === undefined || (scope === "global" ? lock.project === null : lock.project === project);
 
   const takeInput = z.object({
@@ -105,7 +96,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const holder = await targetOf(ctx, input);
-      const result = await locks.take(holder, await keyOf(holder, input.name, input.scope), {
+      const result = await locks.take(holder, keyOf(holder, input.name, input.scope), {
         reason: input.reason,
         wait: !input.noWait,
         signal: ctx.signal,
@@ -132,7 +123,7 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     requiresWorkspace: true,
     handler: async (ctx, input) => {
       const holder = await targetOf(ctx, input);
-      const result = await locks.take(holder, await keyOf(holder, input.name, input.scope), {
+      const result = await locks.take(holder, keyOf(holder, input.name, input.scope), {
         reason: input.reason,
         wait: !input.noWait,
         signal: ctx.signal,
@@ -176,14 +167,14 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const workspace = await targetOf(ctx, input);
 
       if (input.name !== undefined) {
-        locks.release(workspace, await keyOf(workspace, input.name, input.scope ?? "global"));
+        locks.release(workspace, keyOf(workspace, input.name, input.scope ?? "global"));
         return { released: [input.name] };
       }
 
-      const project = input.scope === "project" ? await projectOf(workspace) : null;
+      const project = input.scope === "project" ? projectOf(workspace) : null;
       const mine = locks
         .list()
-        .filter((lock) => new Path(lock.holder).equals(workspace))
+        .filter((lock) => lock.holder === workspace)
         .filter((lock) => inScope(lock, input.scope, project));
       for (const lock of mine) {
         locks.release(workspace, { name: lock.name, project: lock.project });
@@ -207,24 +198,22 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     // know which project the caller is in.
     requiresWorkspace: false,
     handler: async (ctx, input) => {
-      const project = input.scope === "project" ? await projectOf(callerOf(ctx)) : null;
+      const project = input.scope === "project" ? projectOf(callerOf(ctx)) : null;
       const shown = locks
         .list()
         .filter((lock) => inScope(lock, input.scope, project))
         .sort(
           (a, b) => (a.project ?? "").localeCompare(b.project ?? "") || a.name.localeCompare(b.name)
         );
-      return Promise.all(
-        shown.map(async (lock) => ({
-          // Strings throughout, so the human table has no `null` cells.
-          name: lock.name,
-          project: lock.project === null ? "" : new Path(lock.project).basename,
-          holder: await nameOf(lock.holder),
-          held: formatAge(lock.acquiredAt),
-          reason: lock.reason ?? "",
-          waiting: (await Promise.all(lock.waiting.map(nameOf))).join(", "),
-        }))
-      );
+      return shown.map((lock) => ({
+        // Strings throughout, so the human table has no `null` cells.
+        name: lock.name,
+        project: lock.project === null ? "" : projectNameOf(lock.project),
+        holder: workspaceNameOf(lock.holder),
+        held: formatAge(lock.acquiredAt),
+        reason: lock.reason ?? "",
+        waiting: lock.waiting.map(workspaceNameOf).join(", "),
+      }));
     },
   });
 

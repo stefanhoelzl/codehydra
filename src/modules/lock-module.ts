@@ -40,7 +40,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Logger } from "../boundaries/platform/logging";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
 import { ApiError } from "../api/errors";
 import type {
   LockKey,
@@ -49,7 +49,7 @@ import type {
   LockTakeResult,
   Locks,
 } from "../api/entries/deps";
-import { Path } from "../utils/path/path";
+import { workspaceNameOf } from "../utils/ref";
 import { formatAge } from "../utils/age";
 import { TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../intents/set-metadata";
@@ -80,9 +80,9 @@ export interface LockModule extends IntentModule {
 }
 
 interface Holder {
-  /** Normalized, for comparison. */
+  /** The ref, for comparison. */
   readonly workspace: string;
-  readonly workspacePath: WorkspacePath;
+  readonly workspaceRef: WorkspaceRef;
   readonly reason: string | undefined;
   readonly acquiredAt: number;
   /** Stops listening to the caller's connection, for a `releaseOnDisconnect` hold. */
@@ -91,7 +91,7 @@ interface Holder {
 
 interface Waiter {
   readonly workspace: string;
-  readonly workspacePath: WorkspacePath;
+  readonly workspaceRef: WorkspaceRef;
   readonly reason: string | undefined;
   readonly enqueuedAt: number;
   readonly options: LockTakeOptions;
@@ -112,13 +112,9 @@ interface TagState {
   readonly waiting: string | null;
 }
 
-/** Map key for a lock. `\0` cannot appear in a name or a path. */
+/** Map key for a lock. `\0` cannot appear in a name or a ref. */
 function idOf(key: LockKey): string {
   return `${key.project ?? ""}\0${key.name}`;
-}
-
-function normalize(workspacePath: WorkspacePath): string {
-  return new Path(workspacePath).toString();
 }
 
 export function createLockModule(deps: LockModuleDeps): LockModule {
@@ -135,12 +131,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   const chains = new Map<string, Promise<void>>();
   // Deleted workspaces: their worktree is gone, so writing their tags would fail.
   const gone = new Set<string>();
-  // Each workspace's name, from the event that opened it. A name is not the
-  // directory: `feature/x` lives in `feature%x`, and Windows paths are lowercased.
-  const names = new Map<string, string>();
-
-  function workspaceName(workspacePath: WorkspacePath): string {
-    return names.get(normalize(workspacePath)) ?? new Path(workspacePath).basename;
+  /** A workspace's name: the one its ref carries. */
+  function workspaceName(workspaceRef: WorkspaceRef): string {
+    return workspaceNameOf(workspaceRef);
   }
 
   // ---------------------------------------------------------------------------
@@ -177,7 +170,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
             label: `${WAITING_ICON} ${waiting.map((l) => l.key.name).join(", ")}`,
             description: waiting
               .map((l) => {
-                const by = `${l.key.name} — held by '${workspaceName(l.holder.workspacePath)}'`;
+                const by = `${l.key.name} — held by '${workspaceName(l.holder.workspaceRef)}'`;
                 return l.holder.reason === undefined ? by : `${by} — "${l.holder.reason}"`;
               })
               .join("\n"),
@@ -187,24 +180,20 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     return { held: heldTag, waiting: waitingTag };
   }
 
-  function writeTag(
-    workspacePath: WorkspacePath,
-    key: string,
-    value: string | null
-  ): Promise<void> {
+  function writeTag(workspaceRef: WorkspaceRef, key: string, value: string | null): Promise<void> {
     return dispatcher
       .dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
-        payload: { workspacePath, key, value },
+        payload: { workspaceRef, key, value },
       })
       .then(() => undefined);
   }
 
   /** Bring the tags of these workspaces in line with the table. Cosmetic: never throws. */
-  function refreshTags(workspacePaths: Iterable<WorkspacePath>): void {
+  function refreshTags(workspaceRefs: Iterable<WorkspaceRef>): void {
     const seen = new Set<string>();
-    for (const workspacePath of workspacePaths) {
-      const workspace = normalize(workspacePath);
+    for (const workspaceRef of workspaceRefs) {
+      const workspace = workspaceRef;
       if (seen.has(workspace) || gone.has(workspace)) continue;
       seen.add(workspace);
 
@@ -215,14 +204,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
 
       const chain = (chains.get(workspace) ?? Promise.resolve()).then(async () => {
         try {
-          if (next.held !== previous.held) await writeTag(workspacePath, LOCK_TAG_KEY, next.held);
+          if (next.held !== previous.held) await writeTag(workspaceRef, LOCK_TAG_KEY, next.held);
           if (next.waiting !== previous.waiting) {
-            await writeTag(workspacePath, LOCK_WAIT_TAG_KEY, next.waiting);
+            await writeTag(workspaceRef, LOCK_WAIT_TAG_KEY, next.waiting);
           }
         } catch (error) {
           // Forget what we thought we wrote, so the next change retries it.
           written.delete(workspace);
-          logger.scoped({ path: workspacePath }).warn("Failed to update lock tags", {
+          logger.scoped({ workspace: workspaceRef }).warn("Failed to update lock tags", {
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -235,8 +224,8 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   }
 
   /** Every workspace whose tags a change to this lock can move. */
-  function involved(lock: Lock): WorkspacePath[] {
-    return [lock.holder.workspacePath, ...lock.queue.map((w) => w.workspacePath)];
+  function involved(lock: Lock): WorkspaceRef[] {
+    return [lock.holder.workspaceRef, ...lock.queue.map((w) => w.workspaceRef)];
   }
 
   // ---------------------------------------------------------------------------
@@ -244,7 +233,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   // ---------------------------------------------------------------------------
 
   function describeHolder(lock: Lock): string {
-    const name = workspaceName(lock.holder.workspacePath);
+    const name = workspaceName(lock.holder.workspaceRef);
     const reason = lock.holder.reason === undefined ? "" : ` — "${lock.holder.reason}"`;
     return `'${lock.key.name}' is held by '${name}' (${formatAge(lock.holder.acquiredAt)})${reason}`;
   }
@@ -263,7 +252,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     interface Edge {
       readonly from: string;
       readonly to: string;
-      readonly toPath: WorkspacePath;
+      readonly toRef: WorkspaceRef;
       readonly lock: Lock;
       /** `to` holds the lock, rather than being queued ahead for it. */
       readonly held: boolean;
@@ -273,14 +262,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       {
         from,
         to: target.holder.workspace,
-        toPath: target.holder.workspacePath,
+        toRef: target.holder.workspaceRef,
         lock: target,
         held: true,
       },
       ...ahead.map((w) => ({
         from,
         to: w.workspace,
-        toPath: w.workspacePath,
+        toRef: w.workspaceRef,
         lock: target,
         held: false,
       })),
@@ -314,13 +303,13 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     }
     const [first, ...rest] = path;
     const lead = (edge: Edge): string => {
-      const name = workspaceName(edge.toPath);
+      const name = workspaceName(edge.toRef);
       return edge.held
         ? `'${edge.lock.key.name}' is held by '${name}'`
         : `'${edge.lock.key.name}' goes to '${name}' first`;
     };
     const then = (edge: Edge): string => {
-      const name = workspaceName(edge.toPath);
+      const name = workspaceName(edge.toRef);
       return edge.held
         ? `, which waits for '${edge.lock.key.name}', held by '${name}'`
         : `, which waits for '${edge.lock.key.name}' behind '${name}'`;
@@ -329,14 +318,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   }
 
   function newHolder(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     reason: string | undefined,
     options: LockTakeOptions,
     id: string
   ): Holder {
     const holder: Holder = {
-      workspace: normalize(workspacePath),
-      workspacePath,
+      workspace: workspaceRef,
+      workspaceRef,
       reason,
       acquiredAt: Date.now(),
     };
@@ -348,7 +337,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
         const current = locks.get(id);
         if (current?.holder !== holder) return;
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .info("Lock released: holder disconnected", { lock: current.key.name });
         releaseHolder(current);
       };
@@ -368,7 +357,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     const id = idOf(lock.key);
     const previous = lock.holder;
     previous.detach?.();
-    const touched: WorkspacePath[] = involved(lock);
+    const touched: WorkspaceRef[] = involved(lock);
 
     let next: Waiter | undefined;
     while ((next = lock.queue.shift()) !== undefined) {
@@ -381,14 +370,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     if (next === undefined) {
       locks.delete(id);
       logger
-        .scoped({ path: previous.workspacePath })
+        .scoped({ workspace: previous.workspaceRef })
         .debug("Lock released", { lock: lock.key.name });
       refreshTags(touched);
       return;
     }
 
     const waiter = next;
-    lock.holder = newHolder(waiter.workspacePath, waiter.reason, waiter.options, id);
+    lock.holder = newHolder(waiter.workspaceRef, waiter.reason, waiter.options, id);
     const waitedMs = Date.now() - waiter.enqueuedAt;
     waiter.resolve({ acquired: true, waitedMs });
 
@@ -404,16 +393,16 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
 
     logger.info("Lock handed over", {
       lock: lock.key.name,
-      from: previous.workspacePath,
-      to: waiter.workspacePath,
+      from: previous.workspaceRef,
+      to: waiter.workspaceRef,
       waitedMs,
     });
     refreshTags(touched);
   }
 
   /** Release everything a workspace holds and drop what it is queued for. */
-  function releaseWorkspace(workspacePath: WorkspacePath, why: string): void {
-    const workspace = normalize(workspacePath);
+  function releaseWorkspace(workspaceRef: WorkspaceRef, why: string): void {
+    const workspace = workspaceRef;
     for (const lock of [...locks.values()]) {
       const dropped = lock.queue.filter((w) => w.workspace === workspace);
       if (dropped.length > 0) {
@@ -429,18 +418,18 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       }
       if (lock.holder.workspace === workspace) {
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .info(`Lock released: workspace ${why}`, { lock: lock.key.name });
         releaseHolder(lock);
       }
     }
-    refreshTags([workspacePath]);
+    refreshTags([workspaceRef]);
   }
 
   const table: Locks = {
-    take(workspacePath, key, options) {
+    take(workspaceRef, key, options) {
       const id = idOf(key);
-      const workspace = normalize(workspacePath);
+      const workspace = workspaceRef;
       const lock = locks.get(id);
 
       if (lock === undefined) {
@@ -449,14 +438,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
         }
         const created: Lock = {
           key,
-          holder: newHolder(workspacePath, options.reason, options, id),
+          holder: newHolder(workspaceRef, options.reason, options, id),
           queue: [],
         };
         locks.set(id, created);
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .info("Lock taken", { lock: key.name, project: key.project });
-        refreshTags([workspacePath]);
+        refreshTags([workspaceRef]);
         return Promise.resolve({ acquired: true, waitedMs: 0 });
       }
 
@@ -473,11 +462,11 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       }
       const cycle = deadlockVia(workspace, lock);
       if (cycle !== null) {
-        logger.info("Lock take refused: deadlock", { lock: key.name, workspace: workspacePath });
+        logger.info("Lock take refused: deadlock", { lock: key.name, workspace: workspaceRef });
         return Promise.reject(
           new ApiError(
             "conflict",
-            `Taking '${key.name}' for '${workspaceName(workspacePath)}' would deadlock: ${cycle}.`
+            `Taking '${key.name}' for '${workspaceName(workspaceRef)}' would deadlock: ${cycle}.`
           )
         );
       }
@@ -485,7 +474,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       return new Promise<LockTakeResult>((resolve, reject) => {
         const waiter: Waiter = {
           workspace,
-          workspacePath,
+          workspaceRef,
           reason: options.reason,
           enqueuedAt: Date.now(),
           options,
@@ -496,26 +485,26 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
             if (index === -1) return;
             lock.queue.splice(index, 1);
             logger
-              .scoped({ path: workspacePath })
+              .scoped({ workspace: workspaceRef })
               .debug("Lock waiter left: caller disconnected", { lock: key.name });
             reject(new ApiError("failed", "The caller disconnected while waiting."));
-            refreshTags([workspacePath]);
+            refreshTags([workspaceRef]);
           },
         };
         options.signal.addEventListener("abort", waiter.onAbort, { once: true });
         lock.queue.push(waiter);
         logger
-          .scoped({ path: workspacePath })
+          .scoped({ workspace: workspaceRef })
           .debug("Lock queued", { lock: key.name, position: lock.queue.length });
-        refreshTags([workspacePath]);
+        refreshTags([workspaceRef]);
       });
     },
 
-    release(workspacePath, key) {
+    release(workspaceRef, key) {
       const lock = locks.get(idOf(key));
-      if (lock === undefined || lock.holder.workspace !== normalize(workspacePath)) {
+      if (lock === undefined || lock.holder.workspace !== workspaceRef) {
         const holder =
-          lock === undefined ? "" : ` (held by '${workspaceName(lock.holder.workspacePath)}')`;
+          lock === undefined ? "" : ` (held by '${workspaceName(lock.holder.workspaceRef)}')`;
         throw new ApiError("not-found", `'${key.name}' is not held by this workspace${holder}.`);
       }
       releaseHolder(lock);
@@ -525,10 +514,10 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       return [...locks.values()].map((lock) => ({
         name: lock.key.name,
         project: lock.key.project,
-        holder: lock.holder.workspacePath,
+        holder: lock.holder.workspaceRef,
         ...(lock.holder.reason !== undefined && { reason: lock.holder.reason }),
         acquiredAt: lock.holder.acquiredAt,
-        waiting: lock.queue.map((w) => w.workspacePath),
+        waiting: lock.queue.map((w) => w.workspaceRef),
       }));
     },
   };
@@ -539,20 +528,19 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     events: {
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+          const { workspaceRef } = (event as WorkspaceDeletedEvent).payload;
           // Mark first, so the release below does not try to write tags into a
           // worktree that no longer exists. A runtime-only teardown (project
           // close) leaves the worktree, and its stale tags are reconciled when the
           // workspace is next discovered.
-          gone.add(normalize(workspacePath));
-          written.delete(normalize(workspacePath));
-          releaseWorkspace(workspacePath, "deleted");
-          names.delete(normalize(workspacePath));
+          gone.add(workspaceRef);
+          written.delete(workspaceRef);
+          releaseWorkspace(workspaceRef, "deleted");
         },
       },
       [EVENT_WORKSPACE_HIBERNATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          releaseWorkspace((event as WorkspaceHibernatedEvent).payload.workspacePath, "hibernated");
+          releaseWorkspace((event as WorkspaceHibernatedEvent).payload.workspaceRef, "hibernated");
         },
       },
       // Startup re-discovery, wake, and project re-open all come through here.
@@ -561,19 +549,14 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       // taken since is kept.
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const {
-            workspacePath,
-            workspaceName: name,
-            metadata,
-          } = (event as WorkspaceCreatedEvent).payload;
-          const workspace = normalize(workspacePath);
+          const { workspaceRef, metadata } = (event as WorkspaceCreatedEvent).payload;
+          const workspace = workspaceRef;
           gone.delete(workspace);
-          names.set(workspace, name);
           const held = metadata[LOCK_TAG_KEY] ?? null;
           const waiting = metadata[LOCK_WAIT_TAG_KEY] ?? null;
           if (held === null && waiting === null && !written.has(workspace)) return;
           written.set(workspace, { held, waiting });
-          refreshTags([workspacePath]);
+          refreshTags([workspaceRef]);
         },
       },
     },

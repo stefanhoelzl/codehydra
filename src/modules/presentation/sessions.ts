@@ -26,7 +26,7 @@ import type {
 import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
 import type { UiDialog } from "../../shared/ui-state";
 import type { Logger } from "../../boundaries/platform/logging";
-import { Path } from "../../utils/path/path";
+import type { WorkspaceRef } from "../../intents/contract";
 import { ApiError } from "../../api/errors";
 
 // =============================================================================
@@ -125,21 +125,15 @@ export interface DialogHandle {
 /**
  * How a dialog session is opened.
  *
- * `workspacePath` names the workspace the dialog is *about*. It never reaches
+ * `workspaceRef` names the workspace the dialog is *about*. It never reaches
  * the renderer — dialogs are positioned by kind, not by workspace — but it is
  * what lets `needsAttention` mark a sidebar row, so a question raised while the
- * user is looking elsewhere still says which workspace raised it.
- *
- * `projectPath` and `workspaceName` name that workspace by project and name.
- * Pass them when the workspace may still be being created: its sidebar row is
- * then a placeholder with no path yet, and project + workspace name is the only
- * identity the two share.
+ * user is looking elsewhere still says which workspace raised it. A workspace
+ * still being created has its ref already, so its placeholder row is marked too.
  */
 export interface DialogOpenOptions {
   readonly kind?: DialogKind;
-  readonly workspacePath?: string;
-  readonly projectPath?: string;
-  readonly workspaceName?: string;
+  readonly workspaceRef?: WorkspaceRef;
 }
 
 /**
@@ -172,21 +166,10 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
   open(config: DialogConfig, options?: DialogOpenOptions): DialogHandle {
     // Default kind is "modal" (matches the renderer DialogHost default).
     const kind: DialogKind = options?.kind ?? "modal";
-    const workspacePath = options?.workspacePath;
-    const projectPath = options?.projectPath;
-    const workspaceName = options?.workspaceName;
+    const workspaceRef = options?.workspaceRef;
     return this.register(
       (id, onRemove) =>
-        new DialogHandleImpl(
-          id,
-          kind,
-          config,
-          this.notifyChange,
-          onRemove,
-          workspacePath,
-          projectPath,
-          workspaceName
-        )
+        new DialogHandleImpl(id, kind, config, this.notifyChange, onRemove, workspaceRef)
     );
   }
 
@@ -198,32 +181,9 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
    * allocating. A session flips the flag through ordinary update() calls, which
    * means this follows the dialog's state with nothing pushed here.
    */
-  needsAttentionFor(workspacePath: string): boolean {
+  needsAttentionFor(workspaceRef: WorkspaceRef): boolean {
     for (const handle of this.openSessions) {
-      if (handle.workspacePath === workspacePath && handle.config.needsAttention === true) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * needsAttentionFor for a workspace still being created, whose row has no
-   * path to match yet: matches an attention dialog opened with this project and
-   * workspace name. The name is compared as given, never derived from the
-   * workspace path — a directory name is not a workspace name (`feature/x`
-   * lives in `feature%x`, and Windows paths are lowercased). A dialog opened
-   * without `projectPath` never matches here — a bare name could belong to
-   * another project.
-   */
-  needsAttentionForPending(projectPath: string, workspaceName: string): boolean {
-    for (const handle of this.openSessions) {
-      if (
-        handle.config.needsAttention === true &&
-        handle.projectPath !== undefined &&
-        handle.workspaceName === workspaceName &&
-        new Path(handle.projectPath).equals(projectPath)
-      ) {
+      if (handle.workspaceRef === workspaceRef && handle.config.needsAttention === true) {
         return true;
       }
     }
@@ -258,11 +218,7 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
   readonly id: string;
   readonly kind: DialogKind;
   /** Workspace this dialog is about, when it is about one. See DialogOpenOptions. */
-  readonly workspacePath: string | undefined;
-  /** Project of that workspace, when given. See DialogOpenOptions. */
-  readonly projectPath: string | undefined;
-  /** Name of that workspace, when given. See DialogOpenOptions. */
-  readonly workspaceName: string | undefined;
+  readonly workspaceRef: WorkspaceRef | undefined;
   readonly closed: Promise<void>;
 
   /** Current render config — read by toSnapshot(). */
@@ -282,15 +238,11 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
     config: DialogConfig,
     notifyChange: () => void,
     onRemove: () => void,
-    workspacePath?: string,
-    projectPath?: string,
-    workspaceName?: string
+    workspaceRef?: WorkspaceRef
   ) {
     this.id = id;
     this.kind = kind;
-    this.workspacePath = workspacePath;
-    this.projectPath = projectPath;
-    this.workspaceName = workspaceName;
+    this.workspaceRef = workspaceRef;
     this.config = config;
     this.notifyChange = notifyChange;
     this.onRemove = onRemove;
@@ -393,14 +345,14 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
 
 /**
  * A card as the registry projects it: the render config plus the domain facts
- * the presenter turns into render-ready fields (the workspace path becomes the
- * row key and display name — paths never reach the renderer).
+ * the presenter turns into render-ready fields (the workspace ref becomes the
+ * row key and display name — refs never reach the renderer).
  */
 export interface NotificationSnapshot {
   readonly id: string;
   readonly config: NotificationConfig;
   readonly count: number;
-  readonly workspacePath?: string;
+  readonly workspaceRef?: WorkspaceRef;
 }
 
 /** What `notification:show` asks the registry for. */
@@ -409,7 +361,7 @@ export interface NotificationShowRequest {
   /** Card to update; omit to open (or join) one. */
   readonly id?: string;
   /** Workspace the card is about. Only read when a card is opened. */
-  readonly workspacePath?: string;
+  readonly workspaceRef?: WorkspaceRef;
 }
 
 /** How a wait may end without the user answering. */
@@ -435,14 +387,14 @@ export interface NotificationWaitOptions {
  * no way to express it — the fix is to put the distinction in the text, as the
  * clone card does with the URL the user typed.
  */
-export function dedupKey(config: NotificationConfig, workspacePath?: string): string {
+export function dedupKey(config: NotificationConfig, workspaceRef?: WorkspaceRef): string {
   return JSON.stringify([
     config.title,
     config.message ?? null,
     config.type,
     config.dismissible ?? false,
     config.actions ?? null,
-    workspacePath ?? null,
+    workspaceRef ?? null,
   ]);
 }
 
@@ -530,9 +482,9 @@ export class NotificationManager extends SessionRegistry<NotificationSnapshot, N
   }
 
   /** Close every card attached to a workspace that is gone. */
-  closeWorkspace(workspacePath: string): void {
+  closeWorkspace(workspaceRef: WorkspaceRef): void {
     for (const card of [...this.openSessions]) {
-      if (card.workspacePath === workspacePath) card.finish(null);
+      if (card.workspaceRef === workspaceRef) card.finish(null);
     }
   }
 
@@ -574,7 +526,7 @@ export class NotificationManager extends SessionRegistry<NotificationSnapshot, N
       return card;
     }
 
-    const key = dedupKey(request.config, request.workspacePath);
+    const key = dedupKey(request.config, request.workspaceRef);
     const existing = this.byKey.get(key);
     if (existing) {
       existing.absorb();
@@ -582,7 +534,7 @@ export class NotificationManager extends SessionRegistry<NotificationSnapshot, N
     }
     const card = this.register(
       (id, onRemove) =>
-        new NotificationCard(id, request.config, request.workspacePath, this.notifyChange, {
+        new NotificationCard(id, request.config, request.workspaceRef, this.notifyChange, {
           // Re-file a card whose config changed, so it is matched by what it now
           // says rather than by what it said when it opened — otherwise a card
           // that has moved on would still swallow a fresh open of its old text.
@@ -631,11 +583,11 @@ class NotificationCard implements RegistrySession<NotificationSnapshot> {
   constructor(
     readonly id: string,
     public config: NotificationConfig,
-    readonly workspacePath: string | undefined,
+    readonly workspaceRef: WorkspaceRef | undefined,
     private readonly notifyChange: () => void,
     private readonly hooks: NotificationRegistryHooks
   ) {
-    this.key = dedupKey(config, workspacePath);
+    this.key = dedupKey(config, workspaceRef);
   }
 
   toSnapshot(): NotificationSnapshot {
@@ -643,7 +595,7 @@ class NotificationCard implements RegistrySession<NotificationSnapshot> {
       id: this.id,
       config: this.config,
       count: this.holds,
-      ...(this.workspacePath !== undefined && { workspacePath: this.workspacePath }),
+      ...(this.workspaceRef !== undefined && { workspaceRef: this.workspaceRef }),
     };
   }
 
@@ -664,7 +616,7 @@ class NotificationCard implements RegistrySession<NotificationSnapshot> {
   update(config: NotificationConfig): void {
     if (this.isClosed) return;
     this.config = config;
-    const next = dedupKey(config, this.workspacePath);
+    const next = dedupKey(config, this.workspaceRef);
     this.hooks.rekey(this.key, next, this);
     this.key = next;
     this.notifyChange();

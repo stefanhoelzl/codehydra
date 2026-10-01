@@ -28,9 +28,11 @@ import {
   hookCtxSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   workspaceNameSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
   workspaceSchema,
+  workspaceTargetShape,
 } from "./contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
@@ -63,7 +65,7 @@ const workspaceOpenSourceSchema = z.enum([
 
 export const wakeWorkspacePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /** Forwarded to the internal workspace:open. If true, switch to the woken
      *  workspace; if false, bring it online in the background. Default
      *  (undefined): switch — matching the pre-fold renderer behavior. */
@@ -78,22 +80,23 @@ export const workspaceWokenPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: workspacePathSchema,
-    projectPath: projectPathSchema,
+    workspaceRef: workspaceRefSchema,
+    projectRef: projectRefSchema,
   })
   .readonly();
 
 export const workspaceWakeFailedPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     error: z.string(),
   })
   .readonly();
 
 /** Operation-added enrichment for the "cleanup" hook point. */
 const wakePipelineEnrichmentSchema = z.object({
+  ...workspaceTargetShape,
+  projectRef: projectRefSchema,
   projectPath: projectPathSchema,
-  workspacePath: workspacePathSchema,
   projectId: projectIdSchema,
   workspaceName: workspaceNameSchema,
 });
@@ -161,17 +164,15 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     try {
-      const { projectPath, workspaceName, projectId, branch } = await resolveWorkspaceIdentity(
-        ctx.dispatch,
-        payload.workspacePath
-      );
+      const { workspacePath, projectRef, projectPath, workspaceName, projectId, branch } =
+        await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
 
       // Clear the hibernated metadata flag before re-init so any consumers
       // observing the metadata-changed event see the workspace as awake.
       await ctx.dispatch<SetMetadataIntent>({
         type: INTENT_SET_METADATA,
         payload: {
-          workspacePath: payload.workspacePath,
+          workspaceRef: payload.workspaceRef,
           key: HIBERNATED_METADATA_KEY,
           value: null,
         },
@@ -179,8 +180,10 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
 
       const hookCtx: WakePipelineHookInput = {
         intent: ctx.intent,
+        workspaceRef: payload.workspaceRef,
+        workspacePath,
+        projectRef,
         projectPath,
-        workspacePath: payload.workspacePath,
         projectId,
         workspaceName,
       };
@@ -193,7 +196,7 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
       // metadata rather than reintroducing the stale flag.
       const metadata = await ctx.dispatch<GetMetadataIntent>({
         type: INTENT_GET_METADATA,
-        payload: { workspacePath: payload.workspacePath },
+        payload: { workspaceRef: payload.workspaceRef },
       });
 
       // Re-run the canonical open pipeline against the existing worktree to
@@ -201,10 +204,10 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
       const workspace = await ctx.dispatch<OpenWorkspaceIntent>({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectPath,
+          projectRef,
           workspaceName,
           existingWorkspace: {
-            path: payload.workspacePath,
+            path: workspacePath,
             name: workspaceName,
             branch,
             metadata,
@@ -219,8 +222,8 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
         payload: {
           projectId,
           workspaceName,
-          workspacePath: payload.workspacePath,
-          projectPath,
+          workspaceRef: payload.workspaceRef,
+          projectRef,
         },
       };
       ctx.emit(event);
@@ -229,7 +232,7 @@ export class WakeWorkspaceOperation implements Operation<typeof schemas> {
     } catch (error) {
       ctx.emit({
         type: EVENT_WORKSPACE_WAKE_FAILED,
-        payload: workspaceFailurePayload(payload.workspacePath, error),
+        payload: workspaceFailurePayload(payload.workspaceRef, error),
       });
       throw error;
     }
