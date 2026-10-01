@@ -216,6 +216,23 @@ describe("RemoteProjectModule Integration", () => {
       expect(results).toHaveLength(0);
     });
 
+    it.each(["/srv/git/repo", "file:///srv/git/repo", "./repo"])(
+      "refuses to clone from the local path %s",
+      async (git) => {
+        const { hookRegistry, gitClient } = createTestSetup();
+
+        const hooks = hookRegistry.resolve<typeof openProjectSchemas>(OPEN_PROJECT_OPERATION_ID);
+        const { results, errors } = await hooks.collect(
+          "resolve",
+          resolveContext(openProjectIntent({ git }))
+        );
+
+        expect(errors[0]!.message).toContain("is a path on this machine");
+        expect(results).toHaveLength(0);
+        expect(gitClient.$.repositories.size).toBe(0);
+      }
+    );
+
     it("propagates clone error", async () => {
       const { hookRegistry, gitClient } = createTestSetup();
 
