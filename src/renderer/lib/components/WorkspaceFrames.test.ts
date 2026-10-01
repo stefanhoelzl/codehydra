@@ -282,6 +282,155 @@ describe("WorkspaceFrames", () => {
   });
 
   // ===========================================================================
+  // Focus policy
+  //
+  // The workbench focuses itself on its own schedule (at startup, among
+  // others), pulling the caret out of a dialog's field. Each frame is told
+  // whether it may take focus on its own, and a gate patched into the workbench
+  // enforces it (bundle-patches.ts, FOCUS_GATE).
+  // ===========================================================================
+
+  describe("focus policy", () => {
+    /** happy-dom leaves contentWindow null, so give each frame a recording one. */
+    function giveWindows(container: HTMLElement): Map<string, { policies: boolean[] }> {
+      const windows = new Map<string, { policies: boolean[] }>();
+      for (const el of frames(container)) {
+        const win = {
+          policies: [] as boolean[],
+          focus: vi.fn(),
+          postMessage: (message: { __chFocusAllowed?: unknown }) => {
+            if (typeof message.__chFocusAllowed === "boolean")
+              win.policies.push(message.__chFocusAllowed);
+          },
+        };
+        Object.defineProperty(el, "contentWindow", { configurable: true, value: win });
+        windows.set(el.dataset.key!, win);
+      }
+      return windows;
+    }
+
+    /** As `source`, ask for this frame's policy, the way the gate does on load. */
+    function requestPolicy(source: object): void {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { __chFocusPolicyRequest: true },
+          source: source as MessageEventSource,
+        })
+      );
+    }
+
+    beforeEach(() => {
+      window.api = createMockApi();
+    });
+
+    function setup(mode: "workspace" | "hover" | "shortcut" | "dialog") {
+      const props = { frames: FRAMES, activeKey: FRAMES[0]!.key, mode };
+      const rendered = render(WorkspaceFrames, { props });
+      const windows = giveWindows(rendered.container);
+      const active = windows.get(FRAMES[0]!.key)!;
+      const hidden = windows.get(FRAMES[1]!.key)!;
+      return { ...rendered, props, active, hidden };
+    }
+
+    it("lets the active frame take focus while it owns the keyboard", () => {
+      const { active } = setup("workspace");
+
+      requestPolicy(active);
+
+      expect(active.policies).toEqual([true]);
+    });
+
+    it("keeps the sidebar hover from taking that away", () => {
+      const { active } = setup("hover");
+
+      requestPolicy(active);
+
+      expect(active.policies).toEqual([true]);
+    });
+
+    it("never lets a hidden frame take focus", () => {
+      // A background workbench focusing itself would take the keyboard from
+      // the workspace on screen.
+      const { hidden } = setup("workspace");
+
+      requestPolicy(hidden);
+
+      expect(hidden.policies).toEqual([false]);
+    });
+
+    it("lets no frame take focus while a dialog owns the keyboard", () => {
+      const { active } = setup("dialog");
+
+      requestPolicy(active);
+
+      expect(active.policies).toEqual([false]);
+    });
+
+    it("lets no frame take focus in shortcut mode", () => {
+      const { active } = setup("shortcut");
+
+      requestPolicy(active);
+
+      expect(active.policies).toEqual([false]);
+    });
+
+    it("withdraws it from the active frame the moment a dialog opens", async () => {
+      const { active, props, rerender } = setup("workspace");
+
+      await rerender({ ...props, mode: "dialog" });
+
+      expect(active.policies.at(-1)).toBe(false);
+    });
+
+    it("moves it to the frame being switched to", async () => {
+      const { active, hidden, props, rerender } = setup("workspace");
+
+      await rerender({ ...props, activeKey: FRAMES[1]!.key });
+
+      expect(active.policies.at(-1)).toBe(false);
+      expect(hidden.policies.at(-1)).toBe(true);
+    });
+
+    it("withdraws it while an element of this page holds focus", async () => {
+      // The mode reaches the renderer only after a round trip through main, so
+      // a dialog's field can hold the caret while the mode still says "hover".
+      const { active } = setup("hover");
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+
+      input.focus();
+      await Promise.resolve();
+
+      expect(active.policies.at(-1)).toBe(false);
+    });
+
+    it("gives it back once this page lets go of focus", async () => {
+      vi.useFakeTimers();
+      const { active } = setup("workspace");
+      const input = document.createElement("input");
+      document.body.appendChild(input);
+      input.focus();
+      await Promise.resolve();
+
+      input.blur();
+      vi.advanceTimersByTime(10);
+      await Promise.resolve();
+
+      expect(active.policies.at(-1)).toBe(true);
+      vi.useRealTimers();
+    });
+
+    it("ignores a request from something that is not a mounted frame", () => {
+      const { active, hidden } = setup("workspace");
+
+      requestPolicy({});
+
+      expect(active.policies).toEqual([]);
+      expect(hidden.policies).toEqual([]);
+    });
+  });
+
+  // ===========================================================================
   // Liveness
   //
   // Showing a frame pings it; a frame that does not answer is logged, and
@@ -297,7 +446,10 @@ describe("WorkspaceFrames", () => {
       for (const el of frames(container)) {
         const win = {
           pings: [] as unknown[],
-          postMessage: (message: unknown) => win.pings.push(message),
+          // Only pings: frames are also sent their focus policy.
+          postMessage: (message: { __chPing?: unknown }) => {
+            if (message.__chPing === true) win.pings.push(message);
+          },
         };
         Object.defineProperty(el, "contentWindow", { configurable: true, value: win });
         windows.set(el.dataset.key!, win);
