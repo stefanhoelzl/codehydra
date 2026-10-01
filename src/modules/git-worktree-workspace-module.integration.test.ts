@@ -51,8 +51,9 @@ import {
 import type { GetStatusHookInput } from "../intents/get-workspace-status";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-  resolveHookResultSchema,
+  ResolveWorkspaceOperation,
+  type ResolveWorkspaceResult,
+  type StateHookInput,
 } from "../intents/resolve-workspace";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
@@ -73,8 +74,10 @@ import { createMockNotificationManager } from "./presentation/notification-manag
 import type { MockNotificationManager } from "./presentation/notification-manager.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, WorkspaceClosing } from "../intents/contract";
+import { WorkspaceError } from "../shared/errors/service-errors";
 
 // =============================================================================
 // Mock Dependencies
@@ -110,10 +113,10 @@ const openProjectOperation = createMinimalOperation<DiscoverHookResult>(
   INTENT_OPEN_PROJECT,
   "discover",
   {
-    hookContext: (ctx) => ({
-      intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath: ProjectPath }).projectPath,
-    }),
+    hookContext: (ctx) => {
+      const { projectPath } = ctx.intent.payload as { projectPath: ProjectPath };
+      return { intent: ctx.intent, projectPath, projectRef: projectRefFor(projectPath) };
+    },
   }
 );
 
@@ -135,10 +138,14 @@ const openWorkspaceOperation = createMinimalOperation<CreateHookResult>(
   INTENT_OPEN_WORKSPACE,
   "create",
   {
-    hookContext: (ctx) => ({
-      intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath?: ProjectPath }).projectPath ?? "",
-    }),
+    hookContext: (ctx) => {
+      const projectPath = (ctx.intent.payload as { projectPath?: ProjectPath }).projectPath ?? "";
+      return {
+        intent: ctx.intent,
+        projectPath,
+        ...(projectPath !== "" && { projectRef: projectRefFor(projectPath) }),
+      };
+    },
   }
 );
 
@@ -271,36 +278,8 @@ interface ResolveResult {
   readonly closing?: WorkspaceClosing | null | undefined;
 }
 
-/**
- * Resolve-workspace operation: runs "resolve" hook point.
- *
- * Uses RESOLVE_WORKSPACE_OPERATION_ID because the module registers its
- * resolve hook under that operation. Accepts workspacePath and reverse-looks
- * up projectPath + workspaceName.
- */
-const resolveWorkspaceSchemas = {
-  type: INTENT_RESOLVE_WORKSPACE,
-  payload: z.unknown(),
-  result: z.custom<ResolveResult>(),
-  hooks: { resolve: { result: resolveHookResultSchema } },
-} satisfies OperationSchemas;
-
-const minimalResolveWorkspaceOperation: Operation<typeof resolveWorkspaceSchemas> = {
-  id: RESOLVE_WORKSPACE_OPERATION_ID,
-  schemas: resolveWorkspaceSchemas,
-  async execute(ctx): Promise<ResolveResult> {
-    const payload = ctx.intent.payload as { workspacePath: WorkspacePath };
-    const resolveInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results: resolveResults } = await ctx.hooks.collect("resolve", resolveInput);
-    const projectPath = resolveResults.find((r) => r.projectPath !== undefined)?.projectPath;
-    const workspaceName = resolveResults.find((r) => r.workspaceName !== undefined)?.workspaceName;
-    const closing = resolveResults.find((r) => r.closing !== undefined)?.closing ?? null;
-    return projectPath ? { projectPath, workspaceName, closing } : {};
-  },
-};
+/** The real resolve-workspace operation: the module under test is its "resolve" handler. */
+const minimalResolveWorkspaceOperation = new ResolveWorkspaceOperation();
 
 /** Result from get-project-bases list + refresh dispatch. */
 interface GetProjectBasesTestResult {
@@ -492,7 +471,7 @@ function createTestSetup(): TestSetup {
   );
   dispatcher.registerModule(module);
 
-  // Stands in for workspace-lifecycle-module's resolve contribution: the module
+  // Stands in for workspace-lifecycle-module's state contribution: the module
   // under test only ever sees `closing` as hook-context enrichment, so the test
   // supplies it the same way production does — through a resolve handler.
   const closing = new Map<string, WorkspaceClosing>();
@@ -500,9 +479,9 @@ function createTestSetup(): TestSetup {
     name: "closing-stub",
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
+        state: {
           handler: async (ctx: HookContext) => {
-            const { workspacePath } = ctx as HookContext & { workspacePath: WorkspacePath };
+            const { workspacePath } = ctx as StateHookInput;
             const reason = closing.get(new Path(workspacePath).toString());
             return { result: reason === undefined ? {} : { closing: reason } };
           },
@@ -582,14 +561,20 @@ async function dispatchCloseProject(
   } as Intent);
 }
 
+/** Resolve a workspace; one no module knows reads as empty. */
 async function dispatchResolveWorkspace(
   dispatcher: Dispatcher,
   workspacePath: WorkspacePath
 ): Promise<ResolveResult> {
-  return (await dispatcher.dispatch({
-    type: "workspace:resolve",
-    payload: { workspacePath },
-  } as Intent)) as ResolveResult;
+  try {
+    return (await dispatcher.dispatch({
+      type: "workspace:resolve",
+      payload: { workspacePath },
+    } as Intent)) as ResolveResult;
+  } catch (error) {
+    if (error instanceof WorkspaceError && error.code === "WORKSPACE_NOT_FOUND") return {};
+    throw error;
+  }
 }
 
 async function dispatchListBases(
@@ -1140,6 +1125,24 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           wsPath(`${projectPath}/.worktrees/feature-1`)
         );
         expect(result.projectPath).toBe(projectPath);
+      });
+
+      it("resolves a workspace by its ref, to its path", async () => {
+        const { dispatcher, provider } = setup;
+        const { projectPath } = await setupWithWorkspace(dispatcher, provider);
+        const workspaceRef = makeWorkspaceRef(projectRefFor(projectPath), "feature-1");
+
+        const result = (await dispatcher.dispatch({
+          type: "workspace:resolve",
+          payload: { workspaceRef },
+        } as Intent)) as ResolveWorkspaceResult;
+
+        expect(result).toMatchObject({
+          workspaceRef,
+          workspacePath: wsPath(`${projectPath}/.worktrees/feature-1`),
+          projectRef: projectRefFor(projectPath),
+          workspaceName: "feature-1",
+        });
       });
 
       it("returns empty for unknown workspace", async () => {

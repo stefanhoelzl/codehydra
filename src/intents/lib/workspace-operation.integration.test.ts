@@ -27,7 +27,7 @@ import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspacePathSchema } from "../contract";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
-import { projectRefFor } from "../../utils/ref";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 // =============================================================================
 // Test operation
@@ -109,8 +109,17 @@ function createSetup(opts: {
           handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const intent = ctx.intent as TestIntent;
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
+              const projectRef = projectRefFor(PROJECT_ROOT);
               return {
-                result: { projectPath: projPath(PROJECT_ROOT), workspaceName: WORKSPACE_NAME },
+                result: {
+                  workspaceRef: makeWorkspaceRef(projectRef, WORKSPACE_NAME),
+                  workspacePath: WORKSPACE_PATH,
+                  projectRef,
+                  projectPath: projPath(PROJECT_ROOT),
+                  workspaceName: WORKSPACE_NAME,
+                  branch: null,
+                  metadata: {},
+                },
               };
             }
             return { result: {} };

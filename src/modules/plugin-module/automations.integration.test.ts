@@ -255,10 +255,15 @@ class ResolveWorkspaceOp implements Operation<typeof resolveWsSchemas> {
   async execute(
     ctx: OperationContext<IntentOf<typeof resolveWsSchemas>, typeof resolveWsSchemas>
   ): Promise<ResolveWorkspaceResult> {
-    const path = ctx.intent.payload.workspacePath;
-    const found = this.projects.workspaces.find((w) => w.path === path);
-    if (!found) throw new Error(`unknown workspace ${path}`);
+    const { workspacePath, workspaceRef } = ctx.intent.payload;
+    const found = this.projects.workspaces.find(
+      (w) => w.path === workspacePath || w.ref === workspaceRef
+    );
+    if (!found) throw new Error(`unknown workspace ${workspacePath ?? workspaceRef ?? ""}`);
     return {
+      workspaceRef: found.ref,
+      workspacePath: found.path,
+      projectRef: projectRefFor(projPath(PROJECT_PATH)),
       projectPath: projPath(PROJECT_PATH),
       workspaceName: found.name,
       active: false,

@@ -161,14 +161,15 @@ describe("DebugModule Integration", () => {
       // Resolve hook should return the cached data
       const resolveHook = getHook(module, RESOLVE_WORKSPACE_OPERATION_ID, "resolve");
       const resolveCtx = {
-        intent: { type: "workspace:resolve", payload: {} },
-        // Normalized, as the resolve pipeline always hands it over.
-        workspacePath: testPath("/projects/my-app/workspaces/test-1").toString(),
+        intent: {
+          type: "workspace:resolve",
+          payload: { workspacePath: testPath("/projects/my-app/workspaces/test-1").toNative() },
+        },
       } as unknown as HookContext;
       const result = ((await resolveHook.handler(resolveCtx)) as HookOutput<ResolveHookResult>)
         .result!;
-      expect(result).toEqual({
-        projectPath: testPath("/projects/my-app").toString(),
+      expect(result).toMatchObject({
+        projectPath: testPath("/projects/my-app").toNative(),
         workspaceName: "test-1",
       });
     });

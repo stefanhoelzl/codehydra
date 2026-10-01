@@ -82,8 +82,8 @@ import {
 } from "../intents/switch-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
-  type ResolveHookInput,
-  type ResolveHookResult,
+  type StateHookInput,
+  type StateHookResult,
 } from "../intents/resolve-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
@@ -152,16 +152,16 @@ export function createWorkspaceLifecycleModule(): IntentModule {
     name: "workspace-lifecycle",
     hooks: {
       // -----------------------------------------------------------------
-      // resolve-workspace → resolve: contribute `closing`.
+      // resolve-workspace → state: contribute `active` and `closing`.
       //
       // Omitted (rather than reported as null) when the workspace is not
       // closing: the operation defaults the field to null, and leaving the key
       // off keeps this module from overwriting a value another handler set.
       // -----------------------------------------------------------------
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
-            const { workspacePath } = ctx as ResolveHookInput;
+        state: {
+          handler: async (ctx: HookContext): Promise<HookOutput<StateHookResult>> => {
+            const { workspacePath } = ctx as StateHookInput;
             const reason = closingReasonFor(workspacePath);
             return {
               result: {
