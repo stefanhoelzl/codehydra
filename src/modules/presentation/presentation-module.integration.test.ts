@@ -94,6 +94,7 @@ import {
   type ShowNotificationResult,
 } from "../../intents/show-notification";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 // =============================================================================
 // Test setup helpers
@@ -240,6 +241,7 @@ function makeWorkspace(
   options?: { url?: string; metadata?: Record<string, string> }
 ): Workspace {
   return {
+    ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), name),
     projectId: PROJECT_ID,
     name: name as WorkspaceName,
     branch: name,
@@ -251,6 +253,7 @@ function makeWorkspace(
 
 function makeProject(workspaces: Workspace[], options?: { remoteUrl?: string }): Project {
   return {
+    ref: projectRefFor(PROJECT_PATH, options?.remoteUrl),
     id: PROJECT_ID,
     name: "alpha",
     path: PROJECT_PATH,
@@ -564,6 +567,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const module = await startModule(deps);
 
     const project: Project = {
+      ref: projectRefFor(PROJECT_PATH),
       id: PROJECT_ID,
       name: "alpha",
       path: PROJECT_PATH,
@@ -1238,6 +1242,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     const otherId = "beta-87654321" as ProjectId;
     const workspaceB: Workspace = {
+      ref: makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b"),
       projectId: otherId,
       name: "b" as WorkspaceName,
       branch: "b",

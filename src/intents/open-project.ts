@@ -28,6 +28,7 @@ import {
   projectSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   discoveredWorkspaceSchema,
   hookCtxSchema,
 } from "./contract";
@@ -42,6 +43,7 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
+import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import { compareDisplayNames } from "../shared/ui-state";
 import { throwHookErrors } from "./lib/hook-helpers";
@@ -135,7 +137,10 @@ export const registerHookResultSchema = z
 // -----------------------------------------------------------------------------
 
 /** Operation-added enrichment for the "discover" hook point. */
-const discoverEnrichmentSchema = z.object({ projectPath: projectPathSchema });
+const discoverEnrichmentSchema = z.object({
+  projectPath: projectPathSchema,
+  projectRef: projectRefSchema,
+});
 
 /** Runtime whole-context validation schema for "discover". */
 export const discoverHookInputSchema = hookCtxSchema(
@@ -146,6 +151,7 @@ export const discoverHookInputSchema = hookCtxSchema(
 /** Operation-added enrichment for the "register" hook point. */
 const registerEnrichmentSchema = z.object({
   projectPath: projectPathSchema,
+  projectRef: projectRefSchema,
   remoteUrl: z.string().optional(),
 });
 
@@ -386,10 +392,14 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         throw new Error("Resolve hook did not provide projectPath");
       }
 
+      // The project's identity: its origin when cloned, else its path
+      const projectRef = projectRefFor(projectPath, resolvedRemoteUrl);
+
       // 2. Register: generate ID, store state, persist
       const registerCtx: RegisterHookInput = {
         intent: effectiveIntent,
         projectPath,
+        projectRef,
         ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
       };
       const { results: registerResults, errors: registerErrors } = await ctx.hooks.collect(
@@ -409,7 +419,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       }
 
       // 3. Discover: find existing workspaces
-      const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
+      const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath, projectRef };
       const { results: discoverResults, errors: discoverErrors } = await ctx.hooks.collect(
         "discover",
         discoverCtx
@@ -424,10 +434,11 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
 
       // Build Project return value
       let project: Project = {
+        ref: projectRef,
         id: projectId,
         path: projectPath,
         name: name ?? new Path(projectPath).basename,
-        workspaces: toIpcWorkspaces(workspaces, projectId),
+        workspaces: toIpcWorkspaces(workspaces, projectId, projectRef),
         ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
         ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
       };

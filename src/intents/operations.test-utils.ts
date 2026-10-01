@@ -41,6 +41,8 @@ import type {
   ActivateHookInput,
 } from "./switch-workspace";
 import type { WorkspacePath, ProjectPath } from "./contract";
+import { projectRefFor } from "../utils/ref";
+import type { ProjectRef } from "./contract";
 
 // =============================================================================
 // Configuration Types
@@ -59,6 +61,7 @@ export interface MockWorkspaceEntry {
 export interface MockProjectEntry {
   readonly projectId: ProjectId;
   readonly projectName?: string;
+  readonly projectRef?: ProjectRef;
 }
 
 export interface MockViewManager {
@@ -249,7 +252,10 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
           const { projectPath } = ctx as ResolveProjectHookInput;
           const entry = lookupProject(projectPath);
           if (!entry) return { result: {} };
-          const result: ResolveProjectHookResult = { projectId: entry.projectId };
+          const result: ResolveProjectHookResult = {
+            projectId: entry.projectId,
+            projectRef: entry.projectRef ?? projectRefFor(projectPath),
+          };
           if (entry.projectName !== undefined) {
             return { result: { ...result, projectName: entry.projectName } };
           }

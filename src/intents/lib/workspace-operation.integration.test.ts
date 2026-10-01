@@ -27,6 +27,7 @@ import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspacePathSchema } from "../contract";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
 
 // =============================================================================
 // Test operation
@@ -122,6 +123,7 @@ function createSetup(opts: {
             handler: async (): Promise<HookOutput<ResolveProjectHookResult>> => ({
               result: {
                 projectId: PROJECT_ID,
+                projectRef: projectRefFor(PROJECT_ROOT),
                 projectName: "project",
               },
             }),

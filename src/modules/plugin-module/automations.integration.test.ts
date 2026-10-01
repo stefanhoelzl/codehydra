@@ -71,6 +71,7 @@ import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -116,7 +117,13 @@ class OpenProjectOp implements Operation<typeof openProjectSchemas> {
     if (path !== undefined && this.failFor.has(path)) throw new Error(`not a git repo: ${path}`);
     const pathStr =
       ctx.intent.payload.path?.toString() ?? testPath("/home/user/projects/repo").toNative();
-    return { id: "project-1" as ProjectId, name: "repo", path: projPath(pathStr), workspaces: [] };
+    return {
+      ref: projectRefFor(projPath(pathStr)),
+      id: "project-1" as ProjectId,
+      name: "repo",
+      path: projPath(pathStr),
+      workspaces: [],
+    };
   }
 }
 
@@ -202,6 +209,7 @@ function workspacePathOf(name: string): WorkspacePath {
 
 function workspaceNamed(name: string, metadata: Record<string, string> = {}): Workspace {
   return {
+    ref: makeWorkspaceRef(projectRefFor(projPath(PROJECT_PATH)), name),
     projectId: "project-1" as ProjectId,
     name: name as WorkspaceName,
     branch: name,
@@ -223,6 +231,7 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   async execute(): Promise<Project[]> {
     return [
       {
+        ref: projectRefFor(projPath(PROJECT_PATH)),
         id: "project-1" as ProjectId,
         name: "repo",
         path: projPath(PROJECT_PATH),

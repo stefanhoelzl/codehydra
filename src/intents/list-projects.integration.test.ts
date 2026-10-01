@@ -26,6 +26,7 @@ import type { Project, ProjectId } from "../shared/api/types";
 import type { DiscoveredWorkspace, ProjectPath, WorkspaceName } from "./contract";
 import { Path } from "../utils/path/path";
 import { projPath, wsPath } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -135,7 +136,14 @@ describe("ListProjects Operation", () => {
       setup = createTestSetup(
         async () => ({
           result: {
-            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+            projects: [
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+            ],
           },
         }),
         async () => ({
@@ -169,8 +177,18 @@ describe("ListProjects Operation", () => {
         async () => ({
           result: {
             projects: [
-              { projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH },
-              { projectId: PROJECT_B_ID, name: "project-b", path: PROJECT_B_PATH },
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+              {
+                ref: projectRefFor(PROJECT_B_PATH),
+                projectId: PROJECT_B_ID,
+                name: "project-b",
+                path: PROJECT_B_PATH,
+              },
             ],
           },
         }),
@@ -207,7 +225,14 @@ describe("ListProjects Operation", () => {
       const setup = createTestSetup(
         async () => ({
           result: {
-            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+            projects: [
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+            ],
           },
         }),
         async () => ({
@@ -228,7 +253,14 @@ describe("ListProjects Operation", () => {
       const setup = createTestSetup(
         async () => ({
           result: {
-            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+            projects: [
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+            ],
           },
         }),
         async () => ({
@@ -249,7 +281,14 @@ describe("ListProjects Operation", () => {
       setup = createTestSetup(
         async () => ({
           result: {
-            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+            projects: [
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+            ],
           },
         }),
         async () => ({ result: { entries: [] } })
@@ -272,7 +311,14 @@ describe("ListProjects Operation", () => {
       setup = createTestSetup(
         async () => ({
           result: {
-            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+            projects: [
+              {
+                ref: projectRefFor(PROJECT_A_PATH),
+                projectId: PROJECT_A_ID,
+                name: "project-a",
+                path: PROJECT_A_PATH,
+              },
+            ],
           },
         }),
         async () => ({

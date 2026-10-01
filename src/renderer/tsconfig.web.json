@@ -16,6 +16,8 @@
     "../shared/**/*",
     "../intents/contract.ts",
     "../utils/path/path.ts",
+    "../utils/ref.ts",
+    "../utils/url-utils.ts",
     "../test/**/*"
   ],
   "exclude": [

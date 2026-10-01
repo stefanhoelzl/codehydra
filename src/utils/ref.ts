@@ -81,6 +81,16 @@ export function makeProjectRef(location: ProjectLocation, machine = LOCAL_MACHIN
   return projectRefSchema.parse(`${PREFIX}${machine}${REF_SEPARATOR}${project}`);
 }
 
+/**
+ * The ref of a project as CodeHydra knows it: a managed clone by the origin it
+ * was cloned from (`remoteUrl`), any other project by its path.
+ */
+export function projectRefFor(path: string, remoteUrl?: string): ProjectRef {
+  return makeProjectRef(
+    remoteUrl !== undefined ? { kind: "managed", origin: remoteUrl } : { kind: "checkout", path }
+  );
+}
+
 /** The ref of workspace `name` in `project`. */
 export function makeWorkspaceRef(project: ProjectRef, name: string): WorkspaceRef {
   if (!isValidRefName(name)) throw new Error(`Invalid workspace name for a ref: "${name}"`);

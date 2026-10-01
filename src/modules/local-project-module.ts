@@ -22,7 +22,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projectPathSchema } from "../intents/contract";
-import type { ProjectPath } from "../intents/contract";
+import type { ProjectPath, ProjectRef } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import {
   managedClonePath,
@@ -74,6 +74,7 @@ import {
  * No remoteUrl — LocalProjectModule is unaware of remote concerns.
  */
 export interface LocalProject {
+  readonly ref: ProjectRef;
   readonly id: ProjectId;
   readonly name: string;
   readonly path: Path;
@@ -407,7 +408,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
             const project = projects.get(normalizedKey);
             if (!project) return { result: {} };
-            return { result: { projectId: project.id, projectName: project.name } };
+            return {
+              result: { projectId: project.id, projectRef: project.ref, projectName: project.name },
+            };
           },
         },
       },
@@ -512,7 +515,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         // register: generate ID, persist, add to internal state (all projects)
         register: {
           handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
-            const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
+            const { projectPath: projectPathStr, projectRef, remoteUrl } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
             const normalizedKey = projectPathSchema.parse(projectPath.toString());
@@ -531,6 +534,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
 
             // Add to internal state
             projects.set(normalizedKey, {
+              ref: projectRef,
               id: projectId,
               name: projectPath.basename,
               path: projectPath,
@@ -628,6 +632,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const entries: ListProjectsHookEntry[] = [];
             for (const [key, project] of projects) {
               entries.push({
+                ref: project.ref,
                 projectId: project.id,
                 name: project.name,
                 path: key,
