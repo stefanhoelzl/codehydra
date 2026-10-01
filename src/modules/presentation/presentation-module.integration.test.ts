@@ -39,7 +39,7 @@ import type {
   ProjectId,
   Workspace,
   WorkspaceName,
-  WorkspaceRef,
+  WorkspaceLocator,
 } from "../../shared/api/types";
 import type { WorkspacePath } from "../../shared/ipc";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
@@ -1203,7 +1203,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     // Deselect (open the creation panel) while the earlier switch's event is
     // still held up by a slow handler ahead of the presenter.
     const deps = createDeps();
-    let active: WorkspaceRef | null = null;
+    let active: WorkspaceLocator | null = null;
     deps.dispatcher.registerOperation(new GetActiveWorkspaceOperation());
     deps.dispatcher.registerModule({
       name: "active-stub",
@@ -3642,7 +3642,7 @@ describe("PresentationModule - startup screen", () => {
     const deps = createDeps();
     const dispatched: Array<{ type: string; payload: unknown }> = [];
     // The workspace the lifecycle module reports active.
-    let active: WorkspaceRef | null = null;
+    let active: WorkspaceLocator | null = null;
     deps.dispatcher = {
       dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
         if (intent.type === INTENT_GET_ACTIVE_WORKSPACE) return Promise.resolve(active);

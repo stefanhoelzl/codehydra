@@ -1252,7 +1252,7 @@ Cloning from a git URL and base-branch listing are owned by the main-process cre
 | Method               | Signature                                                                                | Description                    |
 | -------------------- | ---------------------------------------------------------------------------------------- | ------------------------------ |
 | `selectFolder`       | `() => Promise<string \| null>`                                                          | Open native folder picker      |
-| `getActiveWorkspace` | `() => Promise<WorkspaceRef \| null>`                                                    | Get currently active workspace |
+| `getActiveWorkspace` | `() => Promise<WorkspaceLocator \| null>`                                                | Get currently active workspace |
 | `switchWorkspace`    | `(projectId: ProjectId, workspaceName: WorkspaceName, focus?: boolean) => Promise<void>` | Switch to a workspace          |
 | `setMode`            | `(mode: UIMode) => Promise<void>`                                                        | Set UI mode                    |
 
@@ -1285,9 +1285,9 @@ interface AppStateResult {
 | `project:closed`              | `{ projectId: ProjectId }`                       | Project was closed                                                           |
 | `project:bases-updated`       | `{ projectId: ProjectId, bases: BaseInfo[] }`    | Base branches refreshed                                                      |
 | `workspace:created`           | `{ projectId: ProjectId, workspace: Workspace }` | Workspace created                                                            |
-| `workspace:removed`           | `WorkspaceRef`                                   | Workspace removed                                                            |
-| `workspace:switched`          | `WorkspaceRef \| null`                           | Active workspace changed                                                     |
-| `workspace:status-changed`    | `WorkspaceRef & { status: WorkspaceStatus }`     | Status changed                                                               |
+| `workspace:removed`           | `WorkspaceLocator`                               | Workspace removed                                                            |
+| `workspace:switched`          | `WorkspaceLocator \| null`                       | Active workspace changed                                                     |
+| `workspace:status-changed`    | `WorkspaceLocator & { status: WorkspaceStatus }` | Status changed                                                               |
 | `workspace:metadata-changed`  | `{ projectId, workspaceName, key, value }`       | Metadata updated                                                             |
 | `workspace:loading-changed`   | `{ path: string, loading: boolean }`             | Workspace loading state changed                                              |
 | `workspace:deletion-progress` | `DeletionProgress`                               | Workspace deletion progress update (includes `blockingProcesses` on Windows) |
@@ -1361,10 +1361,10 @@ interface Workspace {
 }
 ```
 
-#### `WorkspaceRef`
+#### `WorkspaceLocator`
 
 ```typescript
-interface WorkspaceRef {
+interface WorkspaceLocator {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
   readonly path: string;

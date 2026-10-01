@@ -3,7 +3,7 @@
  * Integration tests for get-active-workspace operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hook -> result,
- * using a cached WorkspaceRef (event-driven pattern).
+ * using a cached WorkspaceLocator (event-driven pattern).
  *
  * Test plan items covered:
  * #10: get-active-workspace returns ref when cached
@@ -28,7 +28,7 @@ import type {
 import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
-import type { WorkspaceRef } from "../shared/api/types";
+import type { WorkspaceLocator } from "../shared/api/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath } from "../shared/test-fixtures";
 
@@ -48,7 +48,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
 }
 
-function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
+function createTestSetup(cachedRef: WorkspaceLocator | null): TestSetup {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(new GetActiveWorkspaceOperation());
@@ -91,7 +91,7 @@ describe("GetActiveWorkspace Operation", () => {
   describe("returns ref when cached (#10)", () => {
     let setup: TestSetup;
 
-    const expectedRef: WorkspaceRef = {
+    const expectedRef: WorkspaceLocator = {
       projectId: PROJECT_ID,
       workspaceName: "feature-x" as WorkspaceName,
       path: WORKSPACE_PATH,
@@ -101,10 +101,12 @@ describe("GetActiveWorkspace Operation", () => {
       setup = createTestSetup(expectedRef);
     });
 
-    it("returns WorkspaceRef with projectId, workspaceName, and path", async () => {
+    it("returns WorkspaceLocator with projectId, workspaceName, and path", async () => {
       const { dispatcher } = setup;
 
-      const result = (await dispatcher.dispatch(getActiveWorkspaceIntent())) as WorkspaceRef | null;
+      const result = (await dispatcher.dispatch(
+        getActiveWorkspaceIntent()
+      )) as WorkspaceLocator | null;
 
       expect(result).not.toBeNull();
       expect(result!.projectId).toBe(expectedRef.projectId);
@@ -125,7 +127,7 @@ describe("GetActiveWorkspace Operation", () => {
 
   describe("interceptor", () => {
     it("cancellation prevents operation execution (#14)", async () => {
-      const expectedRef: WorkspaceRef = {
+      const expectedRef: WorkspaceLocator = {
         projectId: PROJECT_ID,
         workspaceName: "feature-x" as WorkspaceName,
         path: WORKSPACE_PATH,

@@ -18,7 +18,7 @@
 import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
-import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";
+import type { ProjectId, WorkspaceName, WorkspaceLocator } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
 import type { UpdateAgentStatusIntent } from "./update-agent-status";
@@ -82,7 +82,7 @@ export interface TestMockConfig {
   /** Maps projectPath → resolution data (or dynamic lookup). */
   readonly projects?: MockProjectLookup;
   /** Active workspace ref for get-active-workspace. Default: null. */
-  readonly activeWorkspaceRef?: WorkspaceRef | null;
+  readonly activeWorkspaceRef?: WorkspaceLocator | null;
   /** View manager for switch-workspace activate hook. Only wired if provided. */
   readonly viewManager?: MockViewManager;
 }

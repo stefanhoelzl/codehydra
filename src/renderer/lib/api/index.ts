@@ -88,7 +88,7 @@ export type { Unsubscribe } from "@shared/electron-api";
 export type {
   Project,
   Workspace,
-  WorkspaceRef,
+  WorkspaceLocator,
   WorkspaceStatus,
   AgentStatus,
   AgentStatusCounts,
