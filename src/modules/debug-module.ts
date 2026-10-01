@@ -28,12 +28,13 @@ import {
   type ResolveHookInput,
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
-import type { WorkspaceName } from "../shared/api/types";
+
 import { SETUP_OPERATION_ID, type SetupProgressPayload } from "../intents/setup";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { NotificationCard, notify } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
-import type { ProjectPath } from "../intents/contract";
+import type { WorkspacePath } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 interface DebugModuleDeps {
   readonly configService: Config;
@@ -79,10 +80,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
   }
 
   // Workspaces kept alive by debug.blocking-pids after deletion
-  const debugWorkspaces = new Map<
-    string,
-    { projectPath: ProjectPath; workspaceName: WorkspaceName }
-  >();
+  const debugWorkspaces = new Map<WorkspacePath, ResolveHookResult>();
 
   return {
     name: "debug",
@@ -94,7 +92,16 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             if (!isActive("debug.blocking-pids")) return { result: {} };
             const { projectPath, workspacePath, workspaceName } = ctx as DeletePipelineHookInput;
-            debugWorkspaces.set(workspacePath, { projectPath, workspaceName });
+            const projectRef = projectRefFor(projectPath);
+            debugWorkspaces.set(workspacePath, {
+              workspaceRef: makeWorkspaceRef(projectRef, workspaceName),
+              workspacePath,
+              projectRef,
+              projectPath,
+              workspaceName,
+              branch: null,
+              metadata: {},
+            });
             return { result: { error: "Debug: simulated file lock" } };
           },
         },
@@ -122,15 +129,16 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
-            const { workspacePath } = ctx as ResolveHookInput;
-            const cached = debugWorkspaces.get(workspacePath);
-            if (!cached) return { result: {} };
-            return {
-              result: {
-                projectPath: cached.projectPath,
-                workspaceName: cached.workspaceName,
-              },
-            };
+            const { payload } = (ctx as ResolveHookInput).intent;
+            for (const cached of debugWorkspaces.values()) {
+              if (
+                cached.workspaceRef === payload.workspaceRef ||
+                cached.workspacePath === payload.workspacePath
+              ) {
+                return { result: cached };
+              }
+            }
+            return { result: {} };
           },
         },
       },

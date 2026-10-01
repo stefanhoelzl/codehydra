@@ -38,6 +38,7 @@ import {
   hookCtxSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   workspaceNameSchema,
   workspacePathSchema,
   workspaceSchema,
@@ -157,7 +158,10 @@ export const openWorkspaceResultSchema = workspaceSchema;
 // =============================================================================
 
 /** Operation-added enrichment for the "create" hook point (resolved project path). */
-const createEnrichmentSchema = z.object({ projectPath: projectPathSchema });
+const createEnrichmentSchema = z.object({
+  projectPath: projectPathSchema,
+  projectRef: projectRefSchema,
+});
 const createInputSchema = hookCtxSchema(openWorkspacePayloadSchema, createEnrichmentSchema.shape);
 
 /** Result from the "create" hook point. Fields optional — multiple handlers may each contribute a subset. */
@@ -521,7 +525,11 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       : null;
 
     // Hook: "create" — worktree creation (fatal on error)
-    const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
+    const createCtx: CreateHookInput = {
+      intent: ctx.intent,
+      projectPath,
+      projectRef: projResolved.projectRef,
+    };
     const { results: createResults, errors: createErrors } = await ctx.hooks.collect(
       "create",
       createCtx

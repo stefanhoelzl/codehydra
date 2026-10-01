@@ -23,7 +23,12 @@ import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
 import type { UpdateAgentStatusIntent } from "./update-agent-status";
 import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
+import type {
+  ResolveHookResult as ResolveWorkspaceHookResult,
+  ResolveWorkspaceIntent,
+  StateHookInput,
+  StateHookResult,
+} from "./resolve-workspace";
 import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "./resolve-project";
 import type {
   ResolveHookResult as ResolveProjectHookResult,
@@ -41,8 +46,9 @@ import type {
   ActivateHookInput,
 } from "./switch-workspace";
 import type { WorkspacePath, ProjectPath } from "./contract";
-import { projectRefFor } from "../utils/ref";
-import type { ProjectRef } from "./contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { ProjectRef, WorkspaceRef } from "./contract";
+import { workspacePathSchema } from "./contract";
 
 // =============================================================================
 // Configuration Types
@@ -222,18 +228,49 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const lookupWorkspace =
       typeof workspaces === "function" ? workspaces : (path: string) => workspaces[path];
     const vm = config.viewManager;
+    // A workspace named by its ref is found among the entries by the ref its
+    // project path and name give. A lookup function answers paths only.
+    const refOf = (entry: MockWorkspaceEntry): WorkspaceRef =>
+      makeWorkspaceRef(projectRefFor(entry.projectPath), entry.workspaceName);
+    const find = (payload: ResolveWorkspaceIntent["payload"]) => {
+      if (payload.workspacePath !== undefined) {
+        const entry = lookupWorkspace(payload.workspacePath);
+        return entry ? { entry, path: payload.workspacePath } : undefined;
+      }
+      if (typeof workspaces === "function") return undefined;
+      for (const [path, entry] of Object.entries(workspaces)) {
+        if (refOf(entry) === payload.workspaceRef) {
+          return { entry, path: workspacePathSchema.parse(path) };
+        }
+      }
+      return undefined;
+    };
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
-          const intent = ctx.intent as { payload: { workspacePath: WorkspacePath } };
-          const entry = lookupWorkspace(intent.payload.workspacePath);
-          if (!entry) return { result: {} };
+          const found = find((ctx.intent as ResolveWorkspaceIntent).payload);
+          if (!found) return { result: {} };
+          const { entry, path } = found;
           return {
             result: {
-              ...entry,
-              active:
-                entry.active ??
-                (vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false),
+              workspaceRef: refOf(entry),
+              workspacePath: path,
+              projectRef: projectRefFor(entry.projectPath),
+              projectPath: entry.projectPath,
+              workspaceName: entry.workspaceName,
+              branch: entry.branch ?? null,
+              metadata: entry.metadata ?? {},
+            },
+          };
+        },
+      },
+      state: {
+        handler: async (ctx: HookContext): Promise<HookOutput<StateHookResult>> => {
+          const { workspacePath } = ctx as StateHookInput;
+          const entry = lookupWorkspace(workspacePath);
+          return {
+            result: {
+              active: entry?.active ?? (vm ? vm.getActiveWorkspacePath() === workspacePath : false),
             },
           };
         },

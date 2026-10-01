@@ -82,7 +82,12 @@ import {
   INTENT_GET_ACTIVE_WORKSPACE,
 } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
+import type {
+  ResolveHookInput as ResolveWorkspaceHookInput,
+  ResolveHookResult as ResolveWorkspaceHookResult,
+  StateHookInput,
+  StateHookResult,
+} from "./resolve-workspace";
 import {
   ResolveProjectOperation,
   RESOLVE_PROJECT_OPERATION_ID,
@@ -91,7 +96,7 @@ import {
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
 import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath } from "./contract";
-import { projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -389,18 +394,31 @@ function createTestHarness(options?: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: WorkspacePath } & HookContext;
+            const { payload } = (ctx as ResolveWorkspaceHookInput).intent;
+            const wsPath = payload.workspacePath;
+            if (wsPath === undefined) return { result: {} };
             // Reverse lookup: find which project owns this workspace path
             const project = appState.findProjectForWorkspace(wsPath);
             if (!project) return { result: {} };
-            const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
+            const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName;
+            const projectRef = projectRefFor(project.path);
             return {
               result: {
+                workspaceRef: makeWorkspaceRef(projectRef, workspaceName),
+                workspacePath: wsPath,
+                projectRef,
                 projectPath: projPath(project.path),
-                workspaceName: workspaceName as WorkspaceName,
-                active: viewManager.getActiveWorkspacePath() === wsPath,
+                workspaceName,
+                branch: null,
+                metadata: {},
               },
             };
+          },
+        },
+        state: {
+          handler: async (ctx: HookContext): Promise<HookOutput<StateHookResult>> => {
+            const { workspacePath } = ctx as StateHookInput;
+            return { result: { active: viewManager.getActiveWorkspacePath() === workspacePath } };
           },
         },
       },
