@@ -95,7 +95,11 @@ describe("metadata entries", () => {
     await provider.setMetadata(FEATURE, "agent.pending-prompt", "{}");
     await provider.setMetadata(FEATURE, "title", "Login flow");
 
-    expect(await call("metadata.get", {})).toEqual({ hibernated: "true", title: "Login flow" });
+    expect(await call("metadata.get", {})).toEqual({
+      hibernated: "true",
+      name: "feature-x",
+      title: "Login flow",
+    });
   });
 
   it("writes a public key", async () => {
@@ -103,10 +107,10 @@ describe("metadata entries", () => {
 
     await call("metadata.set", { key: "note", value: "WIP" });
 
-    expect(await provider.getMetadata(FEATURE)).toEqual({ note: "WIP" });
+    expect(await provider.getMetadata(FEATURE)).toEqual({ name: "feature-x", note: "WIP" });
   });
 
-  it.each(["hibernated", "agent", "base", "source", "agent.pending-prompt"])(
+  it.each(["hibernated", "agent", "base", "name", "source", "agent.pending-prompt"])(
     "refuses to write %s, a key CodeHydra manages",
     async (key) => {
       const { call, provider } = await setup();
@@ -115,7 +119,7 @@ describe("metadata entries", () => {
         (error: unknown) => error instanceof ApiError && error.category === "usage"
       );
       await expect(call("metadata.set", { key, value: null })).rejects.toThrow(ApiError);
-      expect(await provider.getMetadata(FEATURE)).toEqual({});
+      expect(await provider.getMetadata(FEATURE)).toEqual({ name: "feature-x" });
     }
   );
 });

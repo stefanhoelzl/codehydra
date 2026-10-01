@@ -67,6 +67,12 @@ An isolated development environment with its own branch, files, and AI agent
 session. Workspaces are git worktrees, so changes in one never affect another.
 Each one opens in a full VSCodium editor with the agent in a terminal.
 
+A workspace is named once, after its branch when it is created, and keeps
+that name for good: switching it to another branch (`git switch`, a detached
+HEAD) changes the branch it shows, not its name. A name stays taken while its
+workspace exists, so a new workspace cannot reuse it even when no branch is
+called that any more. Give it a different label with a title instead.
+
 ### Hibernation
 
 A workspace you're not using can be put to sleep to free its editor and agent
@@ -150,8 +156,9 @@ Open a project from the New workspace form (**Open project folder** or
 - A folder that is not a git repository asks to **initialize** one (git init
   with an initial commit).
 - A repository that already has worktrees CodeHydra does not manage asks which
-  to **adopt**. An adopted workspace is named after its branch, like every
-  other workspace (its directory on a detached HEAD). The adoption belongs to
+  to **adopt**. An adopted workspace is named after the branch it has at
+  adoption (its directory on a detached HEAD, with any `:` turned into `-`)
+  and keeps that name, like every other workspace. The adoption belongs to
   the worktree, so it holds whatever is checked out there.
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
   `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
@@ -653,7 +660,7 @@ Output — every field optional:
 }
 ```
 
-- `title` is the sidebar display name; the branch name stays the identity.
+- `title` is the sidebar display name; the workspace name stays the identity.
 - `tags` are keyed by tag name; `color`, `label` and `description` are optional.
   Each dot-separated part of a tag name must start with a letter and contain
   only letters, digits and `-`, not ending in `-`; at most 59 characters. An
@@ -1303,13 +1310,16 @@ Some keys are CodeHydra's own, and `ws metadata get` shows them read-only:
 | Key          | Meaning                                                     |
 | ------------ | ----------------------------------------------------------- |
 | `base`       | The branch the workspace was created from                   |
+| `name`       | The workspace's name, fixed when it is created or adopted   |
 | `agent`      | The agent the workspace runs (`claude` or `opencode`)       |
 | `hibernated` | `true` while the workspace is hibernated                    |
 | `source`     | The `<plugin>/<automation>` that created or last matched it |
 
 Setting one of those — or a key CodeHydra keeps to itself and does not show —
 is refused, from `ch`, MCP, the extension API, plugin actions and automation
-items alike. Hibernate, wake and creation change them.
+items alike. Hibernate, wake and creation change them. A workspace from a
+version that did not record `name` gets the name it showed until then (its
+branch, else its directory) the first time its project opens.
 
 Versions before this one kept metadata in git config
 (`branch.<name>.codehydra.*`). Opening a project moves its workspaces' entries

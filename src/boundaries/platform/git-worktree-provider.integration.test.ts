@@ -506,7 +506,12 @@ describe("GitWorktreeProvider integration", () => {
 
       expect(
         await readMetadataFile(fs, new Path(PROJECT_ROOT, ".git", "worktrees", "feature-x"))
-      ).toEqual({ version: 1, internal: {}, protected: { base: "main" }, public: {} });
+      ).toEqual({
+        version: 1,
+        internal: {},
+        protected: { base: "main", name: "feature-x" },
+        public: {},
+      });
       expect(await mockClient.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
         new Map()
       );
@@ -1087,6 +1092,7 @@ describe("GitWorktreeProvider", () => {
         base: "main",
         note: "WIP auth feature",
         model: "claude-4",
+        name: "feature-x",
       });
     });
   });
@@ -2994,7 +3000,7 @@ describe("GitWorktreeProvider", () => {
       ).toEqual({
         version: 1,
         internal: { "agent.pending-prompt": "{}" },
-        protected: { hibernated: "true" },
+        protected: { hibernated: "true", name: "feature-x" },
         public: { note: "WIP feature" },
       });
       expect(await mockClient.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
@@ -3028,7 +3034,10 @@ describe("GitWorktreeProvider", () => {
 
       await provider.setMetadata(worktreePath, "hibernated", "true");
 
-      expect(await provider.getMetadata(worktreePath)).toEqual({ hibernated: "true" });
+      expect(await provider.getMetadata(worktreePath)).toEqual({
+        hibernated: "true",
+        name: "feature-x",
+      });
     });
   });
 
@@ -3093,11 +3102,12 @@ describe("GitWorktreeProvider", () => {
         "tags.new": "{}",
         agent: "claude",
         "agent.pending-prompt": "{}",
+        name: "feature-x",
       });
       expect(await readMetadataFile(fs, FEATURE_GIT_DIR)).toEqual({
         version: 1,
         internal: { "agent.pending-prompt": "{}" },
-        protected: { base: "main", agent: "claude" },
+        protected: { base: "main", agent: "claude", name: "feature-x" },
         public: { title: "Login flow", "tags.new": "{}" },
       });
       expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(new Map());
@@ -3124,12 +3134,17 @@ describe("GitWorktreeProvider", () => {
 
       await provider.discover(PROJECT_ROOT);
 
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ agent: "claude" });
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({
+        agent: "claude",
+        name: "feature-x",
+      });
       expect((await readMetadataFile(fs, FEATURE_GIT_DIR))?.protected).toEqual({
         agent: "claude",
+        name: "feature-x",
       });
       expect(await provider.getMetadata(new Path(FEATURE_PATH.dirname, "pinned"))).toEqual({
         agent: "opencode",
+        name: "pinned",
       });
     });
 
@@ -3147,7 +3162,8 @@ describe("GitWorktreeProvider", () => {
       provider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
       await provider.discover(PROJECT_ROOT);
 
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({});
+      // Only the name is recorded: a workspace from before names were kept gets one
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ name: "feature-x" });
     });
 
     it("writes an empty file for a workspace without config", async () => {
@@ -3165,7 +3181,7 @@ describe("GitWorktreeProvider", () => {
       expect(await readMetadataFile(fs, FEATURE_GIT_DIR)).toEqual({
         version: 1,
         internal: {},
-        protected: {},
+        protected: { name: "feature-x" },
         public: {},
       });
     });
@@ -3229,7 +3245,7 @@ describe("GitWorktreeProvider", () => {
 
       await provider.discover(PROJECT_ROOT);
 
-      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ base: "main" });
+      expect(await provider.getMetadata(FEATURE_PATH)).toEqual({ base: "main", name: "feature-x" });
       expect(await client.getGitConfig(PROJECT_ROOT, { regex: "codehydra" })).toEqual(
         new Map([["branch.feature-x.codehydra.base", "main"]])
       );
@@ -3267,7 +3283,7 @@ describe("GitWorktreeProvider", () => {
       );
     });
 
-    it("keeps a workspace's metadata across a branch rename", async () => {
+    it("keeps a workspace's name and metadata across a branch rename", async () => {
       const fs = createFileSystemMock();
       const before = legacyRepo(fs, {
         branchConfigs: { "feature-x": { "codehydra.title": "Login flow" } },
@@ -3287,8 +3303,10 @@ describe("GitWorktreeProvider", () => {
       );
       const [workspace] = await provider.discover(PROJECT_ROOT);
 
-      expect(workspace?.name).toBe("renamed");
-      expect(workspace?.metadata).toEqual({ title: "Login flow" });
+      // The name was recorded on first discovery and is the workspace's identity
+      expect(workspace?.name).toBe("feature-x");
+      expect(workspace?.branch).toBe("renamed");
+      expect(workspace?.metadata).toEqual({ title: "Login flow", name: "feature-x" });
     });
   });
 
@@ -3328,6 +3346,7 @@ describe("GitWorktreeProvider", () => {
         base: "develop",
         note: "WIP",
         model: "claude-4",
+        name: "feature-x",
       });
     });
   });

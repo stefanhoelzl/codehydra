@@ -51,6 +51,29 @@ function isOwnWorktree(
 }
 
 /**
+ * Metadata key holding a workspace's name.
+ *
+ * A workspace is named once — after its branch when it is created or adopted —
+ * and keeps the name whatever is checked out afterwards: the name is part of its
+ * identity (`utils/ref.ts`), and `git switch` must not make it a different
+ * workspace. Workspaces from before the key existed get it on first discovery,
+ * from the rule that named them until then (`legacyWorkspaceName`).
+ */
+export const NAME_METADATA_KEY = "name";
+
+/**
+ * The name a workspace had before names were recorded: its branch, else its
+ * directory (CodeHydra's own directories are the sanitized branch, so
+ * unsanitizing recovers it). A colon cannot be part of a name (`utils/ref.ts`),
+ * and only a hand-made directory can hold one, so it becomes `-` like git's own
+ * worktree ids.
+ */
+function legacyWorkspaceName(branch: string | null, directory: string, own: boolean): string {
+  if (branch !== null) return branch;
+  return (own ? unsanitizeWorkspaceName(directory) : directory).replace(/:/g, "-");
+}
+
+/**
  * A worktree's metadata file and what it holds: null metadata when it has no file
  * yet, null file when its git directory could not be resolved.
  */
@@ -390,6 +413,7 @@ export class GitWorktreeProvider {
 
     const workspaces: Workspace[] = [];
     const migrations: { path: Path; file: Path; branch: string | null; metadata: Metadata }[] = [];
+    const unnamed: { path: Path; name: string }[] = [];
     candidates.forEach((wt, index) => {
       const { file, metadata: fromFile } = loaded[index]!;
       const fromLegacy = wt.branch ? legacy.get(wt.branch) : undefined;
@@ -405,21 +429,22 @@ export class GitWorktreeProvider {
 
       // Register workspace in the workspace registry for metadata resolution
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
+      const name = metadata[NAME_METADATA_KEY] ?? legacyWorkspaceName(wt.branch, wt.name, own);
       if (file !== null) {
         if (fromFile === null) {
-          metadata = { ...this.migrationDefaults(), ...metadata };
+          metadata = { ...this.migrationDefaults(), ...metadata, [NAME_METADATA_KEY]: name };
           migrations.push({ path: wt.path, file, branch: wt.branch, metadata });
         } else {
           this.metadataStore.track(wt.path, file, metadata);
+          if (metadata[NAME_METADATA_KEY] === undefined) {
+            metadata = { ...metadata, [NAME_METADATA_KEY]: name };
+            unnamed.push({ path: wt.path, name });
+          }
         }
       }
 
       workspaces.push({
-        // A workspace is named after its branch, wherever its directory is and
-        // whatever it is called. Only a detached HEAD falls back to the directory:
-        // CodeHydra's own directories are the sanitized branch, so unsanitizing
-        // recovers it; an adopted one keeps the name the user gave its directory.
-        name: wt.branch ?? (own ? unsanitizeWorkspaceName(wt.name) : wt.name),
+        name,
         path: wt.path,
         branch: wt.branch,
         metadata,
@@ -429,7 +454,22 @@ export class GitWorktreeProvider {
     if (migrations.length > 0) {
       await this.migrateLegacyMetadata(projectRoot, migrations, legacy);
     }
+    await Promise.all(unnamed.map(({ path, name }) => this.recordName(path, name)));
     return workspaces;
+  }
+
+  /**
+   * Record the name a workspace from before names were recorded goes by. Best
+   * effort: until it lands, discovery derives the same name again.
+   */
+  private async recordName(workspacePath: Path, name: string): Promise<void> {
+    try {
+      await this.metadataStore.set(workspacePath, NAME_METADATA_KEY, name);
+    } catch (error: unknown) {
+      this.logger
+        .scoped({ path: workspacePath.toString() })
+        .warn("Failed to record workspace name", { error: getErrorMessage(error) });
+    }
   }
 
   /**
@@ -536,8 +576,8 @@ export class GitWorktreeProvider {
       if (metadata[EXTERNAL_TAG_METADATA_KEY] !== undefined) return;
 
       unmanaged.push({
-        // The name the workspace would take, like discover() gives it.
-        name: wt.branch ?? wt.name,
+        // The name the workspace would take, like adoptWorktree() gives it.
+        name: legacyWorkspaceName(wt.branch, wt.name, false),
         path: wt.path,
         branch: wt.branch,
       });
@@ -562,13 +602,18 @@ export class GitWorktreeProvider {
     branch: string | null
   ): Promise<Workspace> {
     let metadata: Record<string, string>;
+    let name: string;
     try {
       const file = WorkspaceMetadataStore.fileIn(
         await this.gitClient.getWorktreeGitDir(worktreePath)
       );
+      const existing = (await this.metadataStore.read(file)) ?? {};
+      name =
+        existing[NAME_METADATA_KEY] ?? legacyWorkspaceName(branch, worktreePath.basename, false);
       metadata = {
-        ...((await this.metadataStore.read(file)) ?? {}),
+        ...existing,
         [EXTERNAL_TAG_METADATA_KEY]: EXTERNAL_TAG_VALUE,
+        [NAME_METADATA_KEY]: name,
       };
       await this.metadataStore.initialize(worktreePath, file, metadata);
     } catch (error: unknown) {
@@ -581,8 +626,7 @@ export class GitWorktreeProvider {
     this.ensureWorkspaceRegistered(worktreePath, projectRoot);
 
     return {
-      // Named like discover() names it: the branch, else the directory.
-      name: branch ?? worktreePath.basename,
+      name,
       path: worktreePath,
       branch,
       metadata,
@@ -856,7 +900,10 @@ export class GitWorktreeProvider {
       const file = WorkspaceMetadataStore.fileIn(
         await this.gitClient.getWorktreeGitDir(worktreePath)
       );
-      await this.metadataStore.initialize(worktreePath, file, { base: baseBranch });
+      await this.metadataStore.initialize(worktreePath, file, {
+        base: baseBranch,
+        [NAME_METADATA_KEY]: name,
+      });
     } catch (error: unknown) {
       const message = getErrorMessage(error, "Unknown error");
       this.logger.warn("Failed to save base branch metadata", { branch: name, error: message });
@@ -866,7 +913,7 @@ export class GitWorktreeProvider {
       name,
       path: worktreePath,
       branch: name,
-      metadata: { base: baseBranch },
+      metadata: { base: baseBranch, [NAME_METADATA_KEY]: name },
     };
   }
 
