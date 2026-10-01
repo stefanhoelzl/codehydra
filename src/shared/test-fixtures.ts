@@ -8,6 +8,7 @@
 import type { Project, Workspace, ProjectId, WorkspaceName } from "./api/types";
 import { workspacePathSchema, projectPathSchema } from "../intents/contract";
 import { Path } from "../utils/path/path";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import { tmpdir } from "node:os";
 import type { ProjectPath, WorkspacePath } from "../intents/contract";
 
@@ -47,6 +48,7 @@ export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspa
   const branch = "branch" in overrides ? overrides.branch : name;
 
   return {
+    ref: overrides.ref ?? makeWorkspaceRef(projectRefFor(projPath("/test/project")), name),
     projectId: overrides.projectId ?? DEFAULT_PROJECT_ID,
     name: name as WorkspaceName,
     branch,
@@ -215,6 +217,8 @@ export function createMockProject(
   options: MockProjectOptions = {}
 ): Project {
   const projectId = overrides.id ?? DEFAULT_PROJECT_ID;
+  const path = projPath(overrides.path ?? "/test/project");
+  const ref = overrides.ref ?? projectRefFor(path, overrides.remoteUrl);
   // Default to including a workspace (matches renderer test expectations)
   const { includeDefaultWorkspace = true } = options;
 
@@ -227,18 +231,23 @@ export function createMockProject(
         return w as Workspace;
       }
       // Otherwise treat as WorkspaceOverrides
-      return createMockWorkspace({ ...w, projectId });
+      return createMockWorkspace({
+        ...w,
+        projectId,
+        ref: w.ref ?? makeWorkspaceRef(ref, w.name ?? "feature-1"),
+      });
     });
   } else if (includeDefaultWorkspace) {
-    workspaces = [createMockWorkspace({ projectId })];
+    workspaces = [createMockWorkspace({ projectId, ref: makeWorkspaceRef(ref, "feature-1") })];
   } else {
     workspaces = [];
   }
 
   return {
+    ref,
     id: projectId,
     name: overrides.name ?? "test-project",
-    path: projPath(overrides.path ?? "/test/project"),
+    path,
     workspaces,
     ...(overrides.defaultBaseBranch !== undefined
       ? { defaultBaseBranch: overrides.defaultBaseBranch }

@@ -21,6 +21,7 @@ import {
   hookCtxSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   projectSchema,
 } from "./contract";
 import type { DiscoveredWorkspace } from "./contract";
@@ -40,6 +41,7 @@ export const listProjectsResultSchema = z.array(projectSchema);
 
 export const listProjectsHookEntrySchema = z
   .object({
+    ref: projectRefSchema,
     projectId: projectIdSchema,
     name: z.string(),
     path: projectPathSchema,
@@ -146,10 +148,11 @@ export class ListProjectsOperation implements Operation<typeof schemas> {
           const internalWorkspaces = workspaceMap.get(entry.path) ?? [];
           const defaultBaseBranch = defaultBaseMap.get(entry.path);
           projects.push({
+            ref: entry.ref,
             id: entry.projectId,
             name: entry.name,
             path: entry.path,
-            workspaces: toIpcWorkspaces(internalWorkspaces, entry.projectId),
+            workspaces: toIpcWorkspaces(internalWorkspaces, entry.projectId, entry.ref),
             ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
           });
         }

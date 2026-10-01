@@ -61,6 +61,7 @@ import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -126,6 +127,7 @@ function createTestHarness(options?: {
     ? []
     : [
         {
+          ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_A_NAME),
           projectId: PROJECT_ID,
           name: WORKSPACE_A_NAME,
           path: WORKSPACE_A_PATH,
@@ -133,6 +135,7 @@ function createTestHarness(options?: {
           metadata: { base: "main" },
         },
         {
+          ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_B_NAME),
           projectId: PROJECT_ID,
           name: WORKSPACE_B_NAME,
           path: WORKSPACE_B_PATH,
@@ -144,6 +147,7 @@ function createTestHarness(options?: {
   const project: Project | undefined = options?.projectNotFound
     ? undefined
     : {
+        ref: projectRefFor(PROJECT_PATH),
         id: PROJECT_ID,
         path: PROJECT_PATH,
         name: "test-project",

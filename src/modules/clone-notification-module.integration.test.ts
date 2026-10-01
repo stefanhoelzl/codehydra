@@ -24,6 +24,7 @@ import {
 } from "./presentation/notification-manager.state-mock";
 import type { Project, ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
 
 const A = "https://github.com/baltech-ag/Bros2FW";
 const B = "https://github.com/someone-else/Bros2FW";
@@ -40,6 +41,7 @@ function opened(git: string): ProjectOpenedEvent {
     type: EVENT_PROJECT_OPENED,
     payload: {
       project: {
+        ref: projectRefFor("/projects/Bros2FW", git),
         id: "p1" as ProjectId,
         name: "Bros2FW",
         path: projPath("/projects/Bros2FW"),

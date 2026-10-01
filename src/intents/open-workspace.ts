@@ -44,6 +44,7 @@ import {
 } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { makeWorkspaceRef } from "../utils/ref";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "./list-projects";
 import type { OpenProjectIntent } from "./open-project";
@@ -634,6 +635,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const projectId = resolvedProjectId;
 
     const workspace: OpenWorkspaceResult = {
+      ref: makeWorkspaceRef(projResolved.projectRef, resolvedWorkspaceName),
       projectId,
       name: resolvedWorkspaceName,
       branch,

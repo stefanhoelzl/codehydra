@@ -91,6 +91,7 @@ import {
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
 import { wsPath, projPath, testPath } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath } from "./contract";
+import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -417,7 +418,11 @@ function createTestHarness(options?: {
             const project = allProjects.find((p) => p.path === projectPath);
             return {
               result: project
-                ? { projectId: testProjectId(project.path), projectName: project.name }
+                ? {
+                    projectId: testProjectId(project.path),
+                    projectRef: projectRefFor(project.path),
+                    projectName: project.name,
+                  }
                 : {},
             };
           },
@@ -1717,7 +1722,11 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
           return { projectPath: PROJECT_PATH, workspaceName: WORKSPACE_NAME };
         }
         if (dispatchedIntent.type === INTENT_RESOLVE_PROJECT) {
-          return { projectId: PROJECT_ID, projectName: "test-project" };
+          return {
+            projectId: PROJECT_ID,
+            projectRef: projectRefFor(PROJECT_PATH),
+            projectName: "test-project",
+          };
         }
         if (dispatchedIntent.type === INTENT_GET_ACTIVE_WORKSPACE) {
           return { workspaceRef: null };

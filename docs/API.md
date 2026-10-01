@@ -1338,6 +1338,7 @@ type WorkspaceName = string & { readonly [WorkspaceNameBrand]: true };
 
 ```typescript
 interface Project {
+  readonly ref: ProjectRef; // Identity: ch::<machine>::<origin or path>
   readonly id: ProjectId;
   readonly name: string; // Folder name
   readonly path: string; // Absolute path
@@ -1353,6 +1354,7 @@ interface Project {
 
 ```typescript
 interface Workspace {
+  readonly ref: WorkspaceRef; // Identity: <project ref>::<name>
   readonly projectId: ProjectId;
   readonly name: WorkspaceName;
   readonly branch: string | null; // null for detached HEAD

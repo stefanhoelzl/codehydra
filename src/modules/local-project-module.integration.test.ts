@@ -25,6 +25,7 @@
  * #17: close with removeLocalRepo force-deletes config dir for remote projects
  */
 
+import { projectRefFor } from "../utils/ref";
 import { describe, it, expect, vi } from "vitest";
 
 import { createLocalProjectModule, type LocalProjectModuleDeps } from "./local-project-module";
@@ -331,6 +332,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: "https://github.com/user/repo.git",
       };
       await setup.openHooks.collect("register", registerCtx);
@@ -357,6 +359,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
       await setup.openHooks.collect("register", registerCtx);
 
@@ -386,6 +389,7 @@ describe("LocalProjectModule Integration", () => {
       const ctx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
 
       const { results, errors } = await openHooks.collect("register", ctx);
@@ -411,6 +415,7 @@ describe("LocalProjectModule Integration", () => {
       const ctx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: "https://github.com/user/repo.git",
       };
 
@@ -439,6 +444,7 @@ describe("LocalProjectModule Integration", () => {
       const ctx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
 
       const { results, errors } = await setup.openHooks.collect("register", ctx);
@@ -453,6 +459,7 @@ describe("LocalProjectModule Integration", () => {
       const ctx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
 
       // First registration — should persist
@@ -489,6 +496,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
       await setup.openHooks.collect("register", registerCtx);
 
@@ -525,6 +533,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: "https://github.com/user/repo.git",
       };
       await setup.openHooks.collect("register", registerCtx);
@@ -552,6 +561,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
       await setup.openHooks.collect("register", registerCtx);
 
@@ -582,6 +592,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: "https://github.com/user/repo.git",
       };
       await setup.openHooks.collect("register", registerCtx);
@@ -614,6 +625,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: "https://github.com/user/repo.git",
       };
       await setup.openHooks.collect("register", registerCtx);
@@ -642,6 +654,7 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       } satisfies RegisterHookInput);
 
       const { errors } = await setup.closeHooks.collect("close", {
@@ -782,6 +795,7 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", {
         intent: openLocalIntent(MANAGED_PATH),
         projectPath: MANAGED_PATH,
+        projectRef: projectRefFor(MANAGED_PATH),
         remoteUrl: REPO_URL,
       } satisfies RegisterHookInput);
 
@@ -796,6 +810,7 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
         remoteUrl: REPO_URL,
       } satisfies RegisterHookInput);
 
@@ -851,6 +866,7 @@ describe("LocalProjectModule Integration", () => {
       await setup.openHooks.collect("register", {
         intent: openLocalIntent(MANAGED_PATH),
         projectPath: MANAGED_PATH,
+        projectRef: projectRefFor(MANAGED_PATH),
         remoteUrl: REPO_URL,
       } satisfies RegisterHookInput);
       const worktreesDir = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH), "workspaces");
@@ -909,6 +925,7 @@ describe("LocalProjectModule Integration", () => {
       const registerCtx: RegisterHookInput = {
         intent: openLocalIntent(PROJECT_PATH),
         projectPath: projPath(new Path(PROJECT_PATH).toString()),
+        projectRef: projectRefFor(projPath(new Path(PROJECT_PATH).toString())),
       };
       await setup.openHooks.collect("register", registerCtx);
 

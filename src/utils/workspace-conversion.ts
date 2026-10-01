@@ -6,7 +6,7 @@
  *   a `Path` instance, so it is backend-local and cannot cross a tunnel.
  * - Discovered (`intents/contract`): the same fields with a branded `WorkspacePath` string.
  *   This is what a `discover` / `list-workspaces` hook contributes.
- * - IPC (`intents/contract`): adds `projectId` and the optional IDE `url`.
+ * - IPC (`intents/contract`): adds the workspace's `ref`, `projectId` and the optional IDE `url`.
  *
  * `toDiscoveredWorkspace` is the single place a `Path` becomes contract data.
  */
@@ -16,8 +16,10 @@ import type {
   DiscoveredWorkspace,
   Workspace as IpcWorkspace,
   ProjectId,
+  ProjectRef,
 } from "../intents/contract";
 import { discoveredWorkspaceSchema } from "../intents/contract";
+import { makeWorkspaceRef } from "./ref";
 
 /**
  * Convert an internal workspace to its plain-data contract form.
@@ -46,9 +48,15 @@ export function toDiscoveredWorkspaces(
  *
  * @param discovered - Discovered workspace (already plain data)
  * @param projectId - Project ID to include in IPC workspace
+ * @param projectRef - Ref of the project, which the workspace's ref extends
  */
-function toIpcWorkspace(discovered: DiscoveredWorkspace, projectId: ProjectId): IpcWorkspace {
+export function toIpcWorkspace(
+  discovered: DiscoveredWorkspace,
+  projectId: ProjectId,
+  projectRef: ProjectRef
+): IpcWorkspace {
   return {
+    ref: makeWorkspaceRef(projectRef, discovered.name),
     projectId,
     name: discovered.name,
     path: discovered.path,
@@ -62,11 +70,13 @@ function toIpcWorkspace(discovered: DiscoveredWorkspace, projectId: ProjectId): 
  *
  * @param discovered - Array of discovered workspaces
  * @param projectId - Project ID to include in all IPC workspaces
+ * @param projectRef - Ref of the project, which every workspace's ref extends
  * @returns Array of IPC workspaces
  */
 export function toIpcWorkspaces(
   discovered: readonly DiscoveredWorkspace[],
-  projectId: ProjectId
+  projectId: ProjectId,
+  projectRef: ProjectRef
 ): IpcWorkspace[] {
-  return discovered.map((w) => toIpcWorkspace(w, projectId));
+  return discovered.map((w) => toIpcWorkspace(w, projectId, projectRef));
 }

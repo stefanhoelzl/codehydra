@@ -56,6 +56,7 @@ import {
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 import { wsPath, projPath } from "../shared/test-fixtures";
 import { workspaceSchema } from "./contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
@@ -64,6 +65,7 @@ const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 const BRANCH = "feature-a-branch";
 const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
 const REOPENED_WORKSPACE: Workspace = {
+  ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_NAME),
   projectId: PROJECT_ID,
   name: WORKSPACE_NAME,
   branch: BRANCH,

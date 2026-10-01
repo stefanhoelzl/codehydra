@@ -26,12 +26,14 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
 import type { ProjectPath } from "./contract";
+import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_PATH = projPath("/projects/my-app");
+const PROJECT_REF = projectRefFor(PROJECT_PATH);
 const PROJECT_ID = "my-app-12345678" as ProjectId;
 const PROJECT_NAME = "my-app";
 
@@ -80,6 +82,7 @@ describe("ResolveProjectOperation Integration", () => {
       const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
         result: {
           projectId: PROJECT_ID,
+          projectRef: PROJECT_REF,
           projectName: PROJECT_NAME,
         },
       }));
@@ -88,6 +91,7 @@ describe("ResolveProjectOperation Integration", () => {
 
       expect(result).toEqual({
         projectId: PROJECT_ID,
+        projectRef: PROJECT_REF,
         projectName: PROJECT_NAME,
       });
     });
@@ -96,6 +100,7 @@ describe("ResolveProjectOperation Integration", () => {
       const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
         result: {
           projectId: PROJECT_ID,
+          projectRef: PROJECT_REF,
         },
       }));
 
@@ -103,6 +108,7 @@ describe("ResolveProjectOperation Integration", () => {
 
       expect(result).toEqual({
         projectId: PROJECT_ID,
+        projectRef: PROJECT_REF,
         projectName: "",
       });
     });

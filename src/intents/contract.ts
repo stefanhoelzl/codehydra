@@ -157,6 +157,8 @@ export interface SerializedError {
 /** A workspace within a project (represents a git worktree). */
 export const workspaceSchema = z
   .object({
+    /** The workspace's identity (`utils/ref.ts`). */
+    ref: workspaceRefSchema,
     projectId: projectIdSchema,
     name: workspaceNameSchema,
     /** Current branch name, or null for detached HEAD state. */
@@ -193,6 +195,8 @@ export type DiscoveredWorkspace = z.infer<typeof discoveredWorkspaceSchema>;
 /** A project in CodeHydra (represents a git repository). */
 export const projectSchema = z
   .object({
+    /** The project's identity (`utils/ref.ts`). */
+    ref: projectRefSchema,
     id: projectIdSchema,
     name: z.string(),
     path: projectPathSchema,

@@ -38,6 +38,7 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
 import { projPath, testPath } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -89,7 +90,13 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             if (opts?.unknownProject || projectPath !== PROJECT_ROOT) {
               return { result: {} };
             }
-            return { result: { projectId: PROJECT_ID, projectName: "test" } };
+            return {
+              result: {
+                projectId: PROJECT_ID,
+                projectRef: projectRefFor(PROJECT_ROOT),
+                projectName: "test",
+              },
+            };
           },
         },
       },
