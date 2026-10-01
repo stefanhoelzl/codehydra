@@ -643,6 +643,17 @@ export function createGitWorktreeWorkspaceModule(
             // New workspace: create via provider
             const projectPathObj = new Path(projectPath);
 
+            // A name is taken for good once a workspace has it, even after that
+            // workspace switches to another branch: the name is its identity.
+            // Compared like the creation dialog does, ignoring case.
+            const requested = payload.workspaceName!.toLowerCase();
+            const taken = (workspaces.get(projectKey(projectPathObj.toString())) ?? []).some(
+              (w) => w.name.toLowerCase() === requested
+            );
+            if (taken) {
+              throw new WorkspaceError(`Workspace '${payload.workspaceName!}' already exists`);
+            }
+
             // Resolve base: explicit or default
             const base = payload.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
             if (!base) {

@@ -847,6 +847,27 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         );
         expect(resolveResult.projectPath).toBe(projectPath);
       });
+
+      it("refuses a name a workspace on another branch still has", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = projPath("/projects/my-app");
+
+        // Created as `feat`, since switched to `main`: the name stays taken
+        provider.discover.mockResolvedValue([
+          { ...makeWorkspace("feat", projPath(projectPath)), branch: "main" },
+        ]);
+        await dispatchOpenProject(dispatcher, projPath(projectPath));
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: { workspaceName: "Feat", base: "origin/main", projectPath },
+        };
+
+        await expect(dispatchCreateWorkspace(dispatcher, createIntent)).rejects.toThrow(
+          "Workspace 'Feat' already exists"
+        );
+        expect(provider.createWorkspace).not.toHaveBeenCalled();
+      });
     });
 
     describe("existing workspace", () => {

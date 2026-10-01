@@ -125,7 +125,7 @@ describe("Services Integration", () => {
       expect(JSON.parse(await fileSystemLayer.readFile(file))).toEqual({
         version: 1,
         internal: {},
-        protected: { base: "main" },
+        protected: { base: "main", name: "feature-x" },
         public: { title: "Login flow" },
       });
       expect(await gitClient.getGitConfig(projectRoot, { regex: "codehydra" })).toEqual(new Map());
@@ -144,11 +144,11 @@ describe("Services Integration", () => {
       );
       const [discovered] = await restarted.discover(projectRoot);
 
-      expect(discovered?.metadata).toEqual({ base: "main", "tags.new": "{}" });
+      expect(discovered?.metadata).toEqual({ base: "main", "tags.new": "{}", name: "feature-x" });
       expect(JSON.parse(await fileSystemLayer.readFile(file))).toEqual({
         version: 1,
         internal: {},
-        protected: { base: "main" },
+        protected: { base: "main", name: "feature-x" },
         public: { "tags.new": "{}" },
       });
       expect(await gitClient.getGitConfig(projectRoot, { regex: "codehydra" })).toEqual(new Map());
