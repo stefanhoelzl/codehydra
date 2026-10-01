@@ -2,7 +2,7 @@
  * GetActiveWorkspaceOperation - Orchestrates active workspace queries.
  *
  * Runs the "get" hook point where the handler retrieves the current active
- * workspace from the ViewManager and resolves it to a WorkspaceRef.
+ * workspace from the ViewManager and resolves it to a WorkspaceLocator.
  *
  * No provider dependencies - the hook handler does the actual work.
  * No domain events - this is a query operation.
@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspaceRefSchema } from "./contract";
+import { hookCtxSchema, workspaceLocatorSchema } from "./contract";
 import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_GET_ACTIVE_WORKSPACE = "ui:get-active-workspace" as const;
@@ -27,7 +27,7 @@ export const GET_ACTIVE_WORKSPACE_OPERATION_ID = "get-active-workspace";
 
 export const getActiveWorkspacePayloadSchema = z.object({}).readonly();
 
-export const getActiveWorkspaceResultSchema = workspaceRefSchema.nullable();
+export const getActiveWorkspaceResultSchema = workspaceLocatorSchema.nullable();
 
 /**
  * Per-handler result contract for the "get" hook point.
@@ -36,7 +36,7 @@ export const getActiveWorkspaceResultSchema = workspaceRefSchema.nullable();
  */
 export const getActiveWorkspaceHookResultSchema = z
   .object({
-    workspaceRef: workspaceRefSchema.nullable().optional(),
+    workspaceRef: workspaceLocatorSchema.nullable().optional(),
   })
   .readonly();
 

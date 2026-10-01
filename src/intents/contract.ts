@@ -46,6 +46,18 @@ export type WorkspacePath = z.infer<typeof workspacePathSchema>;
 export const projectPathSchema = z.string().brand<"ProjectPath">();
 export type ProjectPath = z.infer<typeof projectPathSchema>;
 
+/**
+ * A project's identity: `ch::<machine>::<project>`, built and read by `utils/ref.ts`.
+ * The project part is the normalized origin of a managed clone, or the path of an
+ * existing checkout — never a path CodeHydra may move.
+ */
+export const projectRefSchema = z.string().brand<"ProjectRef">();
+export type ProjectRef = z.infer<typeof projectRefSchema>;
+
+/** A workspace's identity: its project's ref, `::`, and its name. See `utils/ref.ts`. */
+export const workspaceRefSchema = z.string().brand<"WorkspaceRef">();
+export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
+
 // =============================================================================
 // Agent spec / session
 // =============================================================================
@@ -192,15 +204,15 @@ export const projectSchema = z
   .readonly();
 export type Project = z.infer<typeof projectSchema>;
 
-/** Reference to a workspace (includes path for efficiency). Used in events. */
-export const workspaceRefSchema = z
+/** Locates a workspace (includes path for efficiency). Used in events. */
+export const workspaceLocatorSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
     path: workspacePathSchema,
   })
   .readonly();
-export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
+export type WorkspaceLocator = z.infer<typeof workspaceLocatorSchema>;
 
 /**
  * Why a workspace is being torn down, while a teardown pipeline owns it.

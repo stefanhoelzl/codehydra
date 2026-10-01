@@ -67,7 +67,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
-import type { WorkspaceClosing, WorkspaceRef } from "../intents/contract";
+import type { WorkspaceClosing, WorkspaceLocator } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import {
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
@@ -125,7 +125,7 @@ export function createWorkspaceLifecycleModule(): IntentModule {
   let activeWorkspacePath: string | null = null;
 
   /** UI-level cache returned by get-active-workspace. See above for why it differs. */
-  let cachedActiveRef: WorkspaceRef | null = null;
+  let cachedActiveRef: WorkspaceLocator | null = null;
 
   const key = (workspacePath: string): string => new Path(workspacePath).toString();
 

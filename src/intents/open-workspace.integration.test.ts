@@ -74,7 +74,7 @@ import type { SwitchWorkspaceHookResult, ActivateHookInput } from "./switch-work
 import { registerTestInfrastructure } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
-import type { WorkspaceRef } from "../shared/api/types";
+import type { WorkspaceLocator } from "../shared/api/types";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 
 // =============================================================================
@@ -148,14 +148,14 @@ interface TestSetupOptions {
   setupThrows?: boolean;
   workspaceUrl?: string;
   /** Active workspace ref returned by GetActiveWorkspaceOperation. Default: null (no active workspace). */
-  activeWorkspaceRef?: WorkspaceRef | null;
+  activeWorkspaceRef?: WorkspaceLocator | null;
   /**
    * Dynamic active-workspace ref, re-read on every get-active-workspace
    * dispatch. Lets a test move the active workspace mid-creation (the user
    * navigating away while a workspace is still being made). Replaces
    * activeWorkspaceRef when given.
    */
-  activeWorkspaceRefFn?: () => WorkspaceRef | null;
+  activeWorkspaceRefFn?: () => WorkspaceLocator | null;
 }
 
 interface TestSetup {
@@ -1123,7 +1123,7 @@ describe("OpenWorkspace Operation", () => {
   });
 
   describe("a completing creation never yanks the view back", () => {
-    const OTHER_WORKSPACE: WorkspaceRef = {
+    const OTHER_WORKSPACE: WorkspaceLocator = {
       projectId: PROJECT_ID,
       workspaceName: "other-ws" as WorkspaceName,
       path: wsPath("/workspaces/other-ws"),
@@ -1133,7 +1133,7 @@ describe("OpenWorkspace Operation", () => {
       // Nothing active at dispatch (the creation panel), then the user picks
       // another workspace while the worktree is still being made. Landing them
       // on the new one now would pull them out of what they moved to.
-      let active: WorkspaceRef | null = null;
+      let active: WorkspaceLocator | null = null;
       const setup = createTestSetup({ activeWorkspaceRefFn: () => active });
       // Move the active workspace from inside the pipeline, between the
       // baseline read and the final one.
