@@ -3,7 +3,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { normalizeGitUrl, extractRepoName, isValidGitUrl, expandGitUrl } from "./url-utils";
+import {
+  normalizeGitUrl,
+  extractRepoName,
+  isValidGitUrl,
+  expandGitUrl,
+  isLocalGitOrigin,
+} from "./url-utils";
 
 describe("normalizeGitUrl", () => {
   it("normalizes HTTPS URLs", () => {
@@ -148,5 +154,32 @@ describe("expandGitUrl", () => {
 
   it("handles repo names with hyphens and underscores", () => {
     expect(expandGitUrl("org/my-cool_repo")).toBe("https://github.com/org/my-cool_repo.git");
+  });
+});
+
+describe("isLocalGitOrigin", () => {
+  it.each([
+    "/srv/git/repo",
+    "file:///srv/git/repo",
+    "file:/srv/git/repo",
+    "./repo",
+    "../repo",
+    "repo",
+    "~/repo",
+    "C:\\repos\\app",
+    "C:/repos/app",
+    "some/dir:with-colon",
+  ])("reads %s as a path", (url) => {
+    expect(isLocalGitOrigin(url)).toBe(true);
+  });
+
+  it.each([
+    "https://github.com/org/repo.git",
+    "ssh://git@host:2222/org/repo.git",
+    "git://host/org/repo",
+    "git@github.com:org/repo.git",
+    "myserver:repos/app.git",
+  ])("reads %s as a remote", (url) => {
+    expect(isLocalGitOrigin(url)).toBe(false);
   });
 });

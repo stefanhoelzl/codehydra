@@ -19,7 +19,7 @@ import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { projectPathSchema } from "../intents/contract";
-import { expandGitUrl, extractRepoName } from "../utils/url-utils";
+import { expandGitUrl, extractRepoName, isLocalGitOrigin } from "../utils/url-utils";
 import { managedClonePath } from "../boundaries/platform/paths";
 import type {
   OpenProjectIntent,
@@ -68,6 +68,11 @@ export function createRemoteProjectModule(deps: {
             }
 
             const expanded = expandGitUrl(git);
+            if (isLocalGitOrigin(expanded)) {
+              throw new Error(
+                `Cannot clone "${git}": it is a path on this machine. Open the folder instead.`
+              );
+            }
 
             // Deterministic clone path from URL
             const repoName = extractRepoName(expanded);

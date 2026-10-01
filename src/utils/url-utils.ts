@@ -155,7 +155,8 @@ export function expandGitUrl(input: string): string {
 
   // Partial URL: github.com/org/repo (domain without protocol)
   // e.g., "github.com/org/repo" -> "https://github.com/org/repo.git"
-  if (/^[a-z0-9.-]+\/[^\s]+$/i.test(trimmed) && trimmed.includes(".")) {
+  // The host is dot-separated non-empty labels, so `./repo` stays a path.
+  if (/^[a-z0-9-]+(\.[a-z0-9-]+)+\/[^\s]+$/i.test(trimmed)) {
     const withProtocol = `https://${trimmed}`;
     // Add .git suffix if not present
     return withProtocol.endsWith(".git") ? withProtocol : `${withProtocol}.git`;
@@ -163,6 +164,34 @@ export function expandGitUrl(input: string): string {
 
   // Unknown format - return as-is (will fail validation)
   return trimmed;
+}
+
+/**
+ * Whether git would read an origin as a path on this machine rather than as a
+ * remote: a `file:` URL, or anything that is neither a `scheme://` URL nor the
+ * scp-like `host:path` form (a colon before any slash; a single letter before
+ * it is a Windows drive, not a host).
+ *
+ * A managed project is named by its origin (`utils/ref.ts`), and a local origin
+ * would name it by a path — the same name the checkout at that path has when
+ * opened directly. So CodeHydra does not clone one.
+ *
+ * @example
+ * isLocalGitOrigin("/srv/git/repo") // true
+ * isLocalGitOrigin("file:///srv/git/repo") // true
+ * isLocalGitOrigin("C:\\repos\\app") // true
+ * isLocalGitOrigin("git@github.com:org/repo.git") // false
+ * isLocalGitOrigin("https://github.com/org/repo.git") // false
+ */
+export function isLocalGitOrigin(url: string): boolean {
+  const trimmed = url.trim();
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(trimmed);
+  if (scheme) return scheme[1]!.toLowerCase() === "file";
+  if (/^file:/i.test(trimmed)) return true;
+  const colon = trimmed.indexOf(":");
+  if (colon < 0) return true;
+  const beforeColon = trimmed.slice(0, colon);
+  return beforeColon.includes("/") || beforeColon.includes("\\") || beforeColon.length <= 1;
 }
 
 /**

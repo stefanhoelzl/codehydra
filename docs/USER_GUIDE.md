@@ -161,7 +161,8 @@ Open a project from the New workspace form (**Open project folder** or
   and keeps that name, like every other workspace. The adoption belongs to
   the worktree, so it holds whatever is checked out there.
 - **Clone** accepts `org/repo`, `github.com/org/repo`, and https, ssh and
-  `git://` URLs. Progress shows inline and as a sidebar card; **Continue in
+  `git://` URLs, but not a path or `file://` URL on this machine — open that
+  folder instead. Progress shows inline and as a sidebar card; **Continue in
   background** (or <kbd>Escape</kbd>) lets it finish on its own. For a GitHub
   repository that does not exist it offers **Create on GitHub** (initialize it
   with a README so it can be cloned) and **Retry Clone**.
