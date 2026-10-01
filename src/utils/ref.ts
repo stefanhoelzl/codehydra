@@ -139,6 +139,15 @@ export function workspaceNameOf(workspace: WorkspaceRef): string {
   return parts.name;
 }
 
+/**
+ * A project's name for showing to a person: the last part of its path or origin
+ * (`github.com/org/codehydra` and `/home/s/codehydra` are both `codehydra`).
+ */
+export function projectNameOf(project: ProjectRef): string {
+  const part = parseProjectRef(project)?.project ?? project;
+  return part.slice(part.lastIndexOf("/") + 1) || part;
+}
+
 /** A project ref as `ProjectRef`, or null when `value` is not one. */
 export function asProjectRef(value: string): ProjectRef | null {
   return parseProjectRef(value) === null ? null : projectRefSchema.parse(value);

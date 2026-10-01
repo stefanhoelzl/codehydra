@@ -28,6 +28,9 @@ import { delay } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 
+/** The ref every workspace in these tests is started with. */
+const TEST_WORKSPACE_REF = "ch::local::/workspace::feature-a";
+
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
   let manager: OpenCodeServerManager;
@@ -90,7 +93,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
       const workspacePath = join(testDir, "workspace");
 
-      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
+      const port = await manager.startServer(workspacePath, {
+        workspaceRef: TEST_WORKSPACE_REF,
+        binary: TEST_BINARY,
+      });
 
       expect(port).toBeGreaterThan(0);
       expect(port).toBeLessThan(65536);
@@ -111,7 +117,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
+      const port = await manager.startServer(workspacePath, {
+        workspaceRef: TEST_WORKSPACE_REF,
+        binary: TEST_BINARY,
+      });
 
       // Verify health check endpoint works
       const response = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, { timeout: 5000 });
@@ -133,7 +142,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
+      const port = await manager.startServer(workspacePath, {
+        workspaceRef: TEST_WORKSPACE_REF,
+        binary: TEST_BINARY,
+      });
 
       // Verify server is running
       const runningResponse = await networkLayer.fetch(`http://127.0.0.1:${port}/path`, {
@@ -178,7 +190,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       expect(existsSync(portsJsonPath)).toBe(false);
 
       // Start the server
-      await manager.startServer(workspacePath, { binary: TEST_BINARY });
+      await manager.startServer(workspacePath, {
+        workspaceRef: TEST_WORKSPACE_REF,
+        binary: TEST_BINARY,
+      });
 
       // Verify no ports.json file was created
       // Port is stored in memory only, not written to disk
@@ -214,7 +229,10 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         JSON.stringify({ instructions: ["USER_RULES.md"] })
       );
 
-      const port = await manager.startServer(workspacePath, { binary: TEST_BINARY });
+      const port = await manager.startServer(workspacePath, {
+        workspaceRef: TEST_WORKSPACE_REF,
+        binary: TEST_BINARY,
+      });
 
       const response = await networkLayer.fetch(`http://127.0.0.1:${port}/config`, {
         timeout: 5000,

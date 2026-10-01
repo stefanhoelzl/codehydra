@@ -420,7 +420,7 @@ what they may call and in how operations are addressed.
 | -------- | -------------------------------------------------- | ---------------------------- |
 | _(none)_ | `{ workspacePath }` — an extension. **Unchanged.** | `api:workspace:getStatus`, … |
 | `cli`    | `{ client: "cli", token, cwd? }`                   | `api:operation:<name>`       |
-| `mcp`    | `{ client: "mcp", token, cwd?, workspacePath? }`   | `api:operation:<name>`       |
+| `mcp`    | `{ client: "mcp", token, cwd?, workspace? }`       | `api:operation:<name>`       |
 
 The historical channel names are a compatibility surface for extensions, so they
 are kept exactly as they are and never grow for a new client. `ch` and the stdio
@@ -430,14 +430,17 @@ operation does not widen the extension-facing contract.
 The handshake says only who the **caller** is — what a name is looked up
 relative to, and who `agent.message` signs as. For a `cli` client that is the
 workspace containing `cwd` (none outside every worktree); for `mcp` and
-extensions it is the workspace they present. What a call acts on is never part
+extensions it is the workspace they present (an extension its folder, which the
+server matches to the workspace there; `mcp` its ref — a `workspacePath` from an
+older shim is still read). What a call acts on is never part
 of the handshake: it is the call's own target fields, below. A `cli` handshake
 that still carries `workspacePath` or `project` (a `ch` older than the app) has
 them ignored.
 
 **Naming a target.** Every operation that can act on another workspace takes
-`workspace` (a name or an absolute path) and `project` (a name or path to look
-the name up in). A name is looked up in the caller's project first, where a match
+`workspace` (a name, `<project>::<name>`, or a workspace ref — not a path) and
+`project` (a name, a checkout path, an origin, or a project ref, to look the name
+up in). A name is looked up in the caller's project first, where a match
 wins; otherwise it must be unique across the other open projects (several →
 `usage`, none → `not-found`). `project` without `workspace` is `usage`. These
 two fields replace the former path-only `workspacePath` field — a breaking
@@ -1030,7 +1033,7 @@ this way, and any MCP client can:
   "type": "stdio",
   "command": "<node>",
   "args": ["<dataRoot>/bin/ch.cjs", "mcp"],
-  "env": { "_CH_WORKSPACE_PATH": "…", "_CH_API_PORT": "…", "_CH_API_TOKEN": "…" },
+  "env": { "_CH_WORKSPACE": "ch::…", "_CH_API_PORT": "…", "_CH_API_TOKEN": "…" },
 }
 ```
 
@@ -1367,9 +1370,9 @@ interface Workspace {
 
 ```typescript
 interface WorkspaceLocator {
+  readonly ref: WorkspaceRef;
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
-  readonly path: string;
 }
 ```
 
@@ -1464,7 +1467,7 @@ type SetupResult =
 
 ```typescript
 interface DeletionProgress {
-  readonly workspacePath: WorkspacePath;
+  readonly workspaceRef: WorkspaceRef;
   readonly workspaceName: WorkspaceName;
   readonly projectId: ProjectId;
   readonly keepBranch: boolean;
@@ -1550,7 +1553,7 @@ These variables are set when using the Claude agent provider.
 | `_CH_CLAUDE_SYSTEM_PROMPT` | Path to the composed CodeHydra system prompt (`codehydra-prompt-claude.md`), passed to Claude as `--append-system-prompt-file`. Shared by all workspaces (runtime bin dir); required, the wrapper refuses to launch without it. OpenCode gets its own file through `instructions` in `OPENCODE_CONFIG_CONTENT`, not an env var |
 | `_CH_BRIDGE_PORT`          | HTTP bridge server port for hook notifications                                                                                                                                                                                                                                                                                 |
 | `_CH_API_TOKEN`            | Token `ch` and `ch mcp` present when connecting to the API server                                                                                                                                                                                                                                                              |
-| `_CH_WORKSPACE_PATH`       | Absolute path to the workspace directory                                                                                                                                                                                                                                                                                       |
+| `_CH_WORKSPACE`            | The workspace's ref (`ch::<machine>::<project>::<name>`): how `ch mcp` presents its workspace, how the Claude hooks name it to the bridge, and how the sidekick recognises the agent terminal                                                                                                                                  |
 | `_CH_INITIAL_PROMPT_FILE`  | (Optional) Path to initial prompt JSON file. Contains `{ prompt, model?, agent? }`. The file is deleted after first read by the Claude wrapper.                                                                                                                                                                                |
 
 ---

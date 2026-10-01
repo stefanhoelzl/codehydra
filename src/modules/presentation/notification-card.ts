@@ -24,7 +24,7 @@ import {
   INTENT_CLOSE_NOTIFICATION,
   type CloseNotificationIntent,
 } from "../../intents/close-notification";
-import type { WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 
 type Dispatch = Pick<Dispatcher, "dispatch">;
 
@@ -37,14 +37,14 @@ type Dispatch = Pick<Dispatcher, "dispatch">;
 export function notify(
   dispatcher: Dispatch,
   config: NotificationConfig,
-  workspacePath?: WorkspacePath
+  workspaceRef?: WorkspaceRef
 ): void {
   void dispatcher
     .dispatch<ShowNotificationIntent>({
       type: INTENT_SHOW_NOTIFICATION,
       payload: {
         config,
-        ...(workspacePath !== undefined && { workspacePath }),
+        ...(workspaceRef !== undefined && { workspaceRef }),
       },
     })
     .catch(() => undefined);

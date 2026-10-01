@@ -55,6 +55,9 @@ import { ClaudeCodeServerManager } from "./server-manager";
 import { isValidHookName, type ClaudeCodeHookName } from "./types";
 import type { AgentMessage, AgentStatus } from "../types";
 
+/** The ref the boundary tests' one workspace goes by, in its hooks and the manager alike. */
+const BOUNDARY_WORKSPACE_REF = "ch::local::/boundary/repo::main";
+
 /** The shipped hook handler. Built by `pnpm build:wrappers`. */
 const HOOK_HANDLER_PATH = resolve(__dirname, "../../../../dist/bin/claude-code-hook-handler.cjs");
 
@@ -559,7 +562,7 @@ async function runScenarioInner(
   disposables.cleanups.push(() => manager.dispose());
 
   // Registers the workspace AND writes the real settings file Claude is given.
-  const bridgePort = await manager.startServer(repo.path);
+  const bridgePort = await manager.startServer(repo.path, { workspaceRef: BOUNDARY_WORKSPACE_REF });
   const settingsPath = manager.getHooksConfigPath(repo.path).toNative();
 
   // Track the status the bridge reports, so the tap can sample it either side
@@ -801,7 +804,7 @@ function agentEnv(options: SpawnAgentOptions): Record<string, string | undefined
     // Read by the shipped hook handler; the two together are what make it
     // POST anything at all.
     _CH_BRIDGE_PORT: String(options.bridgePort),
-    _CH_WORKSPACE_PATH: options.cwd,
+    _CH_WORKSPACE: BOUNDARY_WORKSPACE_REF,
     ANTHROPIC_BASE_URL: options.mockUrl,
     // A bearer token rather than ANTHROPIC_API_KEY: an API key makes Claude
     // ask the user to approve it once, and nobody is there to answer.

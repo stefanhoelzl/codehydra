@@ -13,6 +13,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import { projPath, wsPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
@@ -20,7 +21,12 @@ import type { PluginListing, PluginScope, Plugins, PluginState } from "./deps";
 import { createRegistry } from "./index";
 
 const APP = projPath("/projects/app");
-const FEAT = wsPath("/projects/app/workspaces/feat");
+const FEAT_PATH = wsPath("/projects/app/workspaces/feat");
+const FEAT = makeWorkspaceRef(projectRefFor(APP), "feat");
+/** The scope a caller in (or naming) `feat` lists in. */
+const FEAT_SCOPE: PluginScope = {
+  workspace: { workspacePath: FEAT_PATH, projectRef: projectRefFor(APP), projectPath: APP },
+};
 
 const resolveSchemas = {
   type: INTENT_RESOLVE_WORKSPACE,
@@ -32,7 +38,15 @@ class ResolveWorkspaceOp implements Operation<typeof resolveSchemas> {
   readonly id = "resolve-workspace";
   readonly schemas = resolveSchemas;
   async execute(): Promise<unknown> {
-    return { projectPath: APP, workspaceName: "feat", branch: "feat", metadata: {} };
+    return {
+      workspaceRef: FEAT,
+      workspacePath: FEAT_PATH,
+      projectRef: projectRefFor(APP),
+      projectPath: APP,
+      workspaceName: "feat",
+      branch: "feat",
+      metadata: {},
+    };
   }
 }
 
@@ -42,7 +56,7 @@ const listProjectsSchemas = {
   result: z.unknown(),
 } satisfies OperationSchemas;
 
-/** Nothing is listed: a workspace named by path is taken at its word. */
+/** Nothing is listed: a workspace named by its full ref is taken at its word. */
 class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
   readonly id = "list-projects";
   readonly schemas = listProjectsSchemas;
@@ -70,7 +84,7 @@ function setup() {
       scopes.push(scope);
       return [
         listing("local:github", "enabled", ["linux", "windows", "macos"]),
-        ...(scope.workspacePath === null ? [] : [listing("workspace:setup", "ask", ["linux"])]),
+        ...(scope.workspace === null ? [] : [listing("workspace:setup", "ask", ["linux"])]),
       ];
     },
     setState: async (_scope, id, state) => {
@@ -110,12 +124,12 @@ function setup() {
 }
 
 const inWorkspace: OperationContext = {
-  workspacePath: FEAT,
+  workspaceRef: FEAT,
   cwd: null,
   signal: new AbortController().signal,
 };
 const outside: OperationContext = {
-  workspacePath: null,
+  workspaceRef: null,
   cwd: null,
   signal: new AbortController().signal,
 };
@@ -126,7 +140,7 @@ describe("plugin.list", () => {
 
     const rows = await call("plugin.list", inWorkspace);
 
-    expect(scopes).toEqual([{ workspacePath: FEAT, projectPath: APP }]);
+    expect(scopes).toEqual([FEAT_SCOPE]);
     expect(rows).toEqual([
       {
         name: "local:github",
@@ -156,10 +170,10 @@ describe("plugin.list", () => {
   it("reads the repository of the workspace the input names, from outside every workspace", async () => {
     const { call, scopes } = setup();
 
-    const rows = (await call("plugin.list", outside, { workspace: FEAT.toString() })) as unknown[];
+    const rows = (await call("plugin.list", outside, { workspace: FEAT })) as unknown[];
 
     expect(rows).toHaveLength(2);
-    expect(scopes).toEqual([{ workspacePath: FEAT, projectPath: APP }]);
+    expect(scopes).toEqual([FEAT_SCOPE]);
   });
 });
 

@@ -32,7 +32,7 @@ import {
   discoveredWorkspaceSchema,
   hookCtxSchema,
 } from "./contract";
-import type { ProjectPath, DiscoveredWorkspace } from "./contract";
+import type { ProjectPath, DiscoveredWorkspace, WorkspaceRef } from "./contract";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -296,14 +296,14 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
   readonly schemas = schemas;
 
   /** The active workspace's path, or null when none is active. */
-  private async activePath(
+  private async activeRef(
     ctx: OperationContext<OpenProjectIntent, typeof schemas>
-  ): Promise<Path | null> {
+  ): Promise<WorkspaceRef | null> {
     const active = await ctx.dispatch<GetActiveWorkspaceIntent>({
       type: INTENT_GET_ACTIVE_WORKSPACE,
       payload: {},
     });
-    return active === null ? null : new Path(active.path);
+    return active === null ? null : active.ref;
   }
 
   async execute(ctx: OperationContext<OpenProjectIntent, typeof schemas>): Promise<Project | null> {
@@ -458,18 +458,18 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         // Hibernated workspaces stay inert — no view + agent init runs; they
         // appear in the sidebar with the hibernation indicator. The rest open
         // in sidebar order, so the rows fill in top to bottom.
-        const pending = workspaces
+        const pending = project.workspaces
           .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
           .sort((a, b) => compareDisplayNames(a.name, b.name));
 
         // Land on the first of them when nothing is active, so the user sees
         // this project's workspace loading rather than an empty view.
         const first = pending[0];
-        if (first !== undefined && (await this.activePath(ctx)) === null) {
+        if (first !== undefined && (await this.activeRef(ctx)) === null) {
           try {
             await ctx.dispatch<SwitchWorkspaceIntent>({
               type: INTENT_SWITCH_WORKSPACE,
-              payload: { workspacePath: first.path },
+              payload: { workspaceRef: first.ref },
             });
           } catch {
             // Best-effort: switch failure doesn't fail the project open
@@ -479,11 +479,11 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         // Open one at a time (best-effort), the active workspace first: asked
         // before each open, so switching to a row still loading moves it to
         // the front of the queue.
-        const urlByPath = new Map<string, string>();
+        const urlByRef = new Map<WorkspaceRef, string>();
         while (pending.length > 0) {
-          const activePath = await this.activePath(ctx);
+          const activeRef = await this.activeRef(ctx);
           const activeIndex =
-            activePath === null ? -1 : pending.findIndex((w) => activePath.equals(w.path));
+            activeRef === null ? -1 : pending.findIndex((w) => w.ref === activeRef);
           const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
           if (workspace === undefined) break;
           try {
@@ -499,7 +499,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
               payload: {
                 workspaceName: workspace.name,
                 existingWorkspace,
-                projectPath,
+                projectRef,
                 stealFocus: false,
                 source: "open-project",
               },
@@ -507,7 +507,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
 
             const opened = await ctx.dispatch(openWsIntent);
             if (opened?.url !== undefined) {
-              urlByPath.set(opened.path, opened.url);
+              urlByRef.set(opened.ref, opened.url);
             }
           } catch {
             // Best-effort: individual workspace:open failures don't fail the
@@ -520,7 +520,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         project = {
           ...project,
           workspaces: project.workspaces.map((w) => {
-            const url = urlByPath.get(w.path);
+            const url = urlByRef.get(w.ref);
             return url !== undefined ? { ...w, url } : w;
           }),
         };

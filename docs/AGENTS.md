@@ -170,7 +170,7 @@ Manages server lifecycle (`types.ts`). One manager handles all workspaces.
 
 ```typescript
 interface AgentServerManager {
-  startServer(workspacePath: string): Promise<number>;
+  startServer(workspacePath: string, options: { workspaceRef: string }): Promise<number>;
   stopServer(workspacePath: string): Promise<StopServerResult>;
   restartServer(workspacePath: string): Promise<RestartServerResult>;
   onServerStarted(
@@ -381,7 +381,7 @@ The sidekick extension applies the env vars from `getEnvironmentVariables()` to 
 | `_CH_OPENCODE_PORT`       | OpenCode server port               |
 | `_CH_OPENCODE_SESSION_ID` | OpenCode session ID for attachment |
 | `_CH_BRIDGE_PORT`         | Claude hook bridge port            |
-| `_CH_WORKSPACE_PATH`      | Workspace path (both agents)       |
+| `_CH_WORKSPACE`           | Workspace ref (both agents)        |
 
 The OpenCode wrapper script reads these to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
 
@@ -394,7 +394,7 @@ OpenCode uses SSE (Server-Sent Events) for real-time status updates.
 ### Server Startup Flow
 
 ```
-1. startServer(workspacePath) called
+1. startServer(workspacePath, { workspaceRef }) called
 2. Allocate port via PortManager
 3. Spawn `opencode serve --port N` (cwd = workspace)
 4. HTTP probe to `/path` confirms server is ready
@@ -452,13 +452,13 @@ Claude Code uses a shared HTTP server with a hook-based integration model.
 
 ### Architecture
 
-Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspacePath` field in the hook payload.
+Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspaceRef` field in the hook payload (the hook handler adds it from `_CH_WORKSPACE`), which the server manager maps to the workspace it started with that ref.
 
 ```
 POST /hook/<HookName>
 Content-Type: application/json
 
-{ "workspacePath": "/path/to/workspace", "session_id": "..." }
+{ "workspaceRef": "ch::local::/path/to/project::feature-x", "session_id": "..." }
 ```
 
 ### Status Derivation

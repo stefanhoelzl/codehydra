@@ -98,6 +98,11 @@ import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
 import type { WorkspacePath } from "../../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import type { WorkspaceRef } from "../../intents/contract";
+
+/** The ref of the one workspace these tests act on. */
+const TEST_WS_REF = makeWorkspaceRef(projectRefFor(projPath("/test/project")), "test-workspace");
 
 // =============================================================================
 // Mock AgentModuleProvider Factory
@@ -326,7 +331,9 @@ function minimalSetup(
     async execute(ctx): Promise<SetupOperationResult | undefined> {
       const { results, errors } = await ctx.hooks.collect("setup", {
         intent: ctx.intent,
+        workspaceRef: TEST_WS_REF,
         workspacePath: testPath("/test/workspace").toNative(),
+        projectRef: projectRefFor(projPath("/test/project")),
         projectPath: testPath("/test/project").toNative(),
         ...hookInput,
         ...(agentCapability !== null && {
@@ -355,11 +362,13 @@ function minimalShutdown(agentCapability: string | null = "claude"): Operation<O
     "shutdown",
     {
       hookContext: (ctx): DeletePipelineHookInput => {
-        const payload = ctx.intent.payload as { workspacePath?: WorkspacePath };
+        const payload = ctx.intent.payload as { workspaceRef?: WorkspaceRef };
         return {
           intent: ctx.intent,
+          workspaceRef: payload.workspaceRef ?? TEST_WS_REF,
+          workspacePath: wsPath("/test/workspace"),
+          projectRef: projectRefFor(projPath("/test/project")),
           projectPath: projPath("/test/project"),
-          workspacePath: payload.workspacePath ?? wsPath("/test/workspace"),
           workspaceName: "test-workspace" as WorkspaceName,
           active: false,
           ...(agentCapability !== null && {
@@ -693,10 +702,27 @@ describe("createAgentModule", () => {
       expect(dispatchSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_UPDATE_AGENT_STATUS,
-          payload: { workspacePath: testPath("/test/workspace").toNative(), status },
+          payload: { workspaceRef: TEST_WS_REF, status },
         }),
         { origin: "agent-hook" }
       );
+    });
+
+    it("drops a status report for a workspace it never set up", async () => {
+      const { dispatcher, moduleDeps } = createTestSetup();
+      dispatcher.registerOperation(minimalStart(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      dispatcher.registerOperation(minimalSetup());
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
+
+      const dispatchSpy = vi.spyOn(moduleDeps.dispatcher, "dispatch").mockResolvedValue(undefined);
+      const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 1, busy: 0 } };
+      capturedStatusCallback!(testPath("/other/workspace").toNative() as WorkspacePath, status);
+
+      expect(dispatchSpy).not.toHaveBeenCalled();
     });
 
     it("does not initialize when agent capability does not match provider type", async () => {
@@ -907,6 +933,7 @@ describe("createAgentModule", () => {
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
         testPath("/test/workspace").toString(),
         {
+          workspaceRef: TEST_WS_REF,
           isNewWorkspace: true,
         }
       );
@@ -939,6 +966,7 @@ describe("createAgentModule", () => {
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
         testPath("/test/workspace").toString(),
         {
+          workspaceRef: TEST_WS_REF,
           initialPrompt: { prompt: "Hello Claude" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
@@ -1033,6 +1061,7 @@ describe("createAgentModule", () => {
         await reopen(dispatcher, { [PENDING_KEY]: JSON.stringify(spec) });
 
         expect(startOptions(mockProvider)).toEqual({
+          workspaceRef: TEST_WS_REF,
           initialPrompt: { prompt: "Review PR #65", permissionMode: "plan" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
@@ -1051,7 +1080,10 @@ describe("createAgentModule", () => {
         await reopen(dispatcher, { [PENDING_KEY]: "{not json" });
 
         expect(metadata.has(PENDING_KEY)).toBe(false);
-        expect(startOptions(mockProvider)).toEqual({ isNewWorkspace: false });
+        expect(startOptions(mockProvider)).toEqual({
+          workspaceRef: TEST_WS_REF,
+          isNewWorkspace: false,
+        });
       });
 
       it("drops a pending prompt meant for another agent", async () => {
@@ -1062,7 +1094,10 @@ describe("createAgentModule", () => {
         await reopen(dispatcher, { [PENDING_KEY]: other });
 
         expect(metadata.has(PENDING_KEY)).toBe(false);
-        expect(startOptions(mockProvider)).toEqual({ isNewWorkspace: false });
+        expect(startOptions(mockProvider)).toEqual({
+          workspaceRef: TEST_WS_REF,
+          isNewWorkspace: false,
+        });
       });
     });
 
@@ -1095,6 +1130,7 @@ describe("createAgentModule", () => {
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
         testPath("/test/workspace").toString(),
         {
+          workspaceRef: TEST_WS_REF,
           isNewWorkspace: false,
         }
       );
@@ -1141,7 +1177,7 @@ describe("createAgentModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/workspace"),
+          workspaceRef: TEST_WS_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1164,7 +1200,7 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/workspace"),
+          workspaceRef: TEST_WS_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1187,7 +1223,7 @@ describe("createAgentModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/workspace"),
+          workspaceRef: TEST_WS_REF,
           keepBranch: false,
           force: true,
           removeWorktree: true,
@@ -1210,7 +1246,7 @@ describe("createAgentModule", () => {
         dispatcher.dispatch<DeleteWorkspaceIntent>({
           type: "workspace:delete",
           payload: {
-            workspacePath: wsPath("/test/workspace"),
+            workspaceRef: TEST_WS_REF,
             keepBranch: false,
             force: false,
             removeWorktree: true,
@@ -1227,7 +1263,7 @@ describe("createAgentModule", () => {
       const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
         type: "workspace:delete",
         payload: {
-          workspacePath: wsPath("/test/workspace"),
+          workspaceRef: TEST_WS_REF,
           keepBranch: false,
           force: false,
           removeWorktree: true,

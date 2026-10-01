@@ -2,7 +2,7 @@
  * GetAgentSessionOperation - Orchestrates agent session queries.
  *
  * Runs two steps:
- * 1. Dispatch workspace:resolve to validate workspacePath
+ * 1. Dispatch workspace:resolve to turn workspaceRef into the workspace
  * 2. "get" hook — retrieve session info from enriched context
  *
  * No provider dependencies - the hook handlers do the actual work.
@@ -15,7 +15,12 @@
 import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { agentSessionSchema, hookCtxSchema, workspacePathSchema } from "./contract";
+import {
+  agentSessionSchema,
+  hookCtxSchema,
+  workspaceRefSchema,
+  workspaceTargetShape,
+} from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
@@ -28,7 +33,7 @@ export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
 
 export const getAgentSessionPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
   })
   .readonly();
 
@@ -46,7 +51,7 @@ export const getAgentSessionHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getAgentSessionEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const getAgentSessionEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for "get". */
 export const getAgentSessionHookInputSchema = hookCtxSchema(
@@ -90,7 +95,7 @@ export class GetAgentSessionOperation extends WorkspaceHookOperation<typeof sche
   constructor() {
     super(GET_AGENT_SESSION_OPERATION_ID, {
       hookPoint: "get",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "get-agent-session get hooks failed",
       extract: (results) =>
         requireResult(

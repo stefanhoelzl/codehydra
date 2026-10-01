@@ -23,6 +23,7 @@ import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projectPathSchema } from "../intents/contract";
 import type { ProjectPath, ProjectRef } from "../intents/contract";
+import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import {
   managedClonePath,
@@ -48,7 +49,7 @@ import { notify } from "./presentation/notification-card";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,
-  type CloseProjectIntent,
+  type CloseResolveHookInput,
   type CloseResolveHookResult,
   type CloseHookInput,
   type CloseHookResult,
@@ -365,7 +366,17 @@ async function migrateLegacyRecords(
  * @param deps - FileSystemBoundary for persistence, GitWorktreeProvider for .git validation
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
-export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
+/** The local-project module, plus what it knows of every project it has a record of. */
+export interface LocalProjectModule extends IntentModule {
+  /**
+   * The ref of every project with a record, by its normalized path — open or
+   * not. For a migration turning stored project paths into refs, which needs to
+   * know whether each one was cloned (named by its origin) or is a checkout.
+   */
+  projectRefs(): Promise<ReadonlyMap<string, ProjectRef>>;
+}
+
+export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalProjectModule {
   const { projectsDir, remotesDir, fs, gitWorktreeProvider, ui, dispatcher, gitClient, logger } =
     deps;
   const dirs = (): StoreDirs => ({ projectsDir, remotesDir: remotesDir() });
@@ -397,20 +408,28 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
     }
   }
 
+  async function projectRefs(): Promise<ReadonlyMap<string, ProjectRef>> {
+    const refs = new Map<string, ProjectRef>();
+    for (const config of await loadAllProjectConfigs(fs, dirs())) {
+      refs.set(new Path(config.path).toString(), projectRefFor(config.path, config.remoteUrl));
+    }
+    return refs;
+  }
+
   return {
     name: "local-project",
+    projectRefs,
     hooks: {
       // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
-            const project = projects.get(normalizedKey);
-            if (!project) return { result: {} };
-            return {
-              result: { projectId: project.id, projectRef: project.ref, projectName: project.name },
-            };
+            const { projectRef } = ctx as ResolveProjectHookInput;
+            for (const [projectPath, project] of projects) {
+              if (project.ref !== projectRef) continue;
+              return { result: { projectId: project.id, projectPath, projectName: project.name } };
+            }
+            return { result: {} };
           },
         },
       },
@@ -549,8 +568,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         // resolve: look up projectPath in config to get remoteUrl
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
-            const intent = ctx.intent as CloseProjectIntent;
-            const { projectPath } = intent.payload;
+            const { projectPath } = ctx as CloseResolveHookInput;
 
             // Look up config to get remoteUrl
             const config = await getProjectConfig(fs, dirs(), projectPath);

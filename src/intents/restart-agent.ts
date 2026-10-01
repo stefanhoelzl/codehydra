@@ -2,7 +2,7 @@
  * RestartAgentOperation - Orchestrates agent server restarts.
  *
  * Runs three steps:
- * 1. Dispatch workspace:resolve — validates workspacePath, returns projectPath + workspaceName
+ * 1. Dispatch workspace:resolve — turns workspaceRef into the workspace (path, project, name)
  * 2. Dispatch project:resolve — resolves projectPath to projectId (for domain events)
  * 3. "restart" hook — restart the agent server using enriched context
  *
@@ -23,7 +23,8 @@ import {
   hookCtxSchema,
   projectIdSchema,
   workspaceNameSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
+  workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
@@ -40,7 +41,7 @@ const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
 
 export const restartAgentPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
   })
   .readonly();
 
@@ -51,7 +52,7 @@ export const agentRestartedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    path: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     port: z.number(),
   })
   .readonly();
@@ -67,7 +68,7 @@ export const restartAgentHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "restart" hook point (beyond the base HookContext). */
-const restartEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const restartEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for "restart". */
 export const restartAgentHookInputSchema = hookCtxSchema(
@@ -118,7 +119,7 @@ export class RestartAgentOperation extends WorkspaceHookOperation<typeof schemas
   constructor() {
     super(RESTART_AGENT_OPERATION_ID, {
       hookPoint: "restart",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       resolveProject: true,
       errorLabel: "restart-agent restart hooks failed",
       extract: (results) =>
@@ -126,13 +127,13 @@ export class RestartAgentOperation extends WorkspaceHookOperation<typeof schemas
           lastDefined(results, (r) => r.port),
           "Restart agent hook did not provide port result"
         ),
-      onSuccess: ({ intent, resolved, project, result }) =>
+      onSuccess: ({ resolved, project, result }) =>
         ({
           type: EVENT_AGENT_RESTARTED,
           payload: {
             projectId: project!.projectId,
             workspaceName: resolved.workspaceName,
-            path: intent.payload.workspacePath,
+            workspaceRef: resolved.workspaceRef,
             port: result,
           },
         }) satisfies AgentRestartedEvent,

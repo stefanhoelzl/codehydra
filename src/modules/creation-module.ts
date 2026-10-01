@@ -64,13 +64,12 @@ import {
 } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../intents/list-projects";
-import { Path } from "../utils/path/path";
 import {
   INTENT_GET_LAUNCH_OPTIONS,
   type GetLaunchOptionsIntent,
   type LaunchOptionsResult,
 } from "../intents/agent-launch-options";
-import type { ProjectPath } from "../intents/contract";
+import type { ProjectRef } from "../intents/contract";
 
 // =============================================================================
 // Dependencies
@@ -154,7 +153,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let launchOptions: LaunchOptionsResult | null = null;
   /** The backend whose launch options are currently being fetched (if any). */
   let loadingLaunchOptionsFor: LifecycleAgentType | null = null;
-  let selectedProjectPath: ProjectPath | null = null;
+  let selectedProjectRef: ProjectRef | null = null;
   let branches: readonly BaseInfo[] = [];
   let branchesLoading = false;
   let branchesError: string | null = null;
@@ -184,7 +183,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   /** Form-level error (e.g. folder-open failure), shown above the footer. */
   let formError: string | null = null;
   /** Project to seed the next reset with (most recently opened project). */
-  let pendingSeedProjectPath: ProjectPath | null = null;
+  let pendingSeedProjectRef: ProjectRef | null = null;
   /**
    * Project path of the workspace the app last made active. Recorded from
    * non-null workspace:switched events so it survives the deselect
@@ -192,7 +191,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * that deselect would otherwise null the live active ref before the seed
    * reads it, collapsing the seed to projects[0].
    */
-  let lastActiveProjectPath: string | null = null;
+  let lastActiveProjectRef: ProjectRef | null = null;
   /** Guards against overlapping resets (dismiss bursts). */
   let resetting = false;
   /** Invalidates in-flight branch fetches when the selection changes. */
@@ -206,7 +205,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   // ---- Derived helpers ----
 
   function selectedProject(): Project | undefined {
-    return projects.find((p) => p.path === selectedProjectPath);
+    return projects.find((p) => p.ref === selectedProjectRef);
   }
 
   /** The configured global default agent (already validated by the store). */
@@ -416,8 +415,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
                 {
                   type: "dropdown" as const,
                   id: FIELD_PROJECT,
-                  suggestions: [{ items: projects.map((p) => ({ value: p.path, label: p.name })) }],
-                  value: selectedProjectPath ?? "",
+                  suggestions: [{ items: projects.map((p) => ({ value: p.ref, label: p.name })) }],
+                  value: selectedProjectRef ?? "",
                   changeEvent: true,
                   disabled: pickerBusy,
                 },
@@ -588,8 +587,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * even when it already carried the flag — used by the folder-open and
    * git-clone flows.
    */
-  function selectProject(projectPath: ProjectPath, options?: { refocusName?: boolean }): void {
-    selectedProjectPath = projectPath;
+  function selectProject(projectRef: ProjectRef, options?: { refocusName?: boolean }): void {
+    selectedProjectRef = projectRef;
     branches = [];
     branchesLoading = true;
     branchesError = null;
@@ -597,7 +596,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     // project:open, carried on the project list) so it paints on the first
     // frame instead of after the git round-trip. The async list/refresh below
     // validates and, if needed, re-defaults it.
-    baseValue = projects.find((p) => p.path === projectPath)?.defaultBaseBranch ?? "";
+    baseValue = projects.find((p) => p.ref === projectRef)?.defaultBaseBranch ?? "";
     formError = null;
     const epoch = ++selectionEpoch;
     if (options?.refocusName) {
@@ -609,7 +608,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
     const intent: GetProjectBasesIntent = {
       type: INTENT_GET_PROJECT_BASES,
-      payload: { projectPath, refresh: true },
+      payload: { projectRef, refresh: true },
     };
     dispatcher.dispatch(intent).then(
       (result) => {
@@ -631,26 +630,25 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   // ---- Session lifecycle ----
 
   /** Seed rule: pending opened project > last active workspace's project > first. */
-  function computeSeedProject(): ProjectPath | null {
-    if (pendingSeedProjectPath !== null) {
-      const seed = pendingSeedProjectPath;
-      pendingSeedProjectPath = null;
-      if (projects.some((p) => p.path === seed)) return seed;
+  function computeSeedProject(): ProjectRef | null {
+    if (pendingSeedProjectRef !== null) {
+      const seed = pendingSeedProjectRef;
+      pendingSeedProjectRef = null;
+      if (projects.some((p) => p.ref === seed)) return seed;
     }
     // The live active ref is unusable here: showing the panel deselects the
     // active workspace first, so a query would return null. Use the last
     // workspace the app made active instead (recorded across switches).
-    if (lastActiveProjectPath !== null) {
-      const remembered = new Path(lastActiveProjectPath);
-      const project = projects.find((p) => remembered.equals(new Path(p.path)));
-      if (project) return project.path;
+    if (lastActiveProjectRef !== null) {
+      const project = projects.find((p) => p.ref === lastActiveProjectRef);
+      if (project) return project.ref;
     }
-    return projects[0]?.path ?? null;
+    return projects[0]?.ref ?? null;
   }
 
   /** Open a fresh form session (the always-alive panel surface). */
   async function openSession(): Promise<void> {
-    selectedProjectPath = null;
+    selectedProjectRef = null;
     branches = [];
     branchesLoading = false;
     branchesError = null;
@@ -670,7 +668,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     selectedAgentType = resolveInitialAgentType();
     const seed = computeSeedProject();
     if (seed !== null) {
-      selectedProjectPath = seed;
+      selectedProjectRef = seed;
       branchesLoading = true;
     }
 
@@ -718,8 +716,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         // The dialog hands back a raw string; resolve it against the module's own
         // project list rather than minting a brand from unvalidated UI input.
         const raw = data[FIELD_PROJECT] ?? "";
-        const picked = projects.find((p) => p.path === raw)?.path;
-        if (picked !== undefined && picked !== selectedProjectPath) {
+        const picked = projects.find((p) => p.ref === raw)?.ref;
+        if (picked !== undefined && picked !== selectedProjectRef) {
           selectProject(picked);
         }
       } else if (event.fieldId === FIELD_NAME) {
@@ -838,7 +836,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     const intent: OpenWorkspaceIntent = {
       type: INTENT_OPEN_WORKSPACE,
       payload: {
-        projectPath: project.path,
+        projectRef: project.ref,
         workspaceName,
         base,
         ...(agent !== undefined && { agent }),
@@ -881,9 +879,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
           pushConfig();
           return;
         }
-        pendingSeedProjectPath = null;
+        pendingSeedProjectRef = null;
         void refreshProjects().then(() => {
-          selectProject(project.path, { refocusName: true });
+          selectProject(project.ref, { refocusName: true });
         });
       },
       (error: unknown) => {
@@ -1050,9 +1048,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         if (cloneDialog !== state || state.cloneUrl !== url) return;
         closeCloneDialog();
         if (project !== null) {
-          pendingSeedProjectPath = null;
+          pendingSeedProjectRef = null;
           void refreshProjects().then(() => {
-            selectProject(project.path, { refocusName: true });
+            selectProject(project.ref, { refocusName: true });
           });
         }
       },
@@ -1136,7 +1134,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         // Seed the next reset with the freshly opened project; the live form
         // keeps the user's current selection (the project just joins the
         // dropdown list).
-        pendingSeedProjectPath = project.path;
+        pendingSeedProjectRef = project.ref;
         await refreshProjects();
         pushConfig();
       },
@@ -1145,14 +1143,14 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       handler: async (): Promise<void> => {
         if (handle === null) return;
         await refreshProjects();
-        if (selectedProjectPath !== null && selectedProject() === undefined) {
+        if (selectedProjectRef !== null && selectedProject() === undefined) {
           // The selected project was closed: fall back to the seed rule.
           const seed = computeSeedProject();
           if (seed !== null) {
             selectProject(seed);
             return;
           }
-          selectedProjectPath = null;
+          selectedProjectRef = null;
           branches = [];
           branchesLoading = false;
           branchesError = null;
@@ -1164,7 +1162,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     [EVENT_BASES_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as BasesUpdatedEvent).payload;
-        if (payload.projectPath !== selectedProjectPath) return;
+        if (payload.projectRef !== selectedProjectRef) return;
         branches = payload.bases;
         branchesLoading = false;
         branchesError = payload.bases.length === 0 ? "No base branches available" : null;
@@ -1194,24 +1192,23 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       handler: async (event: DomainEvent): Promise<void> => {
         // The user moved on — a stale "recently opened project" seed should
         // not override the active workspace's project on the next reset.
-        pendingSeedProjectPath = null;
+        pendingSeedProjectRef = null;
         // Remember the active workspace's project for the seed. Only non-null
         // payloads update it: the deselect (null) the renderer fires when
         // showing the panel must not erase the project we want to seed.
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload !== null) {
-          lastActiveProjectPath = payload.projectPath;
+          lastActiveProjectRef = payload.projectRef;
           return;
         }
         // The panel is being shown. The session outlives switches (so typed
         // input survives), which would leave an untouched form on whatever
         // project it was seeded with — follow the workspace the user came
         // from instead. A touched form keeps everything, project included.
-        if (handle === null || dirty || resetting || lastActiveProjectPath === null) return;
-        const remembered = new Path(lastActiveProjectPath);
-        const project = projects.find((p) => remembered.equals(new Path(p.path)));
-        if (project !== undefined && project.path !== selectedProjectPath) {
-          selectProject(project.path);
+        if (handle === null || dirty || resetting || lastActiveProjectRef === null) return;
+        const project = projects.find((p) => p.ref === lastActiveProjectRef);
+        if (project !== undefined && project.ref !== selectedProjectRef) {
+          selectProject(project.ref);
         }
       },
     },

@@ -34,14 +34,16 @@ import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { Intent } from "../intents/lib/types";
-import type { WorkspacePath } from "../intents/contract";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import { createTerminalFocusModule } from "./terminal-focus-module";
+import { makeWorkspaceRef, projectRefFor, workspaceNameOf } from "../utils/ref";
+import type { WorkspaceRef } from "../intents/contract";
 
-const WS = wsPath("/projects/test/workspaces/alpha");
-const OTHER = wsPath("/projects/test/workspaces/beta");
+const PROJECT = projectRefFor(projPath("/projects/test"));
+const WS = makeWorkspaceRef(PROJECT, "alpha");
+const OTHER = makeWorkspaceRef(PROJECT, "beta");
 
 const idle: AggregatedAgentStatus = { status: "idle", counts: { idle: 1, busy: 0 } };
 const busy: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
@@ -56,7 +58,7 @@ const permissive = (type: string) =>
 type Permissive = ReturnType<typeof permissive>;
 
 interface CommandCall {
-  readonly workspacePath: string;
+  readonly workspaceRef: string;
   readonly command: string;
   settle(ok: boolean): void;
 }
@@ -67,13 +69,13 @@ function createCommandOperation(calls: CommandCall[]): Operation<Permissive> {
     id: "vscode-command",
     schemas: permissive(INTENT_VSCODE_COMMAND),
     execute(ctx): Promise<unknown> {
-      const { workspacePath, command } = ctx.intent.payload as {
-        workspacePath: string;
+      const { workspaceRef, command } = ctx.intent.payload as {
+        workspaceRef: string;
         command: string;
       };
       return new Promise((resolve, reject) => {
         calls.push({
-          workspacePath,
+          workspaceRef,
           command,
           settle: (ok) => (ok ? resolve(undefined) : reject(new Error("Command timed out"))),
         });
@@ -100,15 +102,15 @@ const switchOperation: Operation<Permissive> = {
   id: "switch-workspace",
   schemas: permissive(INTENT_TEST_SWITCH),
   async execute(ctx): Promise<void> {
-    const path = ctx.intent.payload as WorkspacePath;
+    const ref = ctx.intent.payload as WorkspaceRef;
     const event: WorkspaceSwitchedEvent = {
       type: EVENT_WORKSPACE_SWITCHED,
       payload: {
         projectId: "test-project" as ProjectId,
         projectName: "test",
-        projectPath: projPath("/projects/test"),
-        workspaceName: path.split("/").pop() as WorkspaceName,
-        path,
+        projectRef: PROJECT,
+        workspaceName: workspaceNameOf(ref) as WorkspaceName,
+        workspaceRef: ref,
         metadata: {},
       },
     };
@@ -124,7 +126,7 @@ interface Setup {
   readonly dispatcher: Dispatcher;
   readonly calls: CommandCall[];
   readonly state: {
-    active: WorkspacePath;
+    active: WorkspaceRef;
     connected: boolean;
     agent: AggregatedAgentStatus;
     viewFocus: number;
@@ -147,11 +149,18 @@ function setup(): Setup {
 
   dispatcher.registerModule(
     createTestMockModule({
-      workspaces: (workspacePath) => ({
-        projectPath: projPath("/projects/test"),
-        workspaceName: workspacePath.split("/").pop() as WorkspaceName,
-        active: workspacePath === state.active,
-      }),
+      workspaces: Object.fromEntries(
+        ["alpha", "beta"].map((name) => [
+          wsPath(`/projects/test/workspaces/${name}`),
+          {
+            projectPath: projPath("/projects/test"),
+            workspaceName: name as WorkspaceName,
+            get active(): boolean {
+              return makeWorkspaceRef(PROJECT, name) === state.active;
+            },
+          },
+        ])
+      ),
       projects: () => ({ projectId: "test-project" as ProjectId }),
     })
   );
@@ -173,8 +182,8 @@ function setup(): Setup {
         modal: {
           requires: { agent: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<void> => {
-            const { workspacePath, open } = ctx as ModalHookInput;
-            void dispatcher.dispatch(updateStatusIntent(workspacePath, open ? idle : state.agent));
+            const { workspaceRef, open } = ctx as ModalHookInput;
+            void dispatcher.dispatch(updateStatusIntent(workspaceRef, open ? idle : state.agent));
           },
         },
       },
@@ -198,21 +207,21 @@ function setup(): Setup {
 /** Let unawaited dispatches and their event handlers run. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function report(s: Setup, path: WorkspacePath, status: AggregatedAgentStatus): Promise<void> {
+async function report(s: Setup, path: WorkspaceRef, status: AggregatedAgentStatus): Promise<void> {
   await s.dispatcher.dispatch(updateStatusIntent(path, status));
   await settle();
 }
 
-async function modal(s: Setup, path: WorkspacePath, open: boolean): Promise<void> {
+async function modal(s: Setup, path: WorkspaceRef, open: boolean): Promise<void> {
   const intent: VscodeModalChangedIntent = {
     type: INTENT_VSCODE_MODAL_CHANGED,
-    payload: { workspacePath: path, open },
+    payload: { workspaceRef: path, open },
   };
   await s.dispatcher.dispatch(intent);
   await settle();
 }
 
-async function switchTo(s: Setup, path: WorkspacePath): Promise<void> {
+async function switchTo(s: Setup, path: WorkspaceRef): Promise<void> {
   s.state.active = path;
   await s.dispatcher.dispatch({ type: INTENT_TEST_SWITCH, payload: path } as Intent);
   await settle();
@@ -232,7 +241,7 @@ describe("TerminalFocusModule", () => {
     const s = setup();
 
     await report(s, WS, idle);
-    expect(s.calls.map((c) => [c.workspacePath, c.command])).toEqual([
+    expect(s.calls.map((c) => [c.workspaceRef, c.command])).toEqual([
       [WS, "workbench.action.terminal.focus"],
     ]);
     await answer(s, true);
@@ -306,7 +315,7 @@ describe("TerminalFocusModule", () => {
     expect(s.calls).toHaveLength(0);
 
     await switchTo(s, WS);
-    expect(s.calls.map((c) => c.workspacePath)).toEqual([WS]);
+    expect(s.calls.map((c) => c.workspaceRef)).toEqual([WS]);
   });
 
   it("focuses a workspace again after it was deleted", async () => {
@@ -317,7 +326,7 @@ describe("TerminalFocusModule", () => {
 
     const deletion: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
-      payload: { workspacePath: WS, keepBranch: true, force: false, removeWorktree: false },
+      payload: { workspaceRef: WS, keepBranch: true, force: false, removeWorktree: false },
     };
     await s.dispatcher.dispatch(deletion);
     await settle();

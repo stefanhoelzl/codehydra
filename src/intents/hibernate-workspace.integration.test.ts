@@ -62,10 +62,11 @@ const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
 const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_NAME);
 const BRANCH = "feature-a-branch";
 const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
 const REOPENED_WORKSPACE: Workspace = {
-  ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_NAME),
+  ref: WORKSPACE_REF,
   projectId: PROJECT_ID,
   name: WORKSPACE_NAME,
   branch: BRANCH,
@@ -289,14 +290,16 @@ function buildHarness(
     },
   });
 
-  // Every workspace path resolves to the test workspace; `active` comes from opts.
+  // The test workspace; `active` comes from opts.
   registerTestInfrastructure(dispatcher, {
-    workspaces: () => ({
-      projectPath: PROJECT_PATH,
-      workspaceName: WORKSPACE_NAME,
-      active: opts.active ?? false,
-      branch: BRANCH,
-    }),
+    workspaces: {
+      [WORKSPACE_PATH]: {
+        projectPath: PROJECT_PATH,
+        workspaceName: WORKSPACE_NAME,
+        active: opts.active ?? false,
+        branch: BRANCH,
+      },
+    },
     projects: () => ({ projectId: PROJECT_ID, projectName: "test-project" }),
   });
 
@@ -333,7 +336,7 @@ describe("workspace:hibernate", () => {
 
     const intent: HibernateWorkspaceIntent = {
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     };
     await dispatcher.dispatch(intent);
     await waitForBackground();
@@ -348,8 +351,8 @@ describe("workspace:hibernate", () => {
 
     const hibernated = recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED);
     expect(hibernated).toBeDefined();
-    expect((hibernated as { payload: { workspacePath: string } }).payload.workspacePath).toBe(
-      WORKSPACE_PATH
+    expect((hibernated as { payload: { workspaceRef: string } }).payload.workspaceRef).toBe(
+      WORKSPACE_REF
     );
 
     const metadataChanged = recorder.events.find((e) => e.type === EVENT_METADATA_CHANGED) as
@@ -366,7 +369,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
     await waitForBackground();
 
@@ -392,7 +395,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
 
     // Foreground done: metadata flipped, no shutdown yet.
@@ -430,7 +433,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
     await waitForBackground();
 
@@ -448,7 +451,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
     await waitForBackground();
 
@@ -469,7 +472,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
     await waitForBackground();
 
@@ -492,7 +495,7 @@ describe("workspace:hibernate", () => {
 
     await dispatcher.dispatch<HibernateWorkspaceIntent>({
       type: INTENT_HIBERNATE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
     await waitForBackground();
 
@@ -514,7 +517,7 @@ describe("workspace:wake", () => {
 
     const intent: WakeWorkspaceIntent = {
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     };
     const result = await dispatcher.dispatch(intent);
 
@@ -524,7 +527,7 @@ describe("workspace:wake", () => {
     // Reopen dispatched with the resolved branch and the clean (post-clear)
     // metadata, via the existingWorkspace branch of workspace:open.
     expect(recorder.openPayload).toBeDefined();
-    expect(recorder.openPayload?.projectPath).toBe(PROJECT_PATH);
+    expect(recorder.openPayload?.projectRef).toBe(projectRefFor(PROJECT_PATH));
     expect(recorder.openPayload?.workspaceName).toBe(WORKSPACE_NAME);
     expect(recorder.openPayload?.existingWorkspace).toEqual({
       path: WORKSPACE_PATH,
@@ -547,7 +550,7 @@ describe("workspace:wake", () => {
 
     await dispatcher.dispatch<WakeWorkspaceIntent>({
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH, stealFocus: false, source: "mcp" },
+      payload: { workspaceRef: WORKSPACE_REF, stealFocus: false, source: "mcp" },
     });
 
     expect(recorder.openPayload?.stealFocus).toBe(false);
@@ -559,7 +562,7 @@ describe("workspace:wake", () => {
 
     await dispatcher.dispatch<WakeWorkspaceIntent>({
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: WORKSPACE_PATH },
+      payload: { workspaceRef: WORKSPACE_REF },
     });
 
     expect(recorder.openPayload).toBeDefined();

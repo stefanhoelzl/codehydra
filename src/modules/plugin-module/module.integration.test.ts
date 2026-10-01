@@ -61,7 +61,6 @@ import {
   type SetMetadataIntent,
 } from "../../intents/set-metadata";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { WorkspacePath } from "../../intents/contract";
 import type { DialogConfig } from "../../shared/dialog-types";
 import type { NotificationConfig } from "../../shared/notification-types";
 import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
@@ -81,10 +80,15 @@ import {
 } from "../../intents/vscode-show-message";
 import type { Operation, OperationContext, OperationSchemas } from "../../intents/lib/operation";
 import type { HookOutputSink } from "./output-sink";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const PROJECT_REF = projectRefFor(PROJECT_ROOT);
+const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, "feature-x");
 const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const HOME = testPath("/home");
 const LOCAL_PLUGINS = new Path(HOME, "plugins");
@@ -116,6 +120,8 @@ interface SetupOptions {
   readonly pluginsEnabled?: Record<string, boolean>;
   /** Seeds the pre-plugin `hooks.trusted`. */
   readonly legacyTrusted?: Record<string, boolean>;
+  /** The project refs the startup migration knows, by path. */
+  readonly projectRefs?: ReadonlyMap<string, ProjectRef>;
   /** How the trust dialog answers: an action id plus unchecked plugin names. */
   readonly trustAnswer?: { action: string; unchecked?: string[] };
   /** Seeds the pre-plugin `auto-workspace.sources` setting. */
@@ -197,12 +203,14 @@ function createTestSetup(options?: SetupOptions): TestSetup {
 
   const views = createTestViewManager(null);
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: WorkspacePath) => ({
-      projectPath: PROJECT_ROOT,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
-      branch: "feature-x",
-      metadata: { base: "main" },
-    }),
+    workspaces: {
+      [WORKSPACE_PATH]: {
+        projectPath: PROJECT_ROOT,
+        workspaceName: "feature-x" as WorkspaceName,
+        branch: "feature-x",
+        metadata: { base: "main" },
+      },
+    },
     projects: { [PROJECT_ROOT]: { projectId: PROJECT_ID } },
     activeWorkspaceRef: null,
     viewManager: views.viewManager,
@@ -244,7 +252,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     }
   }
   dispatcher.registerOperation(new ShowMessageOp());
-  const connected: Array<(workspacePath: string) => void> = [];
+  const connected: Array<(workspaceRef: WorkspaceRef) => void> = [];
 
   const outcomes = options?.outcomes ?? {};
   const processRunner = createMockProcessRunner({
@@ -420,6 +428,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       connected.push(listener);
       return () => {};
     },
+    projectRefs: async () => options?.projectRefs ?? new Map(),
     registry: () => registry,
     platform: options?.platform ?? "linux",
     env: { PATH: "/usr/bin" },
@@ -462,7 +471,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     },
     editorMessages,
     connectEditor: async () => {
-      for (const listener of connected) listener(WORKSPACE_PATH);
+      for (const listener of connected) listener(WORKSPACE_REF);
       await settle();
     },
     killedCount: () =>
@@ -483,7 +492,7 @@ function hooksManifest(hooks: Record<string, string>, extra = ""): string {
 async function openWorkspace(setup: TestSetup): Promise<void> {
   await setup.dispatcher.dispatch<OpenWorkspaceIntent>({
     type: INTENT_OPEN_WORKSPACE,
-    payload: { workspaceName: "feature-x", projectPath: PROJECT_ROOT },
+    payload: { workspaceName: "feature-x", projectRef: PROJECT_REF },
   });
 }
 
@@ -492,7 +501,7 @@ async function reopenWorkspace(setup: TestSetup): Promise<void> {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
       workspaceName: "feature-x",
-      projectPath: PROJECT_ROOT,
+      projectRef: PROJECT_REF,
       existingWorkspace: {
         path: WORKSPACE_PATH,
         name: "feature-x",
@@ -506,7 +515,7 @@ async function reopenWorkspace(setup: TestSetup): Promise<void> {
 async function deleteWorkspace(setup: TestSetup, force = false): Promise<void> {
   await setup.dispatcher.dispatch<DeleteWorkspaceIntent>({
     type: INTENT_DELETE_WORKSPACE,
-    payload: { workspacePath: WORKSPACE_PATH, keepBranch: false, removeWorktree: true, force },
+    payload: { workspaceRef: WORKSPACE_REF, keepBranch: false, removeWorktree: true, force },
   });
 }
 
@@ -569,6 +578,8 @@ describe("after-worktree-created", () => {
       workspaceName: "feature-x",
       workspacePath: WORKSPACE_PATH,
       projectPath: PROJECT_ROOT,
+      workspace: WORKSPACE_REF,
+      project: PROJECT_REF,
       branch: "feature-x",
       base: "main",
     });
@@ -868,8 +879,8 @@ describe("trust", () => {
     ]);
     expect(setup.ran).toEqual(["echo a"]);
     expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
-      [`workspace:${new Path(PROJECT_ROOT).toString()}:a`]: true,
-      [`workspace:${new Path(PROJECT_ROOT).toString()}:b`]: false,
+      [`workspace:${PROJECT_REF}:a`]: true,
+      [`workspace:${PROJECT_REF}:b`]: false,
     });
 
     await reopenWorkspace(setup);
@@ -910,15 +921,26 @@ describe("trust", () => {
     expect(setup.ran).toEqual([]);
   });
 
-  it("carries answers over to a project whose path moved", async () => {
-    const moved = projPath("/moved");
+  it("moves answers stored by project path to the project's ref at app start", async () => {
+    const gone = new Path(testPath("/gone")).toString();
     const setup = createTestSetup({
-      pluginsEnabled: { [`workspace:${new Path(PROJECT_ROOT).toString()}:a`]: true },
+      pluginsEnabled: {
+        [`workspace:${new Path(PROJECT_ROOT).toString()}:a`]: true,
+        [`workspace:${gone}:b`]: false,
+        "local:c": false,
+      },
+      projectRefs: new Map([[new Path(PROJECT_ROOT).toString(), PROJECT_REF]]),
     });
-    await setup.module.moveProjects([{ from: PROJECT_ROOT, to: moved }]);
+
+    await setup.module.hooks![APP_START_OPERATION_ID]!["migrations"]!.handler({
+      intent: { type: "app:start", payload: {} },
+    });
 
     expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
-      [`workspace:${new Path(moved).toString()}:a`]: true,
+      [`workspace:${PROJECT_REF}:a`]: true,
+      // An answer whose project has no record keeps its key; the project asks afresh.
+      [`workspace:${gone}:b`]: false,
+      "local:c": false,
     });
   });
 });
@@ -950,7 +972,13 @@ describe("kill switch", () => {
 });
 
 describe("ch plugin", () => {
-  const scope = { workspacePath: WORKSPACE_PATH, projectPath: PROJECT_ROOT };
+  const scope = {
+    workspace: {
+      workspacePath: WORKSPACE_PATH,
+      projectRef: PROJECT_REF,
+      projectPath: PROJECT_ROOT,
+    },
+  };
 
   it("lists local and workspace plugins with their state and platforms", async () => {
     const setup = createTestSetup({

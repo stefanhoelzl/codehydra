@@ -27,7 +27,7 @@
 import { z } from "zod/v4";
 import type { HookContext, Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
@@ -51,7 +51,7 @@ export const AGENT_READY_TIMEOUT_MS = 90_000;
 
 export const sendAgentMessagePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /** The message text. */
     text: z.string().min(1),
     /** Sender as the agent should see it — set by CodeHydra, never by the caller. */
@@ -81,7 +81,7 @@ export const sendHookResultSchema = z
 
 /** Operation-added enrichment for the "send" hook point (beyond the base HookContext). */
 const sendEnrichmentSchema = z.object({
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
   /** How long the agent may take to become reachable (0 = must be reachable now). */
   waitMs: z.number().int().nonnegative(),
 });
@@ -129,11 +129,11 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
     ctx: OperationContext<SendAgentMessageIntent, typeof schemas>
   ): Promise<SendAgentMessageResult> {
     const { payload } = ctx.intent;
-    const { workspacePath } = payload;
+    const { workspaceRef } = payload;
 
     const resolved = await ctx.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     });
     if (resolved.closing !== null) {
       return {
@@ -153,26 +153,31 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
       }
       await ctx.dispatch<WakeWorkspaceIntent>({
         type: INTENT_WAKE_WORKSPACE,
-        payload: { workspacePath, stealFocus: false, source: "mcp" },
+        payload: { workspaceRef, stealFocus: false, source: "mcp" },
       });
       waitMs = AGENT_READY_TIMEOUT_MS;
     } else if (payload.wake) {
       const status = await ctx.dispatch<GetWorkspaceStatusIntent>({
         type: INTENT_GET_WORKSPACE_STATUS,
-        payload: { workspacePath },
+        payload: { workspaceRef },
       });
       if (status.agent.type === "none") {
         // The agent terminal is closed (or the agent is still starting, in
         // which case this only focuses the terminal it is starting in).
         await ctx.dispatch<VscodeCommandIntent>({
           type: INTENT_VSCODE_COMMAND,
-          payload: { workspacePath, command: "codehydra.openAgent", args: undefined },
+          payload: { workspaceRef, command: "codehydra.openAgent", args: undefined },
         });
         waitMs = AGENT_READY_TIMEOUT_MS;
       }
     }
 
-    const hookCtx: SendHookInput = { intent: ctx.intent, workspacePath, waitMs };
+    const hookCtx: SendHookInput = {
+      intent: ctx.intent,
+      workspaceRef,
+      workspacePath: resolved.workspacePath,
+      waitMs,
+    };
     const { results, errors } = await ctx.hooks.collect("send", hookCtx);
     throwHookErrors(errors, "send-agent-message send hooks failed");
 

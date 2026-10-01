@@ -37,7 +37,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
-import { projPath, testPath } from "../shared/test-fixtures";
+import { projPath } from "../shared/test-fixtures";
 import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
@@ -46,6 +46,7 @@ import { projectRefFor } from "../utils/ref";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const PROJECT_ROOT = projPath("/project");
+const PROJECT_REF = projectRefFor(PROJECT_ROOT);
 const CACHED_BASES = [
   { name: "main", isRemote: false },
   { name: "origin/main", isRemote: true },
@@ -86,14 +87,14 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            if (opts?.unknownProject || projectPath !== PROJECT_ROOT) {
+            const { projectRef } = ctx as ResolveProjectHookInput;
+            if (opts?.unknownProject || projectRef !== PROJECT_REF) {
               return { result: {} };
             }
             return {
               result: {
                 projectId: PROJECT_ID,
-                projectRef: projectRefFor(PROJECT_ROOT),
+                projectPath: PROJECT_ROOT,
                 projectName: "test",
               },
             };
@@ -142,13 +143,13 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 }
 
 function createIntent(
-  projectPath = PROJECT_ROOT,
+  projectRef = PROJECT_REF,
   opts?: { refresh?: boolean; wait?: boolean }
 ): GetProjectBasesIntent {
   return {
     type: INTENT_GET_PROJECT_BASES,
     payload: {
-      projectPath,
+      projectRef,
       ...(opts?.refresh !== undefined && { refresh: opts.refresh }),
       ...(opts?.wait !== undefined && { wait: opts.wait }),
     },
@@ -167,14 +168,14 @@ describe("GetProjectBases Operation", () => {
       setup = createTestSetup();
     });
 
-    it("returns cached bases, defaultBaseBranch, projectPath, and projectId", async () => {
+    it("returns cached bases, defaultBaseBranch, projectRef, and projectId", async () => {
       const result = (await setup.dispatcher.dispatch(
-        createIntent(PROJECT_ROOT, { refresh: true })
+        createIntent(PROJECT_REF, { refresh: true })
       )) as GetProjectBasesResult;
 
       expect(result.bases).toEqual(CACHED_BASES);
       expect(result.defaultBaseBranch).toBe("main");
-      expect(result.projectPath).toBe(PROJECT_ROOT);
+      expect(result.projectRef).toBe(PROJECT_REF);
       expect(result.projectId).toBe(PROJECT_ID);
     });
   });
@@ -187,7 +188,7 @@ describe("GetProjectBases Operation", () => {
         events.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(PROJECT_ROOT, { refresh: true }));
+      await setup.dispatcher.dispatch(createIntent(PROJECT_REF, { refresh: true }));
 
       // Wait for fire-and-forget to complete
       await vi.waitFor(() => {
@@ -197,7 +198,7 @@ describe("GetProjectBases Operation", () => {
       const freshEvent = events[0] as BasesUpdatedEvent;
       expect(freshEvent.type).toBe(EVENT_BASES_UPDATED);
       expect(freshEvent.payload.projectId).toBe(PROJECT_ID);
-      expect(freshEvent.payload.projectPath).toBe(PROJECT_ROOT);
+      expect(freshEvent.payload.projectRef).toBe(PROJECT_REF);
       expect(freshEvent.payload.bases).toEqual(FRESH_BASES);
       expect(freshEvent.payload.defaultBaseBranch).toBe("main");
     });
@@ -209,7 +210,7 @@ describe("GetProjectBases Operation", () => {
         events.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(PROJECT_ROOT, { refresh: true }));
+      await setup.dispatcher.dispatch(createIntent(PROJECT_REF, { refresh: true }));
 
       await vi.waitFor(() => {
         expect(events.length).toBe(1);
@@ -251,7 +252,7 @@ describe("GetProjectBases Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        createIntent(PROJECT_ROOT, { refresh: true })
+        createIntent(PROJECT_REF, { refresh: true })
       )) as GetProjectBasesResult;
 
       // Operation succeeds with cached data
@@ -275,12 +276,12 @@ describe("GetProjectBases Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        createIntent(PROJECT_ROOT, { refresh: true, wait: true })
+        createIntent(PROJECT_REF, { refresh: true, wait: true })
       )) as GetProjectBasesResult;
 
       // Returns fresh bases (after refresh + re-list)
       expect(result.bases).toEqual(FRESH_BASES);
-      expect(result.projectPath).toBe(PROJECT_ROOT);
+      expect(result.projectRef).toBe(PROJECT_REF);
       expect(result.projectId).toBe(PROJECT_ID);
 
       // No events emitted (caller gets fresh data directly)
@@ -291,7 +292,7 @@ describe("GetProjectBases Operation", () => {
       const setup = createTestSetup({ refreshThrows: true });
 
       const result = (await setup.dispatcher.dispatch(
-        createIntent(PROJECT_ROOT, { refresh: true, wait: true })
+        createIntent(PROJECT_REF, { refresh: true, wait: true })
       )) as GetProjectBasesResult;
 
       // Falls back to cached data
@@ -305,7 +306,7 @@ describe("GetProjectBases Operation", () => {
       const setup = createTestSetup({ unknownProject: true });
 
       await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
-        `Project not found for path: ${testPath("/project").toString()}`
+        `Project not found: ${PROJECT_REF}`
       );
     });
 
@@ -313,10 +314,8 @@ describe("GetProjectBases Operation", () => {
       const setup = createTestSetup();
 
       await expect(
-        setup.dispatcher.dispatch(createIntent(projPath("/nonexistent/project")))
-      ).rejects.toThrow(
-        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
-      );
+        setup.dispatcher.dispatch(createIntent(projectRefFor(projPath("/nonexistent/project"))))
+      ).rejects.toThrow(`Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`);
     });
   });
 });

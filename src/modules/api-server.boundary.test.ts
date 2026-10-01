@@ -17,6 +17,7 @@ import {
   waitForConnect,
   waitForDisconnect,
   createMockCommandHandler,
+  testWorkspaceRef,
   type TestClientSocket,
 } from "./api-server.test-utils";
 import type { WorkspaceStatus } from "../shared/api/types";
@@ -37,9 +38,9 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { z } from "zod/v4";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
-import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
+import { projectRefFor } from "../utils/ref";
 import { AsyncLogScopeStore, ScopedLogger } from "../boundaries/platform/log-scope";
 import type { LogContext, Logger, LogScope } from "../boundaries/platform/logging-types";
 
@@ -56,10 +57,13 @@ function createDeleteShutdownOperation(
     schemas: deleteShutdownSchemas,
     async execute(ctx): Promise<void> {
       const { workspacePath } = ctx.intent.payload as { workspacePath: WorkspacePath };
+      const workspaceRef = testWorkspaceRef(workspacePath);
       const hookCtx: DeletePipelineHookInput = {
         // The minimal schema types the payload as `unknown`, so widen before narrowing.
         intent: ctx.intent as unknown as DeleteWorkspaceIntent,
+        projectRef: projectRefFor(projPath("/projects/test")),
         projectPath: projPath("/projects/test"),
+        workspaceRef,
         workspacePath,
         workspaceName: "ws" as WorkspaceName,
         active: false,
@@ -71,13 +75,13 @@ function createDeleteShutdownOperation(
           payload: {
             projectId: "test-12345678" as ProjectId,
             workspaceName: "ws" as WorkspaceName,
-            workspacePath,
-            projectPath: testPath("/projects/test").toNative(),
+            workspaceRef,
+            projectRef: projectRefFor(projPath("/projects/test")),
             worktreeRemoved: true,
           },
         });
       } else if (ends === EVENT_WORKSPACE_DELETE_FAILED) {
-        await ctx.emit({ type: EVENT_WORKSPACE_DELETE_FAILED, payload: { workspacePath } });
+        await ctx.emit({ type: EVENT_WORKSPACE_DELETE_FAILED, payload: { workspaceRef } });
       }
     },
   };
@@ -123,11 +127,11 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // Before: the server is listening, so `isReady` would say yes. The
       // question a command actually needs is this one, and the answer is no.
       expect(env.apiServer.isReady()).toBe(true);
-      expect(env.apiServer.isConnected(workspace)).toBe(false);
+      expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(false);
 
       const client = createClient(workspace);
       await waitForConnect(client);
-      expect(env.apiServer.isConnected(workspace)).toBe(true);
+      expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(true);
 
       // And after the extension host goes away — the case that produced
       // "[dispatcher] failed vscode:command … Workspace not connected" in the
@@ -139,14 +143,16 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // is why the caller keeps its catch. What must hold is that it converges.
       client.disconnect();
       await waitForDisconnect(client);
-      await expect.poll(() => env.apiServer.isConnected(workspace), { timeout: 5000 }).toBe(false);
+      await expect
+        .poll(() => env.apiServer.isConnected(testWorkspaceRef(workspace)), { timeout: 5000 })
+        .toBe(false);
     });
 
     it("is false for a workspace that never connected", async () => {
       const connected = createClient(wsPath("/test/workspace"));
       await waitForConnect(connected);
 
-      expect(env.apiServer.isConnected(wsPath("/test/other"))).toBe(false);
+      expect(env.apiServer.isConnected(testWorkspaceRef(wsPath("/test/other")))).toBe(false);
     });
   });
 
@@ -167,7 +173,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       await expect.poll(() => listener.mock.calls.length, { timeout: 5000 }).toBe(1);
       expect(listener).toHaveBeenCalledWith({
-        workspacePath: workspace,
+        workspaceRef: testWorkspaceRef(workspace),
         reason: "client namespace disconnect",
         initiatedByUs: false,
       });
@@ -204,7 +210,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // The workspace never stopped being connected, so there is nothing to judge.
       await expect.poll(() => listener.mock.calls.length, { timeout: 5000 }).toBe(1);
       expect(listener.mock.calls[0]![0]).toMatchObject({ initiatedByUs: true });
-      expect(env.apiServer.isConnected(workspace)).toBe(true);
+      expect(env.apiServer.isConnected(testWorkspaceRef(workspace))).toBe(true);
     });
   });
 
@@ -438,7 +444,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: testPath("/test/workspace").toString() },
+          payload: { workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()) },
         })
       );
     });
@@ -492,7 +498,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_AGENT_SESSION,
-          payload: { workspacePath: testPath("/test/workspace").toString() },
+          payload: { workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()) },
         })
       );
     });
@@ -565,7 +571,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_SET_METADATA,
           payload: {
-            workspacePath: testPath("/test/workspace").toString(),
+            workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
             key: "note",
             value: "my note",
           },
@@ -591,7 +597,10 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: testPath("/test/workspace").toString(), event: "open" },
+            payload: {
+              workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
+              event: "open",
+            },
           })
         )
       );
@@ -614,7 +623,10 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect(env.mockDispatch).toHaveBeenCalledWith(
           expect.objectContaining({
             type: INTENT_AGENT_LIFECYCLE,
-            payload: { workspacePath: testPath("/test/workspace").toString(), event: "close" },
+            payload: {
+              workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
+              event: "close",
+            },
           })
         )
       );
@@ -672,7 +684,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(env.mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath: testPath("/my/special/workspace").toString() },
+          payload: { workspaceRef: testWorkspaceRef(testPath("/my/special/workspace").toString()) },
         })
       );
     });
@@ -795,7 +807,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_VSCODE_COMMAND,
           payload: expect.objectContaining({
-            workspacePath: testPath("/test/workspace").toString(),
+            workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
             command: "test.command",
           }),
         })
@@ -896,7 +908,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_DELETE_WORKSPACE,
           payload: expect.objectContaining({
-            workspacePath: testPath("/test/workspace").toString(),
+            workspaceRef: testWorkspaceRef(testPath("/test/workspace").toString()),
             keepBranch: true,
             force: false,
             removeWorktree: true,
@@ -938,18 +950,10 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         metadata: {},
         path: testPath("/workspaces/my-ws").toNative(),
       };
-      const resolvedProject = {
-        projectPath: testPath("/project/path").toNative(),
-        workspaceName: "caller-ws",
-      };
-      env.mockDispatch.mockImplementation((intent: Intent) => {
+      env.mockDispatch.mockImplementation(() => {
         const handle = new IntentHandle();
         handle.signalAccepted(true);
-        if (intent.type === INTENT_RESOLVE_WORKSPACE) {
-          handle.resolve(resolvedProject);
-        } else {
-          handle.resolve(workspace);
-        }
+        handle.resolve(workspace);
         return handle;
       });
 
@@ -981,7 +985,8 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         expect.objectContaining({
           type: INTENT_OPEN_WORKSPACE,
           payload: expect.objectContaining({
-            projectPath: testPath("/project/path").toNative(),
+            // The caller's own project: the one its ref extends.
+            projectRef: projectRefFor(testPath("/test").toString()),
             workspaceName: "my-ws",
             base: "main",
             agent: { type: "default", prompt: "Do something" },
@@ -1013,7 +1018,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       return { lines, logger };
     }
 
-    it("tags an opened workspace's extension logs with its name instead of its path", async () => {
+    it("tags a workspace's extension logs with the project and name its ref carries", async () => {
       await env.cleanup();
       const store = new AsyncLogScopeStore();
       const { logger, lines } = recordingLogger(store);
@@ -1027,17 +1032,14 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await vi.waitFor(() => expect(lines).toHaveLength(1));
 
       expect(lines[0]?.context).toEqual({ n: 1 });
+      // The harness names /test/workspace as workspace `workspace` of project `test`.
       expect(lines[0]?.scope).toEqual(
-        expect.objectContaining({
-          project: "project",
-          ws: "test",
-          path: workspace,
-          origin: "sidekick",
-        })
+        expect.objectContaining({ project: "test", ws: "workspace", origin: "sidekick" })
       );
+      expect(lines[0]?.scope).not.toHaveProperty("path");
     });
 
-    it("names a workspace it has no name for by path, and drops scope.* keys", async () => {
+    it("names a workspace never opened by its ref too, and drops scope.* keys", async () => {
       await env.cleanup();
       const store = new AsyncLogScopeStore();
       const { logger, lines } = recordingLogger(store);
@@ -1054,9 +1056,8 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await vi.waitFor(() => expect(lines).toHaveLength(1));
 
       expect(lines[0]?.message).toBe("hello");
-      expect(lines[0]?.context).toEqual({ path: workspace });
-      expect(lines[0]?.scope).not.toHaveProperty("ws");
-      expect(lines[0]?.scope?.origin).toBe("sidekick");
+      expect(lines[0]?.context).toEqual({});
+      expect(lines[0]?.scope).toMatchObject({ ws: "unopened", origin: "sidekick" });
     });
   });
 

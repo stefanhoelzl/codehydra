@@ -14,17 +14,17 @@ import { OperationRegistry } from "./registry";
 import { ApiError } from "./errors";
 import { defineEntry } from "./types";
 import type { AnyOperationEntry, OperationContext } from "./types";
-import { workspacePathSchema } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import { testPath } from "../shared/test-fixtures";
 
-const WS = workspacePathSchema.parse(testPath("/repo/wt/feature").toNative());
+const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
 const IN_WORKSPACE: OperationContext = {
-  workspacePath: WS,
+  workspaceRef: WS,
   cwd: null,
   signal: new AbortController().signal,
 };
 const NO_WORKSPACE: OperationContext = {
-  workspacePath: null,
+  workspaceRef: null,
   cwd: null,
   signal: new AbortController().signal,
 };

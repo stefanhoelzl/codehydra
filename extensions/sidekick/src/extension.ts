@@ -166,7 +166,7 @@ function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefin
  * extension host still sees the terminal, with `creationOptions` rebuilt from
  * its launch config — including the env we passed. Only the agent terminal is
  * created with that env (config.env, see the agent providers'
- * getEnvironmentVariables), so `_CH_WORKSPACE_PATH` in it identifies the agent
+ * getEnvironmentVariables), so `_CH_WORKSPACE` in it identifies the agent
  * terminal. The workspace env (applyWorkspaceEnv) does not interfere: VS Code
  * applies the environment variable collection when the process launches, and
  * it never appears in `creationOptions.env`. Should there be several, the first
@@ -175,7 +175,7 @@ function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefin
 function findRunningAgentTerminal(): vscode.Terminal | undefined {
   return vscode.window.terminals.find((t) => {
     const opts = t.creationOptions as vscode.TerminalOptions | undefined;
-    return opts?.env?._CH_WORKSPACE_PATH !== undefined;
+    return opts?.env?._CH_WORKSPACE !== undefined;
   });
 }
 

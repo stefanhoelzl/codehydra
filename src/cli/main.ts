@@ -109,7 +109,7 @@ async function main(): Promise<number> {
    * to the caller's own workspace. What a command acts on is its own
    * `--workspace` field, sent with the call.
    *
-   * `_CH_WORKSPACE_PATH` is deliberately NOT consulted here. Every CodeHydra
+   * `_CH_WORKSPACE` is deliberately NOT consulted here. Every CodeHydra
    * terminal sets it to that terminal's workspace, so using it would make `ch`
    * ignore the directory it was run in — `cd` into another workspace and
    * commands would silently act on the terminal's own. The environment is only

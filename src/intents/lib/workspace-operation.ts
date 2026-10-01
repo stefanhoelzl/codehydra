@@ -4,11 +4,11 @@
  * Six operations (get-agent-session, get-metadata, restart-agent,
  * set-metadata, vscode-command, vscode-show-message) follow the same shape:
  *
- * 1. Dispatch workspace:resolve to validate workspacePath (and obtain
- *    workspaceName for event payloads)
+ * 1. Dispatch workspace:resolve to turn the workspaceRef into the workspace
+ *    (its path for the handlers, its name for event payloads)
  * 2. Optionally dispatch project:resolve (only needed when a post-hook
  *    domain event wants projectId)
- * 3. Run a single hook point with `{ intent, workspacePath }` input
+ * 3. Run a single hook point with `{ intent, workspaceRef, workspacePath }` input
  * 4. Throw hook errors via the standard guard (lone error raw, multiple
  *    aggregated)
  * 5. Extract the operation result from the hook results
@@ -38,18 +38,24 @@ import {
   type ResolveProjectIntent,
   type ResolveProjectResult,
 } from "../resolve-project";
-import type { WorkspacePath } from "../contract";
+import type { WorkspacePath, WorkspaceRef } from "../contract";
 import type { HookPointOf, HookResultOf, InputOf, EventOf } from "./operation";
 
-/** An intent whose payload carries the target workspace path. */
+/** An intent whose payload carries the target workspace's ref. */
 export type WorkspaceScopedIntent<R> = Intent<R> & {
-  readonly payload: { readonly workspacePath: WorkspacePath };
+  readonly payload: { readonly workspaceRef: WorkspaceRef };
 };
 
-/** Operation schemas whose payload carries the target workspace path. */
+/** Operation schemas whose payload carries the target workspace's ref. */
 export type WorkspaceScopedSchemas = OperationSchemas & {
-  readonly payload: z.ZodType<{ readonly workspacePath: WorkspacePath }>;
+  readonly payload: z.ZodType<{ readonly workspaceRef: WorkspaceRef }>;
 };
+
+/** The resolved target a hook context carries. */
+export interface WorkspaceTarget {
+  readonly workspaceRef: WorkspaceRef;
+  readonly workspacePath: WorkspacePath;
+}
 
 /**
  * The per-handler result type of the single hook point these operations collect.
@@ -78,7 +84,7 @@ export interface WorkspaceHookSpec<
    */
   readonly buildInput: (
     intent: IntentOf<S>,
-    workspacePath: WorkspacePath
+    target: WorkspaceTarget
   ) => InputOf<S, HookPointOf<S> & string>;
   /** Also dispatch project:resolve — needed only when onSuccess wants projectId. */
   readonly resolveProject?: boolean;
@@ -106,24 +112,27 @@ export abstract class WorkspaceHookOperation<
   ) {}
 
   async execute(ctx: OperationContext<IntentOf<S>, S>): Promise<ResultOf<S>> {
-    const { workspacePath } = ctx.intent.payload;
+    const { workspaceRef } = ctx.intent.payload;
 
     // 1. Dispatch shared workspace resolution
     const resolved = await ctx.dispatch<ResolveWorkspaceIntent>({
       type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath },
+      payload: { workspaceRef },
     });
 
     // 2. Dispatch shared project resolution (event payloads only)
     const project = this.spec.resolveProject
       ? await ctx.dispatch<ResolveProjectIntent>({
           type: INTENT_RESOLVE_PROJECT,
-          payload: { projectPath: resolved.projectPath },
+          payload: { projectRef: resolved.projectRef },
         })
       : undefined;
 
     // 3. Run the hook point — handlers do the actual work
-    const hookCtx = this.spec.buildInput(ctx.intent, workspacePath);
+    const hookCtx = this.spec.buildInput(ctx.intent, {
+      workspaceRef: resolved.workspaceRef,
+      workspacePath: resolved.workspacePath,
+    });
     const { results, errors } = await ctx.hooks.collect(this.spec.hookPoint, hookCtx);
     throwHookErrors(errors, this.spec.errorLabel);
 

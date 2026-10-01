@@ -82,6 +82,8 @@ export interface OpenCodeServerManagerConfig {
  * Options for starting a server.
  */
 export interface StartServerOptions {
+  /** The workspace's ref, which the agent and every `ch` it runs name it by. */
+  readonly workspaceRef: string;
   /** Initial prompt to send after server becomes healthy */
   readonly initialPrompt?: {
     readonly prompt: string;
@@ -133,6 +135,8 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   /** The binary each workspace's server runs, kept for restarts like its env. */
   private readonly workspaceBinaries = new Map<string, ResolvedAgentBinary>();
+  /** Each workspace's ref, for the agent's `_CH_WORKSPACE`. Kept for restarts. */
+  private readonly workspaceRefs = new Map<string, string>();
 
   private mcpConfig: McpConfig | null = null;
 
@@ -167,7 +171,13 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * @returns Allocated port number
    * @throws Error if server fails to start or health check times out
    */
-  async startServer(workspacePath: string, options?: StartServerOptions): Promise<number> {
+  /** The ref a workspace was started with, while it is tracked. */
+  getWorkspaceRef(workspacePath: string): string | undefined {
+    return this.workspaceRefs.get(workspacePath);
+  }
+
+  async startServer(workspacePath: string, options: StartServerOptions): Promise<number> {
+    this.workspaceRefs.set(workspacePath, options.workspaceRef);
     // Store pending prompt if provided
     if (options?.initialPrompt) {
       this.setPendingPrompt(
@@ -258,7 +268,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     //
     // Use Path.toString() for paths (already POSIX format). Backslashes would
     // become invalid escape sequences in JSON.
-    const normalizedWorkspacePath = new Path(workspacePath).toString();
+    const workspaceRef = this.workspaceRefs.get(workspacePath);
     const config: Record<string, unknown> = {
       // Appended to the system prompt as "Instructions from: <path>".
       instructions: [this.getSystemPromptPath().toString()],
@@ -275,7 +285,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
           type: "local",
           command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
           environment: {
-            _CH_WORKSPACE_PATH: normalizedWorkspacePath,
+            ...(workspaceRef !== undefined && { _CH_WORKSPACE: workspaceRef }),
             _CH_API_PORT: String(this.mcpConfig.port),
             _CH_API_TOKEN: this.mcpConfig.token,
           },
@@ -304,7 +314,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       PATH: existingPath ? `${binDir}${delimiter}${existingPath}` : binDir,
       // The agent's own workspace, so `ch` run from its bash tool resolves the
       // right one without depending on the process's working directory.
-      _CH_WORKSPACE_PATH: normalizedWorkspacePath,
+      ...(workspaceRef !== undefined && { _CH_WORKSPACE: workspaceRef }),
       ...(this.mcpConfig && {
         _CH_API_PORT: String(this.mcpConfig.port),
         _CH_API_TOKEN: this.mcpConfig.token,
@@ -410,6 +420,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     if (!isRestart) {
       this.workspaceEnvs.delete(workspacePath);
       this.workspaceBinaries.delete(workspacePath);
+      this.workspaceRefs.delete(workspacePath);
     }
 
     // Fire callback with isRestart flag

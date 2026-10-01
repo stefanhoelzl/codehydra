@@ -11,8 +11,9 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { registerTestInfrastructure } from "../../intents/operations.test-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { WorkspacePath } from "../../intents/contract";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import type { WorkspacePath, WorkspaceRef } from "../../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import type { OperationName } from "../names";
 import type { OperationContext } from "../types";
@@ -20,11 +21,11 @@ import { createRegistry } from "./index";
 
 const SNAPSYNC = projPath("/projects/snapsync");
 const CODEHYDRA = projPath("/projects/codehydra");
-const IOS = wsPath("/projects/snapsync/workspaces/ios");
-const ANDROID = wsPath("/projects/snapsync/workspaces/android");
-const CH_LOCK = wsPath("/projects/codehydra/workspaces/ch-lock");
-/** Branch `feature/x`, in the directory CodeHydra sanitizes it to. */
-const FEATURE_X = wsPath("/projects/snapsync/workspaces/feature%x");
+const IOS = makeWorkspaceRef(projectRefFor(SNAPSYNC), "ios");
+const ANDROID = makeWorkspaceRef(projectRefFor(SNAPSYNC), "android");
+const CH_LOCK = makeWorkspaceRef(projectRefFor(CODEHYDRA), "ch-lock");
+/** A workspace named after branch `feature/x`. */
+const FEATURE_X = makeWorkspaceRef(projectRefFor(SNAPSYNC), "feature/x");
 
 function setup() {
   const dispatcher = createMockDispatcher();
@@ -59,12 +60,12 @@ function setup() {
   /** Call an operation as a caller standing in `workspace`, on its own connection. */
   const call = (
     name: OperationName,
-    workspace: WorkspacePath | null,
+    workspace: WorkspaceRef | null,
     input: Record<string, unknown> = {},
     signal: AbortSignal = new AbortController().signal
   ): Promise<unknown> => {
     const ctx: OperationContext = {
-      workspacePath: workspace,
+      workspaceRef: workspace,
       cwd: null,
       signal,
     };

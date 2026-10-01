@@ -28,6 +28,7 @@ import {
   type MockProcessRunner,
 } from "../../../boundaries/platform/process.state-mock";
 import { testPath } from "../../../shared/test-fixtures";
+import { workspaceRefSchema } from "../../../intents/contract";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
@@ -71,6 +72,7 @@ function createMockServerManager(): ClaudeCodeServerManager {
 }
 
 const WS_PATH = testPath("/workspace/feature-a").toNative() as WorkspacePath;
+const WS_REF = workspaceRefSchema.parse("ch::local::/test::ws");
 const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
 
 // =============================================================================
@@ -706,9 +708,9 @@ describe("createClaudeModuleProvider", () => {
         return 8080;
       });
 
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
-      expect(mockServerManager.startServer).toHaveBeenCalledWith(WS_PATH);
+      expect(mockServerManager.startServer).toHaveBeenCalledWith(WS_PATH, { workspaceRef: WS_REF });
       expect(result.envVars).toEqual({
         CLAUDE_PORT: "8080",
         _CH_CLAUDE_BIN: "/usr/local/bin/claude",
@@ -719,7 +721,7 @@ describe("createClaudeModuleProvider", () => {
       binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE });
       const provider = createProvider();
 
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(result.envVars).toMatchObject({
         _CH_CLAUDE_BIN: "/bundles/claude/2.1.274/claude",
@@ -730,7 +732,7 @@ describe("createClaudeModuleProvider", () => {
     it("leaves a system install's self-update alone", async () => {
       const provider = createProvider();
 
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(result.envVars).not.toHaveProperty("DISABLE_AUTOUPDATER");
     });
@@ -753,7 +755,11 @@ describe("createClaudeModuleProvider", () => {
 
       const initialPrompt = { prompt: "Hello" };
       const onInitialPromptDelivered = vi.fn();
-      await provider.startWorkspace(WS_PATH, { initialPrompt, onInitialPromptDelivered });
+      await provider.startWorkspace(WS_PATH, {
+        workspaceRef: WS_REF,
+        initialPrompt,
+        onInitialPromptDelivered,
+      });
 
       expect(mockServerManager.setInitialPrompt).toHaveBeenCalledWith(
         WS_PATH,
@@ -778,7 +784,7 @@ describe("createClaudeModuleProvider", () => {
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, { isNewWorkspace: true });
+      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF, isNewWorkspace: true });
 
       expect(mockServerManager.setNoSessionMarker).toHaveBeenCalledWith(WS_PATH);
     });
@@ -799,7 +805,7 @@ describe("createClaudeModuleProvider", () => {
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH);
+      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(mockServerManager.setInitialPrompt).not.toHaveBeenCalled();
       expect(mockServerManager.setNoSessionMarker).not.toHaveBeenCalled();
@@ -815,7 +821,7 @@ describe("createClaudeModuleProvider", () => {
       });
 
       // startServer does not trigger onServerStarted callback
-      const result = await provider.startWorkspace(WS_PATH);
+      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
 
       expect(result.envVars).toEqual({ _CH_CLAUDE_BIN: "/usr/local/bin/claude" });
     });

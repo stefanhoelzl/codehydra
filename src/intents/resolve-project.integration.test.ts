@@ -5,7 +5,7 @@
  * Tests verify the full dispatch pipeline: intent -> operation -> hooks -> result.
  *
  * Test plan items covered:
- * #1: resolves projectPath → projectId + projectName
+ * #1: resolves projectRef → projectId + projectPath + projectName
  * #2: throws when no handler returns projectId
  * #3: defaults projectName to empty string when not provided
  * #4: propagates hook handler errors
@@ -25,7 +25,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projPath } from "../shared/test-fixtures";
-import type { ProjectPath } from "./contract";
+import type { ProjectRef } from "./contract";
 import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
@@ -65,10 +65,10 @@ function createTestSetup(
   return { dispatcher };
 }
 
-function resolveIntent(projectPath: ProjectPath): ResolveProjectIntent {
+function resolveIntent(projectRef: ProjectRef): ResolveProjectIntent {
   return {
     type: INTENT_RESOLVE_PROJECT,
-    payload: { projectPath },
+    payload: { projectRef },
   };
 }
 
@@ -78,20 +78,21 @@ function resolveIntent(projectPath: ProjectPath): ResolveProjectIntent {
 
 describe("ResolveProjectOperation Integration", () => {
   describe("success", () => {
-    it("resolves projectPath to projectId + projectName (#1)", async () => {
+    it("resolves projectRef to projectId + projectPath + projectName (#1)", async () => {
       const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
         result: {
           projectId: PROJECT_ID,
-          projectRef: PROJECT_REF,
+          projectPath: PROJECT_PATH,
           projectName: PROJECT_NAME,
         },
       }));
 
-      const result = await dispatcher.dispatch(resolveIntent(PROJECT_PATH));
+      const result = await dispatcher.dispatch(resolveIntent(PROJECT_REF));
 
       expect(result).toEqual({
         projectId: PROJECT_ID,
         projectRef: PROJECT_REF,
+        projectPath: PROJECT_PATH,
         projectName: PROJECT_NAME,
       });
     });
@@ -100,15 +101,16 @@ describe("ResolveProjectOperation Integration", () => {
       const { dispatcher } = createTestSetup(async (): Promise<HookOutput<ResolveHookResult>> => ({
         result: {
           projectId: PROJECT_ID,
-          projectRef: PROJECT_REF,
+          projectPath: PROJECT_PATH,
         },
       }));
 
-      const result = await dispatcher.dispatch(resolveIntent(PROJECT_PATH));
+      const result = await dispatcher.dispatch(resolveIntent(PROJECT_REF));
 
       expect(result).toEqual({
         projectId: PROJECT_ID,
         projectRef: PROJECT_REF,
+        projectPath: PROJECT_PATH,
         projectName: "",
       });
     });
@@ -122,16 +124,16 @@ describe("ResolveProjectOperation Integration", () => {
         },
       }));
 
-      await expect(dispatcher.dispatch(resolveIntent(PROJECT_PATH))).rejects.toThrow(
-        `Project not found for path: ${PROJECT_PATH}`
+      await expect(dispatcher.dispatch(resolveIntent(PROJECT_REF))).rejects.toThrow(
+        `Project not found: ${PROJECT_REF}`
       );
     });
 
     it("throws when no handler is registered", async () => {
       const { dispatcher } = createTestSetup();
 
-      await expect(dispatcher.dispatch(resolveIntent(PROJECT_PATH))).rejects.toThrow(
-        `Project not found for path: ${PROJECT_PATH}`
+      await expect(dispatcher.dispatch(resolveIntent(PROJECT_REF))).rejects.toThrow(
+        `Project not found: ${PROJECT_REF}`
       );
     });
 
@@ -140,7 +142,7 @@ describe("ResolveProjectOperation Integration", () => {
         throw new Error("storage error");
       });
 
-      await expect(dispatcher.dispatch(resolveIntent(PROJECT_PATH))).rejects.toThrow(
+      await expect(dispatcher.dispatch(resolveIntent(PROJECT_REF))).rejects.toThrow(
         "storage error"
       );
     });

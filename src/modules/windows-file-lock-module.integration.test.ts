@@ -39,6 +39,7 @@ import { createBehavioralLogger } from "../boundaries/platform/logging.test-util
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
 import { wsPath, projPath, testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -134,7 +135,9 @@ class FlushOperation implements Operation<typeof flushOpSchemas> {
   ): Promise<FlushHookResult> {
     const flushCtx: FlushHookInput = {
       intent: ctx.intent,
+      projectRef: projectRefFor(projPath("/projects/my-app")),
       projectPath: projPath("/projects/my-app"),
+      workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/projects/my-app")), "feature-1"),
       workspacePath: wsPath("/workspaces/feature-1"),
       workspaceName: "feature-1" as WorkspaceName,
       active: false,

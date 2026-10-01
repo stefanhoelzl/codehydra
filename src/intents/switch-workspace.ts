@@ -29,11 +29,12 @@ import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
   projectIdSchema,
-  projectPathSchema,
+  projectRefSchema,
   workspaceNameSchema,
   workspacePathSchema,
+  workspaceRefSchema,
 } from "./contract";
-import type { WorkspacePath } from "./contract";
+import type { WorkspaceRef } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
@@ -47,12 +48,12 @@ export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
 // =============================================================================
 
 /** Specific-target payload: switch to a known workspace, or deselect.
- *  `workspacePath: null` deselects the active workspace — no workspace is
+ *  `workspaceRef: null` deselects the active workspace — no workspace is
  *  active afterwards and the creation panel becomes the main view (it is the
  *  ground state when nothing is selected). `focus` is ignored for null. */
 export const switchWorkspaceTargetPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema.nullable(),
+    workspaceRef: workspaceRefSchema.nullable(),
     focus: z.boolean().optional(),
   })
   .readonly();
@@ -61,9 +62,9 @@ export const switchWorkspaceTargetPayloadSchema = z
 export const switchWorkspaceAutoPayloadSchema = z
   .object({
     auto: z.literal(true),
-    currentPath: workspacePathSchema,
+    currentRef: workspaceRefSchema,
     focus: z.boolean().optional(),
-    /** When true, if no other candidate is selectable, switch to currentPath
+    /** When true, if no other candidate is selectable, switch to currentRef
      *  instead of emitting workspace:switched(null). Used by hibernate so the
      *  user lands on the hibernation overlay rather than the empty backdrop
      *  when the only workspace was just hibernated. */
@@ -79,9 +80,9 @@ export const switchWorkspacePayloadSchema = z.union([
 /** A workspace candidate returned by the "find-candidates" hook. */
 export const workspaceCandidateSchema = z
   .object({
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     projectName: z.string(),
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /** Stored workspace name (original case) — used for alphabetical ordering. */
     workspaceName: z.string(),
     /** True when the candidate is hibernated. Hibernated candidates are excluded
@@ -94,9 +95,9 @@ export const workspaceSwitchedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     projectName: z.string(),
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     workspaceName: workspaceNameSchema,
-    path: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /** The workspace's raw domain metadata, as resolved at switch time. It is
      *  the baseline consumers can't reconstruct from workspace:metadata-changed
      *  alone: metadata persists across restarts, so a title set in
@@ -113,7 +114,7 @@ export const workspaceSwitchedPayloadSchema = z
  */
 export const switchWorkspaceHookResultSchema = z
   .object({
-    resolvedPath: workspacePathSchema.optional(),
+    resolvedRef: workspaceRefSchema.optional(),
   })
   .readonly();
 
@@ -131,9 +132,10 @@ export const selectNextHookResultSchema = z
   })
   .readonly();
 
-/** Operation-added enrichment for the "activate" hook point. `workspacePath: null`
- *  = deselect (clear the active workspace). */
+/** Operation-added enrichment for the "activate" hook point. `workspaceRef: null`
+ *  (with `workspacePath: null`) = deselect (clear the active workspace). */
 const activateEnrichmentSchema = z.object({
+  workspaceRef: workspaceRefSchema.nullable(),
   workspacePath: workspacePathSchema.nullable(),
   active: z.boolean(),
 });
@@ -146,7 +148,7 @@ export const activateHookInputSchema = hookCtxSchema(
 
 /** Operation-added enrichment for the "select-next" hook point. */
 const selectNextEnrichmentSchema = z.object({
-  currentPath: workspacePathSchema,
+  currentRef: workspaceRefSchema,
   candidates: z.array(workspaceCandidateSchema).readonly(),
 });
 
@@ -202,7 +204,7 @@ export type FindCandidatesHookResult = z.infer<typeof findCandidatesHookResultSc
 /** Per-handler result for the "select-next" hook point. */
 export type SelectNextHookResult = z.infer<typeof selectNextHookResultSchema>;
 
-/** Input context for the "activate" hook point. `workspacePath: null` =
+/** Input context for the "activate" hook point. `workspaceRef: null` =
  *  deselect (clear the active workspace). */
 export type ActivateHookInput = HookContext & z.infer<typeof activateEnrichmentSchema>;
 
@@ -210,10 +212,10 @@ export type ActivateHookInput = HookContext & z.infer<typeof activateEnrichmentS
 export type SelectNextHookInput = HookContext & z.infer<typeof selectNextEnrichmentSchema>;
 
 /**
- * Agent status scorer function. Given a workspace path, returns a numeric score:
+ * Agent status scorer function. Given a workspace's ref, returns a numeric score:
  * 0 = idle (preferred), 1 = busy, 2 = none/unknown.
  */
-export type AgentStatusScorer = (workspacePath: WorkspacePath) => number;
+export type AgentStatusScorer = (workspaceRef: WorkspaceRef) => number;
 
 /** Type guard for auto-select mode. */
 function isAutoSwitch(payload: SwitchWorkspacePayload): payload is SwitchWorkspaceAutoPayload {
@@ -233,7 +235,7 @@ function isAutoSwitch(payload: SwitchWorkspacePayload): payload is SwitchWorkspa
  * proximity to the deleted workspace in alphabetical order.
  */
 export function selectNextWorkspace(
-  currentWorkspacePath: string,
+  currentWorkspaceRef: WorkspaceRef,
   candidates: readonly WorkspaceCandidate[],
   scorer: AgentStatusScorer
 ): WorkspaceCandidate | null {
@@ -244,9 +246,9 @@ export function selectNextWorkspace(
   // Build sorted list (projects alphabetically, workspaces alphabetically)
   const byProject = new Map<string, WorkspaceCandidate[]>();
   for (const c of candidates) {
-    const list = byProject.get(c.projectPath) ?? [];
+    const list = byProject.get(c.projectRef) ?? [];
     list.push(c);
-    byProject.set(c.projectPath, list);
+    byProject.set(c.projectRef, list);
   }
 
   const sortedProjectPaths = [...byProject.keys()].sort((a, b) => {
@@ -264,12 +266,12 @@ export function selectNextWorkspace(
     sorted.push(...list);
   }
 
-  // Find current workspace index (-1 when currentPath was already de-registered)
-  const currentIndex = sorted.findIndex((w) => w.workspacePath === currentWorkspacePath);
+  // Find current workspace index (-1 when the current one was already de-registered)
+  const currentIndex = sorted.findIndex((w) => w.workspaceRef === currentWorkspaceRef);
 
   const getKey = (ws: WorkspaceCandidate, index: number): number => {
-    const statusKey = scorer(ws.workspacePath as WorkspacePath);
-    // When currentPath is not in candidates, use score-only (no positional proximity)
+    const statusKey = scorer(ws.workspaceRef);
+    // When the current one is not in candidates, use score-only (no positional proximity)
     if (currentIndex === -1) return statusKey;
     const positionKey = (index - currentIndex + sorted.length) % sorted.length;
     return statusKey * sorted.length + positionKey;
@@ -318,9 +320,10 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     // deselected workspace would no-op as already-active), then announce.
     // Deliberately NOT no-op-guarded: switched(null) is emitted even when
     // nothing was active (deselect is idempotent; consumers tolerate it).
-    if (payload.workspacePath === null) {
+    if (payload.workspaceRef === null) {
       const deselectCtx: ActivateHookInput = {
         intent: ctx.intent,
+        workspaceRef: null,
         workspacePath: null,
         active: false,
       };
@@ -336,22 +339,23 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName, active, metadata } =
+    const { workspacePath, projectRef, workspaceName, active, metadata } =
       await ctx.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath: payload.workspacePath },
+        payload: { workspaceRef: payload.workspaceRef },
       });
 
     // 2. Dispatch shared project resolution
     const { projectId, projectName } = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
+      payload: { projectRef },
     });
 
     // 3. Activate: call setActiveWorkspace
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath,
       active,
     };
     const { results: activateResults, errors: activateErrors } = await ctx.hooks.collect(
@@ -360,12 +364,12 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     );
     throwHookErrors(activateErrors, "workspace:switch activate hooks failed");
 
-    // Merge results — last-write-wins for resolvedPath
-    const resolvedPath = lastDefined(activateResults, (r) => r.resolvedPath);
+    // Merge results — last-write-wins for resolvedRef
+    const resolvedRef = lastDefined(activateResults, (r) => r.resolvedRef);
 
     // No-op: hook resolved workspace but it was already active
-    // (resolvedPath left unset intentionally)
-    if (!resolvedPath) {
+    // (resolvedRef left unset intentionally)
+    if (!resolvedRef) {
       return;
     }
 
@@ -375,9 +379,9 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       payload: {
         projectId,
         projectName,
-        projectPath,
+        projectRef,
         workspaceName,
-        path: resolvedPath,
+        workspaceRef: resolvedRef,
         metadata,
       },
     };
@@ -399,7 +403,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     // 2. Select best candidate via hook
     const selectCtx: SelectNextHookInput = {
       intent: ctx.intent,
-      currentPath: payload.currentPath,
+      currentRef: payload.currentRef,
       candidates: allCandidates,
     };
     const { results: selectResults } = await ctx.hooks.collect("select-next", selectCtx);
@@ -408,13 +412,13 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       if (r.selected !== undefined) best = r.selected;
     }
 
-    const targetPath =
-      best?.workspacePath ?? (payload.fallbackToCurrent ? payload.currentPath : undefined);
-    if (targetPath !== undefined) {
+    const targetRef =
+      best?.workspaceRef ?? (payload.fallbackToCurrent ? payload.currentRef : undefined);
+    if (targetRef !== undefined) {
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: targetPath,
+          workspaceRef: targetRef,
           ...(payload.focus !== undefined && { focus: payload.focus }),
         },
       };

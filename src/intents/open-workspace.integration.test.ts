@@ -72,16 +72,20 @@ import { Path } from "../utils/path/path";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type { SwitchWorkspaceHookResult, ActivateHookInput } from "./switch-workspace";
 import { registerTestInfrastructure } from "./operations.test-utils";
+import type { MockWorkspaceEntry } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import type { WorkspaceLocator } from "../shared/api/types";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspacePath } from "./contract";
 
 // =============================================================================
 // Test Constants
 // =============================================================================
 
 const PROJECT_ROOT = projPath("/project");
+const PROJECT_REF = projectRefFor(PROJECT_ROOT);
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_BRANCH = "feature-x";
 const WORKSPACE_METADATA: Readonly<Record<string, string>> = { base: "main" };
@@ -183,13 +187,20 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   // Only PROJECT_ROOT is known by default; tests can add more.
   const knownProjectPaths = new Set<string>([PROJECT_ROOT]);
 
-  // Shared infra: every workspace path resolves under PROJECT_ROOT with the
-  // basename as workspaceName; projects resolve from knownProjectPaths.
+  // Shared infra: a workspace created (or reopened) here resolves to the
+  // project and name it was opened with, so a switch to it resolves by ref;
+  // any other path resolves under PROJECT_ROOT with the basename as its name.
+  // Projects resolve from knownProjectPaths.
+  const opened = new Map<WorkspacePath, MockWorkspaceEntry>();
   registerTestInfrastructure(dispatcher, {
-    workspaces: (wsPath) => ({
-      projectPath: PROJECT_ROOT,
-      workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
-    }),
+    workspaces: Object.assign(
+      (wsPath: WorkspacePath) =>
+        opened.get(wsPath) ?? {
+          projectPath: PROJECT_ROOT,
+          workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+        },
+      { paths: () => opened.keys() }
+    ),
     projects: (projectPath) =>
       knownProjectPaths.has(projectPath)
         ? { projectId: PROJECT_ID, projectName: "test" }
@@ -223,8 +234,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-            const { workspacePath } = ctx as ActivateHookInput;
-            return { result: workspacePath === null ? {} : { resolvedPath: workspacePath } };
+            const { workspaceRef } = ctx as ActivateHookInput;
+            return { result: workspaceRef === null ? {} : { resolvedRef: workspaceRef } };
           },
         },
       },
@@ -244,6 +255,10 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             // Existing workspace path: return context from existing data
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
+              opened.set(existing.path, {
+                projectPath,
+                workspaceName: existing.name as WorkspaceName,
+              });
               return {
                 result: {
                   workspacePath: existing.path,
@@ -265,9 +280,10 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               intent.payload.base!
             );
 
-            // Suppress unused variable warning for projectPath verification
-            void projectPath;
-
+            opened.set(wsPath(workspace.path.toString()), {
+              projectPath,
+              workspaceName: intent.payload.workspaceName as WorkspaceName,
+            });
             return {
               result: {
                 workspacePath: wsPath(workspace.path.toString()),
@@ -385,7 +401,7 @@ function createIntent(overrides?: Partial<OpenWorkspacePayload>): OpenWorkspaceI
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
-      projectPath: projPath(PROJECT_ROOT),
+      projectRef: PROJECT_REF,
       workspaceName: "feature-x",
       base: "main",
       ...overrides,
@@ -438,8 +454,8 @@ describe("OpenWorkspace Operation", () => {
       expect(event.type).toBe(EVENT_WORKSPACE_CREATED);
       expect(event.payload.projectId).toBe(setup.projectId);
       expect(event.payload.workspaceName).toBe("feature-x");
-      expect(event.payload.workspacePath).toBe(WORKSPACE_PATH);
-      expect(event.payload.projectPath).toBe(PROJECT_ROOT);
+      expect(event.payload.workspaceRef).toBe(makeWorkspaceRef(PROJECT_REF, "feature-x"));
+      expect(event.payload.projectRef).toBe(PROJECT_REF);
       expect(event.payload.branch).toBe(WORKSPACE_BRANCH);
       expect(event.payload.base).toBe("main");
       expect(event.payload.metadata).toEqual(WORKSPACE_METADATA);
@@ -480,7 +496,7 @@ describe("OpenWorkspace Operation", () => {
       setup = createTestSetup();
     });
 
-    it("carries workspaceName, projectPath, and base from the intent", async () => {
+    it("carries workspaceName, projectRef, and base from the intent", async () => {
       const receivedEvents: DomainEvent[] = [];
       setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
         receivedEvents.push(event);
@@ -492,7 +508,7 @@ describe("OpenWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceLoadingEvent;
       expect(event.payload).toEqual({
         workspaceName: "feature-x",
-        projectPath: PROJECT_ROOT,
+        projectRef: PROJECT_REF,
         base: "main",
       });
     });
@@ -505,7 +521,7 @@ describe("OpenWorkspace Operation", () => {
 
       const intentWithoutBase: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
-        payload: { projectPath: projPath(PROJECT_ROOT), workspaceName: "feature-x" },
+        payload: { projectRef: PROJECT_REF, workspaceName: "feature-x" },
       };
       await setup.dispatcher.dispatch(intentWithoutBase);
 
@@ -513,7 +529,7 @@ describe("OpenWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceLoadingEvent;
       expect(event.payload).toEqual({
         workspaceName: "feature-x",
-        projectPath: PROJECT_ROOT,
+        projectRef: PROJECT_REF,
       });
     });
 
@@ -532,7 +548,7 @@ describe("OpenWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceLoadingEvent;
       expect(event.payload).toEqual({
         workspaceName: "feature-x",
-        projectPath: PROJECT_ROOT,
+        projectRef: PROJECT_REF,
         base: "main",
         stealFocus: false,
       });
@@ -623,14 +639,14 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectPath: projPath("/nonexistent/project"),
+          projectRef: projectRefFor(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
           base: "main",
         },
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
+        `Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`
       );
     });
   });
@@ -686,9 +702,9 @@ describe("OpenWorkspace Operation", () => {
     it("includes stealFocus in event when false", async () => {
       const setup = createTestSetup({
         activeWorkspaceRef: {
+          ref: makeWorkspaceRef(PROJECT_REF, "other"),
           projectId: PROJECT_ID,
           workspaceName: "other" as WorkspaceName,
-          path: wsPath("/workspaces/other"),
         },
       });
 
@@ -790,7 +806,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "feature-y",
           base: "main",
           existingWorkspace,
-          projectPath: projPath(PROJECT_ROOT),
+          projectRef: PROJECT_REF,
         },
       };
 
@@ -805,10 +821,8 @@ describe("OpenWorkspace Operation", () => {
       // Event emitted with existing workspace data
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.workspacePath).toBe(
-        testPath("/existing/workspace/feature-y").toString()
-      );
-      expect(event.payload.projectPath).toBe(PROJECT_ROOT);
+      expect(event.payload.workspaceRef).toBe(makeWorkspaceRef(PROJECT_REF, "feature-y"));
+      expect(event.payload.projectRef).toBe(PROJECT_REF);
     });
   });
 
@@ -838,7 +852,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "my-ws",
           base: "develop",
           existingWorkspace,
-          projectPath: projPath(customProjectPath),
+          projectRef: projectRefFor(customProjectPath),
         },
       };
 
@@ -849,10 +863,10 @@ describe("OpenWorkspace Operation", () => {
       // A detached HEAD stays null — never the workspace name standing in for it
       expect(workspace.branch).toBeNull();
 
-      // Event uses the provided projectPath directly
+      // Event names the provided project
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.projectPath).toBe(customProjectPath);
+      expect(event.payload.projectRef).toBe(projectRefFor(customProjectPath));
     });
   });
 
@@ -900,7 +914,7 @@ describe("OpenWorkspace Operation", () => {
           workspaceName: "SDK-214",
           base: "main",
           existingWorkspace,
-          projectPath: projPath(PROJECT_ROOT),
+          projectRef: PROJECT_REF,
         },
       };
 
@@ -921,14 +935,14 @@ describe("OpenWorkspace Operation", () => {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          projectPath: projPath("/nonexistent/project"),
+          projectRef: projectRefFor(projPath("/nonexistent/project")),
           workspaceName: "feature-x",
           base: "main",
         },
       };
 
       await expect(setup.dispatcher.dispatch(intent)).rejects.toThrow(
-        `Project not found for path: ${testPath("/nonexistent/project").toString()}`
+        `Project not found: ${projectRefFor(projPath("/nonexistent/project"))}`
       );
     });
   });
@@ -963,10 +977,13 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerOperation(new OpenWorkspaceOperation());
 
       registerTestInfrastructure(dispatcher, {
-        workspaces: (wsPath) => ({
-          projectPath: PROJECT_ROOT,
-          workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
-        }),
+        workspaces: Object.assign(
+          (wsPath: WorkspacePath) => ({
+            projectPath: PROJECT_ROOT,
+            workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+          }),
+          { paths: () => [WORKSPACE_PATH] }
+        ),
         projects: () => ({ projectId: PROJECT_ID, projectName: "test" }),
         activeWorkspaceRef: null,
       });
@@ -977,8 +994,8 @@ describe("OpenWorkspace Operation", () => {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
             activate: {
               handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-                const { workspacePath } = ctx as ActivateHookInput;
-                return { result: workspacePath === null ? {} : { resolvedPath: workspacePath } };
+                const { workspaceRef } = ctx as ActivateHookInput;
+                return { result: workspaceRef === null ? {} : { resolvedRef: workspaceRef } };
               },
             },
           },
@@ -1124,9 +1141,9 @@ describe("OpenWorkspace Operation", () => {
 
   describe("a completing creation never yanks the view back", () => {
     const OTHER_WORKSPACE: WorkspaceLocator = {
+      ref: makeWorkspaceRef(PROJECT_REF, "other-ws"),
       projectId: PROJECT_ID,
       workspaceName: "other-ws" as WorkspaceName,
-      path: wsPath("/workspaces/other-ws"),
     };
 
     it("skips the switch when the user navigated away mid-creation", async () => {
@@ -1215,9 +1232,9 @@ describe("OpenWorkspace Operation", () => {
     it("does not switch when another workspace is active", async () => {
       const setup = createTestSetup({
         activeWorkspaceRef: {
+          ref: makeWorkspaceRef(PROJECT_REF, "other-ws"),
           projectId: PROJECT_ID,
           workspaceName: "other-ws" as WorkspaceName,
-          path: wsPath("/workspaces/other-ws"),
         },
       });
 
@@ -1259,8 +1276,8 @@ describe("OpenWorkspaceOperation project references", () => {
   function withProjectOps(
     dispatcher: Dispatcher,
     options: {
-      open: readonly { name: string; path: string }[];
-      opened?: { path: string } | null;
+      open: readonly { name: string; path: string; ref: string }[];
+      opened?: { path: string; ref: string } | null;
       onOpen?: (payload: { path?: string; git?: string }) => void;
     }
   ) {
@@ -1274,7 +1291,9 @@ describe("OpenWorkspaceOperation project references", () => {
       schemas: { type: INTENT_OPEN_PROJECT, payload: z.unknown(), result: z.unknown() },
       execute: async (ctx: { intent: { payload: { path?: string; git?: string } } }) => {
         options.onOpen?.(ctx.intent.payload);
-        return options.opened === undefined ? { path: PROJECT_ROOT } : options.opened;
+        return options.opened === undefined
+          ? { path: PROJECT_ROOT, ref: PROJECT_REF }
+          : options.opened;
       },
     } as never);
   }
@@ -1283,7 +1302,7 @@ describe("OpenWorkspaceOperation project references", () => {
     const { dispatcher } = createTestSetup();
     let openedWith: unknown;
     withProjectOps(dispatcher, {
-      open: [{ name: "test", path: PROJECT_ROOT }],
+      open: [{ name: "test", path: PROJECT_ROOT, ref: PROJECT_REF }],
       onOpen: (payload) => (openedWith = payload),
     });
 
@@ -1340,7 +1359,7 @@ describe("OpenWorkspaceOperation project references", () => {
     ).rejects.toThrow(/Could not open project/);
   });
 
-  it("still accepts an explicit projectPath, and resolves nothing", async () => {
+  it("still accepts an explicit projectRef, and resolves nothing", async () => {
     const { dispatcher } = createTestSetup();
     let listed = false;
     dispatcher.registerOperation({
@@ -1353,12 +1372,12 @@ describe("OpenWorkspaceOperation project references", () => {
     } as never);
 
     const result = await open(dispatcher, {
-      projectPath: PROJECT_ROOT,
+      projectRef: PROJECT_REF,
       workspaceName: "explicit",
       base: "main",
     });
 
     expect(result.name).toBe("explicit");
-    expect(listed, "a caller holding a path has already resolved it").toBe(false);
+    expect(listed, "a caller holding a ref has already resolved it").toBe(false);
   });
 });

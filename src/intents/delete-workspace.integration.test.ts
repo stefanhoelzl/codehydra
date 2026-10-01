@@ -69,6 +69,7 @@ import type {
   ActivateHookInput,
   FindCandidatesHookResult,
   SelectNextHookInput,
+  WorkspaceCandidate,
   SelectNextHookResult,
 } from "./switch-workspace";
 import {
@@ -94,8 +95,8 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath, ProjectPath } from "./contract";
+import { wsPath, projPath } from "../shared/test-fixtures";
+import type { WorkspacePath, ProjectPath, ProjectRef, WorkspaceRef } from "./contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
@@ -116,6 +117,9 @@ const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 
 const WORKSPACE_PATH_B = wsPath("/test/project/workspaces/feature-b");
+const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const WORKSPACE_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_NAME);
+const WORKSPACE_REF_B = makeWorkspaceRef(PROJECT_REF, "feature-b");
 
 // =============================================================================
 // Helper: Build Intent
@@ -127,7 +131,7 @@ function buildDeleteIntent(
   return {
     type: INTENT_DELETE_WORKSPACE,
     payload: {
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
       keepBranch: true,
       force: false,
       removeWorktree: true,
@@ -352,7 +356,7 @@ function createTestHarness(options?: {
             return intent;
           }
           const deleteIntent = intent as DeleteWorkspaceIntent;
-          const key = deleteIntent.payload.workspacePath;
+          const key = deleteIntent.payload.workspaceRef;
 
           if (deleteIntent.payload.force) {
             inProgressDeletions.add(key);
@@ -372,13 +376,13 @@ function createTestHarness(options?: {
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceDeletedEvent).payload;
-          inProgressDeletions.delete(payload.workspacePath);
+          inProgressDeletions.delete(payload.workspaceRef);
         },
       },
       [EVENT_WORKSPACE_DELETE_FAILED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceDeleteFailedEvent).payload;
-          inProgressDeletions.delete(payload.workspacePath);
+          inProgressDeletions.delete(payload.workspaceRef);
         },
       },
     },
@@ -388,6 +392,22 @@ function createTestHarness(options?: {
   const killTerminalsCallback = options?.killTerminalsCallback ?? undefined;
   const workspaceLockHandler = options?.workspaceLockHandler ?? undefined;
 
+  /** The path of a workspace of the test projects, by its ref. */
+  const pathOfRef = async (ref: WorkspaceRef | undefined): Promise<WorkspacePath | undefined> => {
+    for (const project of await appState.getAllProjects()) {
+      for (const ws of project.workspaces) {
+        const name = ws.path.slice(ws.path.lastIndexOf("/") + 1);
+        if (makeWorkspaceRef(projectRefFor(project.path), name) === ref) return wsPath(ws.path);
+      }
+    }
+    return undefined;
+  };
+  /** The path of a test project, by its ref. */
+  const projectPathOfRef = async (ref: ProjectRef): Promise<ProjectPath | undefined> => {
+    const project = (await appState.getAllProjects()).find((p) => projectRefFor(p.path) === ref);
+    return project === undefined ? undefined : projPath(project.path);
+  };
+
   const resolveWorkspaceModule: IntentModule = {
     name: "test",
     hooks: {
@@ -395,7 +415,7 @@ function createTestHarness(options?: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const { payload } = (ctx as ResolveWorkspaceHookInput).intent;
-            const wsPath = payload.workspacePath;
+            const wsPath = payload.workspacePath ?? (await pathOfRef(payload.workspaceRef));
             if (wsPath === undefined) return { result: {} };
             // Reverse lookup: find which project owns this workspace path
             const project = appState.findProjectForWorkspace(wsPath);
@@ -431,14 +451,14 @@ function createTestHarness(options?: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectPath } = ctx as { projectPath: ProjectPath } & HookContext;
+            const { projectRef } = ctx as { projectRef: ProjectRef } & HookContext;
             const allProjects = await appState.getAllProjects();
-            const project = allProjects.find((p) => p.path === projectPath);
+            const project = allProjects.find((p) => projectRefFor(p.path) === projectRef);
             return {
               result: project
                 ? {
                     projectId: testProjectId(project.path),
-                    projectRef: projectRefFor(project.path),
+                    projectPath: projPath(project.path),
                     projectName: project.name,
                   }
                 : {},
@@ -649,7 +669,11 @@ function createTestHarness(options?: {
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceDeletedEvent).payload;
-          appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+          const projectPath = await projectPathOfRef(payload.projectRef);
+          const workspacePath = await pathOfRef(payload.workspaceRef);
+          if (projectPath !== undefined && workspacePath !== undefined) {
+            appState.unregisterWorkspace(projectPath, workspacePath);
+          }
         },
       },
     },
@@ -662,15 +686,15 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-            const { workspacePath, active } = ctx as ActivateHookInput;
+            const { workspaceRef, workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (workspacePath === null || active) {
+            if (workspaceRef === null || workspacePath === null || active) {
               return { result: {} };
             }
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspacePath, focus);
-            return { result: { resolvedPath: workspacePath } };
+            return { result: { resolvedRef: workspaceRef } };
           },
         },
       },
@@ -695,19 +719,15 @@ function createTestHarness(options?: {
         "find-candidates": {
           handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
             const allProjects = await appState.getAllProjects();
-            const candidates: Array<{
-              projectPath: ProjectPath;
-              projectName: string;
-              workspacePath: WorkspacePath;
-              workspaceName: string;
-            }> = [];
+            const candidates: WorkspaceCandidate[] = [];
             for (const project of allProjects) {
               for (const ws of project.workspaces) {
+                const workspaceName = ws.path.slice(ws.path.lastIndexOf("/") + 1);
                 candidates.push({
-                  projectPath: projPath(project.path),
+                  projectRef: projectRefFor(project.path),
                   projectName: project.name,
-                  workspacePath: wsPath(ws.path),
-                  workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
+                  workspaceRef: makeWorkspaceRef(projectRefFor(project.path), workspaceName),
+                  workspaceName,
                 });
               }
             }
@@ -729,9 +749,9 @@ function createTestHarness(options?: {
             return {
               result: {
                 workspaceRef: {
+                  ref: makeWorkspaceRef(PROJECT_REF, path.slice(path.lastIndexOf("/") + 1)),
                   projectId: PROJECT_ID,
                   workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-                  path: wsPath(path),
                 },
               },
             };
@@ -759,11 +779,11 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {
           handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
-            const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
+            const { currentRef, candidates } = ctx as unknown as SelectNextHookInput;
             // In production, scoring uses an internal status cache.
             // For these tests, all workspaces are treated as idle (score 0).
             const scorer = (): number => 0;
-            const result = selectNextWorkspace(currentPath, candidates, scorer);
+            const result = selectNextWorkspace(currentRef, candidates, scorer);
             return { result: result ? { selected: result } : {} };
           },
         },
@@ -835,12 +855,12 @@ describe("DeleteWorkspaceOperation.normalDeletion", () => {
     });
 
     // Domain event: workspace:deleted emitted with the resolved identity
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeDefined();
     expect(deleted).toMatchObject({
       projectId: PROJECT_ID,
       workspaceName: WORKSPACE_NAME,
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
     });
 
     // Progress emitted after each hook (shutdown, release, delete + final)
@@ -872,7 +892,7 @@ describe("DeleteWorkspaceOperation.forceDeletion", () => {
     });
 
     // workspace:deleted still emitted (via the finally block)
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeDefined();
 
     // Final progress should report errors
@@ -886,7 +906,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Manually mark workspace as in-progress (simulate concurrent dispatch)
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_REF);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -903,7 +923,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace as in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_REF);
 
     const forceIntent = buildDeleteIntent({ force: true });
     const result = await harness.dispatcher.dispatch(forceIntent);
@@ -925,7 +945,7 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     await harness.dispatcher.dispatch(intent);
 
     // After completion, the in-progress flag should be cleared
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // Should be able to dispatch again (e.g., for a new workspace with same path)
     // Reset state for second dispatch
@@ -943,11 +963,11 @@ describe("DeleteWorkspaceOperation.idempotency", () => {
     const harness = createTestHarness();
 
     // Mark workspace A as in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_REF);
 
     // Dispatch delete for workspace B -- should NOT be blocked
     const intentB = buildDeleteIntent({
-      workspacePath: WORKSPACE_PATH_B,
+      workspaceRef: WORKSPACE_REF_B,
     });
 
     const result = await harness.dispatcher.dispatch(intentB);
@@ -1045,7 +1065,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(detectOp!.status).toBe("error");
 
     // Idempotency reset by workspace:delete-failed event
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // Retry with blockingPids
     const retryIntent = buildDeleteIntent({ blockingPids: [5678] });
@@ -1089,11 +1109,11 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
 
     // No workspace:deleted event
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeUndefined();
 
     // Idempotency was reset by delete-failed event (allows retry)
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // Progress shows blockers
     const progressWithBlockers = harness.progressCaptures.find(
@@ -1134,13 +1154,13 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     const result1 = await harness.dispatcher.dispatch(buildDeleteIntent());
     expect(result1).toEqual({ started: true });
     expect(deleteAttempts).toBe(1);
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // Second attempt (retry with PIDs): also fails
     const result2 = await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111] }));
     expect(result2).toEqual({ started: true });
     expect(deleteAttempts).toBe(2);
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // Third attempt: succeeds
     const result3 = await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111] }));
@@ -1169,7 +1189,7 @@ describe("DeleteWorkspaceOperation.progressFormat", () => {
 
     // Every progress emission should have the correct shape
     for (const progress of harness.progressCaptures) {
-      expect(progress.workspacePath).toBe(WORKSPACE_PATH);
+      expect(progress.workspaceRef).toBe(WORKSPACE_REF);
       expect(progress.workspaceName).toBe(WORKSPACE_NAME);
       expect(progress.projectId).toBe(PROJECT_ID);
       expect(progress.keepBranch).toBe(true);
@@ -1526,12 +1546,12 @@ describe("DeleteWorkspaceOperation.deletedEvent", () => {
 
     await harness.dispatcher.dispatch(intent);
 
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeDefined();
     expect(deleted).toMatchObject({
       projectId: PROJECT_ID,
       workspaceName: WORKSPACE_NAME,
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
     });
   });
 });
@@ -1542,7 +1562,7 @@ describe("DeleteWorkspaceOperation.ipcHandler", () => {
     const harness = createTestHarness();
 
     // Simulate interceptor blocking by pre-adding to in-progress
-    harness.inProgressDeletions.add(WORKSPACE_PATH);
+    harness.inProgressDeletions.add(WORKSPACE_REF);
 
     const intent = buildDeleteIntent();
     const result = await harness.dispatcher.dispatch(intent);
@@ -1578,7 +1598,7 @@ describe("DeleteWorkspaceOperation.removeWorktree", () => {
     });
 
     // workspace:deleted event emitted
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeDefined();
   });
 
@@ -1612,7 +1632,7 @@ describe("DeleteWorkspaceOperation.removeWorktree", () => {
 
     await harness.dispatcher.dispatch(buildDeleteIntent({ removeWorktree: false }));
     await harness.dispatcher.dispatch(
-      buildDeleteIntent({ workspacePath: WORKSPACE_PATH_B, removeWorktree: true })
+      buildDeleteIntent({ workspaceRef: WORKSPACE_REF_B, removeWorktree: true })
     );
 
     expect(deleted.map((event) => event.payload.worktreeRemoved)).toEqual([false, true]);
@@ -1628,7 +1648,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     expect(result).toEqual({ started: true });
 
     // Workspace deleted event should use the resolved project id
-    const deleted = harness.deletedEvents.find((p) => p.workspacePath === WORKSPACE_PATH);
+    const deleted = harness.deletedEvents.find((p) => p.workspaceRef === WORKSPACE_REF);
     expect(deleted).toBeDefined();
     expect(deleted!.projectId).toBe(PROJECT_ID);
 
@@ -1649,9 +1669,9 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     // Worktree was removed — proves enriched context reached the delete hook
     expect(harness.testState.worktreeRemoved).toBe(true);
 
-    // Progress uses the resolved workspace path
+    // Progress names the workspace by its ref
     const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
-    expect(finalProgress.workspacePath).toBe(WORKSPACE_PATH);
+    expect(finalProgress.workspaceRef).toBe(WORKSPACE_REF);
   });
 
   it("test 21: throws when resolve hook cannot find workspace", async () => {
@@ -1664,7 +1684,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
 
     // Resolve hook returns empty -> shared resolve operation throws
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      `Workspace not found: ${testPath("/test/project/workspaces/feature-a").toString()}`
+      `Workspace not found: ${WORKSPACE_REF}`
     );
   });
 
@@ -1675,7 +1695,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        workspacePath: WORKSPACE_PATH,
+        workspaceRef: WORKSPACE_REF,
         keepBranch: true,
         force: false,
         removeWorktree: true,
@@ -1692,9 +1712,9 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
       workspacePath: WORKSPACE_PATH,
     });
 
-    // Progress used resolved paths
+    // Progress names the workspace by its ref
     const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
-    expect(finalProgress.workspacePath).toBe(WORKSPACE_PATH);
+    expect(finalProgress.workspaceRef).toBe(WORKSPACE_REF);
   });
 
   it("test 28: throws when resolve hooks return nothing for unknown workspace path", async () => {
@@ -1706,7 +1726,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        workspacePath: wsPath("/unknown/workspace"),
+        workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/unknown")), "workspace"),
         keepBranch: true,
         force: false,
         removeWorktree: true,
@@ -1715,7 +1735,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
 
     // Normal mode: shared resolve operation should throw when workspace not found
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      `Workspace not found: ${testPath("/unknown/workspace").toString()}`
+      `Workspace not found: ${makeWorkspaceRef(projectRefFor(projPath("/unknown")), "workspace")}`
     );
   });
 });
@@ -1824,7 +1844,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
     expect(progressWithBlockers!.hasErrors).toBe(true);
 
     // delete-failed emitted (resets idempotency for retry)
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // workspace:deleted NOT emitted (workspace still exists)
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
@@ -1879,7 +1899,7 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
 
     // delete-failed emitted (resets idempotency)
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
 
     // No progress events emitted (the gate runs before any progress)
     expect(harness.progressCaptures).toHaveLength(0);
@@ -2061,7 +2081,7 @@ describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
     // delete-failed reset the per-key guard: the workspace can be
     // delete-requested again.
-    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+    expect(harness.inProgressDeletions.has(WORKSPACE_REF)).toBe(false);
   });
 
   it("after a cancel the same workspace can be removed again", async () => {

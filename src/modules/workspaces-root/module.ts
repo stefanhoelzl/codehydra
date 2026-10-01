@@ -58,12 +58,7 @@ import { notify } from "../presentation/notification-card";
 import type { SettingsExtraRow } from "../settings-module";
 import { loadAllProjects } from "../local-project-module";
 import { Path } from "../../utils/path/path";
-import {
-  createWorkspacesRoot,
-  remotesDirUnder,
-  type ProjectMoveListener,
-  type WorkspacesRoot,
-} from "./workspaces-root";
+import { createWorkspacesRoot, remotesDirUnder, type WorkspacesRoot } from "./workspaces-root";
 import {
   MigrationProgress,
   migrateWorkspacesRoot,
@@ -71,6 +66,7 @@ import {
   type MigrationReport,
 } from "./migrate";
 import { convertMigrationAdoptions, type ConvertAdoptionsDeps } from "./convert-adoptions";
+import type { WorkspaceRef } from "../../intents/contract";
 
 export const ROOT_STATE_KEY = "paths.workspaces";
 export const PENDING_ROOT_STATE_KEY = "paths.workspaces-pending";
@@ -110,8 +106,6 @@ export interface WorkspacesRootModuleDeps {
   /** Restarts the app once a migration is requested. */
   readonly app: Pick<AppBoundary, "relaunch">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
-  /** Owners of path-keyed state; read when a migration runs (they are built later). */
-  readonly moveListeners: () => readonly ProjectMoveListener[];
   readonly logger: Logger;
 }
 
@@ -210,8 +204,8 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
   // Agent activity, for the confirmation
   // ---------------------------------------------------------------------------
 
-  /** Names of the workspaces whose agents are working, by workspace path. */
-  const busy = new Map<string, string>();
+  /** Names of the workspaces whose agents are working, by workspace ref. */
+  const busy = new Map<WorkspaceRef, string>();
 
   // ---------------------------------------------------------------------------
   // Checks on the new folder
@@ -581,7 +575,6 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     if (result.leftovers.length > 0) {
       lines.push(`Old clones that could not be deleted: ${result.leftovers.join(", ")}`);
     }
-    lines.push(...result.warnings);
     if (lines.length === 0) return;
     notify(deps.dispatcher, {
       type: "warning",
@@ -657,7 +650,6 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
                 gitClient: deps.gitClient,
                 projectsDir,
                 screenshotsDir: pathProvider.dataPath("screenshots"),
-                moveListeners: deps.moveListeners(),
                 commit: (left) => commitMigration(to, left),
                 logger,
               },
@@ -707,15 +699,15 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
         handler: async (event: DomainEvent): Promise<void> => {
           const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
           if (status.status === "busy" || status.status === "mixed") {
-            busy.set(workspace.path, workspace.name);
+            busy.set(workspace.ref, workspace.name);
           } else {
-            busy.delete(workspace.path);
+            busy.delete(workspace.ref);
           }
         },
       },
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          busy.delete((event as WorkspaceDeletedEvent).payload.workspacePath);
+          busy.delete((event as WorkspaceDeletedEvent).payload.workspaceRef);
         },
       },
     },

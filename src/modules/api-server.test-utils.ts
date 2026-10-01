@@ -57,7 +57,12 @@ import {
 } from "../intents/vscode-show-message";
 import type { ShowHookInput } from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import type { WorkspacePath } from "../intents/contract";
+import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, parseWorkspaceRef, projectRefFor } from "../utils/ref";
+import { Path } from "../utils/path/path";
+import type { LogScopeStore } from "../boundaries/platform/logging-types";
+import type { Intent } from "../intents/lib/types";
+import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 
 // ============================================================================
 // Mock Socket Types
@@ -183,6 +188,36 @@ export function createMockCommandHandler(
   });
 }
 
+/** Server options as the module takes them: the harness keeps `logScope` for its dispatcher. */
+function withoutLogScope(
+  options: (ApiServerOptions & { readonly logScope?: LogScopeStore }) | undefined
+): ApiServerOptions {
+  if (options === undefined) return {};
+  const { logScope: _logScope, ...rest } = options;
+  return rest;
+}
+
+// ============================================================================
+// Workspace refs
+// ============================================================================
+
+/**
+ * The ref a test workspace goes by: a checkout project at its parent directory,
+ * named after its own. Every helper here takes a workspace's path and names it
+ * to the server by this ref, so tests keep speaking in paths.
+ */
+export function testWorkspaceRef(workspacePath: string): WorkspaceRef {
+  const path = new Path(workspacePath);
+  return makeWorkspaceRef(projectRefFor(path.dirname.toString()), path.basename);
+}
+
+/** The path a ref made by {@link testWorkspaceRef} stands for. */
+function testWorkspacePath(workspaceRef: WorkspaceRef): WorkspacePath {
+  const parts = parseWorkspaceRef(workspaceRef);
+  if (parts === null) throw new Error(`Not a workspace ref: ${workspaceRef}`);
+  return workspacePathSchema.parse(new Path(parts.project, parts.name).toString());
+}
+
 // ============================================================================
 // Mock Dispatcher
 // ============================================================================
@@ -257,6 +292,7 @@ function createMinimalFinalizeOperation(): Operation<typeof finalizeSchemas> & {
       });
       const { errors } = await ctx.hooks.collect("finalize", {
         intent: ctx.intent,
+        workspaceRef: testWorkspaceRef("/test/workspace"),
         workspacePath: "/test/workspace",
         envVars: {},
         agentType: "opencode" as const,
@@ -286,7 +322,8 @@ class MinimalCommandOperation implements Operation<typeof commandSchemas> {
     const payload = ctx.intent.payload as VscodeCommandIntent["payload"];
     const executeCtx: ExecuteHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath: testWorkspacePath(payload.workspaceRef),
     };
     const { results, errors } = await ctx.hooks.collect("execute", executeCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -317,7 +354,8 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
     const payload = ctx.intent.payload as VscodeShowMessageIntent["payload"];
     const showCtx: ShowHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath: testWorkspacePath(payload.workspaceRef),
     };
     const { results, errors } = await ctx.hooks.collect("show", showCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -346,7 +384,7 @@ class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas
  * - setWorkspaceConfig: dispatches workspace:open finalize
  */
 export async function createApiServerEnv(
-  options?: ApiServerOptions,
+  options?: ApiServerOptions & { readonly logScope?: LogScopeStore },
   extra?: { registry?: OperationRegistry; cliToken?: string | null }
 ) {
   const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
@@ -357,8 +395,41 @@ export async function createApiServerEnv(
   const subscribers = new Map<string, Set<(event: DomainEvent) => void>>();
   /** Every origin a connection tagged its packets' work with, in order. */
   const origins: DispatchOptions[] = [];
+  /**
+   * The workspaces clients have connected for. The server looks a sidekick's
+   * folder up in `project:list`, which is answered from these rather than by
+   * `mockDispatch`, so what tests assert on stays what they caused.
+   */
+  const known = new Set<string>();
+  /** What `setProjects` put in place of the listing built from `known`. */
+  let projects: readonly unknown[] | undefined;
+  const listing = (): readonly unknown[] => {
+    if (projects !== undefined) return projects;
+    const byProject = new Map<string, string[]>();
+    for (const path of known) {
+      const dir = new Path(path).dirname.toString();
+      byProject.set(dir, [...(byProject.get(dir) ?? []), path]);
+    }
+    return [...byProject].map(([dir, paths]) => ({
+      ref: projectRefFor(dir),
+      name: new Path(dir).basename,
+      path: dir,
+      workspaces: paths.map((path) => ({
+        ref: testWorkspaceRef(path),
+        name: new Path(path).basename,
+        path,
+      })),
+    }));
+  };
   const mockDispatcher = {
-    dispatch: mockDispatch,
+    dispatch: (...args: [Intent, DispatchOptions?]) => {
+      // Forwarded as called, so assertions on `mockDispatch` see the same arguments.
+      if (args[0].type !== INTENT_LIST_PROJECTS) return mockDispatch(...args);
+      const handle = new IntentHandle();
+      handle.signalAccepted(true);
+      handle.resolve(listing());
+      return handle;
+    },
     withOrigin: <T>(options: DispatchOptions, fn: () => T): T => {
       origins.push(options);
       return fn();
@@ -380,17 +451,18 @@ export async function createApiServerEnv(
     ...(extra?.cliToken !== undefined && { cliToken: () => extra.cliToken ?? null }),
     options: {
       transports: ["polling"],
-      ...options,
+      ...withoutLogScope(options),
     },
   };
 
   const apiServer = createApiServerModule(moduleDeps);
   const { module } = apiServer;
+  const logScope = options?.logScope;
 
   // Wire up a real dispatcher to drive the module through hooks
   const testDispatcher = new Dispatcher({
     logger: createMockLogger(),
-    ...(options?.logScope !== undefined && { logScope: options.logScope }),
+    ...(logScope !== undefined && { logScope }),
   });
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(new MinimalStartOperation());
@@ -424,9 +496,18 @@ export async function createApiServerEnv(
     apiServer,
 
     createClient(workspacePath: WorkspacePath): TestClientSocket {
+      known.add(new Path(workspacePath).toString());
       const client = createTestClient(this.port, { workspacePath });
       clients.push(client);
       return client;
+    },
+
+    /**
+     * Answer the server's `project:list` with these projects from now on,
+     * instead of the ones the connected clients' folders make up.
+     */
+    setProjects(listed: readonly unknown[]): void {
+      projects = listed;
     },
 
     /** Fire a domain event at whatever the module subscribed with. */
@@ -456,6 +537,7 @@ export async function createApiServerEnv(
     ): Promise<void> {
       // Update the mutable hook input for the finalize operation
       finalizeOp.hookInput = {
+        workspaceRef: testWorkspaceRef(workspacePath),
         workspacePath,
         envVars: env,
         workspaceEnv,
@@ -465,7 +547,7 @@ export async function createApiServerEnv(
       await testDispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectPath: "/test/project",
+          projectRef: projectRefFor("/test/project"),
           workspaceName: "test",
           base: "main",
           ...(resetWorkspace
@@ -492,7 +574,7 @@ export async function createApiServerEnv(
     ): Promise<unknown> {
       return testDispatcher.dispatch<VscodeCommandIntent>({
         type: INTENT_VSCODE_COMMAND,
-        payload: { workspacePath, command, args },
+        payload: { workspaceRef: testWorkspaceRef(workspacePath), command, args },
       });
     },
 
@@ -507,7 +589,7 @@ export async function createApiServerEnv(
       const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath,
+          workspaceRef: testWorkspaceRef(workspacePath),
           type: request.severity as VscodeShowMessageType,
           message: request.message,
           options: request.actions,
@@ -527,7 +609,7 @@ export async function createApiServerEnv(
       const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath,
+          workspaceRef: testWorkspaceRef(workspacePath),
           type: "status" as VscodeShowMessageType,
           message: request.text,
           hint: request.tooltip,
@@ -543,7 +625,7 @@ export async function createApiServerEnv(
       const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath,
+          workspaceRef: testWorkspaceRef(workspacePath),
           type: "status" as VscodeShowMessageType,
           message: null,
         },
@@ -566,7 +648,7 @@ export async function createApiServerEnv(
       const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath,
+          workspaceRef: testWorkspaceRef(workspacePath),
           type: "select" as VscodeShowMessageType,
           message: null,
           hint: request.placeholder,
@@ -588,7 +670,7 @@ export async function createApiServerEnv(
       const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
-          workspacePath,
+          workspaceRef: testWorkspaceRef(workspacePath),
           type: "select" as VscodeShowMessageType,
           message: request.prompt ?? null,
           hint: request.placeholder,

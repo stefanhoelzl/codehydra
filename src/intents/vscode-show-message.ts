@@ -5,7 +5,7 @@
  * a single intent with a `type` discriminator.
  *
  * Runs two steps:
- * 1. Dispatch workspace:resolve to validate workspacePath
+ * 1. Dispatch workspace:resolve to turn workspaceRef into the workspace
  * 2. "show" hook — handler performs the actual VS Code UI call
  *
  * No provider dependencies - hook handlers do the actual work.
@@ -21,7 +21,7 @@ import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined } from "./lib/hook-helpers";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 
 export const INTENT_VSCODE_SHOW_MESSAGE = "vscode:show-message" as const;
 export const VSCODE_SHOW_MESSAGE_OPERATION_ID = "vscode-show-message";
@@ -34,7 +34,7 @@ export const vscodeShowMessageTypeSchema = z.enum(["info", "warning", "error", "
 
 export const vscodeShowMessagePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     type: vscodeShowMessageTypeSchema,
     /** Display text. null = dismiss (only valid for status). */
     message: z.string().nullable(),
@@ -57,7 +57,7 @@ export const showHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "show" hook point (beyond the base HookContext). */
-const showEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const showEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for "show". */
 export const showHookInputSchema = hookCtxSchema(
@@ -100,7 +100,7 @@ export class VscodeShowMessageOperation extends WorkspaceHookOperation<typeof sc
   constructor() {
     super(VSCODE_SHOW_MESSAGE_OPERATION_ID, {
       hookPoint: "show",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "vscode-show-message show hooks failed",
       extract: (results) => lastDefined(results, (r) => r.result) ?? null,
     });

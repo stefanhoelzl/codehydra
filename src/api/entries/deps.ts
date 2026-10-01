@@ -9,7 +9,7 @@
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { AppBoundary } from "../../boundaries/shell/app";
 import type { DeletionProgress } from "../../shared/api/types";
-import type { ProjectPath, WorkspacePath } from "../../intents/contract";
+import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import type { OperationRegistry } from "../registry";
 import type { Config } from "../../boundaries/platform/config";
 
@@ -24,7 +24,7 @@ export interface LockKey {
   /** `[A-Za-z0-9-_]+` — free-form, created on first take. */
   readonly name: string;
   /** The owning project for a project-scoped lock; null for a global one. */
-  readonly project: ProjectPath | null;
+  readonly project: ProjectRef | null;
 }
 
 export interface LockTakeOptions {
@@ -57,13 +57,13 @@ export interface LockTakeResult {
 /** One lock as it stands right now. Locks exist only while held. */
 export interface LockSnapshot {
   readonly name: string;
-  readonly project: ProjectPath | null;
-  readonly holder: WorkspacePath;
+  readonly project: ProjectRef | null;
+  readonly holder: WorkspaceRef;
   readonly reason?: string;
   /** Epoch milliseconds. */
   readonly acquiredAt: number;
   /** Queued workspaces, in the order they will be granted. */
-  readonly waiting: readonly WorkspacePath[];
+  readonly waiting: readonly WorkspaceRef[];
 }
 
 /**
@@ -79,9 +79,9 @@ export interface Locks {
    * (FIFO, granted atomically on release). Rejects with `conflict` when held and
    * `wait` is false.
    */
-  take(workspace: WorkspacePath, key: LockKey, options: LockTakeOptions): Promise<LockTakeResult>;
+  take(workspace: WorkspaceRef, key: LockKey, options: LockTakeOptions): Promise<LockTakeResult>;
   /** Release a lock the workspace holds. Throws `not-found` when it does not hold it. */
-  release(workspace: WorkspacePath, key: LockKey): void;
+  release(workspace: WorkspaceRef, key: LockKey): void;
   list(): readonly LockSnapshot[];
 }
 
@@ -118,8 +118,12 @@ export interface PluginError {
 
 /** Where a caller stands, for the workspace half of the plugin list. */
 export interface PluginScope {
-  readonly workspacePath: string | null;
-  readonly projectPath: string | null;
+  /** The caller's workspace, resolved: where its repository's plugins are read from. */
+  readonly workspace: {
+    readonly workspacePath: string;
+    readonly projectRef: ProjectRef;
+    readonly projectPath: string;
+  } | null;
 }
 
 /** The plugins, owned by the plugin module. */
@@ -154,7 +158,7 @@ export interface EntryDeps {
    * state after `await handle` races the emit. Returns a promise for the
    * terminal progress plus a cleanup to drop the waiter.
    */
-  readonly awaitDeletion: (workspacePath: WorkspacePath) => {
+  readonly awaitDeletion: (workspaceRef: WorkspaceRef) => {
     readonly outcome: Promise<DeletionProgress>;
     readonly release: () => void;
   };

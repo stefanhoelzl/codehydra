@@ -16,14 +16,16 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import { createMockLogger } from "../boundaries/platform/logging";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "../intents/contract";
 
-const WS = "/projects/app/.worktrees/ios";
+const WS = makeWorkspaceRef(projectRefFor("/projects/app"), "ios");
 
 function createSetup(options?: { mounted?: boolean }) {
-  const connectListeners = new Set<(workspacePath: string) => void>();
+  const connectListeners = new Set<(workspaceRef: WorkspaceRef) => void>();
   const disconnectListeners = new Set<(disconnect: WorkspaceDisconnect) => void>();
   const transport = {
-    onWorkspaceConnected(listener: (workspacePath: string) => void): () => void {
+    onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void {
       connectListeners.add(listener);
       return () => connectListeners.delete(listener);
     },
@@ -32,7 +34,9 @@ function createSetup(options?: { mounted?: boolean }) {
       return () => disconnectListeners.delete(listener);
     },
   };
-  const reloadFrame = vi.fn<(workspacePath: string) => boolean>(() => options?.mounted ?? true);
+  const reloadFrame = vi.fn<(workspaceRef: WorkspaceRef) => boolean>(
+    () => options?.mounted ?? true
+  );
   const logger = createMockLogger();
   const module = createFrameWatchdogModule({ transport, frames: { reloadFrame }, logger });
 
@@ -40,16 +44,16 @@ function createSetup(options?: { mounted?: boolean }) {
     module,
     reloadFrame,
     logger,
-    connect(workspacePath = WS): void {
-      for (const listener of [...connectListeners]) listener(workspacePath);
+    connect(workspaceRef = WS): void {
+      for (const listener of [...connectListeners]) listener(workspaceRef);
     },
     disconnect(
       reason = "client namespace disconnect",
       initiatedByUs = false,
-      workspacePath = WS
+      workspaceRef = WS
     ): void {
       for (const listener of [...disconnectListeners]) {
-        listener({ workspacePath, reason, initiatedByUs });
+        listener({ workspaceRef, reason, initiatedByUs });
       }
     },
     listenerCount: (): number => connectListeners.size + disconnectListeners.size,
@@ -79,7 +83,7 @@ describe("FrameWatchdogModule", () => {
     expect(reloadFrame).toHaveBeenCalledExactlyOnceWith(WS);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("reloaded its frame"),
-      expect.objectContaining({ "scope.path": WS, reason: "client namespace disconnect" })
+      expect.objectContaining({ "scope.workspace": WS, reason: "client namespace disconnect" })
     );
   });
 
@@ -124,7 +128,7 @@ describe("FrameWatchdogModule", () => {
     expect(reloadFrame).toHaveBeenCalledTimes(1);
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("still disconnected after reloading"),
-      expect.objectContaining({ "scope.path": WS })
+      expect.objectContaining({ "scope.workspace": WS })
     );
   });
 
@@ -138,7 +142,7 @@ describe("FrameWatchdogModule", () => {
 
     expect(logger.info).toHaveBeenCalledWith(
       expect.stringContaining("reconnected after its frame was reloaded"),
-      expect.objectContaining({ "scope.path": WS })
+      expect.objectContaining({ "scope.workspace": WS })
     );
     expect(logger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining("still disconnected"),
@@ -157,7 +161,7 @@ describe("FrameWatchdogModule", () => {
   });
 
   it("tracks workspaces independently", () => {
-    const other = "/projects/app/.worktrees/android";
+    const other = makeWorkspaceRef(projectRefFor("/projects/app"), "android");
     const { reloadFrame, disconnect, connect } = createSetup();
 
     disconnect("client namespace disconnect", false, WS);

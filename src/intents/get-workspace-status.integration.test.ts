@@ -32,8 +32,9 @@ import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { Path } from "../utils/path/path";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "./contract";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "./contract";
 
 // =============================================================================
 // Test Constants
@@ -41,6 +42,7 @@ import type { WorkspacePath } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -127,10 +129,10 @@ function createTestSetup(opts: {
 // Helpers
 // =============================================================================
 
-function statusIntent(workspacePath: WorkspacePath): GetWorkspaceStatusIntent {
+function statusIntent(workspaceRef: WorkspaceRef): GetWorkspaceStatusIntent {
   return {
     type: INTENT_GET_WORKSPACE_STATUS,
-    payload: { workspacePath },
+    payload: { workspaceRef },
   };
 }
 
@@ -154,7 +156,7 @@ describe("GetWorkspaceStatus Operation", () => {
     it("returns combined dirty + agent status", async () => {
       const { dispatcher } = setup;
 
-      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_REF))) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(true);
       expect(result.agent).toEqual({
@@ -172,7 +174,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await cleanSetup.dispatcher.dispatch(
-        statusIntent(WORKSPACE_PATH)
+        statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -193,7 +195,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(WORKSPACE_PATH)
+        statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(true);
@@ -209,7 +211,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(WORKSPACE_PATH)
+        statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -246,7 +248,7 @@ describe("GetWorkspaceStatus Operation", () => {
 
       dispatcher.registerModule(unmergedModule);
 
-      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_REF))) as WorkspaceStatus;
 
       expect(result.unmergedCommits).toBe(3);
     });
@@ -260,7 +262,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(WORKSPACE_PATH)
+        statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
       expect(result.unmergedCommits).toBe(0);
@@ -275,7 +277,7 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const result = (await setup.dispatcher.dispatch(
-        statusIntent(WORKSPACE_PATH)
+        statusIntent(WORKSPACE_REF)
       )) as WorkspaceStatus;
 
       expect(result.isDirty).toBe(false);
@@ -291,13 +293,13 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const error = await setup.dispatcher
-        .dispatch(statusIntent(wsPath("/nonexistent/path")))
+        .dispatch(statusIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")))
         .then(() => expect.unreachable("should have thrown"))
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(
-        `Workspace not found: ${testPath("/nonexistent/path").toString()}`
+        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
       );
     });
   });
@@ -319,7 +321,7 @@ describe("GetWorkspaceStatus Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(statusIntent(WORKSPACE_PATH));
+      const result = await setup.dispatcher.dispatch(statusIntent(WORKSPACE_REF));
 
       expect(result).toBeUndefined();
     });

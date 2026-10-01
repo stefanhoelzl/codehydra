@@ -41,7 +41,6 @@ import type {
   WorkspaceName,
   WorkspaceLocator,
 } from "../../shared/api/types";
-import type { WorkspacePath } from "../../shared/ipc";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import type { ShowUIHookResult } from "../../intents/app-start";
@@ -102,6 +101,7 @@ import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = projPath("/projects/alpha");
+const PROJECT_REF = projectRefFor(PROJECT_PATH);
 // Local copies of the sidebar-width default/floor (the source constants are no
 // longer exported; the tests only need values that match main.ts's inlined
 // 250, which is stable).
@@ -295,8 +295,8 @@ async function openProject(module: IntentModule, project: Project): Promise<void
     await emit(module, EVENT_WORKSPACE_CREATED, {
       projectId: project.id,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      projectPath: project.path,
+      workspaceRef: workspace.ref,
+      projectRef: project.ref,
       branch: workspace.branch,
       metadata: workspace.metadata,
       workspaceUrl: workspace.url,
@@ -311,9 +311,10 @@ function switchedPayload(workspace: Workspace): unknown {
   return {
     projectId: PROJECT_ID,
     projectName: "alpha",
-    projectPath: PROJECT_PATH,
+    projectRef: PROJECT_REF,
     workspaceName: workspace.name,
-    path: workspace.path,
+    workspaceRef: workspace.ref,
+    metadata: workspace.metadata,
   };
 }
 
@@ -604,7 +605,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     void emit(module, EVENT_METADATA_CHANGED, {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
       key: "tags.x",
       value: "{}",
     });
@@ -631,7 +632,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       base: "main",
     });
     await flush();
@@ -667,14 +668,14 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     await emit(module, EVENT_WORKSPACE_CREATED, {
       projectId: PROJECT_ID,
       workspaceName: "feat" as WorkspaceName,
-      workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
-      projectPath: PROJECT_PATH,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "feat"),
+      projectRef: PROJECT_REF,
       branch: "feat",
       metadata: { base: "main" },
       workspaceUrl: "http://127.0.0.1:1/feat",
@@ -706,7 +707,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "agent-made",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       stealFocus: false,
     });
     await flush();
@@ -733,7 +734,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await openProject(module, makeProject([existing]));
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "deps",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
@@ -755,15 +756,15 @@ describe("PresentationModule - ui:state snapshots", () => {
     await openProject(module, makeProject([existing]));
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "deps",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(existing));
 
     await emit(module, EVENT_WORKSPACE_CREATED, {
       projectId: PROJECT_ID,
       workspaceName: "deps" as WorkspaceName,
-      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
-      projectPath: PROJECT_PATH,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "deps"),
+      projectRef: PROJECT_REF,
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
@@ -788,8 +789,8 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_WORKSPACE_CREATED, {
       projectId: PROJECT_ID,
       workspaceName: "deps" as WorkspaceName,
-      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
-      projectPath: PROJECT_PATH,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "deps"),
+      projectRef: PROJECT_REF,
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
@@ -806,7 +807,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
     await flush();
 
@@ -819,12 +820,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     await emit(module, EVENT_WORKSPACE_CREATE_FAILED, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       error: "boom",
     });
     await flush();
@@ -841,7 +842,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
     const progressBase = {
-      workspacePath: workspace.path as WorkspacePath,
+      workspaceRef: workspace.ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
       keepBranch: false,
@@ -867,8 +868,8 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_WORKSPACE_DELETED, {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      projectPath: PROJECT_PATH,
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
     });
     await flush();
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces).toEqual([]);
@@ -885,7 +886,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).frames).toEqual({ [frameKey]: "http://127.0.0.1:1/feat" });
 
     const progressBase = {
-      workspacePath: workspace.path as WorkspacePath,
+      workspaceRef: workspace.ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
       keepBranch: false,
@@ -911,14 +912,14 @@ describe("PresentationModule - ui:state snapshots", () => {
       intent: {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: workspace.path as WorkspacePath,
+          workspaceRef: workspace.ref,
           keepBranch: false,
           force: false,
           removeWorktree: true,
         },
       },
-      projectPath: PROJECT_PATH,
-      workspacePath: workspace.path as WorkspacePath,
+      projectRef: PROJECT_REF,
+      workspaceRef: workspace.ref,
       workspaceName: workspace.name,
       active: false,
     } as never);
@@ -950,12 +951,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     const module = await startModule(deps);
     const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    const path = workspace.path as WorkspacePath;
+    const ref = workspace.ref;
 
-    expect(module.deletionProgress(path)).toBeUndefined();
+    expect(module.deletionProgress(ref)).toBeUndefined();
 
     await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
-      workspacePath: path,
+      workspaceRef: ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
       keepBranch: true,
@@ -975,7 +976,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await flush();
 
     // Accessor exposes the FULL domain progress (pids, keepBranch) for the modal.
-    const full = module.deletionProgress(path);
+    const full = module.deletionProgress(ref);
     expect(full?.keepBranch).toBe(true);
     expect(full?.blockingProcesses?.[0]?.pid).toBe(4242);
 
@@ -990,7 +991,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     // Cleared on successful completion.
     await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
-      workspacePath: path,
+      workspaceRef: ref,
       workspaceName: workspace.name,
       projectId: PROJECT_ID,
       keepBranch: true,
@@ -999,7 +1000,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       hasErrors: false,
     });
     await flush();
-    expect(module.deletionProgress(path)).toBeUndefined();
+    expect(module.deletionProgress(ref)).toBeUndefined();
   });
 
   it("agent status updates land inline on the row", async () => {
@@ -1010,7 +1011,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     await emit(module, EVENT_AGENT_STATUS_UPDATED, {
       workspace: {
-        path: workspace.path,
+        ref: workspace.ref,
         projectId: PROJECT_ID,
         name: workspace.name,
         active: false,
@@ -1036,7 +1037,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_METADATA_CHANGED, {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
       key: "hibernated",
       value: "true",
     });
@@ -1084,7 +1085,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       emit(module, EVENT_METADATA_CHANGED, {
         projectId: PROJECT_ID,
         workspaceName: workspace.name,
-        workspacePath: workspace.path,
+        workspaceRef: workspace.ref,
         key,
         value,
       });
@@ -1114,7 +1115,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       emit(module, EVENT_METADATA_CHANGED, {
         projectId: PROJECT_ID,
         workspaceName: workspace.name,
-        workspacePath: workspace.path,
+        workspaceRef: workspace.ref,
         key,
         value,
       });
@@ -1150,7 +1151,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       emit(module, EVENT_METADATA_CHANGED, {
         projectId: PROJECT_ID,
         workspaceName: workspace.name,
-        workspacePath: workspace.path,
+        workspaceRef: workspace.ref,
         key: "title",
         value,
       });
@@ -1176,7 +1177,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_METADATA_CHANGED, {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
       key: "some-plugin-key",
       value: "whatever",
     });
@@ -1220,7 +1221,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const module = await startModule(deps);
     const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    active = { projectId: PROJECT_ID, workspaceName: workspace.name, path: workspace.path };
+    active = { projectId: PROJECT_ID, workspaceName: workspace.name, ref: workspace.ref };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
@@ -1241,8 +1242,9 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspaceA]) });
 
     const otherId = "beta-87654321" as ProjectId;
+    const betaRef = projectRefFor(projPath("/projects/beta"));
     const workspaceB: Workspace = {
-      ref: makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "b"),
+      ref: makeWorkspaceRef(betaRef, "b"),
       projectId: otherId,
       name: "b" as WorkspaceName,
       branch: "b",
@@ -1252,6 +1254,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     };
     await emit(module, EVENT_PROJECT_OPENED, {
       project: {
+        ref: betaRef,
         id: otherId,
         name: "beta",
         path: testPath("/projects/beta").toNative(),
@@ -1261,14 +1264,15 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, {
       projectId: otherId,
       projectName: "beta",
-      projectPath: testPath("/projects/beta").toNative(),
+      projectRef: betaRef,
       workspaceName: workspaceB.name,
-      path: workspaceB.path,
+      workspaceRef: workspaceB.ref,
+      metadata: {},
     });
 
     await emit(module, EVENT_PROJECT_CLOSED, {
       projectId: otherId,
-      projectPath: testPath("/projects/beta").toNative(),
+      projectRef: betaRef,
     });
     await flush();
 
@@ -1507,7 +1511,7 @@ describe("PresentationModule - ui:event routing", () => {
       {
         type: "workspace:delete",
         payload: {
-          workspacePath: workspace.path,
+          workspaceRef: workspace.ref,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -1542,7 +1546,7 @@ describe("PresentationModule - ui:event routing", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     emitUiEvent(deps, {
@@ -1566,7 +1570,7 @@ describe("PresentationModule - ui:event routing", () => {
     });
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: workspace.path } },
+      { type: "workspace:switch", payload: { workspaceRef: workspace.ref } },
     ]);
   });
 
@@ -1577,7 +1581,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, { kind: "switch-workspace", key: null });
 
-    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspacePath: null } }]);
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: null } }]);
   });
 
   it("drops switch-workspace for a stale key with a warning", async () => {
@@ -1611,7 +1615,7 @@ describe("PresentationModule - ui:event routing", () => {
     });
 
     expect(dispatched).toEqual([
-      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+      { type: "workspace:wake", payload: { workspaceRef: workspace.ref, source: "ui-ipc" } },
     ]);
   });
 
@@ -1646,7 +1650,7 @@ describe("PresentationModule - ui:event routing", () => {
     });
 
     expect(dispatched).toEqual([
-      { type: "workspace:hibernate", payload: { workspacePath: workspace.path } },
+      { type: "workspace:hibernate", payload: { workspaceRef: workspace.ref } },
     ]);
   });
 
@@ -1682,7 +1686,7 @@ describe("PresentationModule - ui:event routing", () => {
     expect(dispatched).toEqual([
       {
         type: "project:close",
-        payload: { projectPath: PROJECT_PATH, interactive: true },
+        payload: { projectRef: PROJECT_REF, interactive: true },
       },
     ]);
   });
@@ -2003,13 +2007,15 @@ describe("PresentationModule - close confirm", () => {
     connect(deps);
     void emit(module, EVENT_APP_STARTED, {});
     const workspaces = Array.from({ length: input.workspaceCount ?? 2 }, (_, i) => ({
-      path: `${PROJECT_PATH}/.worktrees/ws${i + 1}`,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, `ws${i + 1}`),
+      workspacePath: `${PROJECT_PATH}/.worktrees/ws${i + 1}`,
     }));
     const hookInput = {
       intent: {
         type: "project:close",
-        payload: { projectPath: PROJECT_PATH, interactive: true },
+        payload: { projectRef: PROJECT_REF, interactive: true },
       },
+      projectRef: PROJECT_REF,
       projectPath: PROJECT_PATH,
       ...(input.remoteUrl !== undefined && { remoteUrl: input.remoteUrl }),
       workspaces,
@@ -2341,8 +2347,8 @@ describe("PresentationModule - hibernation capture hooks", () => {
   function captureInput(active: boolean): HibernatePipelineHookInput {
     return {
       intent: { type: "workspace:hibernate", payload: {} },
-      projectPath: PROJECT_PATH,
-      workspacePath: `${PROJECT_PATH}/.worktrees/main`,
+      projectRef: PROJECT_REF,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "main"),
       projectId: PROJECT_ID,
       workspaceName: "main" as WorkspaceName,
       active,
@@ -2437,7 +2443,7 @@ describe("PresentationModule - shortcut navigation", () => {
     return emit(module, EVENT_SHORTCUT_KEY_PRESSED, { key: k });
   }
 
-  const pathOf = (name: string): string => `${PROJECT_PATH}/.worktrees/${name}`;
+  const refOf = (name: string): string => makeWorkspaceRef(PROJECT_REF, name);
 
   async function withWorkspaces(
     deps: Deps,
@@ -2462,7 +2468,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "up");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: pathOf("a"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("a"), focus: false } },
     ]);
   });
 
@@ -2474,7 +2480,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "down");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("c"), focus: false } },
     ]);
   });
 
@@ -2487,8 +2493,8 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "down");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
-      { type: "workspace:switch", payload: { workspacePath: pathOf("a"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("c"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("a"), focus: false } },
     ]);
   });
 
@@ -2498,7 +2504,7 @@ describe("PresentationModule - shortcut navigation", () => {
     // "b" sorts between them and has no path yet — nothing to switch to.
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "b",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       stealFocus: false,
     });
     const dispatched = recordDispatches(deps);
@@ -2506,7 +2512,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "down");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("c"), focus: false } },
     ]);
   });
 
@@ -2518,7 +2524,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "2");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: pathOf("b"), focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: refOf("b"), focus: false } },
     ]);
   });
 
@@ -2542,7 +2548,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
     // Mark c idle; b is hibernated (skipped) and would otherwise be the next.
     await emit(module, EVENT_AGENT_STATUS_UPDATED, {
-      workspace: { path: c.path, projectId: PROJECT_ID, name: c.name, active: false },
+      workspace: { ref: c.ref, projectId: PROJECT_ID, name: c.name, active: false },
       status: { status: "idle", counts: { idle: 1, busy: 0 } },
     });
     const dispatched = recordDispatches(deps);
@@ -2550,7 +2556,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "right");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: c.path, focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: c.ref, focus: false } },
     ]);
   });
 
@@ -2564,21 +2570,21 @@ describe("PresentationModule - shortcut navigation", () => {
 
     await key(module, "h");
     expect(dispatched).toEqual([
-      { type: "workspace:hibernate", payload: { workspacePath: awake.path } },
+      { type: "workspace:hibernate", payload: { workspaceRef: awake.ref } },
     ]);
 
     // Flip to hibernated, then h again → wake.
     await emit(module, EVENT_METADATA_CHANGED, {
       projectId: PROJECT_ID,
       workspaceName: awake.name,
-      workspacePath: awake.path,
+      workspaceRef: awake.ref,
       key: "hibernated",
       value: "true",
     });
     dispatched.length = 0;
     await key(module, "h");
     expect(dispatched).toEqual([
-      { type: "workspace:wake", payload: { workspacePath: awake.path, source: "ui-ipc" } },
+      { type: "workspace:wake", payload: { workspaceRef: awake.ref, source: "ui-ipc" } },
     ]);
   });
 
@@ -2633,7 +2639,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await key(module, "down");
 
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: c.path, focus: false } },
+      { type: "workspace:switch", payload: { workspaceRef: c.ref, focus: false } },
     ]);
   });
 
@@ -2644,7 +2650,7 @@ describe("PresentationModule - shortcut navigation", () => {
 
     await key(module, "enter");
 
-    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspacePath: null } }]);
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: null } }]);
   });
 
   it("enter is a no-op when the creation panel is already showing", async () => {
@@ -2671,7 +2677,7 @@ describe("PresentationModule - shortcut navigation", () => {
       {
         type: "workspace:delete",
         payload: {
-          workspacePath: workspace.path,
+          workspaceRef: workspace.ref,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -2687,7 +2693,7 @@ describe("PresentationModule - shortcut navigation", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
     const dispatched = recordDispatches(deps);
 
@@ -2728,7 +2734,7 @@ describe("PresentationModule - background-focus suppression", () => {
   function openIntent(source: WorkspaceOpenSource, stealFocus?: boolean): Intent {
     const payload: OpenWorkspacePayload = {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       source,
       ...(stealFocus !== undefined && { stealFocus }),
     };
@@ -2753,7 +2759,7 @@ describe("PresentationModule - background-focus suppression", () => {
   it("never modifies non-open intents", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    const other: Intent = { type: "workspace:switch", payload: { workspacePath: null } };
+    const other: Intent = { type: "workspace:switch", payload: { workspaceRef: null } };
     expect(await interceptor(module).before(other)).toBe(other);
   });
 
@@ -2837,7 +2843,7 @@ describe("PresentationModule - reloadFrame", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     await flush();
 
-    expect(module.reloadFrame(workspace.path)).toBe(true);
+    expect(module.reloadFrame(workspace.ref)).toBe(true);
     expect(deps.viewManager.reloadFrame).toHaveBeenCalledWith(`${PROJECT_ID}/feat`);
   });
 
@@ -2851,7 +2857,7 @@ describe("PresentationModule - reloadFrame", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     await flush();
 
-    expect(module.reloadFrame(workspace.path)).toBe(false);
+    expect(module.reloadFrame(workspace.ref)).toBe(false);
     expect(deps.viewManager.reloadFrame).not.toHaveBeenCalled();
   });
 
@@ -2859,7 +2865,7 @@ describe("PresentationModule - reloadFrame", () => {
     const deps = createDeps();
     const module = await startModule(deps);
 
-    expect(module.reloadFrame(wsPath("/elsewhere/ws"))).toBe(false);
+    expect(module.reloadFrame(makeWorkspaceRef(PROJECT_REF, "elsewhere"))).toBe(false);
     expect(deps.viewManager.reloadFrame).not.toHaveBeenCalled();
   });
 });
@@ -3005,7 +3011,7 @@ describe("PresentationModule - attention highlight", () => {
     const workspace = makeWorkspace("feat");
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
-    const handle = module.dialog(ATTENTION, { kind: "modal", workspacePath: workspace.path });
+    const handle = module.dialog(ATTENTION, { kind: "modal", workspaceRef: workspace.ref });
     await flush();
     expect(rowAgent(deps, "feat")).toEqual(IDLE_ATTENTION);
 
@@ -3020,16 +3026,14 @@ describe("PresentationModule - attention highlight", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     // The hook-trust question during after-worktree-created: the worktree
     // exists, but the row is still a pathless placeholder.
     const handle = module.dialog(ATTENTION, {
       kind: "modal",
-      workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
-      projectPath: PROJECT_PATH.toString(),
-      workspaceName: "feat",
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "feat"),
     });
     await flush();
     expect(rowAgent(deps, "feat")).toEqual(IDLE_ATTENTION);
@@ -3039,21 +3043,19 @@ describe("PresentationModule - attention highlight", () => {
     expect(rowAgent(deps, "feat")).toEqual({ type: "none" });
   });
 
-  it("matches the placeholder by the name it was given, not the directory", async () => {
+  it("matches the placeholder by the name it was given", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feature/x",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
-    // `feature/x` lives in `feature%x`: the directory name is not the name.
+    // `feature/x` lives in `feature%x`: the ref carries the name, not the directory.
     module.dialog(ATTENTION, {
       kind: "modal",
-      workspacePath: `${PROJECT_PATH}/.worktrees/feature%x`,
-      projectPath: PROJECT_PATH.toString(),
-      workspaceName: "feature/x",
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "feature/x"),
     });
     await flush();
 
@@ -3066,21 +3068,12 @@ describe("PresentationModule - attention highlight", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
-    const other = testPath("/projects/beta").toString();
     module.dialog(ATTENTION, {
       kind: "modal",
-      workspacePath: `${other}/.worktrees/feat`,
-      projectPath: other,
-      workspaceName: "feat",
-    });
-    // Without a project the name alone is not enough to claim the row.
-    module.dialog(ATTENTION, {
-      kind: "modal",
-      workspacePath: `${PROJECT_PATH}/.worktrees/feat`,
-      workspaceName: "feat",
+      workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "feat"),
     });
     await flush();
 
@@ -3101,7 +3094,7 @@ describe("PresentationModule - sidebar notifications", () => {
 
     await showNotification(module, {
       config: { title: "Build done", type: "info" },
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
     });
     await flush();
 
@@ -3128,7 +3121,7 @@ describe("PresentationModule - sidebar notifications", () => {
 
     const answer = showNotification(module, {
       config: { title: "Deploy?", type: "info", actions: [{ id: "yes", label: "Yes" }] },
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
       wait: true,
     });
     await flush();
@@ -3137,8 +3130,8 @@ describe("PresentationModule - sidebar notifications", () => {
     await emit(module, EVENT_WORKSPACE_DELETED, {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      projectPath: PROJECT_PATH,
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
     });
     await flush();
 
@@ -3196,7 +3189,7 @@ describe("PresentationModule - sidebar notifications", () => {
 });
 
 describe("PresentationModule - running repository hooks", () => {
-  const FEAT_PATH = `${PROJECT_PATH}/.worktrees/feat`;
+  const FEAT_REF = makeWorkspaceRef(PROJECT_REF, "feat");
 
   function openHook(
     workspaceName: string,
@@ -3204,8 +3197,7 @@ describe("PresentationModule - running repository hooks", () => {
     phase: "open" | "delete" = "open"
   ) {
     return {
-      workspacePath: `${PROJECT_PATH}/.worktrees/${workspaceName}`,
-      projectPath: PROJECT_PATH,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, workspaceName),
       workspaceName,
       entry: "after-worktree-created",
       phase,
@@ -3269,7 +3261,7 @@ describe("PresentationModule - running repository hooks", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
 
     const cancel = vi.fn();
@@ -3390,7 +3382,7 @@ describe("PresentationModule - running repository hooks", () => {
       expect(lastSnapshot(deps).notifications).toEqual([]);
       expect(lastSnapshot(deps).dialogs).toEqual([]);
 
-      module.cancelRunningHooks(FEAT_PATH);
+      module.cancelRunningHooks(FEAT_REF);
       expect(cancelFeat).toHaveBeenCalledTimes(1);
       expect(cancelOther).not.toHaveBeenCalled();
     } finally {
@@ -3426,8 +3418,8 @@ describe("PresentationModule - loading rows", () => {
     return {
       projectId: PROJECT_ID,
       workspaceName: workspace.name,
-      workspacePath: workspace.path,
-      projectPath: PROJECT_PATH,
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
       branch: workspace.branch,
       metadata: workspace.metadata,
       workspaceUrl: `http://127.0.0.1:1/${workspace.name}`,
@@ -3440,7 +3432,7 @@ describe("PresentationModule - loading rows", () => {
   function failedPayload(workspace: Workspace, error: string): unknown {
     return {
       workspaceName: workspace.name,
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       error,
       source: "open-project",
     };
@@ -3535,7 +3527,7 @@ describe("PresentationModule - loading rows", () => {
       {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: workspace.path,
+          workspaceRef: workspace.ref,
           keepBranch: false,
           force: false,
           removeWorktree: true,
@@ -3558,14 +3550,14 @@ describe("PresentationModule - loading rows", () => {
     click(deps, "retry-open");
     await flush();
     expect(dispatched).toEqual([
-      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+      { type: "workspace:wake", payload: { workspaceRef: workspace.ref, source: "ui-ipc" } },
     ]);
     expect(rows(deps)).toEqual([["a", "loading", true]]);
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.openError).toBeUndefined();
 
     // The wake failed before reaching workspace:open.
     await emit(module, EVENT_WORKSPACE_WAKE_FAILED, {
-      workspacePath: workspace.path,
+      workspaceRef: workspace.ref,
       error: "second",
     });
     await flush();
@@ -3579,7 +3571,7 @@ describe("PresentationModule - loading rows", () => {
     emitUiEvent(deps, { kind: "wake-workspace", key: `${PROJECT_ID}/a` });
     await flush();
     expect(dispatched).toEqual([
-      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+      { type: "workspace:wake", payload: { workspaceRef: workspace.ref, source: "ui-ipc" } },
     ]);
 
     await emit(module, EVENT_WORKSPACE_CREATED, { ...(createdPayload(workspace) as object) });
@@ -3595,7 +3587,7 @@ describe("PresentationModule - loading rows", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(feat));
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "deps",
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       stealFocus: false,
     });
     const dispatched = recordDispatches(deps);
@@ -3612,15 +3604,18 @@ describe("PresentationModule - loading rows", () => {
     await emit(module, EVENT_WORKSPACE_CREATED, {
       projectId: PROJECT_ID,
       workspaceName: "deps" as WorkspaceName,
-      workspacePath: `${PROJECT_PATH}/.worktrees/deps`,
-      projectPath: PROJECT_PATH,
+      workspaceRef: makeWorkspaceRef(PROJECT_REF, "deps"),
+      projectRef: PROJECT_REF,
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
       stealFocus: false,
     });
     expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: `${PROJECT_PATH}/.worktrees/deps` } },
+      {
+        type: "workspace:switch",
+        payload: { workspaceRef: makeWorkspaceRef(PROJECT_REF, "deps") },
+      },
     ]);
   });
 });
@@ -3671,7 +3666,7 @@ describe("PresentationModule - startup screen", () => {
       project: makeProject([zeta, asleep, beta]),
       path: PROJECT_PATH,
     });
-    active = { projectId: PROJECT_ID, workspaceName: zeta.name, path: zeta.path };
+    active = { projectId: PROJECT_ID, workspaceName: zeta.name, ref: zeta.ref };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(zeta));
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
@@ -3682,10 +3677,8 @@ describe("PresentationModule - startup screen", () => {
     await flush();
 
     // The topmost awake row, whichever project announced itself first.
-    expect(dispatched).toEqual([
-      { type: "workspace:switch", payload: { workspacePath: beta.path } },
-    ]);
-    active = { projectId: PROJECT_ID, workspaceName: beta.name, path: beta.path };
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspaceRef: beta.ref } }]);
+    active = { projectId: PROJECT_ID, workspaceName: beta.name, ref: beta.ref };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(beta));
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/beta` });

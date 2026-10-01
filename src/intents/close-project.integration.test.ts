@@ -32,6 +32,7 @@ import {
 } from "./close-project";
 import type {
   CloseProjectIntent,
+  CloseResolveHookInput,
   CloseResolveHookResult,
   CloseConfirmHookInput,
   CloseConfirmHookResult,
@@ -60,7 +61,7 @@ import type { TestViewManager } from "./operations.test-utils";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
+import { projPath, wsPath } from "../shared/test-fixtures";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
@@ -81,6 +82,9 @@ const WORKSPACE_A_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_A_NAME = "feature-a" as WorkspaceName;
 const WORKSPACE_B_PATH = wsPath("/test/project/workspaces/feature-b");
 const WORKSPACE_B_NAME = "feature-b" as WorkspaceName;
+const PROJECT_REF = projectRefFor(PROJECT_PATH);
+const WORKSPACE_A_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_A_NAME);
+const WORKSPACE_B_REF = makeWorkspaceRef(PROJECT_REF, WORKSPACE_B_NAME);
 
 // =============================================================================
 // Mock Factories
@@ -203,7 +207,10 @@ function createTestHarness(options?: {
 
   // Shared workspace:resolve (reverse lookup over the project) and project:resolve
   registerTestInfrastructure(dispatcher, {
-    workspaces: workspacesFromProjects(() => (project ? [project] : [])),
+    // By path alone: the test names its project by its checkout ref, remote or not.
+    workspaces: workspacesFromProjects(() =>
+      project ? [{ path: project.path, workspaces: project.workspaces }] : []
+    ),
     projects: (projectPath) => ({ projectId: testProjectId(projectPath) }),
     viewManager,
   });
@@ -254,7 +261,7 @@ function createTestHarness(options?: {
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceDeletedEvent).payload;
-          appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+          appState.unregisterWorkspace(payload.projectRef, payload.workspaceRef);
         },
       },
     },
@@ -267,8 +274,7 @@ function createTestHarness(options?: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
-            const intent = ctx.intent as CloseProjectIntent;
-            const { projectPath: payloadPath } = intent.payload;
+            const { projectPath: payloadPath } = ctx as CloseResolveHookInput;
 
             // Resolve using appState (mirrors bootstrap pattern)
             const allProjects: Project[] = await appState.getAllProjects();
@@ -282,7 +288,10 @@ function createTestHarness(options?: {
 
             return {
               result: {
-                workspaces: found.workspaces ?? [],
+                workspaces: (found.workspaces ?? []).map((w) => ({
+                  workspaceRef: w.ref,
+                  workspacePath: w.path,
+                })),
                 ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
               },
             };
@@ -414,7 +423,7 @@ function buildCloseIntent(overrides?: Partial<CloseProjectIntent["payload"]>): C
   return {
     type: INTENT_CLOSE_PROJECT,
     payload: {
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
       ...overrides,
     },
   };
@@ -526,16 +535,16 @@ describe("CloseProjectOperation", () => {
     const event = receivedEvents[0] as ProjectClosedEvent;
     expect(event.type).toBe(EVENT_PROJECT_CLOSED);
     expect(event.payload.projectId).toBe(PROJECT_ID);
-    // Regression: project:closed must carry projectPath so the per-projectPath
+    // Regression: project:closed must carry projectRef so the per-project
     // idempotency guard resets on success (not only on project:close-failed).
     // Without it the guard leaks and a reopened project can never be closed again.
-    expect(event.payload.projectPath).toBe(PROJECT_PATH);
+    expect(event.payload.projectRef).toBe(PROJECT_REF);
   });
 
-  it("test 13: close with unknown projectPath throws", async () => {
+  it("test 13: close with an unknown project throws", async () => {
     const harness = createTestHarness({ projectNotFound: true });
     const intent = buildCloseIntent({
-      projectPath: projPath("/nonexistent/project"),
+      projectRef: projectRefFor(projPath("/nonexistent/project")),
     });
 
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Project not found");
@@ -622,7 +631,10 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     const input = confirm.mock.calls[0]![0] as CloseConfirmHookInput;
     expect(input.projectPath).toBe(PROJECT_PATH);
     expect(input.remoteUrl).toBe("https://github.com/org/repo.git");
-    expect(input.workspaces.map((w) => w.path)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+    expect(input.workspaces.map((w) => w.workspacePath)).toEqual([
+      WORKSPACE_A_PATH,
+      WORKSPACE_B_PATH,
+    ]);
   });
 
   it("a canceled confirm aborts cleanly and emits project:close-failed", async () => {
@@ -640,10 +652,10 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
     expect(harness.state.deregisteredProjects).toHaveLength(0);
     expect(harness.state.destroyedViews).toHaveLength(0);
     expect(closed).toHaveLength(0);
-    // close-failed resets the per-projectPath idempotency guard.
+    // close-failed resets the per-project idempotency guard.
     expect(closeFailed).toHaveLength(1);
     expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
-      projectPath: PROJECT_PATH,
+      projectRef: PROJECT_REF,
     });
   });
 
@@ -654,7 +666,7 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
 
-    expect(fullDeletes.map((p) => p.workspacePath)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+    expect(fullDeletes.map((p) => p.workspaceRef)).toEqual([WORKSPACE_A_REF, WORKSPACE_B_REF]);
     for (const payload of fullDeletes) {
       expect(payload).toMatchObject({
         removeWorktree: true,
@@ -698,13 +710,13 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     await expect(
       harness.dispatcher.dispatch(
-        buildCloseIntent({ projectPath: projPath("/nonexistent/project") })
+        buildCloseIntent({ projectRef: projectRefFor(projPath("/nonexistent/project")) })
       )
     ).rejects.toThrow("Project not found");
 
     expect(closeFailed).toHaveLength(1);
     expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
-      projectPath: testPath("/nonexistent/project").toString(),
+      projectRef: projectRefFor(projPath("/nonexistent/project")),
     });
   });
 
@@ -718,7 +730,7 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
 
     await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
 
-    expect(fullDeletes.map((p) => p.workspacePath)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+    expect(fullDeletes.map((p) => p.workspaceRef)).toEqual([WORKSPACE_A_REF, WORKSPACE_B_REF]);
     for (const payload of fullDeletes) {
       expect(payload).toMatchObject({ removeWorktree: true, keepBranch: false });
     }

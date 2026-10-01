@@ -39,7 +39,6 @@ import {
 } from "../../intents/update-agent-status";
 import type { HookContext } from "../../intents/lib/operation";
 import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
-import type { WorkspacePath } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../intents/contract";
 import { testPath } from "../../shared/test-fixtures";
 import type { Entry } from "../../boundaries/platform/filesystem.state-mock";
@@ -53,7 +52,8 @@ import {
   PENDING_ROOT_STATE_KEY,
   ROOT_STATE_KEY,
 } from "./module";
-import { workspacesDirUnder, type ProjectMove } from "./workspaces-root";
+import { workspacesDirUnder } from "./workspaces-root";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 const DATA = testPath("/data");
 const NEW_ROOT = testPath("/devdrive/ch");
@@ -146,7 +146,6 @@ function setup(options: SetupOptions = {}) {
   const repair = vi.spyOn(gitClient, "repairWorktrees");
   if (options.failRepair) repair.mockRejectedValue(new Error("repair failed"));
 
-  const moves: ProjectMove[][] = [];
   const dialogs = createMockDialogManager();
   const notifications = createMockNotificationManager();
   const dispatch = vi.spyOn(notifications.dispatcher, "dispatch");
@@ -177,11 +176,6 @@ function setup(options: SetupOptions = {}) {
     dialog: picker,
     app,
     dispatcher: notifications.dispatcher,
-    moveListeners: () => [
-      async (m) => {
-        moves.push([...m]);
-      },
-    ],
     logger: SILENT_LOGGER,
   });
 
@@ -192,7 +186,6 @@ function setup(options: SetupOptions = {}) {
     fs,
     gitClient,
     repair,
-    moves,
     dialogs,
     notifications,
     dispatch,
@@ -291,7 +284,7 @@ function agentStatus(name: string, status: "busy" | "idle"): AgentStatusUpdatedE
       workspace: {
         projectId: "app-1234" as ProjectId,
         name: name as WorkspaceName,
-        path: new Path(LOCAL_WT.dirname, name).toString() as WorkspacePath,
+        ref: makeWorkspaceRef(projectRefFor(LOCAL_WT.dirname.toString()), name),
         active: false,
       },
       status: {
@@ -340,8 +333,7 @@ describe("WorkspacesRootModule", () => {
       // The new root is in use and the request is settled.
       expect(s.root.current().equals(NEW_ROOT)).toBe(true);
       expect(s.state.getEffective()[PENDING_ROOT_STATE_KEY]).toBeNull();
-      // Path-keyed state and screenshots follow the clone.
-      expect(s.moves).toEqual([[{ from: OLD_CLONE.toString(), to: NEW_CLONE.toString() }]]);
+      // Screenshots follow the clone.
       expect(
         exists(
           s.fs,
@@ -434,7 +426,6 @@ describe("WorkspacesRootModule", () => {
       await done;
       expect(s.root.current().equals(DATA)).toBe(true);
       expect(s.state.getEffective()[PENDING_ROOT_STATE_KEY]).toBeNull();
-      expect(s.moves).toEqual([]);
     });
 
     it("records a folder reached through a symlink as git will report it", async () => {

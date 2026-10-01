@@ -32,8 +32,14 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, projectIdSchema, projectPathSchema, workspacePathSchema } from "./contract";
-import type { ProjectPath } from "./contract";
+import {
+  hookCtxSchema,
+  projectIdSchema,
+  projectPathSchema,
+  projectRefSchema,
+  workspaceTargetShape,
+} from "./contract";
+import type { ProjectRef } from "./contract";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
@@ -58,7 +64,7 @@ export const EVENT_PROJECT_CLOSE_FAILED = "project:close-failed" as const;
 
 export const closeProjectPayloadSchema = z
   .object({
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     /**
      * Delete the project's own directory from disk — the clone for a project
      * opened from a URL, the user's own working copy for a local one. Implies
@@ -84,18 +90,18 @@ export const projectClosedPayloadSchema = z
   .object({
     projectId: projectIdSchema,
     /**
-     * The closed project's path. Carried so the per-projectPath idempotency
-     * guard (keyed by projectPath) resets on this success event — not just on
+     * The closed project's ref. Carried so the per-project idempotency guard
+     * (keyed by projectRef) resets on this success event — not just on
      * project:close-failed. Without it, getKey(payload) is undefined and a
      * successfully-closed-then-reopened project can never be closed again.
      */
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
   })
   .readonly();
 
 export const projectCloseFailedPayloadSchema = z
   .object({
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
   })
   .readonly();
 
@@ -103,14 +109,17 @@ export const projectCloseFailedPayloadSchema = z
 // Hook result schemas
 // -----------------------------------------------------------------------------
 
+/** The project a close's hook points act on: its ref, and the path it resolved to. */
+const projectTargetShape = { projectRef: projectRefSchema, projectPath: projectPathSchema };
+
+/** A workspace of the project being closed. */
+const closingWorkspaceSchema = z.object(workspaceTargetShape).readonly();
+
 /** Per-handler result contract for the "resolve" hook point. */
 export const closeResolveHookResultSchema = z
   .object({
     remoteUrl: z.string().optional(),
-    workspaces: z
-      .array(z.object({ path: workspacePathSchema }))
-      .readonly()
-      .optional(),
+    workspaces: z.array(closingWorkspaceSchema).readonly().optional(),
   })
   .readonly();
 
@@ -144,9 +153,9 @@ export const closeHookResultSchema = z
 
 /** Operation-added enrichment for the "confirm" hook point (interactive dispatches only). */
 const closeConfirmEnrichmentSchema = z.object({
-  projectPath: projectPathSchema,
+  ...projectTargetShape,
   remoteUrl: z.string().optional(),
-  workspaces: z.array(z.object({ path: workspacePathSchema })).readonly(),
+  workspaces: z.array(closingWorkspaceSchema).readonly(),
 });
 
 /** Runtime whole-context validation schema for "confirm". */
@@ -157,7 +166,7 @@ export const closeConfirmHookInputSchema = hookCtxSchema(
 
 /** Operation-added enrichment for the "close" hook point. */
 const closeEnrichmentSchema = z.object({
-  projectPath: projectPathSchema,
+  ...projectTargetShape,
   remoteUrl: z.string().optional(),
   removeLocalRepo: z.boolean(),
 });
@@ -168,8 +177,14 @@ export const closeHookInputSchema = hookCtxSchema(
   closeEnrichmentSchema.shape
 );
 
-/** The resolve hook point receives the bare intent. */
-const bareCloseHookInputSchema = hookCtxSchema(closeProjectPayloadSchema, {});
+/** Operation-added enrichment for the "resolve" hook point. */
+const closeResolveEnrichmentSchema = z.object(projectTargetShape);
+
+/** Runtime whole-context validation schema for "resolve". */
+const closeResolveHookInputSchema = hookCtxSchema(
+  closeProjectPayloadSchema,
+  closeResolveEnrichmentSchema.shape
+);
 
 /**
  * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
@@ -179,7 +194,7 @@ export const schemas = {
   type: INTENT_CLOSE_PROJECT,
   payload: closeProjectPayloadSchema,
   hooks: {
-    resolve: { input: bareCloseHookInputSchema, result: closeResolveHookResultSchema },
+    resolve: { input: closeResolveHookInputSchema, result: closeResolveHookResultSchema },
     confirm: { input: closeConfirmHookInputSchema, result: closeConfirmHookResultSchema },
     close: { input: closeHookInputSchema, result: closeHookResultSchema },
   },
@@ -202,6 +217,9 @@ export type ProjectCloseFailedPayload = z.infer<typeof projectCloseFailedPayload
 export type CloseResolveHookResult = z.infer<typeof closeResolveHookResultSchema>;
 export type CloseConfirmHookResult = z.infer<typeof closeConfirmHookResultSchema>;
 export type CloseHookResult = z.infer<typeof closeHookResultSchema>;
+
+/** Input context for "resolve" handlers: the project, resolved. */
+export type CloseResolveHookInput = HookContext & z.infer<typeof closeResolveEnrichmentSchema>;
 
 /**
  * Input context for the "confirm" hook handler (interactive dispatches only)
@@ -235,43 +253,41 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
 
   async execute(ctx: OperationContext<CloseProjectIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
-    const projectPath = payload.projectPath;
+    const projectRef = payload.projectRef;
 
     try {
       await this.run(ctx);
     } catch (error) {
       // The dispatch ended without closing — reset the idempotency guard.
-      this.emitCloseFailed(ctx, projectPath);
+      this.emitCloseFailed(ctx, projectRef);
       throw error;
     }
   }
 
   private emitCloseFailed(
     ctx: OperationContext<CloseProjectIntent, typeof schemas>,
-    projectPath: ProjectPath
+    projectRef: ProjectRef
   ): void {
     const event: ProjectCloseFailedEvent = {
       type: EVENT_PROJECT_CLOSE_FAILED,
-      payload: { projectPath },
+      payload: { projectRef },
     };
     ctx.emit(event);
   }
 
   private async run(ctx: OperationContext<CloseProjectIntent, typeof schemas>): Promise<void> {
     const { payload } = ctx.intent;
-    const projectPath = payload.projectPath;
+    const projectRef = payload.projectRef;
 
-    // 1. Dispatch project:resolve to get projectId from projectPath
+    // 1. Dispatch project:resolve to get projectId and the project's path
     const projResolved = await ctx.dispatch<ResolveProjectIntent>({
       type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
+      payload: { projectRef },
     });
-    const projectId = projResolved.projectId;
+    const { projectId, projectPath } = projResolved;
 
     // 2. Run "resolve" hook -- returns remoteUrl, workspaces
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-    };
+    const hookCtx: CloseResolveHookInput = { intent: ctx.intent, projectRef, projectPath };
     const { results: resolveResults, errors: resolveErrors } = await ctx.hooks.collect(
       "resolve",
       hookCtx
@@ -303,6 +319,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     if (payload.interactive) {
       const confirmCtx: CloseConfirmHookInput = {
         intent: ctx.intent,
+        projectRef,
         projectPath,
         ...(remoteUrl !== undefined && { remoteUrl }),
         workspaces,
@@ -313,7 +330,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
       );
       throwHookErrors(confirmErrors, "close-project confirm hooks failed");
       if (confirmResults.some((r) => r.canceled)) {
-        this.emitCloseFailed(ctx, projectPath);
+        this.emitCloseFailed(ctx, projectRef);
         return;
       }
       removeAll = lastDefined(confirmResults, (r) => r.removeAll) ?? false;
@@ -336,7 +353,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
           type: INTENT_DELETE_WORKSPACE,
           payload: removeAll
             ? {
-                workspacePath: workspace.path,
+                workspaceRef: workspace.workspaceRef,
                 keepBranch: false,
                 force: false,
                 removeWorktree: true,
@@ -344,7 +361,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
                 ignoreWarnings: true,
               }
             : {
-                workspacePath: workspace.path,
+                workspaceRef: workspace.workspaceRef,
                 keepBranch: true,
                 force: true,
                 removeWorktree: false,
@@ -360,6 +377,7 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     // 4. Run "close" hook (dispose provider, remove state + store, clear active workspace)
     const closeHookInput: CloseHookInput = {
       intent: ctx.intent,
+      projectRef,
       projectPath,
       removeLocalRepo,
       ...(remoteUrl !== undefined && { remoteUrl }),
@@ -386,14 +404,14 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     if (otherProjectsExist === false) {
       await ctx.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: null },
+        payload: { workspaceRef: null },
       });
     }
 
     // 6. Emit project:closed event
     const event: ProjectClosedEvent = {
       type: EVENT_PROJECT_CLOSED,
-      payload: { projectId, projectPath },
+      payload: { projectId, projectRef },
     };
     ctx.emit(event);
   }

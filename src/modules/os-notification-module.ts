@@ -37,7 +37,8 @@
 import type { EventDeclarations, IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { WorkspacePath, InternalAgentCounts } from "../shared/ipc";
+import type { InternalAgentCounts } from "../shared/ipc";
+import type { WorkspaceRef } from "../intents/contract";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
@@ -112,7 +113,7 @@ export function isIdleIncrease(
  *
  * @param tracked - Per-workspace state as it was before the change
  */
-export function wasEveryAgentBusy(tracked: ReadonlyMap<WorkspacePath, TrackedWorkspace>): boolean {
+export function wasEveryAgentBusy(tracked: ReadonlyMap<WorkspaceRef, TrackedWorkspace>): boolean {
   let hasBusy = false;
   for (const workspace of tracked.values()) {
     if (workspace.counts.idle > 0) return false;
@@ -157,9 +158,9 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
   });
 
   /** Workspace state as of its previous status report — the "before" side. */
-  const tracked = new Map<WorkspacePath, TrackedWorkspace>();
+  const tracked = new Map<WorkspaceRef, TrackedWorkspace>();
 
-  function notify(workspacePath: WorkspacePath, workspaceName: string): void {
+  function notify(workspaceRef: WorkspaceRef, workspaceName: string): void {
     osNotificationLayer.show({
       title: NOTIFICATION_TITLE,
       body: workspaceName,
@@ -172,13 +173,13 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
           .dispatch<SwitchWorkspaceIntent>(
             {
               type: INTENT_SWITCH_WORKSPACE,
-              payload: { workspacePath, focus: true },
+              payload: { workspaceRef, focus: true },
             },
             { origin: "notification" }
           )
           .catch((error: unknown) => {
             logger
-              .scoped({ path: workspacePath })
+              .scoped({ workspace: workspaceRef })
               .warn("Failed to switch to workspace from notification click", {
                 error: getErrorMessage(error),
               });
@@ -192,15 +193,15 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
     [EVENT_AGENT_STATUS_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-        const path = workspace.path as WorkspacePath;
+        const ref = workspace.ref;
 
-        const previous = tracked.get(path);
+        const previous = tracked.get(ref);
         // Both questions are about the world *before* this report, so ask them
         // while the map still describes it.
         const idleIncrease = isIdleIncrease(previous?.counts, status.counts);
         const everyAgentWasBusy = wasEveryAgentBusy(tracked);
 
-        tracked.set(path, { counts: { ...status.counts } });
+        tracked.set(ref, { counts: { ...status.counts } });
 
         if (!idleIncrease) return;
 
@@ -212,13 +213,12 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
         if (windowManager.isFocused()) return;
         if (mode === "first-workspace" && !everyAgentWasBusy) return;
 
-        notify(path, workspace.name);
+        notify(ref, workspace.name);
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
       handler: async (event: DomainEvent): Promise<void> => {
-        const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        tracked.delete(workspacePath as WorkspacePath);
+        tracked.delete((event as WorkspaceDeletedEvent).payload.workspaceRef);
       },
     },
   };

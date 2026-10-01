@@ -37,6 +37,7 @@ import type { schemas as openProjectSchemas } from "../intents/open-project";
 import type { schemas as closeProjectSchemas } from "../intents/close-project";
 import type { ProjectPath } from "../intents/contract";
 import { projPath, testPath } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
 
 // Pre-computed: generateProjectIdFromUrl("https://github.com/org/repo.git")
 const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
@@ -137,9 +138,10 @@ function closeProjectIntent(payload: {
   projectPath: ProjectPath;
   removeLocalRepo?: boolean;
 }): CloseProjectIntent {
+  const { projectPath, ...rest } = payload;
   return {
     type: "project:close",
-    payload: payload as CloseProjectIntent["payload"],
+    payload: { projectRef: projectRefFor(projectPath), ...rest },
   };
 }
 
@@ -315,6 +317,7 @@ describe("RemoteProjectModule Integration", () => {
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,
         projectPath,
+        projectRef: projectRefFor(projectPath),
         removeLocalRepo: true,
         remoteUrl: "https://github.com/org/repo.git",
       };
@@ -345,6 +348,7 @@ describe("RemoteProjectModule Integration", () => {
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,
         projectPath,
+        projectRef: projectRefFor(projectPath),
         removeLocalRepo: false,
         remoteUrl: "https://github.com/org/repo.git",
       };
@@ -374,6 +378,7 @@ describe("RemoteProjectModule Integration", () => {
       const closeCtx: CloseHookInput = {
         intent: closeIntnt,
         projectPath,
+        projectRef: projectRefFor(projectPath),
         removeLocalRepo: true,
         // No remoteUrl — local project
       };
@@ -399,6 +404,7 @@ describe("RemoteProjectModule Integration", () => {
           projectPath: projPath("/test/project"),
           removeLocalRepo: true,
         }),
+        projectRef: projectRefFor(projectPath),
         projectPath,
         removeLocalRepo: true,
         remoteUrl: "https://github.com/org/repo.git",

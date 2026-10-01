@@ -2,9 +2,9 @@
  * The workspace an operation acts on, when a caller may name another one.
  *
  * Every entry that can act on a workspace other than the caller's own takes the
- * same two optional fields — `workspace` (a name or an absolute path) and
- * `project` (to look the name up in) — and resolves them here, so a name means
- * the same thing on every surface: an MCP tool's arguments, the CLI's
+ * same two optional fields — `workspace` (a workspace ref, whole or short) and
+ * `project` (to look a bare name up in) — and resolves them here, so a reference
+ * means the same thing on every surface: an MCP tool's arguments, the CLI's
  * `--workspace` / `--project` flags, an extension's request.
  */
 
@@ -12,12 +12,10 @@ import { z } from "zod/v4";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import { workspacePathSchema, type WorkspacePath } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { ListProjectsIntent } from "../../intents/list-projects";
-import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
-import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
-import { Path } from "../../utils/path/path";
+import { parseWorkspaceRef } from "../../utils/ref";
 import { resolveWorkspaceReference, type ProjectLocation } from "../workspace-lookup";
 
 /** The input fields that name a target workspace. */
@@ -27,14 +25,17 @@ export const targetFields = {
     .min(1)
     .optional()
     .describe(
-      "Workspace to act on: a name (looked up in your own project first) or an absolute " +
-        "path. Omit to target the current workspace."
+      "Workspace to act on: its name (looked up in your own project first), " +
+        "<project>::<name>, or its full ref (ch::…). Omit to target the current workspace."
     ),
   project: z
     .string()
     .min(1)
     .optional()
-    .describe("Project to look the workspace name up in: a name or a path. Needs workspace."),
+    .describe(
+      "Project to look the workspace name up in: its name, path, origin or full ref. " +
+        "Needs workspace."
+    ),
 };
 
 /** The shape of {@link targetFields} after parsing. */
@@ -44,7 +45,7 @@ export interface TargetInput {
 }
 
 /**
- * Turn a workspace reference into a path, the way `--workspace` does.
+ * Turn a workspace reference into its ref, the way `--workspace` does.
  *
  * A name is looked up relative to the caller — its own project first — and an
  * ambiguity or a miss is the caller's to fix, reported with the category that
@@ -52,7 +53,7 @@ export interface TargetInput {
  */
 export function createReferenceResolver(
   dispatcher: Dispatcher
-): (ctx: OperationContext, reference: string, project?: string) => Promise<WorkspacePath> {
+): (ctx: OperationContext, reference: string, project?: string) => Promise<WorkspaceRef> {
   return async (ctx, reference, project) => {
     const projects = await dispatcher.dispatch<ListProjectsIntent>({
       type: INTENT_LIST_PROJECTS,
@@ -61,10 +62,10 @@ export function createReferenceResolver(
     const resolved = resolveWorkspaceReference(
       (projects ?? []) as readonly ProjectLocation[],
       reference,
-      { callerWorkspace: ctx.workspacePath, cwd: ctx.cwd, project }
+      { callerWorkspace: ctx.workspaceRef, cwd: ctx.cwd, project }
     );
     if ("error" in resolved) throw new ApiError(resolved.category, resolved.error);
-    return workspacePathSchema.parse(resolved.path);
+    return resolved.ref;
   };
 }
 
@@ -75,19 +76,19 @@ export function createReferenceResolver(
  */
 export function createTargetResolver(
   dispatcher: Dispatcher
-): (ctx: OperationContext, input: TargetInput) => Promise<WorkspacePath> {
+): (ctx: OperationContext, input: TargetInput) => Promise<WorkspaceRef> {
   const resolveReference = createReferenceResolver(dispatcher);
-  const resolve = async (ctx: OperationContext, input: TargetInput): Promise<WorkspacePath> => {
+  const resolve = async (ctx: OperationContext, input: TargetInput): Promise<WorkspaceRef> => {
     if (input.workspace !== undefined) {
       return resolveReference(ctx, input.workspace, input.project);
     }
     if (input.project !== undefined) {
       throw new ApiError("usage", "project only says where to look a workspace name up: name one.");
     }
-    if (ctx.workspacePath === null) {
+    if (ctx.workspaceRef === null) {
       throw new ApiError("no-workspace", "No workspace to act on.");
     }
-    return ctx.workspacePath;
+    return ctx.workspaceRef;
   };
   return async (ctx, input) => {
     const target = await resolve(ctx, input);
@@ -96,26 +97,7 @@ export function createTargetResolver(
   };
 }
 
-/**
- * The name of the workspace at a path, for showing to a person.
- *
- * Looked up, never derived from the path: a workspace is named after its branch,
- * so `feature/x` lives in `feature%x`, and an adopted worktree's directory can be
- * called anything. A path no open workspace owns any more falls back to its
- * directory name — it only labels something, so it must not fail the call.
- */
-export function createWorkspaceNamer(
-  dispatcher: Dispatcher
-): (workspacePath: WorkspacePath) => Promise<string> {
-  return async (workspacePath) => {
-    try {
-      const resolved = await dispatcher.dispatch<ResolveWorkspaceIntent>({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath },
-      });
-      return resolved.workspaceName;
-    } catch {
-      return new Path(workspacePath).basename;
-    }
-  };
+/** The name of a workspace, for showing to a person: the name its ref carries. */
+export function workspaceNameOf(workspaceRef: WorkspaceRef): string {
+  return parseWorkspaceRef(workspaceRef)?.name ?? workspaceRef;
 }

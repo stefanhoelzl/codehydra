@@ -23,24 +23,29 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import type { WorkspacePath } from "../intents/contract";
+import type { WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { LockKey, LockTakeOptions } from "../api/entries/deps";
 import { ApiError } from "../api/errors";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import { createLockModule, LOCK_TAG_KEY, LOCK_WAIT_TAG_KEY, type LockModule } from "./lock-module";
 
-const PROJECT = projPath("/project");
-const OTHER_PROJECT = projPath("/other");
-const A = wsPath("/workspaces/alpha");
-const B = wsPath("/workspaces/bravo");
-const C = wsPath("/workspaces/charlie");
+const PROJECT_PATH = projPath("/project");
+const PROJECT = projectRefFor(PROJECT_PATH);
+const OTHER_PROJECT = projectRefFor(projPath("/other"));
+const ref = (name: string): WorkspaceRef => makeWorkspaceRef(PROJECT, name);
+const A = ref("alpha");
+const B = ref("bravo");
+const C = ref("charlie");
+/** Every workspace the tests use, by the path the resolve mock knows it at. */
+const NAMES = ["alpha", "bravo", "charlie", "delta", "feature/x"];
 
 const DEVICE: LockKey = { name: "device", project: null };
 
 interface Setup {
   readonly module: LockModule;
   readonly metadata: Map<string, Map<string, string>>;
-  readonly writes: Array<{ workspacePath: WorkspacePath; key: string; value: string | null }>;
+  readonly writes: Array<{ workspaceRef: WorkspaceRef; key: string; value: string | null }>;
 }
 
 function setup(): Setup {
@@ -49,11 +54,13 @@ function setup(): Setup {
   const writes: Setup["writes"] = [];
 
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath: WorkspacePath) => ({
-      projectPath: PROJECT,
-      workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
-    }),
-    projects: { [PROJECT]: { projectId: "project-1" as ProjectId } },
+    workspaces: Object.fromEntries(
+      NAMES.map((name) => [
+        wsPath(`/workspaces/${name.replace("/", "%")}`),
+        { projectPath: PROJECT_PATH, workspaceName: name as WorkspaceName },
+      ])
+    ),
+    projects: { [PROJECT_PATH]: { projectId: "project-1" as ProjectId } },
   });
   dispatcher.registerOperation(new SetMetadataOperation());
 
@@ -66,10 +73,10 @@ function setup(): Setup {
           handler: async (ctx: HookContext): Promise<void> => {
             const { payload } = ctx.intent as SetMetadataIntent;
             writes.push({ ...payload });
-            const entries = metadata.get(payload.workspacePath) ?? new Map<string, string>();
+            const entries = metadata.get(payload.workspaceRef) ?? new Map<string, string>();
             if (payload.value === null) entries.delete(payload.key);
             else entries.set(payload.key, payload.value);
-            metadata.set(payload.workspacePath, entries);
+            metadata.set(payload.workspaceRef, entries);
           },
         },
       },
@@ -97,7 +104,7 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-function tag(s: Setup, workspace: WorkspacePath, key: string): unknown {
+function tag(s: Setup, workspace: WorkspaceRef, key: string): unknown {
   const raw = s.metadata.get(workspace)?.get(key);
   return raw === undefined ? undefined : JSON.parse(raw);
 }
@@ -155,9 +162,9 @@ describe("lock module", () => {
 
     it("names the holder by its workspace name, not its directory", async () => {
       const s = setup();
-      const slashed = wsPath("/workspaces/feature%x");
+      const slashed = ref("feature/x");
       await emit(s.module, EVENT_WORKSPACE_CREATED, {
-        workspacePath: slashed,
+        workspaceRef: slashed,
         workspaceName: "feature/x",
         metadata: {},
       });
@@ -289,7 +296,7 @@ describe("lock module", () => {
 
     it("counts a waiter queued ahead, which gets the lock first", async () => {
       const s = setup();
-      const D = wsPath("/workspaces/delta");
+      const D = ref("delta");
       await s.module.locks.take(C, DEVICE, opts());
       await s.module.locks.take(A, PORT, opts());
       // Bravo is first in line for the device and also waits for alpha's port.
@@ -402,7 +409,7 @@ describe("lock module", () => {
       const next = s.module.locks.take(B, DEVICE, opts());
       const dropped = s.module.locks.take(A, { name: "gpu", project: null }, opts());
 
-      await emit(s.module, EVENT_WORKSPACE_HIBERNATED, { workspacePath: A });
+      await emit(s.module, EVENT_WORKSPACE_HIBERNATED, { workspaceRef: A });
 
       await expect(next).resolves.toMatchObject({ acquired: true });
       await expect(dropped).rejects.toMatchObject({
@@ -420,11 +427,11 @@ describe("lock module", () => {
       await settle();
       s.writes.length = 0;
 
-      await emit(s.module, EVENT_WORKSPACE_DELETED, { workspacePath: A });
+      await emit(s.module, EVENT_WORKSPACE_DELETED, { workspaceRef: A });
       await settle();
 
       expect(s.module.locks.list()).toEqual([]);
-      expect(s.writes.filter((w) => w.workspacePath === A)).toEqual([]);
+      expect(s.writes.filter((w) => w.workspaceRef === A)).toEqual([]);
     });
   });
 
@@ -487,7 +494,7 @@ describe("lock module", () => {
       s.metadata.set(A, new Map([[LOCK_TAG_KEY, stale]]));
 
       await emit(s.module, EVENT_WORKSPACE_CREATED, {
-        workspacePath: A,
+        workspaceRef: A,
         metadata: { [LOCK_TAG_KEY]: stale },
       });
       await settle();
@@ -502,7 +509,7 @@ describe("lock module", () => {
       const current = s.metadata.get(A)?.get(LOCK_TAG_KEY);
 
       await emit(s.module, EVENT_WORKSPACE_CREATED, {
-        workspacePath: A,
+        workspaceRef: A,
         metadata: { [LOCK_TAG_KEY]: current },
       });
       await settle();

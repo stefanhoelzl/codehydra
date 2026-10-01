@@ -20,7 +20,8 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_AGENT_LIFECYCLE = "agent:lifecycle" as const;
@@ -40,14 +41,14 @@ const agentLifecycleEventSchema = z.enum(["open", "close"]);
 
 export const agentLifecyclePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     event: agentLifecycleEventSchema,
   })
   .readonly();
 
 /** Operation-added enrichment for the "lifecycle" hook point (beyond the base HookContext). */
 const lifecycleEnrichmentSchema = z.object({
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
   event: agentLifecycleEventSchema,
 });
 
@@ -92,7 +93,13 @@ export class AgentLifecycleOperation implements Operation<typeof schemas> {
 
     const lifecycleCtx: AgentLifecycleHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath: (
+        await ctx.dispatch<ResolveWorkspaceIntent>({
+          type: INTENT_RESOLVE_WORKSPACE,
+          payload: { workspaceRef: payload.workspaceRef },
+        })
+      ).workspacePath,
       event: payload.event,
     };
     const { errors } = await ctx.hooks.collect("lifecycle", lifecycleCtx);

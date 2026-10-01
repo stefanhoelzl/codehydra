@@ -22,7 +22,7 @@ export interface PluginActionDeps {
 const NEVER = new AbortController().signal;
 
 /** An automation calls from nowhere: no workspace, no directory. */
-const AUTOMATION_CALLER: OperationContext = { workspacePath: null, cwd: null, signal: NEVER };
+const AUTOMATION_CALLER: OperationContext = { workspaceRef: null, cwd: null, signal: NEVER };
 
 export async function invokePluginAction(
   deps: PluginActionDeps,

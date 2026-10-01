@@ -405,12 +405,12 @@ const idempotencyModule = createIdempotencyModule([
   // Singleton with reset: setup blocks re-dispatch until setup error resets it
   { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
 
-  // Per-key: workspace:delete keyed by workspacePath, with force bypass
+  // Per-key: workspace:delete keyed by workspaceRef, with force bypass
   {
     intentType: INTENT_DELETE_WORKSPACE,
     getKey: (p) => {
-      const { workspacePath } = p as DeleteWorkspacePayload;
-      return workspacePath;
+      const { workspaceRef } = p as DeleteWorkspacePayload;
+      return workspaceRef;
     },
     resetOn: [EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_DELETE_FAILED],
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
@@ -499,7 +499,7 @@ The presenter (`PresentationModule`) maps renderer `ui:events` to these intents.
 
 The `show-notification` / `close-notification` operations are the only way anything raises a CodeHydra **sidebar** card (distinct from `vscode:show-message`, which is a toast inside a workspace's editor). In-process producers dispatch them (through `notify()` / `NotificationCard` in `src/modules/presentation/notification-card.ts`, which only order a producer's own dispatches), and the registry exposes them as `notification.show` / `notification.close`. The presenter handles both hooks over its `NotificationManager`:
 
-- **show**: without `id`, opens a card or joins the open card with the same text _and_ attached workspace (one more hold, a repeat count), returning `{ id }`; with `id`, replaces that card's content, or returns `{ missing: true }` when it is not open (the user dismissed it) — an answer rather than a thrown error, because the dispatcher logs every failed intent as an app error; the registry entry turns it into `not-found` (exit 6). With `wait`, blocks and returns `{ choice }`: the clicked button's id, or null on dismiss, `timeoutMs`, the attached workspace's `workspace:deleted`, or a released waiter. A choice or dismiss closes the card and answers every waiter on it; a waiter that times out or is released gives up only its own hold. `wait` with `id` takes the card over (its hold becomes the only one). When `workspacePath` is given on a new card the operation first dispatches `workspace:resolve` to validate it.
+- **show**: without `id`, opens a card or joins the open card with the same text _and_ attached workspace (one more hold, a repeat count), returning `{ id }`; with `id`, replaces that card's content, or returns `{ missing: true }` when it is not open (the user dismissed it) — an answer rather than a thrown error, because the dispatcher logs every failed intent as an app error; the registry entry turns it into `not-found` (exit 6). With `wait`, blocks and returns `{ choice }`: the clicked button's id, or null on dismiss, `timeoutMs`, the attached workspace's `workspace:deleted`, or a released waiter. A choice or dismiss closes the card and answers every waiter on it; a waiter that times out or is released gives up only its own hold. `wait` with `id` takes the card over (its hold becomes the only one). When `workspaceRef` is given on a new card the operation first dispatches `workspace:resolve` to validate it.
 - **close**: `{ id }` releases one hold (idempotent: an id that is not open is a no-op); `{ waiter }` releases the wait a `show { wait, waiter }` is blocked on. The registry entry mints a `waiter` token per waiting call and dispatches the release when the caller's `OperationContext.signal` aborts, so a disconnected `ch`/MCP caller does not leave a question up.
 
 The `open-workspace` operation uses these hook modules:

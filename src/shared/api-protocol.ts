@@ -658,8 +658,8 @@ export interface ClientToServerEvents {
  * Stored in the Socket.data property.
  */
 export interface SocketData {
-  /** Normalized workspace path this socket is connected from */
-  workspacePath: string;
+  /** Ref of the workspace this socket is connected from */
+  workspaceRef: string;
 }
 
 // ============================================================================

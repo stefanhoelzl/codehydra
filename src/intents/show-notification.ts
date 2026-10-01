@@ -33,7 +33,7 @@ import { z } from "zod/v4";
 import type { HookContext, Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { lastDefined, requireResult, throwHookErrors } from "./lib/hook-helpers";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import type { NotificationConfig } from "../shared/notification-types";
 import type { DialogButton } from "../shared/dialog-types";
@@ -82,7 +82,7 @@ export const showNotificationPayloadSchema = z
      * switches there, and it closes when the workspace is deleted. Ignored on
      * an update: a card keeps the attachment it was opened with.
      */
-    workspacePath: workspacePathSchema.optional(),
+    workspaceRef: workspaceRefSchema.optional(),
     /** Block until the user answers; the result is `{ choice }`. */
     wait: z.boolean().optional(),
     /** Give up waiting after this long (choice null). Only with `wait`. */
@@ -185,13 +185,13 @@ export class ShowNotificationOperation implements Operation<typeof schemas> {
   async execute(
     ctx: OperationContext<ShowNotificationIntent, typeof schemas>
   ): Promise<ShowNotificationResult> {
-    const { workspacePath, id } = ctx.intent.payload;
+    const { workspaceRef, id } = ctx.intent.payload;
 
     // An update keeps its attachment, so only a new card needs its workspace checked.
-    if (workspacePath !== undefined && id === undefined) {
+    if (workspaceRef !== undefined && id === undefined) {
       await ctx.dispatch<ResolveWorkspaceIntent>({
         type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath },
+        payload: { workspaceRef },
       });
     }
 

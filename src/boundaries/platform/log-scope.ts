@@ -8,6 +8,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as nodePath from "node:path";
 import { Path } from "../../utils/path/path";
+import { parseWorkspaceRef, projectNameOf } from "../../utils/ref";
 import type {
   LogContext,
   Logger,
@@ -140,6 +141,16 @@ export function applyScopeHint(
 ): { scope: LogScope; path: string | undefined } {
   const ambient: LogScope = store.current() ?? {};
   const origin = hint.origin !== undefined ? { origin: hint.origin } : {};
+  if ((hint.path === undefined || hint.path === null) && hint.workspace !== undefined) {
+    const named = parseWorkspaceRef(hint.workspace);
+    if (named !== null) {
+      const rest = Object.fromEntries(
+        Object.entries(ambient).filter(([key]) => !TARGET_KEYS.has(key))
+      ) as LogScope;
+      const project = projectNameOf(named.projectRef);
+      return { scope: { ...rest, project, ws: named.name, ...origin }, path: undefined };
+    }
+  }
   if (hint.path === undefined || hint.path === null) {
     return { scope: { ...ambient, ...origin }, path: undefined };
   }

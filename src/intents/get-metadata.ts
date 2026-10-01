@@ -2,7 +2,7 @@
  * GetMetadataOperation - Orchestrates workspace metadata reads.
  *
  * Runs two steps:
- * 1. Dispatch workspace:resolve to validate workspacePath
+ * 1. Dispatch workspace:resolve to turn workspaceRef into the workspace
  * 2. "get" hook — each handler performs the actual provider read
  *
  * No provider dependencies - hook handlers do the actual work.
@@ -15,7 +15,7 @@
 import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { lastDefined, requireResult } from "./lib/hook-helpers";
 
@@ -28,7 +28,7 @@ export const GET_METADATA_OPERATION_ID = "get-metadata";
 
 export const getMetadataPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
   })
   .readonly();
 
@@ -45,7 +45,7 @@ export const getMetadataHookResultSchema = z
   .readonly();
 
 /** Operation-added enrichment for the "get" hook point (beyond the base HookContext). */
-const getMetadataEnrichmentSchema = z.object({ workspacePath: workspacePathSchema });
+const getMetadataEnrichmentSchema = z.object(workspaceTargetShape);
 
 /** Runtime whole-context validation schema for "get". */
 export const getMetadataHookInputSchema = hookCtxSchema(
@@ -88,7 +88,7 @@ export class GetMetadataOperation extends WorkspaceHookOperation<typeof schemas>
   constructor() {
     super(GET_METADATA_OPERATION_ID, {
       hookPoint: "get",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "get-metadata get hooks failed",
       extract: (results) =>
         requireResult(

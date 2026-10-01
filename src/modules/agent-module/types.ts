@@ -76,8 +76,11 @@ export type RestartServerResult =
  * Implementations should use Path internally and convert at boundaries.
  */
 export interface AgentServerManager {
-  /** Start server for a workspace, returns allocated port */
-  startServer(workspacePath: string): Promise<number>;
+  /**
+   * Start server for a workspace, returns allocated port. `workspaceRef` is what
+   * the agent and its hooks name the workspace by (`_CH_WORKSPACE`).
+   */
+  startServer(workspacePath: string, options: { readonly workspaceRef: string }): Promise<number>;
 
   /** Stop server for a workspace */
   stopServer(workspacePath: string): Promise<StopServerResult>;

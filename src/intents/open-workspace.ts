@@ -30,7 +30,7 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import type { ProjectPath, WorkspaceName } from "./contract";
+import type { ProjectRef, WorkspaceName } from "./contract";
 import { Path } from "../utils/path/path";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
@@ -41,11 +41,17 @@ import {
   projectRefSchema,
   workspaceNameSchema,
   workspacePathSchema,
+  workspaceRefSchema,
   workspaceSchema,
+  workspaceTargetShape,
 } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
-import { makeWorkspaceRef } from "../utils/ref";
+import {
+  INTENT_RESOLVE_PROJECT,
+  type ResolveProjectIntent,
+  type ResolveProjectResult,
+} from "./resolve-project";
+import { asProjectRef, makeWorkspaceRef } from "../utils/ref";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "./list-projects";
 import type { OpenProjectIntent } from "./open-project";
@@ -121,12 +127,12 @@ export const openWorkspacePayloadSchema = z
     /** When set, skip worktree creation and populate context from existing workspace data. */
     existingWorkspace: existingWorkspaceDataSchema.optional(),
     /**
-     * Authoritative project path, for a project already known to be open.
+     * The project's ref, for a project already known to be open.
      *
-     * Exactly one of this and `project` is required. In-app callers hold a path
-     * already; a caller working from a name or a URL passes `project` instead.
+     * Exactly one of this and `project` is required. In-app callers hold a ref
+     * already; a caller working from a name, a path or a URL passes `project` instead.
      */
-    projectPath: projectPathSchema.optional(),
+    projectRef: projectRefSchema.optional(),
     /**
      * Project reference: an open project's name, a local path, or a git URL.
      *
@@ -147,8 +153,8 @@ export const openWorkspacePayloadSchema = z
   })
   .readonly()
   .refine(
-    (payload) => payload.projectPath !== undefined || payload.project !== undefined,
-    "Either projectPath or project is required"
+    (payload) => payload.projectRef !== undefined || payload.project !== undefined,
+    "Either projectRef or project is required"
   );
 
 export const openWorkspaceResultSchema = workspaceSchema;
@@ -187,7 +193,8 @@ export const createResultSchema = z
  * consumer that branches on them never mistakes a stand-in for the real thing.
  */
 const workspaceIdentityShape = {
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
+  projectRef: projectRefSchema,
   projectPath: projectPathSchema,
   /** The checked-out branch. Absent on a detached HEAD. */
   branch: z.string().optional(),
@@ -249,7 +256,7 @@ export const setupResultSchema = z
 
 /** Operation-added enrichment for the "finalize" hook point (create+setup results). */
 const finalizeEnrichmentSchema = z.object({
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
   /** The agent terminal's environment: the workspace environment plus the agent's own. */
   envVars: z.record(z.string(), z.string()),
   /** The workspace environment alone, for terminals that are not the agent's. */
@@ -279,8 +286,8 @@ const workspaceCreatedSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: workspacePathSchema,
-    projectPath: projectPathSchema,
+    workspaceRef: workspaceRefSchema,
+    projectRef: projectRefSchema,
     /** The checked-out branch. Absent on a detached HEAD. */
     branch: z.string().optional(),
     /** The workspace's base. Absent when none is recorded. */
@@ -300,7 +307,7 @@ const workspaceCreatedSchema = z
 const workspaceLoadingSchema = z
   .object({
     workspaceName: z.string(),
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     /** The requested base branch (absent when auto-detected later). */
     base: z.string().optional(),
     /** Mirrors the intent's stealFocus. The placeholder row is shown either
@@ -312,7 +319,7 @@ const workspaceLoadingSchema = z
 const workspaceCreateFailedSchema = z
   .object({
     workspaceName: z.string(),
-    projectPath: projectPathSchema,
+    projectRef: projectRefSchema,
     error: z.string(),
     /** Which module dispatched the original intent. */
     source: workspaceOpenSourceSchema.optional(),
@@ -412,7 +419,8 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // Before anything else, including the loading row: a reference may name a
     // project that is not open, and opening it can clone from the network. The
     // row would otherwise appear against a project that turns out not to exist.
-    const projectPath = await this.resolveProjectPath(ctx);
+    const project = await this.resolveProject(ctx);
+    const { projectRef, projectPath } = project;
     const { existingWorkspace } = ctx.intent.payload;
     ctx.setLogTarget({
       project: new Path(projectPath).basename,
@@ -434,7 +442,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
         type: EVENT_WORKSPACE_LOADING,
         payload: {
           workspaceName: ctx.intent.payload.workspaceName,
-          projectPath,
+          projectRef,
           ...(ctx.intent.payload.base !== undefined && { base: ctx.intent.payload.base }),
           ...(ctx.intent.payload.stealFocus !== undefined && {
             stealFocus: ctx.intent.payload.stealFocus,
@@ -444,13 +452,13 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     }
 
     try {
-      return await this.executeWorkspaceOpen(ctx, projectPath);
+      return await this.executeWorkspaceOpen(ctx, project);
     } catch (error) {
       ctx.emit({
         type: EVENT_WORKSPACE_CREATE_FAILED,
         payload: {
           workspaceName: ctx.intent.payload.workspaceName,
-          projectPath,
+          projectRef,
           error: error instanceof Error ? error.message : String(error),
           ...(ctx.intent.payload.source !== undefined && { source: ctx.intent.payload.source }),
         },
@@ -460,23 +468,31 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   }
 
   /**
-   * Turn the payload's project into a path for an open project.
+   * Turn the payload's project into an open project.
    *
-   * A caller holding a path has already done this. A caller with a reference
-   * gets it resolved here: an open project matched by name is used as-is, and
-   * anything else is opened — which clones it when the reference is a git URL.
-   * project:open reports `alreadyOpen` for a project that is already open, so
-   * taking this route twice is harmless.
+   * A caller holding a ref has already done most of this. A caller with a
+   * reference gets it resolved here: an open project matched by name is used
+   * as-is, and anything else is opened — which clones it when the reference is
+   * a git URL. project:open reports `alreadyOpen` for a project that is already
+   * open, so taking this route twice is harmless.
    */
-  private async resolveProjectPath(
+  private async resolveProject(
     ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>
-  ): Promise<ProjectPath> {
-    const { projectPath, project } = ctx.intent.payload;
-    if (projectPath !== undefined) return projectPath;
+  ): Promise<ResolveProjectResult> {
+    const resolve = (projectRef: ProjectRef): Promise<ResolveProjectResult> =>
+      ctx.dispatch<ResolveProjectIntent>({
+        type: INTENT_RESOLVE_PROJECT,
+        payload: { projectRef },
+      });
+    const { projectRef, project } = ctx.intent.payload;
+    if (projectRef !== undefined) return resolve(projectRef);
     if (project === undefined) {
       // Unreachable via the schema's refine; a direct construction could miss it.
-      throw new Error("open-workspace requires either projectPath or project");
+      throw new Error("open-workspace requires either projectRef or project");
     }
+    // A full ref names an open project exactly.
+    const asRef = asProjectRef(project);
+    if (asRef !== null) return resolve(asRef);
 
     const projects = await ctx.dispatch<ListProjectsIntent>({
       type: INTENT_LIST_PROJECTS,
@@ -485,7 +501,8 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const matched = matchOpenProject(projects ?? [], project);
     if (matched !== undefined) {
       if ("error" in matched) throw new Error(matched.error);
-      return projectPathSchema.parse(matched.path);
+      const open = (projects ?? []).find((p) => p.path === matched.path);
+      if (open !== undefined) return resolve(open.ref);
     }
 
     const opened = await ctx.dispatch<OpenProjectIntent>({
@@ -497,18 +514,14 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     if (!opened) {
       throw new Error(`Could not open project "${project}"`);
     }
-    return opened.path;
+    return resolve(opened.ref);
   }
 
   private async executeWorkspaceOpen(
     ctx: OperationContext<OpenWorkspaceIntent, typeof schemas>,
-    projectPath: ProjectPath
+    projResolved: ResolveProjectResult
   ): Promise<OpenWorkspaceResult> {
-    // Dispatch project:resolve to get projectId from projectPath
-    const projResolved = await ctx.dispatch<ResolveProjectIntent>({
-      type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
-    });
+    const { projectPath, projectRef } = projResolved;
     const resolvedProjectId = projResolved.projectId;
 
     // Baseline for the focus decision at the end. The presenter's creating
@@ -525,11 +538,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       : null;
 
     // Hook: "create" — worktree creation (fatal on error)
-    const createCtx: CreateHookInput = {
-      intent: ctx.intent,
-      projectPath,
-      projectRef: projResolved.projectRef,
-    };
+    const createCtx: CreateHookInput = { intent: ctx.intent, projectPath, projectRef };
     const { results: createResults, errors: createErrors } = await ctx.hooks.collect(
       "create",
       createCtx
@@ -556,9 +565,17 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // presenter drops it (presentation-module.ts, EVENT_METADATA_CHANGED).
     const mergedMetadata: Record<string, string> = { ...metadata };
 
+    // The ref names the workspace by the name it is opened under, which the
+    // payload carries (an existing workspace's name, or the new one's).
+    const workspaceRef = makeWorkspaceRef(
+      projectRef,
+      ctx.intent.payload.existingWorkspace?.name ?? ctx.intent.payload.workspaceName
+    );
     const identity = {
       intent: ctx.intent,
+      workspaceRef,
       workspacePath,
+      projectRef,
       projectPath,
       ...(branch !== null && { branch }),
       ...(resolvedBase !== undefined && { base: resolvedBase }),
@@ -611,6 +628,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
       intent: ctx.intent,
+      workspaceRef,
       workspacePath,
       envVars,
       workspaceEnv,
@@ -643,7 +661,7 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const projectId = resolvedProjectId;
 
     const workspace: OpenWorkspaceResult = {
-      ref: makeWorkspaceRef(projResolved.projectRef, resolvedWorkspaceName),
+      ref: workspaceRef,
       projectId,
       name: resolvedWorkspaceName,
       branch,
@@ -656,8 +674,8 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     const eventPayload: WorkspaceCreatedPayload = {
       projectId,
       workspaceName: resolvedWorkspaceName,
-      workspacePath,
-      projectPath,
+      workspaceRef,
+      projectRef,
       ...(branch !== null && { branch }),
       ...(resolvedBase !== undefined && { base: resolvedBase }),
       ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
@@ -695,13 +713,13 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
       payload: {},
     });
     const shouldSwitch = trackFocus
-      ? activeWorkspace?.path === activeAtStart?.path
+      ? activeWorkspace?.ref === activeAtStart?.ref
       : activeWorkspace === null && ctx.intent.payload.source !== "open-project";
 
     if (shouldSwitch) {
       await ctx.dispatch<SwitchWorkspaceIntent>({
         type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath, focus: true },
+        payload: { workspaceRef, focus: true },
       });
     }
 

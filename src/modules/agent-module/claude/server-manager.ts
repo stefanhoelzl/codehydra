@@ -156,7 +156,7 @@ function hookInterpreter(mcpConfig: McpConfig | null, logger: Logger): string {
  * empty `mcpServers` harmlessly.
  */
 export function buildMcpConfigFile(
-  workspacePath: string,
+  workspaceRef: string,
   mcpConfig: McpConfig | null
 ): ClaudeMcpConfigFile {
   if (mcpConfig === null) return { mcpServers: {} };
@@ -167,7 +167,7 @@ export function buildMcpConfigFile(
         command: mcpConfig.nodePath,
         args: [mcpConfig.cliPath, "mcp"],
         env: {
-          _CH_WORKSPACE_PATH: workspacePath,
+          _CH_WORKSPACE: workspaceRef,
           _CH_API_PORT: String(mcpConfig.port),
           _CH_API_TOKEN: mcpConfig.token,
         },
@@ -180,6 +180,8 @@ export function buildMcpConfigFile(
  * Per-workspace state tracked by the server manager.
  */
 export interface WorkspaceState {
+  /** The workspace's ref: what its agent and hooks name it by. */
+  readonly workspaceRef: string;
   /** Current agent status */
   status: AgentStatus;
   /** Current session ID (from SessionStart hook) */
@@ -333,9 +335,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Starts the HTTP server if this is the first workspace.
    *
    * @param workspacePath - Absolute path to the workspace
+   * @param options.workspaceRef - The workspace's ref, which its agent and hooks name it by
    * @returns Port number of the bridge server
    */
-  async startServer(workspacePath: string): Promise<number> {
+  async startServer(
+    workspacePath: string,
+    { workspaceRef }: { readonly workspaceRef: string }
+  ): Promise<number> {
     // Normalize workspace path
     const normalizedPath = new Path(workspacePath).toString();
 
@@ -354,12 +360,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Register workspace
     this.workspaces.set(normalizedPath, {
+      workspaceRef,
       status: "none",
       statusCallbacks: new Set(),
     });
 
     // Generate config files for this workspace
-    await this.generateConfigFiles(normalizedPath);
+    await this.generateConfigFiles(normalizedPath, workspaceRef);
 
     this.logger.scoped({ path: normalizedPath }).info("Workspace registered", { port: this.port });
 
@@ -440,6 +447,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Reset state but preserve callbacks
     this.workspaces.set(normalizedPath, {
+      workspaceRef: state.workspaceRef,
       status: "none",
       statusCallbacks: savedCallbacks,
       ...(savedInbox !== undefined && { inbox: savedInbox }),
@@ -447,7 +455,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     });
 
     // Regenerate config files
-    await this.generateConfigFiles(normalizedPath);
+    await this.generateConfigFiles(normalizedPath, state.workspaceRef);
 
     // Fire started callback
     for (const callback of this.startedCallbacks) {
@@ -881,16 +889,37 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.handleHook(hookName, { workspacePath });
   }
 
+  /** The ref a workspace was started with, while it is tracked. */
+  getWorkspaceRef(workspacePath: string): string | undefined {
+    return this.workspaces.get(new Path(workspacePath).toString())?.workspaceRef;
+  }
+
+  /** The tracked workspace a ref names. */
+  private pathOfRef(workspaceRef: string | undefined): string | undefined {
+    if (workspaceRef === undefined) return undefined;
+    for (const [path, state] of this.workspaces) {
+      if (state.workspaceRef === workspaceRef) return path;
+    }
+    return undefined;
+  }
+
   /**
    * Handle a hook notification.
    */
   private handleHook(hookName: ClaudeCodeHookName, payload: ClaudeCodeBridgePayload): void {
     this.logger.silly("Hook payload received", { hookName, payload: JSON.stringify(payload) });
 
-    const { workspacePath, session_id } = payload;
+    const { session_id } = payload;
 
-    // Normalize workspace path
-    const normalizedPath = new Path(workspacePath).toString();
+    // A hook names its workspace by ref; the lifecycle reported from here, by path.
+    const normalizedPath =
+      payload.workspacePath !== undefined
+        ? new Path(payload.workspacePath).toString()
+        : this.pathOfRef(payload.workspaceRef);
+    if (normalizedPath === undefined) {
+      this.logger.silly("Hook received for unknown workspace", { hookName });
+      return;
+    }
 
     // Find workspace state
     const state = this.workspaces.get(normalizedPath);
@@ -1227,7 +1256,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Generate config files for a workspace.
    * Creates both hooks.json and mcp.json in the workspace's config directory.
    */
-  private async generateConfigFiles(workspacePath: string): Promise<void> {
+  private async generateConfigFiles(workspacePath: string, workspaceRef: string): Promise<void> {
     // Config directory is in the app temp dir, not in the workspace.
     // Temp, not data: the generated files bake in this launch's bridge port,
     // API server port and API token, so a file that outlives the launch is not
@@ -1250,7 +1279,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     );
     await this.writeJsonFile(
       new Path(workspaceConfigDir, "codehydra-mcp.json"),
-      buildMcpConfigFile(workspacePath, this.mcpConfig ?? null)
+      buildMcpConfigFile(workspaceRef, this.mcpConfig ?? null)
     );
 
     this.logger

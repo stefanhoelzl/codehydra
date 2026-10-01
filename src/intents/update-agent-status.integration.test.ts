@@ -18,7 +18,8 @@ import { registerTestInfrastructure, updateStatusIntent } from "./operations.tes
 import type { DomainEvent } from "./lib/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Setup
@@ -27,6 +28,8 @@ import { projPath, wsPath, testPath } from "../shared/test-fixtures";
 const TEST_PROJECT_ID = "test-project-id" as ProjectId;
 const TEST_PROJECT_PATH = projPath("/projects/test");
 const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
+
+const TEST_WORKSPACE_REF = makeWorkspaceRef(projectRefFor(TEST_PROJECT_PATH), TEST_WORKSPACE_NAME);
 
 const TEST_WORKSPACE_ENTRY = {
   projectPath: TEST_PROJECT_PATH,
@@ -39,8 +42,7 @@ function createTestSetup(): { dispatcher: Dispatcher } {
   dispatcher.registerOperation(new UpdateAgentStatusOperation());
 
   registerTestInfrastructure(dispatcher, {
-    // Every workspace path used by the tests resolves to the same project.
-    workspaces: () => TEST_WORKSPACE_ENTRY,
+    workspaces: { [wsPath("/workspace/test")]: TEST_WORKSPACE_ENTRY },
     projects: { [TEST_PROJECT_PATH]: { projectId: TEST_PROJECT_ID } },
   });
 
@@ -53,7 +55,7 @@ function createTestSetup(): { dispatcher: Dispatcher } {
 
 describe("UpdateAgentStatus Operation", () => {
   describe("status change produces domain event (#1)", () => {
-    it("emits agent:status-updated with correct workspacePath and status for busy", async () => {
+    it("emits agent:status-updated with correct workspace ref and status for busy", async () => {
       const { dispatcher } = createTestSetup();
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {
@@ -61,12 +63,12 @@ describe("UpdateAgentStatus Operation", () => {
       });
 
       const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 2 } };
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/workspace/test"), status));
+      await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_REF, status));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.type).toBe(EVENT_AGENT_STATUS_UPDATED);
-      expect(event.payload.workspace.path).toBe(testPath("/workspace/test").toString());
+      expect(event.payload.workspace.ref).toBe(TEST_WORKSPACE_REF);
       expect(event.payload.workspace.projectId).toBe(TEST_PROJECT_ID);
       expect(event.payload.workspace.name).toBe(TEST_WORKSPACE_NAME);
       expect(event.payload.workspace.active).toBe(false);
@@ -81,11 +83,11 @@ describe("UpdateAgentStatus Operation", () => {
       });
 
       const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 3, busy: 0 } };
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/workspace/idle-test"), status));
+      await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_REF, status));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
-      expect(event.payload.workspace.path).toBe(testPath("/workspace/idle-test").toString());
+      expect(event.payload.workspace.ref).toBe(TEST_WORKSPACE_REF);
       expect(event.payload.status).toEqual(status);
     });
 
@@ -97,7 +99,7 @@ describe("UpdateAgentStatus Operation", () => {
       });
 
       const status: AggregatedAgentStatus = { status: "mixed", counts: { idle: 1, busy: 2 } };
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/workspace/mixed"), status));
+      await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_REF, status));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
@@ -112,14 +114,14 @@ describe("UpdateAgentStatus Operation", () => {
       });
 
       const status: AggregatedAgentStatus = { status: "none", counts: { idle: 0, busy: 0 } };
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/workspace/none"), status));
+      await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_REF, status));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.payload.status).toEqual(status);
     });
 
-    it("silently returns when resolve hooks provide no projectPath", async () => {
+    it("silently returns when the workspace is unknown", async () => {
       const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(new UpdateAgentStatusOperation());
 
@@ -133,7 +135,9 @@ describe("UpdateAgentStatus Operation", () => {
       });
 
       const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
-      await dispatcher.dispatch(updateStatusIntent(wsPath("/unknown/workspace"), status));
+      await dispatcher.dispatch(
+        updateStatusIntent(makeWorkspaceRef(projectRefFor(TEST_PROJECT_PATH), "unknown"), status)
+      );
 
       expect(receivedEvents).toHaveLength(0);
     });

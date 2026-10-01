@@ -14,7 +14,7 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { WorkspaceRef, AggregatedAgentStatus } from "../shared/ipc";
 import { createWorkspaceStatusCache } from "./workspace-status-cache";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { AppBoundary } from "../boundaries/shell/app";
@@ -335,7 +335,7 @@ export class BadgeManager {
  * @returns Badge state to display
  */
 function aggregateWorkspaceStates(
-  statuses: ReadonlyMap<WorkspacePath, AggregatedAgentStatus>
+  statuses: ReadonlyMap<WorkspaceRef, AggregatedAgentStatus>
 ): BadgeState {
   let hasReady = false;
   let hasWorking = false;

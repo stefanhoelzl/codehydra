@@ -142,6 +142,13 @@ export interface LogScopeHint {
    * workspace than the one the line is about. Null: no path (a caller that has none).
    */
   readonly path?: string | null;
+  /**
+   * The workspace the line is about, by its ref (`utils/ref.ts`), for a caller
+   * that knows it by ref rather than by path. The ref names its project and
+   * workspace itself, so the line gets its `project/ws` without the index;
+   * ignored when `path` is given.
+   */
+  readonly workspace?: string;
   /** Where the work entered the app, for lines that arrive outside any dispatch. */
   readonly origin?: string;
 }

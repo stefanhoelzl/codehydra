@@ -58,6 +58,16 @@ export type ProjectRef = z.infer<typeof projectRefSchema>;
 export const workspaceRefSchema = z.string().brand<"WorkspaceRef">();
 export type WorkspaceRef = z.infer<typeof workspaceRefSchema>;
 
+/**
+ * Hook-context enrichment naming the workspace an operation acts on: its ref (the
+ * identity, for keys and events) and its path (resolved by the operation, for the
+ * handlers that touch its files or processes).
+ */
+export const workspaceTargetShape = {
+  workspaceRef: workspaceRefSchema,
+  workspacePath: workspacePathSchema,
+};
+
 // =============================================================================
 // Agent spec / session
 // =============================================================================
@@ -208,12 +218,12 @@ export const projectSchema = z
   .readonly();
 export type Project = z.infer<typeof projectSchema>;
 
-/** Locates a workspace (includes path for efficiency). Used in events. */
+/** Names a workspace: its ref, plus the ids the UI addresses it by. */
 export const workspaceLocatorSchema = z
   .object({
+    ref: workspaceRefSchema,
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    path: workspacePathSchema,
   })
   .readonly();
 export type WorkspaceLocator = z.infer<typeof workspaceLocatorSchema>;
@@ -370,7 +380,7 @@ export type DeletionOperation = z.infer<typeof deletionOperationSchema>;
 /** Progress state for workspace deletion (full state, emitted with each update). */
 export const deletionProgressSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     workspaceName: workspaceNameSchema,
     projectId: projectIdSchema,
     keepBranch: z.boolean(),

@@ -15,7 +15,7 @@
  * - _CH_CLAUDE_MCP_CONFIG: Path to codehydra-mcp.json
  * - _CH_CLAUDE_SYSTEM_PROMPT: Path to codehydra-prompt.md
  * - _CH_MCP_PORT: Main MCP server port
- * - _CH_WORKSPACE_PATH: Workspace path for MCP header
+ * - _CH_WORKSPACE: Workspace ref for MCP header
  * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
  * - _CH_CLAUDE_NO_SESSION_MARKER_PATH: Path to no-session marker (optional, new workspaces only)
  */

@@ -26,8 +26,9 @@ import type { Operation, OperationContext, HookContext, OperationSchemas } from 
 import { DELETE_WORKSPACE_OPERATION_ID, INTENT_DELETE_WORKSPACE } from "../delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
-import type { ProjectId, ProjectPath, WorkspaceName } from "../contract";
+import type { ProjectId, ProjectRef, WorkspaceName } from "../contract";
 import { projectPathSchema } from "../contract";
+import { projectRefFor } from "../../utils/ref";
 
 /** Options for `createMinimalOperation`. */
 export interface MinimalOperationOptions<TResult = void> {
@@ -98,7 +99,7 @@ export function createMinimalOperation<TResult = void>(
 export interface DeleteEventOperationFields {
   readonly projectId?: ProjectId;
   readonly workspaceName?: WorkspaceName;
-  readonly projectPath?: ProjectPath;
+  readonly projectRef?: ProjectRef;
 }
 
 // This one's result is trivially expressible, so it is a real schema rather than a
@@ -127,9 +128,9 @@ export function createDeleteEventOperation(
         payload: {
           projectId: fields.projectId ?? ("test-12345678" as ProjectId),
           workspaceName: fields.workspaceName ?? ("ws" as WorkspaceName),
-          workspacePath: intent.payload.workspacePath,
+          workspaceRef: intent.payload.workspaceRef,
           worktreeRemoved: intent.payload.removeWorktree,
-          projectPath: fields.projectPath ?? projectPathSchema.parse("/projects/test"),
+          projectRef: fields.projectRef ?? projectRefFor(projectPathSchema.parse("/projects/test")),
         },
       };
       ctx.emit(event);

@@ -75,7 +75,11 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   /** Senders waiting for the agent to become reachable (see {@link sendMessage}). */
   private readonly readyWaiters = new ConditionWaiters();
 
-  constructor(workspacePath: string, logger: Logger) {
+  constructor(
+    workspacePath: string,
+    logger: Logger,
+    private readonly workspaceRef?: string
+  ) {
     this.workspacePath = workspacePath;
     // Everything this provider (and its SDK client) logs is about its one workspace.
     this.logger = logger.scoped({ path: workspacePath });
@@ -104,9 +108,10 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     const envVars: Record<string, string> = {
       _CH_OPENCODE_PORT: String(session.port),
       _CH_OPENCODE_SESSION_ID: session.sessionId,
-      // Also how the sidekick recognises a running agent terminal after an
-      // extension host restart (findRunningAgentTerminal) — keep it set.
-      _CH_WORKSPACE_PATH: this.workspacePath,
+      // The workspace's ref, for every `ch` the agent runs. Also how the sidekick
+      // recognises a running agent terminal after an extension host restart
+      // (findRunningAgentTerminal) — keep it set.
+      ...(this.workspaceRef !== undefined && { _CH_WORKSPACE: this.workspaceRef }),
     };
     return envVars;
   }

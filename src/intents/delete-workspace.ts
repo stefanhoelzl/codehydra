@@ -49,10 +49,12 @@ import {
   hookCtxSchema,
   projectIdSchema,
   projectPathSchema,
+  projectRefSchema,
   workspaceNameSchema,
-  workspacePathSchema,
+  workspaceRefSchema,
+  workspaceTargetShape,
 } from "./contract";
-import type { ProjectPath, WorkspacePath } from "./contract";
+import type { ProjectRef, WorkspaceRef } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
@@ -78,7 +80,7 @@ export const CAPABILITY_REPO_HOOK = "repo-hook" as const;
 
 export const deleteWorkspacePayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     keepBranch: z.boolean(),
     force: z.boolean(),
     /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
@@ -208,8 +210,9 @@ export const flushResultSchema = z.object({ error: z.string().optional() }).read
 
 /** Operation-added enrichment shared by shutdown/release/delete/detect/confirm/preflight hooks. */
 const deletePipelineEnrichmentSchema = z.object({
+  ...workspaceTargetShape,
+  projectRef: projectRefSchema,
   projectPath: projectPathSchema,
-  workspacePath: workspacePathSchema,
   workspaceName: workspaceNameSchema,
   active: z.boolean(),
 });
@@ -232,8 +235,8 @@ const workspaceDeletedSchema = z
   .object({
     projectId: projectIdSchema,
     workspaceName: workspaceNameSchema,
-    workspacePath: workspacePathSchema,
-    projectPath: projectPathSchema,
+    workspaceRef: workspaceRefSchema,
+    projectRef: projectRefSchema,
     /**
      * True when the dispatch removed (or force-abandoned) the git worktree;
      * false for runtime-only teardown (removeWorktree: false — e.g. the
@@ -244,7 +247,7 @@ const workspaceDeletedSchema = z
   })
   .readonly();
 
-const workspaceDeleteFailedSchema = z.object({ workspacePath: workspacePathSchema }).readonly();
+const workspaceDeleteFailedSchema = z.object({ workspaceRef: workspaceRefSchema }).readonly();
 
 /**
  * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
@@ -432,7 +435,7 @@ interface PipelineState {
 interface ResolvedIdentity {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
-  readonly projectPath: ProjectPath;
+  readonly projectRef: ProjectRef;
 }
 
 /** Return value of runPipeline, carrying resolved identity for emitEvent. */
@@ -458,8 +461,8 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         payload: {
           projectId: identity.projectId,
           workspaceName: identity.workspaceName,
-          workspacePath: payload.workspacePath,
-          projectPath: identity.projectPath,
+          workspaceRef: payload.workspaceRef,
+          projectRef: identity.projectRef,
           worktreeRemoved: payload.removeWorktree,
         },
       };
@@ -489,7 +492,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
           // auto-switch — no workspace went away.
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
-            payload: { workspacePath: payload.workspacePath },
+            payload: { workspaceRef: payload.workspaceRef },
           };
           ctx.emit(failedEvent);
           return { started: false };
@@ -500,7 +503,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
           // Emit delete-failed to reset idempotency, allowing retry dispatch
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
-            payload: { workspacePath: payload.workspacePath },
+            payload: { workspaceRef: payload.workspaceRef },
           };
           ctx.emit(failedEvent);
         } else {
@@ -510,7 +513,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         // Preflight or unexpected error — emit delete-failed for idempotency reset, then propagate
         const failedEvent: WorkspaceDeleteFailedEvent = {
           type: EVENT_WORKSPACE_DELETE_FAILED,
-          payload: { workspacePath: payload.workspacePath },
+          payload: { workspaceRef: payload.workspaceRef },
         };
         ctx.emit(failedEvent);
         throw error;
@@ -521,7 +524,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       if (failed) return { started: true };
     }
 
-    await this.autoSwitchIfBecameActive(ctx, payload.workspacePath);
+    await this.autoSwitchIfBecameActive(ctx, payload.workspaceRef);
     return { started: true };
   }
 
@@ -531,13 +534,12 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
   ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
 
-    // --- Resolve (workspacePath → projectPath + workspaceName + projectId) ---
-    const { projectPath, workspaceName, active, projectId } = await resolveWorkspaceIdentity(
-      ctx.dispatch,
-      payload.workspacePath
-    );
+    // --- Resolve (workspaceRef → path, project, workspaceName, projectId) ---
+    const { workspacePath, projectRef, projectPath, workspaceName, active, projectId } =
+      await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
 
-    const identity: ResolvedIdentity = { projectId, workspaceName, projectPath };
+    const identity: ResolvedIdentity = { projectId, workspaceName, projectRef };
+    const target = { workspaceRef: payload.workspaceRef, workspacePath, projectRef, projectPath };
 
     // --- Confirm (interactive dispatches only) ---
     // Parks on the confirmation dialog BEFORE any pipeline work or progress
@@ -549,8 +551,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     if (payload.interactive && payload.removeWorktree && !payload.force) {
       const confirmCtx: DeletePipelineHookInput = {
         intent: ctx.intent,
-        projectPath,
-        workspacePath: payload.workspacePath,
+        ...target,
         workspaceName,
         active,
       };
@@ -574,8 +575,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // confirmed values.
     const pipelineCtx: DeletePipelineHookInput = {
       intent: { ...ctx.intent, payload: effectivePayload },
-      projectPath,
-      workspacePath: payload.workspacePath,
+      ...target,
       workspaceName,
       active,
     };
@@ -680,13 +680,13 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // moves it, so with nobody switching it still names the workspace being
     // deleted. (The `active` flag on workspace:resolve is a different field,
     // and that one is cleared during shutdown.)
-    const activeNow = await this.activeWorkspacePath(ctx);
+    const activeNow = await this.activeWorkspaceRef(ctx);
 
-    if (activeNow === payload.workspacePath && !payload.skipSwitch) {
+    if (activeNow === payload.workspaceRef && !payload.skipSwitch) {
       try {
         const switchIntent: SwitchWorkspaceIntent = {
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { auto: true, currentPath: payload.workspacePath, focus: true },
+          payload: { auto: true, currentRef: payload.workspaceRef, focus: true },
         };
         await ctx.dispatch(switchIntent);
       } catch {
@@ -878,15 +878,15 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
    * same answer as an ordinary teardown, so a lookup failure never moves a
    * user who had gone somewhere else.
    */
-  private async activeWorkspacePath(
+  private async activeWorkspaceRef(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>
-  ): Promise<WorkspacePath | null> {
+  ): Promise<WorkspaceRef | null> {
     try {
       const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {},
       });
-      return activeRef?.path ?? null;
+      return activeRef?.ref ?? null;
     } catch {
       return null;
     }
@@ -894,17 +894,17 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
 
   private async autoSwitchIfBecameActive(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
-    workspacePath: WorkspacePath
+    workspaceRef: WorkspaceRef
   ): Promise<void> {
     try {
       const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
         type: INTENT_GET_ACTIVE_WORKSPACE,
         payload: {},
       });
-      if (activeRef?.path === workspacePath) {
+      if (activeRef?.ref === workspaceRef) {
         await ctx.dispatch<SwitchWorkspaceIntent>({
           type: INTENT_SWITCH_WORKSPACE,
-          payload: { auto: true, currentPath: workspacePath, focus: true },
+          payload: { auto: true, currentRef: workspaceRef, focus: true },
         });
       }
     } catch {
@@ -1049,7 +1049,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     const progressEvent: WorkspaceDeletionProgressEvent = {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: {
-        workspacePath: payload.workspacePath as WorkspacePath,
+        workspaceRef: payload.workspaceRef,
         workspaceName: identity.workspaceName,
         projectId: identity.projectId,
         keepBranch: payload.keepBranch,

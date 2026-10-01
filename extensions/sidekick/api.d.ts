@@ -151,14 +151,16 @@ export interface WorkspaceCreateOptions {
  * Workspace information returned from creation.
  */
 export interface Workspace {
+  /** The workspace's identity (`ch::<machine>::<project>::<name>`), as `ch --workspace` takes it */
+  readonly ref: string;
   /** Identifier of the project this workspace belongs to */
   readonly projectId: string;
-  /** Workspace name (also the branch name) */
+  /** Workspace name: its branch when it was created, kept when the branch changes */
   readonly name: string;
   /** Current branch name, or null for detached HEAD state */
   readonly branch: string | null;
   /**
-   * Workspace metadata stored in git config.
+   * Workspace metadata, stored in the worktree's git directory.
    * Always contains a `base` key with the base branch the workspace was created from.
    */
   readonly metadata: Readonly<Record<string, string>>;

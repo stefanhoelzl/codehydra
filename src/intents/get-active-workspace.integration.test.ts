@@ -30,7 +30,8 @@ import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceLocator } from "../shared/api/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { wsPath } from "../shared/test-fixtures";
+import { projPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 
@@ -38,7 +39,7 @@ const PROJECT_ID = "project-ea0135bc" as ProjectId;
 // Test Constants
 // =============================================================================
 
-const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(projPath("/project")), "feature-x");
 
 // =============================================================================
 // Test Setup
@@ -92,16 +93,16 @@ describe("GetActiveWorkspace Operation", () => {
     let setup: TestSetup;
 
     const expectedRef: WorkspaceLocator = {
+      ref: WORKSPACE_REF,
       projectId: PROJECT_ID,
       workspaceName: "feature-x" as WorkspaceName,
-      path: WORKSPACE_PATH,
     };
 
     beforeEach(() => {
       setup = createTestSetup(expectedRef);
     });
 
-    it("returns WorkspaceLocator with projectId, workspaceName, and path", async () => {
+    it("returns WorkspaceLocator with ref, projectId and workspaceName", async () => {
       const { dispatcher } = setup;
 
       const result = (await dispatcher.dispatch(
@@ -111,7 +112,7 @@ describe("GetActiveWorkspace Operation", () => {
       expect(result).not.toBeNull();
       expect(result!.projectId).toBe(expectedRef.projectId);
       expect(result!.workspaceName).toBe(expectedRef.workspaceName);
-      expect(result!.path).toBe(WORKSPACE_PATH);
+      expect(result!.ref).toBe(WORKSPACE_REF);
     });
   });
 
@@ -128,9 +129,9 @@ describe("GetActiveWorkspace Operation", () => {
   describe("interceptor", () => {
     it("cancellation prevents operation execution (#14)", async () => {
       const expectedRef: WorkspaceLocator = {
+        ref: WORKSPACE_REF,
         projectId: PROJECT_ID,
         workspaceName: "feature-x" as WorkspaceName,
-        path: WORKSPACE_PATH,
       };
       const setup = createTestSetup(expectedRef);
 

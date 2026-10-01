@@ -25,8 +25,9 @@ import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import type { WorkspacePath } from "./contract";
+import { projPath, wsPath } from "../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { WorkspaceRef } from "./contract";
 
 // =============================================================================
 // Test Constants
@@ -34,6 +35,7 @@ import type { WorkspacePath } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -87,10 +89,10 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
 // Helpers
 // =============================================================================
 
-function sessionIntent(workspacePath: WorkspacePath): GetAgentSessionIntent {
+function sessionIntent(workspaceRef: WorkspaceRef): GetAgentSessionIntent {
   return {
     type: INTENT_GET_AGENT_SESSION,
-    payload: { workspacePath },
+    payload: { workspaceRef },
   };
 }
 
@@ -112,7 +114,7 @@ describe("GetAgentSession Operation", () => {
       const { dispatcher } = setup;
 
       const result = (await dispatcher.dispatch(
-        sessionIntent(WORKSPACE_PATH)
+        sessionIntent(WORKSPACE_REF)
       )) as AgentSession | null;
 
       expect(result).toEqual({ port: 8080, sessionId: "ses-001" });
@@ -125,7 +127,7 @@ describe("GetAgentSession Operation", () => {
         session: null,
       });
 
-      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_REF));
 
       expect(result).toBeNull();
     });
@@ -135,7 +137,7 @@ describe("GetAgentSession Operation", () => {
         session: null,
       });
 
-      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_REF));
 
       expect(result).toBeNull();
     });
@@ -146,8 +148,12 @@ describe("GetAgentSession Operation", () => {
       const setup = createTestSetup({ session: null });
 
       await expect(
-        setup.dispatcher.dispatch(sessionIntent(wsPath("/nonexistent/path")))
-      ).rejects.toThrow(`Workspace not found: ${testPath("/nonexistent/path").toString()}`);
+        setup.dispatcher.dispatch(
+          sessionIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"))
+        )
+      ).rejects.toThrow(
+        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
+      );
     });
   });
 
@@ -165,7 +171,7 @@ describe("GetAgentSession Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_REF));
 
       expect(result).toBeUndefined();
     });

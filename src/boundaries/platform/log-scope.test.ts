@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import { AsyncLogScopeStore, formatLogScope, ScopedLogger } from "./log-scope";
 import { toLogContext } from "./logging-types";
 import { testPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import type { LogContext, Logger, LogScope } from "./logging-types";
 
 describe("formatLogScope", () => {
@@ -175,6 +176,37 @@ describe("ScopedLogger", () => {
     logger.scoped({ path: other, origin: "sidekick" }).info("m", { path: "/elsewhere" });
 
     expect(seen[0]).toEqual({ context: { path: "/elsewhere" }, scope: { origin: "sidekick" } });
+  });
+
+  it("names the project and workspace from a workspace ref, replacing the ambient one", () => {
+    const { store, seen, logger } = setup();
+    const ref = makeWorkspaceRef(projectRefFor(testPath("/repos/proj").toString()), "feat");
+
+    store.run(
+      () => ({ trace: "7f3a01", intent: "workspace:switch", project: "proj", ws: "a", path: ws }),
+      () => logger.scoped({ workspace: ref, origin: "sidekick" }).info("m", { n: 1 })
+    );
+
+    expect(seen[0]).toEqual({
+      context: { n: 1 },
+      scope: {
+        trace: "7f3a01",
+        intent: "workspace:switch",
+        project: "proj",
+        ws: "feat",
+        origin: "sidekick",
+      },
+    });
+  });
+
+  it("lets a path hint win over a workspace ref", () => {
+    const { store, seen, logger } = setup();
+    store.nameWorkspace(ws, { project: "proj", ws: "a" });
+    const ref = makeWorkspaceRef(projectRefFor(testPath("/repos/proj").toString()), "feat");
+
+    logger.scoped({ workspace: ref, path: ws }).info("m");
+
+    expect(seen[0]?.scope).toEqual({ project: "proj", ws: "a", path: ws });
   });
 
   it("merges the hints of a scoped logger scoped again", () => {

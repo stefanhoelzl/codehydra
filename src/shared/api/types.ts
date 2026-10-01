@@ -195,8 +195,10 @@ export function readTitle(value: string | null | undefined): string | undefined 
 
 export type {
   Project,
+  ProjectRef,
   Workspace,
   WorkspaceLocator,
+  WorkspaceRef,
   WorkspaceStatus,
   AgentStatus,
   AgentStatusCounts,

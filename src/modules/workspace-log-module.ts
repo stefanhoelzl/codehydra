@@ -2,7 +2,7 @@
  * WorkspaceLogModule — a workspace's own log lines in its IDE's Output panel.
  *
  * Every line whose scope names a workspace — the target of the dispatch it was
- * written for, or a `logger.scoped({ path })` inside it — is forwarded to a
+ * written for, or a `logger.scoped({ path })` / `({ workspace })` inside it — is forwarded to a
  * "CodeHydra Log" channel in that workspace's IDE: what CodeHydra did for this
  * workspace, where the person looking at it already is.
  *
@@ -10,16 +10,17 @@
  *   filters: everything at debug and up is sent, and the channel (a VS Code
  *   `LogOutputChannel`) drops what is below the level the user set on it.
  *   `silly` is never sent — it carries unbounded payloads.
- * - A line names its workspace by `project/ws`; its path may not be known yet
- *   (a creation logs before its worktree exists). Such lines are held by name
- *   and follow once a line brings the path.
+ * - A line names its workspace by `project/ws`, which is reached by its ref
+ *   once the workspace has opened (`workspace:created`). Lines from before that
+ *   (a creation logs throughout its open) are held by name and follow.
  * - Held and batched by `createWorkspaceOutput`: bounded while the IDE is away,
  *   flushed on connect, dropped when the workspace is deleted.
  *
  * The listener never logs: its own lines would be forwarded, and come back.
  */
 
-import { Path } from "../utils/path/path";
+import { projectNameOf } from "../utils/ref";
+import type { ProjectRef, WorkspaceRef } from "../intents/contract";
 import { formatContext, formatLogScope } from "../boundaries/platform/log-scope";
 import type { Logger, Logging, LogLine, LogScope } from "../boundaries/platform/logging-types";
 import type { OutputLine, OutputLineLevel } from "../shared/api-protocol";
@@ -28,8 +29,10 @@ import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_WORKSPACE_DELETED, type WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import {
   EVENT_WORKSPACE_CREATE_FAILED,
+  EVENT_WORKSPACE_CREATED,
   INTENT_OPEN_WORKSPACE,
   type WorkspaceCreateFailedEvent,
+  type WorkspaceCreatedEvent,
 } from "../intents/open-workspace";
 import { createWorkspaceOutput, type OutputTransport } from "./workspace-output";
 
@@ -85,12 +88,18 @@ export function createWorkspaceLogModule(deps: WorkspaceLogModuleDeps): {
     batch: true,
     logger: deps.logger,
   });
-  /** `project/ws` → its path, once a line has named it. */
-  const paths = new Map<string, string>();
-  /** Lines of a workspace whose path no line has named yet, by `project/ws`. */
+  /**
+   * `project/ws` → its ref, learned when the workspace opens. A line names its
+   * workspace as `project/ws`, which is the project's name (`projectNameOf`) and
+   * the workspace's.
+   */
+  const refs = new Map<string, WorkspaceRef>();
+  /** Lines of a workspace not open yet, by `project/ws`. */
   const unbound = new Map<string, OutputLine[]>();
 
   const keyOf = (project: string, ws: string): string => `${project}/${ws}`;
+  const keyOfRef = (projectRef: ProjectRef, ws: string): string =>
+    keyOf(projectNameOf(projectRef), ws);
 
   const unsubscribe = deps.logging.onLine((line) => {
     if (line.level === "silly") return;
@@ -103,8 +112,8 @@ export function createWorkspaceLogModule(deps: WorkspaceLogModuleDeps): {
       text: formatWorkspaceLogLine(line),
     };
 
-    const path = scope.path ?? paths.get(key);
-    if (path === undefined) {
+    const ref = refs.get(key);
+    if (ref === undefined) {
       const held = unbound.get(key) ?? [];
       held.push(entry);
       if (held.length > MAX_BUFFERED_LINES) held.splice(0, held.length - MAX_BUFFERED_LINES);
@@ -112,38 +121,50 @@ export function createWorkspaceLogModule(deps: WorkspaceLogModuleDeps): {
       return;
     }
     // An open brings a closed workspace's editor back: worth holding for again.
-    if (scope.intent === INTENT_OPEN_WORKSPACE) output.opening(path);
-    paths.set(key, path);
-    const earlier = unbound.get(key);
-    if (earlier) unbound.delete(key);
-    output.write(path, earlier ? [...earlier, entry] : [entry]);
+    if (scope.intent === INTENT_OPEN_WORKSPACE) output.opening(ref);
+    output.write(ref, [entry]);
   });
 
-  function forget(project: string, ws: string): void {
-    const key = keyOf(project, ws);
-    paths.delete(key);
+  function forget(key: string): void {
+    refs.delete(key);
     unbound.delete(key);
   }
 
   const module: IntentModule = {
     name: "workspace-log",
     events: {
+      [EVENT_WORKSPACE_CREATED]: {
+        // The workspace is open: its lines go to its editor from now on, the
+        // ones written while it was being opened first.
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspaceRef, projectRef, workspaceName } = (event as WorkspaceCreatedEvent)
+            .payload;
+          const key = keyOfRef(projectRef, workspaceName);
+          refs.set(key, workspaceRef);
+          output.opening(workspaceRef);
+          const earlier = unbound.get(key);
+          if (earlier) {
+            unbound.delete(key);
+            output.write(workspaceRef, earlier);
+          }
+        },
+      },
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, projectPath, workspaceName } = (event as WorkspaceDeletedEvent)
+          const { workspaceRef, projectRef, workspaceName } = (event as WorkspaceDeletedEvent)
             .payload;
-          output.closed(new Path(workspacePath).toString());
-          forget(new Path(projectPath).basename, workspaceName);
+          output.closed(workspaceRef);
+          forget(keyOfRef(projectRef, workspaceName));
         },
       },
       [EVENT_WORKSPACE_CREATE_FAILED]: {
         // A creation that failed: its editor is not coming, so its lines have nowhere to go.
         handler: async (event: DomainEvent): Promise<void> => {
-          const { projectPath, workspaceName } = (event as WorkspaceCreateFailedEvent).payload;
-          const project = new Path(projectPath).basename;
-          const path = paths.get(keyOf(project, workspaceName));
-          if (path !== undefined) output.closed(path);
-          forget(project, workspaceName);
+          const { projectRef, workspaceName } = (event as WorkspaceCreateFailedEvent).payload;
+          const key = keyOfRef(projectRef, workspaceName);
+          const ref = refs.get(key);
+          if (ref !== undefined) output.closed(ref);
+          forget(key);
         },
       },
     },

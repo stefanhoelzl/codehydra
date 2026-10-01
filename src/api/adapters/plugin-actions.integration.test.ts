@@ -11,6 +11,7 @@ import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import { projPath, wsPath } from "../../shared/test-fixtures";
+import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { OperationRegistry } from "../registry";
 import { defineEntry, type OperationContext } from "../types";
 import { OPERATION_NAMES } from "../names";
@@ -32,11 +33,13 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
   async execute(): Promise<Project[]> {
     return [
       {
+        ref: projectRefFor(APP),
         id: "app-1" as ProjectId,
         name: "app",
         path: APP,
         workspaces: [
           {
+            ref: makeWorkspaceRef(projectRefFor(APP), "feat"),
             projectId: "app-1" as ProjectId,
             name: "feat" as WorkspaceName,
             path: FEAT,
@@ -104,7 +107,7 @@ describe("invokePluginAction", () => {
 
     await invokePluginAction(deps, "workspace.hibernate", { workspace: "feat" });
 
-    expect(calls[0]!.ctx.workspacePath).toBeNull();
+    expect(calls[0]!.ctx.workspaceRef).toBeNull();
     expect(calls[0]!.input).toEqual({ workspace: "feat" });
   });
 

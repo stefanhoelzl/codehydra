@@ -20,7 +20,8 @@
 import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { hookCtxSchema, workspacePathSchema } from "./contract";
+import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
+import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_VSCODE_MODAL_CHANGED = "vscode:modal-changed" as const;
@@ -33,7 +34,7 @@ export const VSCODE_MODAL_CHANGED_OPERATION_ID = "vscode-modal-changed";
 
 export const vscodeModalChangedPayloadSchema = z
   .object({
-    workspacePath: workspacePathSchema,
+    workspaceRef: workspaceRefSchema,
     /** True while at least one modal is open in the workspace's editor. */
     open: z.boolean(),
   })
@@ -41,7 +42,7 @@ export const vscodeModalChangedPayloadSchema = z
 
 /** Operation-added enrichment for the "modal" hook point (beyond the base HookContext). */
 const modalEnrichmentSchema = z.object({
-  workspacePath: workspacePathSchema,
+  ...workspaceTargetShape,
   open: z.boolean(),
 });
 
@@ -86,7 +87,13 @@ export class VscodeModalChangedOperation implements Operation<typeof schemas> {
 
     const modalCtx: ModalHookInput = {
       intent: ctx.intent,
-      workspacePath: payload.workspacePath,
+      workspaceRef: payload.workspaceRef,
+      workspacePath: (
+        await ctx.dispatch<ResolveWorkspaceIntent>({
+          type: INTENT_RESOLVE_WORKSPACE,
+          payload: { workspaceRef: payload.workspaceRef },
+        })
+      ).workspacePath,
       open: payload.open,
     };
     const { errors } = await ctx.hooks.collect("modal", modalCtx);

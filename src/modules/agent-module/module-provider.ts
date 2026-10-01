@@ -128,7 +128,7 @@ export interface AgentModuleSpec<P extends AgentProvider> {
   /** Start the agent server for a workspace, running `binary`. */
   startServer(
     workspacePath: string,
-    options: WorkspaceStartOptions | undefined,
+    options: WorkspaceStartOptions,
     binary: ResolvedAgentBinary
   ): Promise<void>;
 
@@ -450,7 +450,7 @@ export function createAgentModuleProvider<P extends AgentProvider>(
     // --- Per-workspace ---
     async startWorkspace(
       workspacePath: string,
-      options?: WorkspaceStartOptions
+      options: WorkspaceStartOptions
     ): Promise<WorkspaceStartResult> {
       // Snapshot once: the server and the terminal must run the same binary
       // even if a background download lands meanwhile.

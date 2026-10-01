@@ -49,16 +49,16 @@ export type ForwardedEvent = (typeof FORWARDED_EVENTS)[number];
  * activity. An event with no workspace — a clone, a project opening — concerns
  * the instance as a whole and reaches every client.
  */
-export function eventWorkspacePath(payload: unknown): string | undefined {
+export function eventWorkspaceRef(payload: unknown): string | undefined {
   if (payload === null || typeof payload !== "object") return undefined;
   const record = payload as Record<string, unknown>;
 
-  if (typeof record.workspacePath === "string") return record.workspacePath;
-  // workspace:created carries the workspace itself rather than a bare path.
+  if (typeof record.workspaceRef === "string") return record.workspaceRef;
+  // agent:status-updated carries the workspace itself rather than a bare ref.
   const workspace = record.workspace;
   if (workspace !== null && typeof workspace === "object") {
-    const path = (workspace as Record<string, unknown>).path;
-    if (typeof path === "string") return path;
+    const ref = (workspace as Record<string, unknown>).ref;
+    if (typeof ref === "string") return ref;
   }
   return undefined;
 }

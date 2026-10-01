@@ -73,7 +73,8 @@ export function createOpenCodeModuleProvider(
       binaryEnv: (resolved) => ({ _CH_OPENCODE_BIN: resolved.path }),
 
       // --- Provider lifecycle ---
-      createProvider: (workspacePath) => new OpenCodeProvider(workspacePath, logger),
+      createProvider: (workspacePath) =>
+        new OpenCodeProvider(workspacePath, logger, serverManager.getWorkspaceRef(workspacePath)),
 
       connectProvider: async (provider, port) => {
         await provider.connect(port);
@@ -123,6 +124,7 @@ export function createOpenCodeModuleProvider(
         // required to act on them; without a prompt there's nothing to send.
         const ip = options?.initialPrompt;
         await serverManager.startServer(workspacePath, {
+          workspaceRef: options.workspaceRef,
           ...(ip?.prompt && {
             initialPrompt: {
               prompt: ip.prompt,

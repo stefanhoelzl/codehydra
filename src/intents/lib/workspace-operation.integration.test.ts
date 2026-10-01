@@ -25,8 +25,8 @@ import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "../resolv
 import type { ResolveHookResult as ResolveProjectHookResult } from "../resolve-project";
 import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import { workspacePathSchema } from "../contract";
-import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
+import { workspaceRefSchema } from "../contract";
+import { projPath, wsPath } from "../../shared/test-fixtures";
 import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 // =============================================================================
@@ -37,6 +37,7 @@ const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "proj-1" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_NAME = "feature-x" as WorkspaceName;
+const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), WORKSPACE_NAME);
 
 const INTENT_TEST = "test:workspace-hook" as const;
 const TEST_OPERATION_ID = "test-workspace-hook";
@@ -44,14 +45,14 @@ const EVENT_TEST_DONE = "test:done" as const;
 
 interface TestIntent extends Intent<string> {
   readonly type: typeof INTENT_TEST;
-  readonly payload: { readonly workspacePath: string };
+  readonly payload: { readonly workspaceRef: string };
 }
 
 const testHookResultSchema = z.object({ value: z.string().optional() }).readonly();
 
 const testSchemas = {
   type: INTENT_TEST,
-  payload: z.object({ workspacePath: workspacePathSchema }).readonly(),
+  payload: z.object({ workspaceRef: workspaceRefSchema }).readonly(),
   result: z.string(),
   hooks: { work: { result: testHookResultSchema } },
 } satisfies OperationSchemas;
@@ -62,7 +63,7 @@ class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
   constructor(opts?: { resolveProject?: boolean; emitEvent?: boolean }) {
     super(TEST_OPERATION_ID, {
       hookPoint: "work",
-      buildInput: (intent, workspacePath) => ({ intent, workspacePath }),
+      buildInput: (intent, target) => ({ intent, ...target }),
       ...(opts?.resolveProject !== undefined && { resolveProject: opts.resolveProject }),
       errorLabel: "test-workspace-hook work hooks failed",
       extract: (results) =>
@@ -76,7 +77,7 @@ class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
           payload: {
             projectId: project?.projectId,
             workspaceName: resolved.workspaceName,
-            workspacePath: intent.payload.workspacePath,
+            workspaceRef: intent.payload.workspaceRef,
             result,
           },
         }),
@@ -108,11 +109,11 @@ function createSetup(opts: {
         resolve: {
           handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const intent = ctx.intent as TestIntent;
-            if (intent.payload.workspacePath === WORKSPACE_PATH) {
+            if (intent.payload.workspaceRef === WORKSPACE_REF) {
               const projectRef = projectRefFor(PROJECT_ROOT);
               return {
                 result: {
-                  workspaceRef: makeWorkspaceRef(projectRef, WORKSPACE_NAME),
+                  workspaceRef: WORKSPACE_REF,
                   workspacePath: WORKSPACE_PATH,
                   projectRef,
                   projectPath: projPath(PROJECT_ROOT),
@@ -132,7 +133,7 @@ function createSetup(opts: {
             handler: async (): Promise<HookOutput<ResolveProjectHookResult>> => ({
               result: {
                 projectId: PROJECT_ID,
-                projectRef: projectRefFor(PROJECT_ROOT),
+                projectPath: projPath(PROJECT_ROOT),
                 projectName: "project",
               },
             }),
@@ -167,8 +168,8 @@ function createSetup(opts: {
   return { dispatcher, hookRuns: () => runs };
 }
 
-function testIntent(workspacePath: string = WORKSPACE_PATH): TestIntent {
-  return { type: INTENT_TEST, payload: { workspacePath } };
+function testIntent(workspaceRef: string = WORKSPACE_REF): TestIntent {
+  return { type: INTENT_TEST, payload: { workspaceRef } };
 }
 
 // =============================================================================
@@ -182,8 +183,9 @@ describe("WorkspaceHookOperation", () => {
       workHandlers: [{ handler: async () => ({ result: { value: "x" } }) }],
     });
 
-    await expect(dispatcher.dispatch(testIntent(testPath("/unknown").toNative()))).rejects.toThrow(
-      `Workspace not found: ${testPath("/unknown").toNative()}`
+    const unknown = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "unknown");
+    await expect(dispatcher.dispatch(testIntent(unknown))).rejects.toThrow(
+      `Workspace not found: ${unknown}`
     );
     expect(hookRuns()).toBe(0);
   });
@@ -261,7 +263,7 @@ describe("WorkspaceHookOperation", () => {
     expect(events[0]!.payload).toEqual({
       projectId: PROJECT_ID,
       workspaceName: WORKSPACE_NAME,
-      workspacePath: WORKSPACE_PATH,
+      workspaceRef: WORKSPACE_REF,
       result: "done",
     });
   });

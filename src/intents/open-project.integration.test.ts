@@ -69,7 +69,14 @@ import type { TestViewManager } from "./operations.test-utils";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import type { DiscoveredWorkspace, ProjectPath, WorkspacePath } from "./contract";
+import type {
+  DiscoveredWorkspace,
+  ProjectPath,
+  ProjectRef,
+  WorkspacePath,
+  WorkspaceRef,
+} from "./contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Helpers
@@ -297,31 +304,75 @@ function createTestHarness(options?: {
   // like the worktree module, which knows a workspace from discovery on — over
   // the discovered ones of a registered project), project:resolve,
   // switch-workspace activate, and infra operations.
-  const registeredWorkspace = workspacesFromProjects(() => projectState.registeredProjects);
+  const registeredWorkspaces = workspacesFromProjects(() => projectState.registeredProjects);
+  const registeredWorkspace = (workspacePath: WorkspacePath) =>
+    typeof registeredWorkspaces === "function" ? registeredWorkspaces(workspacePath) : undefined;
+  const workspaceLookup = (workspacePath: WorkspacePath) => {
+    const registered = registeredWorkspace(workspacePath);
+    if (registered !== undefined) return registered;
+    const discovered = discoverResult.find((w) => w.path === workspacePath);
+    const project = projectState.registeredProjects.find((p) =>
+      new Path(workspacePath).isChildOf(new Path(p.path))
+    );
+    return discovered && project
+      ? {
+          projectPath: project.path,
+          projectRef: projectRefFor(project.path, project.remoteUrl),
+          workspaceName: discovered.name,
+          metadata: discovered.metadata,
+        }
+      : undefined;
+  };
+  const projectLookup = (projectPath: ProjectPath) => {
+    const project = projectState.registeredProjects.find((p) => p.path === projectPath);
+    return project
+      ? {
+          projectId: testProjectId(project.path),
+          projectName: project.name,
+          projectRef: projectRefFor(project.path, project.remoteUrl),
+        }
+      : undefined;
+  };
   registerTestInfrastructure(dispatcher, {
-    workspaces: (workspacePath) => {
-      const registered = registeredWorkspace(workspacePath);
-      if (registered !== undefined) return registered;
-      const discovered = discoverResult.find((w) => w.path === workspacePath);
-      const project = projectState.registeredProjects.find((p) =>
-        new Path(workspacePath).isChildOf(new Path(p.path))
-      );
-      return discovered && project
-        ? {
-            projectPath: project.path,
-            workspaceName: discovered.name,
-            metadata: discovered.metadata,
-          }
-        : undefined;
-    },
-    projects: (projectPath) => {
-      const project = projectState.registeredProjects.find((p) => p.path === projectPath);
-      return project
-        ? { projectId: testProjectId(project.path), projectName: project.name }
-        : undefined;
-    },
+    workspaces: Object.assign(workspaceLookup, {
+      paths: () => [
+        ...discoverResult.map((w) => w.path),
+        ...projectState.registeredProjects.flatMap((p) => p.workspaces.map((w) => w.path)),
+      ],
+    }),
+    projects: Object.assign(projectLookup, {
+      paths: () => projectState.registeredProjects.map((p) => p.path),
+    }),
     viewManager,
   });
+
+  /** The path of an open workspace, by its ref. */
+  const workspacePathOf = (workspaceRef: WorkspaceRef): WorkspacePath => {
+    for (const path of [
+      ...discoverResult.map((w) => w.path),
+      ...projectState.registeredProjects.flatMap((p) => p.workspaces.map((w) => w.path)),
+    ]) {
+      const entry = workspaceLookup(path);
+      if (
+        entry &&
+        makeWorkspaceRef(
+          entry.projectRef ?? projectRefFor(entry.projectPath),
+          entry.workspaceName
+        ) === workspaceRef
+      ) {
+        return path;
+      }
+    }
+    throw new Error(`Unknown workspace ${workspaceRef}`);
+  };
+  /** The path of an open project, by its ref. */
+  const projectPathOf = (projectRef: ProjectRef): ProjectPath => {
+    const project = projectState.registeredProjects.find(
+      (p) => projectRefFor(p.path, p.remoteUrl) === projectRef
+    );
+    if (project === undefined) throw new Error(`Unknown project ${projectRef}`);
+    return project.path;
+  };
 
   // ---------------------------------------------------------------------------
   // Self-selecting resolve modules (local vs remote)
@@ -536,8 +587,8 @@ function createTestHarness(options?: {
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
-          appState.registerWorkspace(payload.projectPath, {
-            path: wsPath(new Path(payload.workspacePath).toString()),
+          appState.registerWorkspace(projectPathOf(payload.projectRef), {
+            path: wsPath(new Path(workspacePathOf(payload.workspaceRef)).toString()),
             name: payload.workspaceName,
             branch: payload.branch,
             metadata: payload.metadata,
@@ -555,9 +606,9 @@ function createTestHarness(options?: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
           viewManager.createWorkspaceView(
-            payload.workspacePath,
+            workspacePathOf(payload.workspaceRef),
             payload.workspaceUrl,
-            payload.projectPath,
+            projectPathOf(payload.projectRef),
             true
           );
         },
@@ -603,9 +654,9 @@ function createTestHarness(options?: {
               result: {
                 workspaceRef: project
                   ? {
+                      ref: makeWorkspaceRef(projectRefFor(project.path, project.remoteUrl), name),
                       projectId: testProjectId(project.path),
                       workspaceName: name as WorkspaceName,
-                      path: wsPath(path),
                     }
                   : null,
               },

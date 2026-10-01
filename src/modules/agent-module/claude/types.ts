@@ -76,8 +76,10 @@ export interface ClaudeCodeBackgroundTask {
  * This is what the bridge server receives.
  */
 export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
-  /** Workspace path (added by hook-handler from environment) */
-  readonly workspacePath: string;
+  /** Workspace ref (added by hook-handler from `_CH_WORKSPACE`) */
+  readonly workspaceRef?: string;
+  /** Workspace path, for the lifecycle the server manager reports to itself */
+  readonly workspacePath?: string;
   /**
    * The session's inbox (added by hook-handler to SessionStart only, from the
    * CLAUDE_CODE_MESSAGING_* variables Claude exports to hooks). Absent when the

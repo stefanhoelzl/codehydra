@@ -49,6 +49,8 @@ import type { WorkspacePath, ProjectPath } from "./contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { ProjectRef, WorkspaceRef } from "./contract";
 import { workspacePathSchema } from "./contract";
+import { parseProjectRef } from "../utils/ref";
+import { projectPathSchema } from "./contract";
 
 // =============================================================================
 // Configuration Types
@@ -56,6 +58,8 @@ import { workspacePathSchema } from "./contract";
 
 export interface MockWorkspaceEntry {
   readonly projectPath: ProjectPath;
+  /** The project's ref; defaults to the checkout ref of `projectPath`. */
+  readonly projectRef?: ProjectRef;
   readonly workspaceName: WorkspaceName;
   readonly branch?: string | null;
   /** Explicit active flag; when omitted, derived from the viewManager (if any). */
@@ -75,15 +79,26 @@ export interface MockViewManager {
   setActiveWorkspace(path: string | null, focus?: boolean): void;
 }
 
-/** Static map or dynamic lookup function for workspace resolution. */
+/**
+ * Static map or dynamic lookup function for workspace resolution. A function
+ * answers refs too when it can list the paths it knows (`paths`).
+ */
 export type MockWorkspaceLookup =
   | Readonly<Record<string, MockWorkspaceEntry>>
-  | ((workspacePath: WorkspacePath) => MockWorkspaceEntry | undefined);
+  | (((workspacePath: WorkspacePath) => MockWorkspaceEntry | undefined) & {
+      readonly paths?: () => Iterable<WorkspacePath>;
+    });
 
-/** Static map or dynamic lookup function for project resolution. */
+/**
+ * Static map or dynamic lookup function for project resolution. A checkout's
+ * ref names its path; a managed project's is found through `paths` and the
+ * entry's `projectRef`.
+ */
 export type MockProjectLookup =
   | Readonly<Record<string, MockProjectEntry>>
-  | ((projectPath: ProjectPath) => MockProjectEntry | undefined);
+  | (((projectPath: ProjectPath) => MockProjectEntry | undefined) & {
+      readonly paths?: () => Iterable<ProjectPath>;
+    });
 
 export interface TestMockConfig {
   /** Maps workspacePath → resolution data (or dynamic lookup). */
@@ -99,6 +114,8 @@ export interface TestMockConfig {
 /** Minimal project shape for {@link workspacesFromProjects}. */
 export interface ProjectWithWorkspaces {
   readonly path: ProjectPath;
+  /** Origin of a managed project, which its ref is named by. */
+  readonly remoteUrl?: string;
   readonly workspaces?: ReadonlyArray<{
     readonly path: WorkspacePath;
     readonly metadata?: Readonly<Record<string, string>>;
@@ -112,13 +129,14 @@ export interface ProjectWithWorkspaces {
  */
 export function workspacesFromProjects(
   getProjects: () => readonly ProjectWithWorkspaces[]
-): (workspacePath: WorkspacePath) => MockWorkspaceEntry | undefined {
-  return (workspacePath) => {
+): MockWorkspaceLookup {
+  const lookup = (workspacePath: WorkspacePath): MockWorkspaceEntry | undefined => {
     for (const project of getProjects()) {
       const workspace = project.workspaces?.find((w) => w.path === workspacePath);
       if (workspace) {
         return {
           projectPath: project.path,
+          projectRef: projectRefFor(project.path, project.remoteUrl),
           workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
           ...(workspace.metadata !== undefined && { metadata: workspace.metadata }),
         };
@@ -126,6 +144,9 @@ export function workspacesFromProjects(
     }
     return undefined;
   };
+  return Object.assign(lookup, {
+    paths: () => getProjects().flatMap((project) => (project.workspaces ?? []).map((w) => w.path)),
+  });
 }
 
 // =============================================================================
@@ -134,15 +155,12 @@ export function workspacesFromProjects(
 
 /** Build an agent:update-status intent. */
 export function updateStatusIntent(
-  workspacePath: WorkspacePath,
+  workspaceRef: WorkspaceRef,
   status: AggregatedAgentStatus
 ): UpdateAgentStatusIntent {
   return {
     type: INTENT_UPDATE_AGENT_STATUS,
-    payload: {
-      workspacePath: workspacePath as WorkspacePath,
-      status,
-    },
+    payload: { workspaceRef, status },
   };
 }
 
@@ -229,19 +247,23 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
       typeof workspaces === "function" ? workspaces : (path: string) => workspaces[path];
     const vm = config.viewManager;
     // A workspace named by its ref is found among the entries by the ref its
-    // project path and name give. A lookup function answers paths only.
+    // project and name give. A lookup function answers refs when it lists its paths.
+    const projectRefOfEntry = (entry: MockWorkspaceEntry): ProjectRef =>
+      entry.projectRef ?? projectRefFor(entry.projectPath);
     const refOf = (entry: MockWorkspaceEntry): WorkspaceRef =>
-      makeWorkspaceRef(projectRefFor(entry.projectPath), entry.workspaceName);
+      makeWorkspaceRef(projectRefOfEntry(entry), entry.workspaceName);
+    const knownPaths = (): Iterable<WorkspacePath> =>
+      typeof workspaces === "function"
+        ? (workspaces.paths?.() ?? [])
+        : Object.keys(workspaces).map((path) => workspacePathSchema.parse(path));
     const find = (payload: ResolveWorkspaceIntent["payload"]) => {
       if (payload.workspacePath !== undefined) {
         const entry = lookupWorkspace(payload.workspacePath);
         return entry ? { entry, path: payload.workspacePath } : undefined;
       }
-      if (typeof workspaces === "function") return undefined;
-      for (const [path, entry] of Object.entries(workspaces)) {
-        if (refOf(entry) === payload.workspaceRef) {
-          return { entry, path: workspacePathSchema.parse(path) };
-        }
+      for (const path of knownPaths()) {
+        const entry = lookupWorkspace(path);
+        if (entry !== undefined && refOf(entry) === payload.workspaceRef) return { entry, path };
       }
       return undefined;
     };
@@ -255,7 +277,7 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
             result: {
               workspaceRef: refOf(entry),
               workspacePath: path,
-              projectRef: projectRefFor(entry.projectPath),
+              projectRef: projectRefOfEntry(entry),
               projectPath: entry.projectPath,
               workspaceName: entry.workspaceName,
               branch: entry.branch ?? null,
@@ -283,16 +305,37 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const projects = config.projects;
     const lookupProject =
       typeof projects === "function" ? projects : (path: string) => projects[path];
+    const knownProjectPaths = (): Iterable<ProjectPath> =>
+      typeof projects === "function"
+        ? (projects.paths?.() ?? [])
+        : Object.keys(projects).map((path) => projectPathSchema.parse(path));
+    const findProject = (
+      projectRef: ProjectRef
+    ): { entry: MockProjectEntry; projectPath: ProjectPath } | undefined => {
+      // A checkout's ref names its path; anything else is looked for by ref.
+      const parts = parseProjectRef(projectRef);
+      if (parts?.kind === "checkout") {
+        const projectPath = projectPathSchema.parse(parts.project);
+        const entry = lookupProject(projectPath);
+        if (entry !== undefined && (entry.projectRef ?? projectRef) === projectRef) {
+          return { entry, projectPath };
+        }
+      }
+      for (const projectPath of knownProjectPaths()) {
+        const entry = lookupProject(projectPath);
+        if (entry?.projectRef === projectRef) return { entry, projectPath };
+      }
+      return undefined;
+    };
     hooks[RESOLVE_PROJECT_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-          const { projectPath } = ctx as ResolveProjectHookInput;
-          const entry = lookupProject(projectPath);
-          if (!entry) return { result: {} };
-          const result: ResolveProjectHookResult = {
-            projectId: entry.projectId,
-            projectRef: entry.projectRef ?? projectRefFor(projectPath),
-          };
+          // Test projects are checkouts, so a ref's project part is the path an entry is under.
+          const { projectRef } = ctx as ResolveProjectHookInput;
+          const found = findProject(projectRef);
+          if (found === undefined) return { result: {} };
+          const { entry, projectPath } = found;
+          const result: ResolveProjectHookResult = { projectId: entry.projectId, projectPath };
           if (entry.projectName !== undefined) {
             return { result: { ...result, projectName: entry.projectName } };
           }
@@ -322,10 +365,10 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     hooks[SWITCH_WORKSPACE_OPERATION_ID] = {
       activate: {
         handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-          const { workspacePath, active } = ctx as ActivateHookInput;
+          const { workspaceRef, workspacePath, active } = ctx as ActivateHookInput;
           const intent = ctx.intent as SwitchWorkspaceIntent;
           // Deselect: mirrors the production view-module null branch.
-          if (workspacePath === null) {
+          if (workspaceRef === null || workspacePath === null) {
             vm.setActiveWorkspace(null);
             return { result: {} };
           }
@@ -334,7 +377,7 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
           }
           const focus = intent.payload.focus ?? true;
           vm.setActiveWorkspace(workspacePath, focus);
-          return { result: { resolvedPath: workspacePath } };
+          return { result: { resolvedRef: workspaceRef } };
         },
       },
     };
