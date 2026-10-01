@@ -32,6 +32,15 @@
   "hover" too: hovering the sidebar is a mouse position, not a decision to give
   up the caret.
 
+  Focus policy: the workbench also focuses itself on its own schedule (at
+  startup, among others), which pulls the caret out of a dialog's field. Each
+  frame is told whether it may take focus on its own (`__chFocusAllowed`: the
+  active frame, in the modes the repair defends), and a gate patched into the
+  workbench refuses its focus calls otherwise (bundle-patches.ts, FOCUS_GATE).
+  A frame asks for its policy as it loads (`__chFocusPolicyRequest`). The gate
+  prevents what it sees; the repair still covers the move it cannot see (a
+  hidden workspace's webview host focusing its cross-origin content).
+
   Liveness: showing a frame pings it, and it answers via the probe responder
   the UiViewManager injects alongside the focus tracker. All workspace iframes
   are same-origin, so Chromium hosts them in one shared renderer process; when
@@ -93,6 +102,20 @@
   let { frames, activeKey, mode = "workspace" }: WorkspaceFramesProps = $props();
 
   const frameEls = new SvelteMap<string, HTMLIFrameElement>();
+
+  /** Whether an element of this page (not a frame) holds focus — a dialog field, a sidebar button. */
+  let uiHoldsFocus = $state(false);
+
+  function updateUiFocus(): void {
+    const active = document.activeElement;
+    uiHoldsFocus =
+      active !== null && active !== document.body && !(active instanceof HTMLIFrameElement);
+  }
+
+  // focusout fires before focus lands anywhere; read the outcome once it has.
+  function handleFocusOut(): void {
+    setTimeout(updateUiFocus, 0);
+  }
 
   function registerFrame(el: HTMLIFrameElement, key: string): { destroy(): void } {
     frameEls.set(key, el);
@@ -236,6 +259,13 @@
       return;
     }
 
+    if ((data as { __chFocusPolicyRequest?: unknown }).__chFocusPolicyRequest === true) {
+      const key = keyForSource(event.source);
+      const el = key === undefined ? undefined : frameEls.get(key);
+      if (key !== undefined && el) postFocusPolicy(key, el);
+      return;
+    }
+
     if ((data as { __chAlive?: unknown }).__chAlive !== true) return;
     const key = keyForSource(event.source);
     if (key === undefined) return;
@@ -270,6 +300,34 @@
       }
     });
   }
+
+  /**
+   * Tell a frame whether it may take focus on its own — the focus gate patched
+   * into the workbench (bundle-patches.ts, `FOCUS_GATE`) enforces the answer.
+   * Only the active frame may, only in the modes where it owns the keyboard
+   * (the same ones the repair defends), and only while nothing on this page
+   * holds focus: a dialog's field or shortcut mode must not lose the caret to a
+   * workbench focusing itself.
+   *
+   * `uiHoldsFocus` is what closes the race: `mode` reaches the renderer only
+   * after a round trip through main, so a dialog's field can have the caret
+   * while the mode still says "hover". A focusin here is immediate.
+   */
+  function postFocusPolicy(key: string, el: HTMLIFrameElement): void {
+    const allowed = key === activeKey && repairableMode(mode) && !uiHoldsFocus;
+    try {
+      el.contentWindow?.postMessage({ __chFocusAllowed: allowed }, "*");
+    } catch {
+      // Frame torn down mid-update; it asks again when it loads
+    }
+  }
+
+  // Re-send the policy whenever it can change: the active frame, the mode, the
+  // page's own focus, or the mounted set. A frame that loads later asks for it
+  // itself.
+  $effect(() => {
+    for (const [key, el] of frameEls) postFocusPolicy(key, el);
+  });
 
   function focusActiveFrame(): void {
     const el = activeFrame();
@@ -397,6 +455,8 @@
     hooks.__chReloadFrame = reloadFrame;
 
     window.addEventListener("message", handleFrameMessage);
+    document.addEventListener("focusin", updateUiFocus, true);
+    document.addEventListener("focusout", handleFocusOut, true);
 
     return () => {
       delete hooks.__chFocusActiveFrame;
@@ -404,6 +464,8 @@
       delete hooks.__chReloadFrames;
       delete hooks.__chReloadFrame;
       window.removeEventListener("message", handleFrameMessage);
+      document.removeEventListener("focusin", updateUiFocus, true);
+      document.removeEventListener("focusout", handleFocusOut, true);
       cancelProbe();
     };
   });

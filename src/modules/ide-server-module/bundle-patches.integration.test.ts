@@ -8,6 +8,8 @@
  * not a tidied-up stand-in.
  */
 
+import { runInNewContext } from "node:vm";
+
 import { describe, it, expect } from "vitest";
 
 import {
@@ -43,8 +45,15 @@ const REAL_CREATE_XTERM_TAIL =
   "this._pathService.userHome().then(r=>{this._userHome=r.fsPath}),this._isVisible&&this._open(),i}" +
   "_refreshShellIntegrationInfoStatus(e){";
 
+/** The license header `workbench.js` opens with, as shipped. */
+const REAL_WORKBENCH_HEADER =
+  "/*!--------------------------------------------------------\n" +
+  " * Copyright (C) Microsoft Corporation. All rights reserved.\n" +
+  " *--------------------------------------------------------*/";
+
 /** The workbench as shipped, carrying every one of its patch targets. */
-const REAL_WORKBENCH = REAL_WIRING + REAL_SECRET_WIRING + REAL_CREATE_XTERM_TAIL;
+const REAL_WORKBENCH =
+  REAL_WORKBENCH_HEADER + REAL_WIRING + REAL_SECRET_WIRING + REAL_CREATE_XTERM_TAIL;
 
 /** The normalizeOptions loop the watcher patch anchors on, as shipped. */
 const REAL_WRAPPER_LOOP =
@@ -223,6 +232,217 @@ describe("terminal open-detached patch", () => {
       await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
 
       expect(fsLayer).toHaveFileContaining(WORKBENCH, "this._container?.isConnected&&this._open()");
+    }
+  });
+});
+
+// =============================================================================
+// The focus gate, through the registry
+// =============================================================================
+
+/** The first workbench statement after the header, as shipped. */
+const REAL_FIRST_STATEMENT = "var T$e=function(s,e){return T$e=Object.setPrototypeOf";
+
+/** A stand-in for the workspace frame the gate runs in. */
+interface GateFrame {
+  /** Elements the native focus moved to, in order. */
+  readonly focused: string[];
+  /** Native `window.focus()` calls that went through. */
+  windowFocused: number;
+  /** What `document.hasFocus()` answers. */
+  hasFocus: boolean;
+  /** Messages the frame posted to the host. */
+  readonly posted: unknown[];
+  /** An element of the frame; `.focus()` on it goes through the gate. */
+  element(name: string): { focus(): void; isConnected: boolean };
+  /** The workbench calling `window.focus()`. */
+  windowFocus(): void;
+  /** A message posted by the host (the UI page). */
+  fromHost(data: unknown): void;
+  /** The host focusing the frame (`iframe.contentWindow.focus()`). */
+  gainFocus(): void;
+  /** Something in the frame received focus. */
+  focusIn(): void;
+}
+
+/**
+ * Run the gate exactly as the patch writes it into the bundle, against a fake
+ * frame: a window whose parent is the UI page (also `top`), a document, and an
+ * HTMLElement whose native `focus` records what it focused.
+ */
+async function gateFrame(options: { embedded?: boolean } = {}): Promise<GateFrame> {
+  const fsLayer = bundle(REAL_WORKBENCH_HEADER + REAL_FIRST_STATEMENT);
+  await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+  const patched = await fsLayer.readFile(WORKBENCH);
+  const script = patched.slice(REAL_WORKBENCH_HEADER.length, patched.indexOf(REAL_FIRST_STATEMENT));
+
+  const listeners = new Map<string, ((event: unknown) => void)[]>();
+  const on = (type: string, listener: (event: unknown) => void): void => {
+    listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+  };
+  const emit = (type: string, event: unknown = {}): void => {
+    for (const listener of listeners.get(type) ?? []) listener(event);
+  };
+
+  const focused: string[] = [];
+  class HTMLElementStub {
+    isConnected = true;
+    constructor(readonly name: string) {}
+    focus(): void {
+      focused.push(this.name);
+      emit("focusin");
+    }
+  }
+
+  const posted: unknown[] = [];
+  const parent = { postMessage: (data: unknown) => posted.push(data) };
+  const state = { windowFocused: 0, hasFocus: false };
+  const win: Record<string, unknown> = {
+    addEventListener: on,
+    focus: () => {
+      state.windowFocused += 1;
+    },
+  };
+  win.parent = options.embedded === false ? win : parent;
+  win.top = options.embedded === false ? win : parent;
+  const document = { addEventListener: on, hasFocus: () => state.hasFocus };
+
+  runInNewContext(script, { window: win, document, HTMLElement: HTMLElementStub });
+
+  return {
+    focused,
+    get windowFocused() {
+      return state.windowFocused;
+    },
+    get hasFocus() {
+      return state.hasFocus;
+    },
+    set hasFocus(value: boolean) {
+      state.hasFocus = value;
+    },
+    posted,
+    element: (name) => new HTMLElementStub(name),
+    windowFocus: () => (win.focus as () => void)(),
+    fromHost: (data) => emit("message", { source: parent, data }),
+    gainFocus: () => {
+      state.hasFocus = true;
+      emit("focus");
+    },
+    focusIn: () => emit("focusin"),
+  } as GateFrame;
+}
+
+describe("focus gate patch", () => {
+  it("prepends the gate right after the license header, ahead of every workbench statement", async () => {
+    const fsLayer = bundle(REAL_WORKBENCH_HEADER + REAL_FIRST_STATEMENT);
+
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+
+    const patched = await fsLayer.readFile(WORKBENCH);
+    expect(patched.startsWith(REAL_WORKBENCH_HEADER + ";(function(){")).toBe(true);
+    expect(patched.endsWith("})();" + REAL_FIRST_STATEMENT)).toBe(true);
+  });
+
+  it("is applied once, however often the app starts", async () => {
+    const fsLayer = bundle(REAL_WORKBENCH_HEADER + REAL_FIRST_STATEMENT);
+
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+    const once = await fsLayer.readFile(WORKBENCH);
+    await applyBundlePatches(deps(fsLayer), testPath("/bundle").toNative());
+
+    expect(await fsLayer.readFile(WORKBENCH)).toBe(once);
+  });
+
+  it("asks the host for its focus policy as it loads", async () => {
+    const frame = await gateFrame();
+
+    expect(frame.posted).toEqual([{ __chFocusPolicyRequest: true }]);
+  });
+
+  it("refuses a focus call from a frame that neither holds focus nor was allowed it", async () => {
+    const frame = await gateFrame();
+
+    frame.element("editor").focus();
+    frame.windowFocus();
+
+    // The workbench focusing itself at startup, behind a dialog: nothing moves.
+    expect(frame.focused).toEqual([]);
+    expect(frame.windowFocused).toBe(0);
+  });
+
+  it("lets the frame focus once the host allows it", async () => {
+    const frame = await gateFrame();
+
+    frame.fromHost({ __chFocusAllowed: true });
+    frame.element("editor").focus();
+
+    expect(frame.focused).toEqual(["editor"]);
+  });
+
+  it("refuses again once the host withdraws it (a dialog opened)", async () => {
+    const frame = await gateFrame();
+    frame.fromHost({ __chFocusAllowed: true });
+
+    frame.fromHost({ __chFocusAllowed: false });
+    frame.element("editor").focus();
+
+    expect(frame.focused).toEqual([]);
+  });
+
+  it("lets a frame that holds focus move it within itself", async () => {
+    const frame = await gateFrame();
+    frame.hasFocus = true;
+
+    frame.element("terminal").focus();
+
+    expect(frame.focused).toEqual(["terminal"]);
+  });
+
+  it("replays a refused focus when the frame is given focus", async () => {
+    const frame = await gateFrame();
+    frame.element("editor").focus();
+
+    frame.gainFocus();
+
+    // The workspace that started behind a dialog still lands on its editor.
+    expect(frame.focused).toEqual(["editor"]);
+  });
+
+  it("does not replay over something focused in the frame since", async () => {
+    const frame = await gateFrame();
+    frame.element("editor").focus();
+    frame.focusIn();
+
+    frame.gainFocus();
+
+    expect(frame.focused).toEqual([]);
+  });
+
+  it("ignores policy messages that do not come from the host", async () => {
+    const frame = await gateFrame();
+
+    frame.fromHost({ __chFocusAllowed: "yes" });
+    frame.element("editor").focus();
+
+    expect(frame.focused).toEqual([]);
+  });
+
+  it("stays out of the way when the workbench is not a CodeHydra workspace frame", async () => {
+    const frame = await gateFrame({ embedded: false });
+
+    frame.element("editor").focus();
+
+    expect(frame.focused).toEqual(["editor"]);
+    expect(frame.posted).toEqual([]);
+  });
+
+  it("applies on every platform", async () => {
+    for (const platform of ["linux", "darwin", "win32"] as const) {
+      const fsLayer = bundle();
+
+      await applyBundlePatches(deps(fsLayer, platform), testPath("/bundle").toNative());
+
+      expect(fsLayer).toHaveFileContaining(WORKBENCH, "window.__chFocusGate=true");
     }
   });
 });

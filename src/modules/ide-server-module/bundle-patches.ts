@@ -304,6 +304,83 @@ const TERMINAL_OPEN_DETACHED: TextPatch = {
     "an agent terminal hidden while it starts can no longer be focused (workbench.action.terminal.focus fails)",
 };
 
+/**
+ * The focus gate prepended to `workbench.js` (see `FOCUS_GATE`).
+ *
+ * Inert unless the workbench is a direct child of the CodeHydra UI page. Asks
+ * the host for its policy on load and follows every `__chFocusAllowed` update
+ * the host (WorkspaceFrames) posts. A focus call the gate refuses is remembered
+ * and replayed when the frame is next given focus, so a workspace that started
+ * behind a dialog still lands on what it meant to focus. Nothing is replayed if
+ * something in the frame was focused since; and the in-frame focus tracker,
+ * which restores the element focused before, runs after the replay and wins.
+ *
+ * Only `HTMLElement.prototype.focus` and `window.focus` are wrapped: the
+ * workbench focuses through its own `HTMLElement.focus` helper, and SVG focus
+ * is not a path it takes.
+ */
+const FOCUS_GATE_SCRIPT =
+  ";(function(){" +
+  "if(window.parent===window||window.parent!==window.top||window.__chFocusGate)return;" +
+  "window.__chFocusGate=true;" +
+  "var allowed=false,wanted=null,focusedSince=false;" +
+  "var elementFocus=HTMLElement.prototype.focus,windowFocus=window.focus;" +
+  "function permitted(){return allowed||document.hasFocus()}" +
+  "HTMLElement.prototype.focus=function(){" +
+  "if(permitted())return elementFocus.apply(this,arguments);" +
+  "wanted=this;focusedSince=false};" +
+  "window.focus=function(){if(permitted())return windowFocus.apply(window,arguments)};" +
+  "document.addEventListener('focusin',function(){focusedSince=true},true);" +
+  "window.addEventListener('focus',function(){" +
+  "var w=wanted;wanted=null;" +
+  "if(w&&!focusedSince&&w.isConnected)try{elementFocus.call(w)}catch(e){}});" +
+  "window.addEventListener('message',function(e){" +
+  "if(e.source===window.parent&&e.data&&typeof e.data.__chFocusAllowed==='boolean')allowed=e.data.__chFocusAllowed});" +
+  "try{window.parent.postMessage({__chFocusPolicyRequest:true},'*')}catch(e){}" +
+  "})();";
+
+/**
+ * Let a workspace frame take focus only when CodeHydra gives it focus.
+ *
+ * Code in a frame can move the page's focus into that frame at any time: an
+ * `element.focus()` or `window.focus()` inside an iframe takes focus from
+ * wherever it is in the host page, and nothing on the host side can refuse it
+ * (`inert` on the iframe does not reach into its document — verified). The
+ * workbench does this on its own schedule: when it starts up, `restoreParts`
+ * focuses the editor group whether or not its frame has focus. A workspace that
+ * is still starting behind a CodeHydra dialog therefore pulls the caret out of
+ * the dialog's text field mid-typing, and the rest of the keystrokes land in the
+ * workbench (the e2e flake in `workspaces-root.e2e.ts`: a typed path arrived
+ * truncated).
+ *
+ * The gate wraps the frame's focus calls: one goes through only when the frame
+ * already holds focus, or the host has said it may take it — the active frame,
+ * while no dialog or shortcut mode owns the keyboard. The host owns that
+ * decision (WorkspaceFrames posts `__chFocusAllowed`); the gate only enforces
+ * it. Focus CodeHydra itself hands a frame (`iframe.contentWindow.focus()` from
+ * the host) is not a call inside the frame and is never gated.
+ *
+ * It must run before any workbench code, which is why it is prepended to the
+ * bundle rather than added to the script injected on `did-frame-finish-load`:
+ * that arrives about as late as the first startup focus call, and a spike lost
+ * that race.
+ *
+ * It does not cover a webview in a hidden workspace taking focus: that move goes
+ * through the webview host page focusing its cross-origin content frame, which
+ * no in-frame wrapper sees. The focus repair in WorkspaceFrames still handles it.
+ */
+const FOCUS_GATE: TextPatch = {
+  id: "focus-gate",
+  file: "out/vs/code/browser/workbench/workbench.js",
+  // The lookahead keeps an already-gated header from matching again: the
+  // engine tries `find` before `applied`, and the header stays in place.
+  find: /^(\/\*!-+\r?\n \* Copyright \(C\) Microsoft Corporation\. All rights reserved\.\r?\n \*-+\*\/)(?!;\(function\(\)\{if\(window\.parent===window)/g,
+  replace: (header) => `${header}${FOCUS_GATE_SCRIPT}`,
+  applied: /window\.__chFocusGate=true/,
+  whenMissing:
+    "a workspace that starts behind a dialog can take keyboard focus from it (typed text lands in the workspace)",
+};
+
 /** Every patch. */
 const TEXT_PATCHES: readonly TextPatch[] = [
   OSC52_CLIPBOARD,
@@ -311,6 +388,7 @@ const TEXT_PATCHES: readonly TextPatch[] = [
   WATCHER_IGNORE_SEPARATORS,
   SIMPLE_BROWSER_LOCAL_FILES,
   TERMINAL_OPEN_DETACHED,
+  FOCUS_GATE,
 ];
 
 // =============================================================================
