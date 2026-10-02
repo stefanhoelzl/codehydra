@@ -616,7 +616,9 @@ describe("after-worktree-created", () => {
     expect(setup.createdEvents).toHaveLength(1);
     expect(setup.createdEvents[0]!.payload.metadata["title"]).toBe("B");
     const card = setup.notifications.find((n) => n.title === "Plugin failed");
-    expect(card?.message).toMatch(/local:a after-worktree-created: exit 3 — log: /);
+    // No log path: each run has its own, and a card naming it would never join
+    // the identical one already open.
+    expect(card?.message).toBe("local:a after-worktree-created: exit 3 — see ch plugin errors");
     // What the script printed stays in its log, never in the card.
     expect(card?.message).not.toContain("secret");
 
@@ -624,6 +626,18 @@ describe("after-worktree-created", () => {
     expect(error).toMatchObject({ plugin: "local:a", entry: "after-worktree-created" });
     const log = await setup.fileSystem.readFile(new Path(error!.logPath!));
     expect(log).toContain("token=secret boom");
+  });
+
+  it("treats exit 75 like any other exit: only automations retry", async () => {
+    const setup = createTestSetup({
+      local: { "a.yaml": hooksManifest({ "after-worktree-created": "exit 75" }) },
+      outcomes: { "exit 75": { exitCode: 75 } },
+    });
+    await openWorkspace(setup);
+
+    expect(setup.notifications.find((n) => n.title === "Plugin failed")?.message).toBe(
+      "local:a after-worktree-created: exit 75 — see ch plugin errors"
+    );
   });
 
   it("rejects output that is not the declared shape", async () => {
@@ -708,7 +722,10 @@ describe("before-worktree-deleted", () => {
     });
     await deleteWorkspace(setup);
 
-    expect(rowOf(setup)?.status).toBe("error");
+    expect(rowOf(setup)).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/exit 1 — see ch plugin errors$/),
+    });
     const last = setup.progress.at(-1)!.payload;
     expect(last.operations.find((op) => op.id === "cleanup-workspace")?.status).toBe("pending");
   });
@@ -1050,6 +1067,88 @@ describe("automations", () => {
       },
     ]);
     expect(setup.module.api.errors()[0]?.logPath).toBeDefined();
+  });
+
+  describe("exit 75", () => {
+    const POLL_MS = 60_000;
+    const RETRYING = "temporary failure (exit 75), retrying";
+
+    beforeEach(() => {
+      // setImmediate stays real: the mocks settle on it.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function setupTemporary(): {
+      setup: TestSetup;
+      outcomes: Record<string, { exitCode?: number; stdout?: string }>;
+    } {
+      const outcomes: Record<string, { exitCode?: number; stdout?: string }> = {
+        "list-notes": { exitCode: 75 },
+      };
+      const setup = createTestSetup({
+        local: { "notes.yaml": ["automations:", "  hello: list-notes"].join("\n") },
+        outcomes,
+      });
+      return { setup, outcomes };
+    }
+    const failedCards = (setup: TestSetup): readonly NotificationConfig[] =>
+      setup.notifications.filter((n) => n.title === "Plugin failed");
+
+    it("is listed as retrying, with no card, until it has lasted ten minutes", async () => {
+      const { setup } = setupTemporary();
+      await setup.startApp();
+
+      expect(setup.module.api.errors()).toMatchObject([
+        { plugin: "local:notes", entry: "automations.hello", message: RETRYING },
+      ]);
+      expect(failedCards(setup)).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(9 * POLL_MS);
+      expect(failedCards(setup)).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(setup.module.api.errors()[0]?.message).toBe("exit 75");
+      expect(failedCards(setup).map((card) => card.message)).toEqual([
+        "local:notes automations.hello: exit 75 — see ch plugin errors",
+      ]);
+
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(failedCards(setup)).toHaveLength(1);
+    });
+
+    it("starts the ten minutes over after a success", async () => {
+      const { setup, outcomes } = setupTemporary();
+      await setup.startApp();
+
+      await vi.advanceTimersByTimeAsync(8 * POLL_MS);
+      outcomes["list-notes"] = { stdout: "[]" };
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      outcomes["list-notes"] = { exitCode: 75 };
+      await vi.advanceTimersByTimeAsync(5 * POLL_MS);
+
+      expect(setup.module.api.errors()[0]?.message).toBe(RETRYING);
+      expect(failedCards(setup)).toEqual([]);
+    });
+
+    it("reports a real failure at once, and starts the ten minutes over after it", async () => {
+      const { setup, outcomes } = setupTemporary();
+      await setup.startApp();
+
+      await vi.advanceTimersByTimeAsync(8 * POLL_MS);
+      outcomes["list-notes"] = { exitCode: 1 };
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+      expect(failedCards(setup).map((card) => card.message)).toEqual([
+        "local:notes automations.hello: exit 1 — see ch plugin errors",
+      ]);
+
+      outcomes["list-notes"] = { exitCode: 75 };
+      await vi.advanceTimersByTimeAsync(5 * POLL_MS);
+      expect(setup.module.api.errors()[0]?.message).toBe(RETRYING);
+      expect(failedCards(setup)).toHaveLength(1);
+    });
   });
 
   it("ignores a repository plugin's automations", async () => {
