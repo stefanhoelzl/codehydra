@@ -67,6 +67,9 @@ async function appFlags(options: LaunchAppOptions): Promise<string[]> {
     `--ide-server.port=${await freePort()}`,
     "--telemetry.enabled=false",
     "--update.notification=false",
+    // The suite always runs hook handlers concurrently, so a dependency that only
+    // holds by registration order fails here before the flag becomes the default.
+    "--experimental.concurrent-hooks=true",
   ];
 
   if (options.agent) flags.push(`--agent=${options.agent}`);
