@@ -364,16 +364,19 @@ export interface IdempotencyRule {
   readonly resetOn?: string | readonly string[];
   /** Return true to bypass the idempotency block (intent still gets tracked). */
   readonly isForced?: (intent: Intent) => boolean;
+  /** Per-key only: hold a duplicate until the key is released, then let it through. */
+  readonly wait?: boolean;
 }
 ```
 
-### Three Modes
+### Modes
 
 | Mode                     | Configuration                     | Behavior                                                             |
 | ------------------------ | --------------------------------- | -------------------------------------------------------------------- |
 | **Singleton**            | No `getKey`, no `resetOn`         | Blocks after first dispatch. Never resets.                           |
 | **Singleton with reset** | No `getKey`, with `resetOn`       | Blocks after first dispatch. Resets when the specified event fires.  |
 | **Per-key**              | With `getKey`, optional `resetOn` | Tracks by key extracted from payload. Each key blocks independently. |
+| **Per-key, waiting**     | With `getKey`, `resetOn`, `wait`  | Like per-key, but a duplicate waits for the key instead of blocking. |
 
 ### createIdempotencyModule Factory
 
@@ -392,6 +395,7 @@ The interceptor runs before any operation. For each dispatched intent, it looks 
 - **Singleton**: blocks if the flag is already set; otherwise sets the flag and passes through
 - **Per-key**: extracts a key via `getKey()`; blocks if that key is already tracked; otherwise tracks it and passes through
 - **Force bypass**: if `isForced(intent)` returns true, the intent passes through even if already tracked (but the key is still recorded)
+- **Wait**: a duplicate of a `wait` rule is held (not blocked) until a reset event releases the key, which is handed straight to it; several run one at a time, in arrival order. A blocked dispatch resolves to `undefined`, which a caller that needs the result reads as failure — `project:open` waits so a `ch ws create --project <path>` racing app:ready's startup open of the same project gets the project. Every exit of the operation must emit a reset event (`project:open` emits `project:open-failed` for a cancel too), or its duplicates wait forever
 
 ### Usage in Composition Root
 
@@ -416,7 +420,7 @@ const idempotencyModule = createIdempotencyModule([
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
   },
 
-  // Per-key: project:open keyed by path or git URL
+  // Per-key, waiting: project:open keyed by path or git URL
   {
     intentType: INTENT_OPEN_PROJECT,
     getKey: (p) => {
@@ -426,6 +430,7 @@ const idempotencyModule = createIdempotencyModule([
       return undefined; // select-folder case: no dedup
     },
     resetOn: [EVENT_PROJECT_OPENED, EVENT_PROJECT_OPEN_FAILED],
+    wait: true,
   },
 ]);
 ```

@@ -28,8 +28,14 @@ export function renderEvent(event: ClientEvent): string | undefined {
     case "project:opened":
       return `opened project ${nameOf(payload.project) ?? ""}`.trimEnd();
 
-    case "project:open-failed":
-      return `could not open project: ${textOf(payload.error) ?? "unknown error"}`;
+    case "project:open-failed": {
+      // Also emitted, with these two fixed reasons, by opens that did not fail:
+      // it is what releases project:open's idempotency key.
+      const reason = textOf(payload.reason);
+      if (reason === "already-open") return undefined; // The command still succeeds.
+      if (reason === "canceled") return "opening the project was canceled";
+      return `could not open project: ${reason ?? "unknown error"}`;
+    }
 
     case "workspace:loading":
       return `creating ${textOf(payload.workspaceName) ?? "workspace"}…`;

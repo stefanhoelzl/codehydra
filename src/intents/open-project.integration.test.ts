@@ -1346,6 +1346,40 @@ describe("OpenProjectOperation", () => {
     expect(harness.projectState.registeredProjects).toHaveLength(0);
   });
 
+  // A project:open that ends without project:opened or project:open-failed
+  // never releases its idempotency key, and later opens of the path wait on it.
+  it.each<[string, () => Promise<HookOutput<PrepareHookResult>>, string]>([
+    ["cancels", async () => ({ result: { canceled: true } }), "canceled"],
+    [
+      "throws",
+      async () => {
+        throw new Error("git init failed");
+      },
+      "git init failed",
+    ],
+  ])("emits project:open-failed when a prepare hook %s", async (_, prepare, reason) => {
+    const harness = createTestHarness();
+    harness.dispatcher.registerModule({
+      name: "test",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          prepare: {
+            handler: prepare,
+          },
+        },
+      },
+    });
+    const failedEvents: ProjectOpenFailedEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPEN_FAILED, (event) => {
+      failedEvents.push(event as ProjectOpenFailedEvent);
+    });
+
+    const path = projPath(new Path(PROJECT_PATH).toString());
+    await harness.dispatcher.dispatch(buildOpenIntent({ path })).catch(() => undefined);
+
+    expect(failedEvents.map((event) => event.payload)).toEqual([{ path, reason }]);
+  });
+
   it("skips prepare hook for git URL intents", async () => {
     const harness = createTestHarness();
 
