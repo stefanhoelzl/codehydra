@@ -199,12 +199,18 @@ import { createAutoTaggingModule } from "./modules/auto-tagging-module";
 import { createLockModule } from "./modules/lock-module";
 // Shared
 import { getErrorMessage } from "./shared/error-utils";
+import { clearInheritedEnv } from "./utils/inherited-env";
 
 // Async watcher — detect unexpected I/O before app.whenReady()
 const asyncWatcher = new AsyncWatcher(["PROMISE", "TickObject", "RANDOMBYTESREQUEST"]);
 asyncWatcher.enable();
 
 // 2. Core initializations (buildInfo, platformInfo, pathProvider, logging)
+
+// First, before anything reads the environment or spawns a child: drop what a
+// launching CodeHydra left behind, or this instance's children would reach that
+// one. Nothing imported above reads a `_CH_*` variable at module load.
+const inheritedEnv = clearInheritedEnv(process.env);
 
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
@@ -213,7 +219,7 @@ const platformInfo = new NodePlatformInfo();
 // roaming profile. Move an existing install's data before anything opens it; when
 // that fails (an older instance still running), this run stays in the old folder.
 const legacyDataRoot =
-  platformInfo.platform === "win32" && !buildInfo.isDevelopment && !process.env._CH_ROOT_DIR
+  platformInfo.platform === "win32" && !buildInfo.isDevelopment && !process.env._CHDEV_ROOT_DIR
     ? legacyWindowsDataRoot(platformInfo.homeDir)
     : null;
 const dataRootRelocation: DataRootRelocation =
@@ -227,6 +233,11 @@ const pathProvider: PathProvider = new DefaultPathProvider(
 );
 const loggingService: Logging = new ElectronLog(pathProvider);
 const appLogger = loggingService.createLogger("app");
+if (inheritedEnv.length > 0) {
+  appLogger.info("Cleared variables inherited from a launching CodeHydra", {
+    names: inheritedEnv.join(","),
+  });
+}
 if (dataRootRelocation.status === "moved") {
   appLogger.info("Moved the data folder", {
     from: dataRootRelocation.from,

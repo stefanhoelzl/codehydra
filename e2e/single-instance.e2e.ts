@@ -7,7 +7,7 @@
  * rests on: that Electron keys its single-instance lock on the `userData`
  * directory electron-lifecycle relocates into the data root. If it did not, the
  * lock would be machine-wide and every data root — e2e runs under
- * `_CH_ROOT_DIR`, `pnpm dev` worktrees — would contend with the installed app.
+ * `_CHDEV_ROOT_DIR`, `pnpm dev` worktrees — would contend with the installed app.
  *
  * The second process is started from the driver's own launch recipe, which
  * gives it a free `--ide-server.port` of its own — so nothing but the lock can

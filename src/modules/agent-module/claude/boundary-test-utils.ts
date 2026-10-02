@@ -535,19 +535,19 @@ async function runScenarioInner(
   const mockUrl = await mock.start();
   disposables.cleanups.push(() => mock.stop());
 
-  // The real bridge, with real boundaries. `_CH_ROOT_DIR` relocates the data
+  // The real bridge, with real boundaries. `_CHDEV_ROOT_DIR` relocates the data
   // root so the generated config files land in this run's temp dir rather than
   // in the developer's ./app-data next to a running dev instance.
-  const previousRoot = process.env._CH_ROOT_DIR;
-  process.env._CH_ROOT_DIR = dataRoot.path;
+  const previousRoot = process.env._CHDEV_ROOT_DIR;
+  process.env._CHDEV_ROOT_DIR = dataRoot.path;
   const pathProvider = new DefaultPathProvider(
     createMockBuildInfo({ isDevelopment: true, appPath: process.cwd() }),
     new NodePlatformInfo()
   );
   if (previousRoot === undefined) {
-    delete process.env._CH_ROOT_DIR;
+    delete process.env._CHDEV_ROOT_DIR;
   } else {
-    process.env._CH_ROOT_DIR = previousRoot;
+    process.env._CHDEV_ROOT_DIR = previousRoot;
   }
 
   const network = new DefaultNetworkLayer(SILENT_LOGGER);

@@ -2,7 +2,7 @@
  * Environment prep for `record-demo`, split into its own module so it can be
  * imported for its SIDE EFFECT ahead of the e2e fixtures.
  *
- * `e2e/env.ts` reads `_CH_ROOT_DIR` at module-eval time, so the variable has to
+ * `e2e/env.ts` reads `_CHDEV_ROOT_DIR` at module-eval time, so the variable has to
  * be set before that module is evaluated. ESM evaluates a module graph in import
  * order, so importing this file first is what lets record-demo.ts use plain
  * top-level imports for the fixtures instead of deferred dynamic ones.
@@ -33,5 +33,5 @@ delete process.env.XDG_SESSION_TYPE;
 // (agent-module/claude bundle: `HRo()` short-circuits on `process.env.IS_DEMO`).
 process.env.IS_DEMO = "1";
 process.env.DISPLAY = DISPLAY;
-process.env._CH_ROOT_DIR = APP_ROOT;
+process.env._CHDEV_ROOT_DIR = APP_ROOT;
 process.env.CLAUDE_CONFIG_DIR = CLAUDE_CONFIG_DIR;

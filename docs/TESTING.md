@@ -236,8 +236,10 @@ first, or `CH_E2E_EXE=<binary>`), or `pnpm test:e2e:dev` against the unpackaged 
 The driver is `createDriver()` from `scripts/appctrl.ts` — the same module the appctrl
 CLI (`pnpm -s appctrl`) exposes to agents, so what you debug interactively is what CI runs.
 
-**Root.** `_CH_ROOT_DIR` relocates the app's data root _and_ its bundles root together, in
-either build flavor (`path-provider.ts`). `e2e/env.ts` defaults it under the OS temp dir and
+**Root.** `_CHDEV_ROOT_DIR` relocates the app's data root _and_ its bundles root together, in
+either build flavor (`path-provider.ts`). The app clears every inherited `_CH_*` variable
+at startup, so a run launched from inside a CodeHydra workspace never reaches that
+instance. `e2e/env.ts` defaults it under the OS temp dir and
 **refuses to `rm -rf` anything outside it** — unset, the app resolves it to
 `~/.local/share/codehydra`, which holds every project you have. The global teardown
 (`e2e/global-teardown.ts`) deletes the root when the run ends — every run starts from an

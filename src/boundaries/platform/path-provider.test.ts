@@ -132,7 +132,7 @@ describe("createMockPathProvider", () => {
 
 describe("DefaultPathProvider", () => {
   beforeEach(() => {
-    vi.stubEnv("_CH_ROOT_DIR", "");
+    vi.stubEnv("_CHDEV_ROOT_DIR", "");
   });
 
   afterEach(() => {
@@ -481,8 +481,8 @@ describe("DefaultPathProvider", () => {
   });
 
   describe("root override", () => {
-    it("_CH_ROOT_DIR relocates dataRoot and bundlesRoot together in a dev build", () => {
-      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+    it("_CHDEV_ROOT_DIR relocates dataRoot and bundlesRoot together in a dev build", () => {
+      vi.stubEnv("_CHDEV_ROOT_DIR", "/tmp/ch-root");
       const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
@@ -492,8 +492,8 @@ describe("DefaultPathProvider", () => {
       expect(pp.bundlePath("vscodium").toString()).toBe("/tmp/ch-root/vscodium");
     });
 
-    it("_CH_ROOT_DIR relocates both roots in a production build", () => {
-      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+    it("_CHDEV_ROOT_DIR relocates both roots in a production build", () => {
+      vi.stubEnv("_CHDEV_ROOT_DIR", "/tmp/ch-root");
       const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
@@ -502,7 +502,7 @@ describe("DefaultPathProvider", () => {
       expect(pp.bundlePath("opencode").toString()).toBe("/tmp/ch-root/opencode");
     });
 
-    it("platformRoot replaces the production root, but not _CH_ROOT_DIR", () => {
+    it("platformRoot replaces the production root, but not _CHDEV_ROOT_DIR", () => {
       const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pp = new DefaultPathProvider(buildInfo, platformInfo, { platformRoot: "/old/root" });
@@ -510,15 +510,15 @@ describe("DefaultPathProvider", () => {
       expect(pp.dataPath("state.json").toString()).toBe("/old/root/state.json");
       expect(pp.bundlePath("vscodium").toString()).toBe("/old/root/vscodium");
 
-      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+      vi.stubEnv("_CHDEV_ROOT_DIR", "/tmp/ch-root");
       const overridden = new DefaultPathProvider(buildInfo, platformInfo, {
         platformRoot: "/old/root",
       });
       expect(overridden.dataPath("state.json").toString()).toBe("/tmp/ch-root/state.json");
     });
 
-    it("_CH_ROOT_DIR relocates the home root inside it", () => {
-      vi.stubEnv("_CH_ROOT_DIR", "/tmp/ch-root");
+    it("_CHDEV_ROOT_DIR relocates the home root inside it", () => {
+      vi.stubEnv("_CHDEV_ROOT_DIR", "/tmp/ch-root");
       const buildInfo = createMockBuildInfo({ isDevelopment: false, appPath: "/test/app" });
       const platformInfo = createMockPlatformInfo({ platform: "linux", homeDir: "/home/testuser" });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);

@@ -435,7 +435,7 @@ describe("ElectronLifecycleModule Integration", () => {
     it("claims the single-instance lock only after userData has been redirected", async () => {
       // Electron keys the lock on `userData`. Claiming it before the redirect
       // would key it on the system default, so every data root — dev
-      // worktrees, e2e runs under _CH_ROOT_DIR — would contend with the
+      // worktrees, e2e runs under _CHDEV_ROOT_DIR — would contend with the
       // installed app instead of getting its own lock.
       const order: string[] = [];
       const mockApp = createMockApp();

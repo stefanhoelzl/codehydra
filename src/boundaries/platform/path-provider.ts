@@ -20,10 +20,10 @@ export interface PathOptions {
  * Use `path.toNative()` for external process spawning.
  */
 export interface PathProvider {
-  /** `<dataRoot>/subpath` — app data (dev: ./app-data/, prod: platform-specific, or `_CH_ROOT_DIR`) */
+  /** `<dataRoot>/subpath` — app data (dev: ./app-data/, prod: platform-specific, or `_CHDEV_ROOT_DIR`) */
   dataPath(subpath: string, options?: PathOptions): Path;
 
-  /** `<bundlesRoot>/subpath` — binary downloads (production paths, or `_CH_ROOT_DIR`) */
+  /** `<bundlesRoot>/subpath` — binary downloads (production paths, or `_CHDEV_ROOT_DIR`) */
   bundlePath(subpath: string): Path;
 
   /** `<runtimeRoot>/subpath` — external process access (prod: resourcesPath, dev: assets) */
@@ -38,7 +38,7 @@ export interface PathProvider {
   /**
    * `<homeRoot>/subpath` — what the user authors: `config.json` and `plugins/`.
    * Kept apart from the data root, which holds what the app writes.
-   * (prod: `~/.codehydra`, dev: ./app-data/home, or `<_CH_ROOT_DIR>/home`)
+   * (prod: `~/.codehydra`, dev: ./app-data/home, or `<_CHDEV_ROOT_DIR>/home`)
    */
   homePath(subpath: string): Path;
 
@@ -57,11 +57,11 @@ export interface PathProvider {
  * - Production Windows: `%LOCALAPPDATA%/Codehydra/` (before: `%APPDATA%/Codehydra/`, see
  *   data-root-relocation.ts)
  *
- * `_CH_ROOT_DIR` overrides both roots at once, in either build flavor.
+ * `_CHDEV_ROOT_DIR` overrides both roots at once, in either build flavor.
  *
  * The home root (user-authored files) is `~/.codehydra` in production — the
  * same directory on every platform, so dotfiles can carry it — and sits inside
- * the data root whenever that is relocated (dev, `_CH_ROOT_DIR`), so a dev build
+ * the data root whenever that is relocated (dev, `_CHDEV_ROOT_DIR`), so a dev build
  * or a test run never reads or writes the user's real config and plugins.
  */
 export class DefaultPathProvider implements PathProvider {
@@ -139,7 +139,7 @@ export class DefaultPathProvider implements PathProvider {
    * which is the shape a production install already has.
    */
   private static rootOverride(): string | undefined {
-    return process.env._CH_ROOT_DIR || undefined;
+    return process.env._CHDEV_ROOT_DIR || undefined;
   }
 
   private computeBundlesRootDir(platformInfo: PlatformInfo): string {
