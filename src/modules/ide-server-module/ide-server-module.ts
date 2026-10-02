@@ -380,6 +380,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   let currentPid: number | null = null;
   let serverProcess: SpawnedProcess | null = null;
   let startPromise: Promise<number> | null = null;
+  // Set by app:shutdown. A start still in flight then ends as cancelled rather
+  // than failed: its server was killed (or must never be spawned) on purpose.
+  let shuttingDown = false;
 
   // Internal state: port set by start hook, read by finalize hook
   let ideServerPort = 0;
@@ -525,8 +528,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
   async function checkHealth(port: number): Promise<boolean> {
     if (!serverProcess || currentPid === null) {
+      // stop() ran (shutdown, or a resume restart): there is no server left to
+      // become healthy, so polling on would only wait out the timeout.
       logger.warn("Health check failed: process not available");
-      return false;
+      throw new HealthCheckAbortError("Process stopped");
     }
 
     const processCheck = await serverProcess.wait(0);
@@ -804,6 +809,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       cleanEnv._CH_IDE_REMOTE_CLI_ARGS = formatRemoteCliArgs(remoteCli.args, deps.platform);
       cleanEnv._CH_IDE_NODE = ide.nodeBinary(ideServerDir, deps.platform);
 
+      // A shutdown that ran before the spawn found nothing to stop, so a server
+      // spawned now would outlive the app.
+      if (shuttingDown) {
+        throw new IdeServerError("shutting down");
+      }
+
       serverProcess = processRunner.run(binaryPath, [...prefixArgs, ...args], {
         cwd: config.runtimeDir,
         env: cleanEnv,
@@ -1064,8 +1075,17 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
               fileSystemLayer.mkdir(config.userDataDir),
             ]);
 
-            // Start the IDE server
-            await ensureRunning();
+            // Start the IDE server. A quit while this still awaits the health
+            // check has app:shutdown kill the server under it; that is the app
+            // quitting, not failing to start, so it provides no port instead of
+            // failing app:start.
+            try {
+              await ensureRunning();
+            } catch (error) {
+              if (!shuttingDown) throw error;
+              logger.info("Start cancelled by shutdown", { error: getErrorMessage(error) });
+              return {};
+            }
             const port = currentPort!;
 
             // Update internal port (consumed by finalize hook for workspace URLs)
@@ -1142,6 +1162,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
+            shuttingDown = true;
             await stop();
           },
         },
