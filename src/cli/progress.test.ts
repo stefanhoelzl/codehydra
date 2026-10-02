@@ -24,6 +24,28 @@ describe("renderEvent", () => {
     });
   });
 
+  describe("project open failure", () => {
+    const failed = (reason: string) => ({
+      type: "project:open-failed",
+      payload: { path: "/p", reason },
+    });
+
+    it("reports why the open failed", () => {
+      expect(renderEvent(failed("Not a valid git repository"))).toBe(
+        "could not open project: Not a valid git repository"
+      );
+    });
+
+    it("says nothing for a project that is already open", () => {
+      // Not a failure: the event only releases the open's idempotency key.
+      expect(renderEvent(failed("already-open"))).toBeUndefined();
+    });
+
+    it("reports a cancel as a cancel", () => {
+      expect(renderEvent(failed("canceled"))).toBe("opening the project was canceled");
+    });
+  });
+
   describe("deletion", () => {
     const progress = (extra: Record<string, unknown>) => ({
       type: "workspace:deletion-progress",

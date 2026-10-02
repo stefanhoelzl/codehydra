@@ -181,7 +181,7 @@ export const projectOpenFailedPayloadSchema = z
     path: projectPathSchema.optional(),
     /** Original intent git URL, for idempotency reset. */
     git: z.string().optional(),
-    /** Reason the open failed (error message or "already-open"). */
+    /** Reason the open failed (error message, "already-open" or "canceled"). */
     reason: z.string(),
   })
   .readonly();
@@ -315,6 +315,37 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       ...(intent.payload.git !== undefined && { git: intent.payload.git }),
     };
 
+    try {
+      const project = await this.open(ctx, origin);
+      if (project === null) {
+        // Cancelled (folder dialog, or a prepare hook such as declining git init):
+        // still release the idempotency key, or every later open of this path
+        // would wait on it forever.
+        ctx.emit({
+          type: EVENT_PROJECT_OPEN_FAILED,
+          payload: { ...origin, reason: "canceled" },
+        } satisfies ProjectOpenFailedEvent);
+      }
+      return project;
+    } catch (e) {
+      // Emit failed event so idempotency key is released on error
+      ctx.emit({
+        type: EVENT_PROJECT_OPEN_FAILED,
+        payload: {
+          ...origin,
+          reason: e instanceof Error ? e.message : String(e),
+        },
+      } satisfies ProjectOpenFailedEvent);
+      throw e;
+    }
+  }
+
+  private async open(
+    ctx: OperationContext<OpenProjectIntent, typeof schemas>,
+    origin: Pick<ProjectOpenFailedPayload, "path" | "git">
+  ): Promise<Project | null> {
+    const { intent } = ctx;
+
     // 0. Select folder: when no path or git URL provided, run "select-folder" hook
     let effectiveIntent = intent;
     if (!intent.payload.path && !intent.payload.git) {
@@ -352,197 +383,184 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       }
     }
 
-    try {
-      // The resolve hook streams clone progress by yielding CloneProgressFrame data;
-      // the operation adds the url it knows and emits clone:progress (operation owns emits).
-      const gitUrl = effectiveIntent.payload.git ?? "";
-      const emitCloneProgress = (frame: unknown): void => {
-        if (isCloneProgressFrame(frame)) {
-          void ctx.emit({
-            type: EVENT_CLONE_PROGRESS,
+    // The resolve hook streams clone progress by yielding CloneProgressFrame data;
+    // the operation adds the url it knows and emits clone:progress (operation owns emits).
+    const gitUrl = effectiveIntent.payload.git ?? "";
+    const emitCloneProgress = (frame: unknown): void => {
+      if (isCloneProgressFrame(frame)) {
+        void ctx.emit({
+          type: EVENT_CLONE_PROGRESS,
+          payload: {
+            stage: frame.stage,
+            progress: frame.progress,
+            name: frame.name,
+            url: gitUrl,
+          },
+        } satisfies CloneProgressEvent);
+      }
+    };
+
+    // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
+    const resolveCtx: HookContext = { intent: effectiveIntent };
+    const { results: resolveResults, errors: resolveErrors } = await ctx.hooks.collect(
+      "resolve",
+      resolveCtx,
+      {
+        onYield: emitCloneProgress,
+      }
+    );
+    throwHookErrors(resolveErrors, "project:open resolve hooks failed");
+    let projectPath: ProjectPath | undefined;
+    let resolvedRemoteUrl: string | undefined;
+    let alreadyOpen = false;
+    for (const r of resolveResults) {
+      if (r.projectPath && !projectPath) projectPath = r.projectPath;
+      if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
+      if (r.alreadyOpen) alreadyOpen = true;
+    }
+    if (!projectPath) {
+      throw new Error("Resolve hook did not provide projectPath");
+    }
+
+    // The project's identity: its origin when cloned, else its path
+    const projectRef = projectRefFor(projectPath, resolvedRemoteUrl);
+
+    // 2. Register: generate ID, store state, persist
+    const registerCtx: RegisterHookInput = {
+      intent: effectiveIntent,
+      projectPath,
+      projectRef,
+      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
+    };
+    const { results: registerResults, errors: registerErrors } = await ctx.hooks.collect(
+      "register",
+      registerCtx
+    );
+    throwHookErrors(registerErrors, "project:open register hooks failed");
+    let projectId: ProjectId | undefined;
+    let name: string | undefined;
+    for (const r of registerResults) {
+      if (r.projectId) projectId = r.projectId;
+      if (r.name !== undefined) name = r.name;
+      if (r.alreadyOpen) alreadyOpen = true;
+    }
+    if (!projectId) {
+      throw new Error("Register hook did not provide projectId");
+    }
+
+    // 3. Discover: find existing workspaces
+    const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath, projectRef };
+    const { results: discoverResults, errors: discoverErrors } = await ctx.hooks.collect(
+      "discover",
+      discoverCtx
+    );
+    throwHookErrors(discoverErrors, "project:open discover hooks failed");
+    const workspaces: DiscoveredWorkspace[] = [];
+    let defaultBaseBranch: string | undefined;
+    for (const r of discoverResults) {
+      if (r.workspaces) workspaces.push(...r.workspaces);
+      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
+    }
+
+    // Build Project return value
+    let project: Project = {
+      ref: projectRef,
+      id: projectId,
+      path: projectPath,
+      name: name ?? new Path(projectPath).basename,
+      workspaces: toIpcWorkspaces(workspaces, projectId, projectRef),
+      ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
+    };
+
+    // When already open, register + discover ran (idempotent) but skip side effects
+    if (!alreadyOpen) {
+      // Announce the project before opening anything: its rows appear at once,
+      // each awake one loading until its workspace:created (or
+      // workspace:create-failed) arrives. Opening every workspace takes a
+      // while — git and an agent start each, one after another.
+      const event: ProjectOpenedEvent = {
+        type: EVENT_PROJECT_OPENED,
+        payload: { project, ...origin },
+      };
+      ctx.emit(event);
+
+      // Hibernated workspaces stay inert — no view + agent init runs; they
+      // appear in the sidebar with the hibernation indicator. The rest open
+      // in sidebar order, so the rows fill in top to bottom.
+      const pending = project.workspaces
+        .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
+        .sort((a, b) => compareDisplayNames(a.name, b.name));
+
+      // Land on the first of them when nothing is active, so the user sees
+      // this project's workspace loading rather than an empty view.
+      const first = pending[0];
+      if (first !== undefined && (await this.activeRef(ctx)) === null) {
+        try {
+          await ctx.dispatch<SwitchWorkspaceIntent>({
+            type: INTENT_SWITCH_WORKSPACE,
+            payload: { workspaceRef: first.ref },
+          });
+        } catch {
+          // Best-effort: switch failure doesn't fail the project open
+        }
+      }
+
+      // Open one at a time (best-effort), the active workspace first: asked
+      // before each open, so switching to a row still loading moves it to
+      // the front of the queue.
+      const urlByRef = new Map<WorkspaceRef, string>();
+      while (pending.length > 0) {
+        const activeRef = await this.activeRef(ctx);
+        const activeIndex = activeRef === null ? -1 : pending.findIndex((w) => w.ref === activeRef);
+        const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
+        if (workspace === undefined) break;
+        try {
+          const existingWorkspace: ExistingWorkspaceData = {
+            path: workspace.path,
+            name: workspace.name,
+            branch: workspace.branch,
+            metadata: workspace.metadata,
+          };
+
+          const openWsIntent: OpenWorkspaceIntent = {
+            type: INTENT_OPEN_WORKSPACE,
             payload: {
-              stage: frame.stage,
-              progress: frame.progress,
-              name: frame.name,
-              url: gitUrl,
+              workspaceName: workspace.name,
+              existingWorkspace,
+              projectRef,
+              stealFocus: false,
+              source: "open-project",
             },
-          } satisfies CloneProgressEvent);
-        }
-      };
+          };
 
-      // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
-      const resolveCtx: HookContext = { intent: effectiveIntent };
-      const { results: resolveResults, errors: resolveErrors } = await ctx.hooks.collect(
-        "resolve",
-        resolveCtx,
-        {
-          onYield: emitCloneProgress,
-        }
-      );
-      throwHookErrors(resolveErrors, "project:open resolve hooks failed");
-      let projectPath: ProjectPath | undefined;
-      let resolvedRemoteUrl: string | undefined;
-      let alreadyOpen = false;
-      for (const r of resolveResults) {
-        if (r.projectPath && !projectPath) projectPath = r.projectPath;
-        if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
-        if (r.alreadyOpen) alreadyOpen = true;
-      }
-      if (!projectPath) {
-        throw new Error("Resolve hook did not provide projectPath");
-      }
-
-      // The project's identity: its origin when cloned, else its path
-      const projectRef = projectRefFor(projectPath, resolvedRemoteUrl);
-
-      // 2. Register: generate ID, store state, persist
-      const registerCtx: RegisterHookInput = {
-        intent: effectiveIntent,
-        projectPath,
-        projectRef,
-        ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
-      };
-      const { results: registerResults, errors: registerErrors } = await ctx.hooks.collect(
-        "register",
-        registerCtx
-      );
-      throwHookErrors(registerErrors, "project:open register hooks failed");
-      let projectId: ProjectId | undefined;
-      let name: string | undefined;
-      for (const r of registerResults) {
-        if (r.projectId) projectId = r.projectId;
-        if (r.name !== undefined) name = r.name;
-        if (r.alreadyOpen) alreadyOpen = true;
-      }
-      if (!projectId) {
-        throw new Error("Register hook did not provide projectId");
-      }
-
-      // 3. Discover: find existing workspaces
-      const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath, projectRef };
-      const { results: discoverResults, errors: discoverErrors } = await ctx.hooks.collect(
-        "discover",
-        discoverCtx
-      );
-      throwHookErrors(discoverErrors, "project:open discover hooks failed");
-      const workspaces: DiscoveredWorkspace[] = [];
-      let defaultBaseBranch: string | undefined;
-      for (const r of discoverResults) {
-        if (r.workspaces) workspaces.push(...r.workspaces);
-        if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
-      }
-
-      // Build Project return value
-      let project: Project = {
-        ref: projectRef,
-        id: projectId,
-        path: projectPath,
-        name: name ?? new Path(projectPath).basename,
-        workspaces: toIpcWorkspaces(workspaces, projectId, projectRef),
-        ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-        ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
-      };
-
-      // When already open, register + discover ran (idempotent) but skip side effects
-      if (!alreadyOpen) {
-        // Announce the project before opening anything: its rows appear at once,
-        // each awake one loading until its workspace:created (or
-        // workspace:create-failed) arrives. Opening every workspace takes a
-        // while — git and an agent start each, one after another.
-        const event: ProjectOpenedEvent = {
-          type: EVENT_PROJECT_OPENED,
-          payload: { project, ...origin },
-        };
-        ctx.emit(event);
-
-        // Hibernated workspaces stay inert — no view + agent init runs; they
-        // appear in the sidebar with the hibernation indicator. The rest open
-        // in sidebar order, so the rows fill in top to bottom.
-        const pending = project.workspaces
-          .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
-          .sort((a, b) => compareDisplayNames(a.name, b.name));
-
-        // Land on the first of them when nothing is active, so the user sees
-        // this project's workspace loading rather than an empty view.
-        const first = pending[0];
-        if (first !== undefined && (await this.activeRef(ctx)) === null) {
-          try {
-            await ctx.dispatch<SwitchWorkspaceIntent>({
-              type: INTENT_SWITCH_WORKSPACE,
-              payload: { workspaceRef: first.ref },
-            });
-          } catch {
-            // Best-effort: switch failure doesn't fail the project open
+          const opened = await ctx.dispatch(openWsIntent);
+          if (opened?.url !== undefined) {
+            urlByRef.set(opened.ref, opened.url);
           }
+        } catch {
+          // Best-effort: individual workspace:open failures don't fail the
+          // project open (workspace:create-failed marks the row)
         }
-
-        // Open one at a time (best-effort), the active workspace first: asked
-        // before each open, so switching to a row still loading moves it to
-        // the front of the queue.
-        const urlByRef = new Map<WorkspaceRef, string>();
-        while (pending.length > 0) {
-          const activeRef = await this.activeRef(ctx);
-          const activeIndex =
-            activeRef === null ? -1 : pending.findIndex((w) => w.ref === activeRef);
-          const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
-          if (workspace === undefined) break;
-          try {
-            const existingWorkspace: ExistingWorkspaceData = {
-              path: workspace.path,
-              name: workspace.name,
-              branch: workspace.branch,
-              metadata: workspace.metadata,
-            };
-
-            const openWsIntent: OpenWorkspaceIntent = {
-              type: INTENT_OPEN_WORKSPACE,
-              payload: {
-                workspaceName: workspace.name,
-                existingWorkspace,
-                projectRef,
-                stealFocus: false,
-                source: "open-project",
-              },
-            };
-
-            const opened = await ctx.dispatch(openWsIntent);
-            if (opened?.url !== undefined) {
-              urlByRef.set(opened.ref, opened.url);
-            }
-          } catch {
-            // Best-effort: individual workspace:open failures don't fail the
-            // project open (workspace:create-failed marks the row)
-          }
-        }
-
-        // The caller gets each opened workspace's IDE server URL.
-        // Hibernated workspaces stay URL-less.
-        project = {
-          ...project,
-          workspaces: project.workspaces.map((w) => {
-            const url = urlByRef.get(w.ref);
-            return url !== undefined ? { ...w, url } : w;
-          }),
-        };
-      } else {
-        // Project already open — emit failed event so idempotency key is released
-        ctx.emit({
-          type: EVENT_PROJECT_OPEN_FAILED,
-          payload: { ...origin, reason: "already-open" },
-        } satisfies ProjectOpenFailedEvent);
       }
 
-      return project;
-    } catch (e) {
-      // Emit failed event so idempotency key is released on error
+      // The caller gets each opened workspace's IDE server URL.
+      // Hibernated workspaces stay URL-less.
+      project = {
+        ...project,
+        workspaces: project.workspaces.map((w) => {
+          const url = urlByRef.get(w.ref);
+          return url !== undefined ? { ...w, url } : w;
+        }),
+      };
+    } else {
+      // Project already open — emit failed event so idempotency key is released
       ctx.emit({
         type: EVENT_PROJECT_OPEN_FAILED,
-        payload: {
-          ...origin,
-          reason: e instanceof Error ? e.message : String(e),
-        },
+        payload: { ...origin, reason: "already-open" },
       } satisfies ProjectOpenFailedEvent);
-      throw e;
     }
+
+    return project;
   }
 }

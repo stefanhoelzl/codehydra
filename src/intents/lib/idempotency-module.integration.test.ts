@@ -404,4 +404,90 @@ describe("createIdempotencyModule", () => {
       }).accepted
     ).toBe(true);
   });
+
+  describe("per-key with wait", () => {
+    /**
+     * test:open runs until its call's gate is released, then emits test:opened
+     * (the reset event) and returns its label. Records the order calls start in.
+     */
+    function waitSetup() {
+      const { dispatcher } = setup([
+        {
+          intentType: "test:open",
+          getKey: (p) => (p as { path: string }).path,
+          resetOn: "test:opened",
+          wait: true,
+        },
+      ]);
+      const started: string[] = [];
+      const gates = new Map<string, () => void>();
+      dispatcher.registerOperation(
+        opWithType("test:open", {
+          id: "open-op",
+          execute: async (ctx: OperationContext<Intent>) => {
+            const { path, label } = ctx.intent.payload as { path: string; label: string };
+            started.push(label);
+            await new Promise<void>((resolve) => gates.set(label, resolve));
+            ctx.emit({ type: "test:opened", payload: { path } });
+            return label;
+          },
+        })
+      );
+      const open = async (path: string, label: string): Promise<unknown> =>
+        await dispatcher.dispatch({ type: "test:open", payload: { path, label } });
+      /** Let pending interceptors and operations run. */
+      const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+      return { open, started, gates, settle };
+    }
+
+    it("holds a duplicate until the in-flight one releases the key, then runs it", async () => {
+      const { open, started, gates, settle } = waitSetup();
+
+      const first = open("/a", "first");
+      const second = open("/a", "second");
+      await settle();
+      expect(started).toEqual(["first"]);
+
+      gates.get("first")!();
+      expect(await first).toBe("first");
+      await settle();
+      expect(started).toEqual(["first", "second"]);
+
+      gates.get("second")!();
+      expect(await second, "the duplicate gets its own result, not undefined").toBe("second");
+    });
+
+    it("runs several duplicates one at a time, in arrival order", async () => {
+      const { open, started, gates, settle } = waitSetup();
+
+      const calls = [open("/a", "1"), open("/a", "2"), open("/a", "3")];
+      for (const label of ["1", "2", "3"]) {
+        await settle();
+        expect(started.at(-1)).toBe(label);
+        expect(started).toHaveLength(Number(label));
+        gates.get(label)!();
+      }
+      expect(await Promise.all(calls)).toEqual(["1", "2", "3"]);
+
+      // Everything released: a later dispatch runs at once.
+      const later = open("/a", "later");
+      await settle();
+      expect(started.at(-1)).toBe("later");
+      gates.get("later")!();
+      expect(await later).toBe("later");
+    });
+
+    it("does not hold a dispatch for a different key", async () => {
+      const { open, started, gates, settle } = waitSetup();
+
+      const a = open("/a", "a");
+      const b = open("/b", "b");
+      await settle();
+      expect(started).toEqual(["a", "b"]);
+
+      gates.get("a")!();
+      gates.get("b")!();
+      expect(await Promise.all([a, b])).toEqual(["a", "b"]);
+    });
+  });
 });

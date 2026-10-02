@@ -515,6 +515,10 @@ const idempotencyModule = createIdempotencyModule([
       return undefined; // select-folder case: no dedup
     },
     resetOn: [EVENT_PROJECT_OPENED, EVENT_PROJECT_OPEN_FAILED],
+    // A second open of the same project (`ch ws create --project <path>` while
+    // app:ready opens it at startup) waits for the first rather than failing,
+    // then finds it open.
+    wait: true,
   },
   {
     // An interactive close parks on its confirm dialog; the guard keeps a
