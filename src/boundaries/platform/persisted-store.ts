@@ -436,7 +436,7 @@ export class PersistedStore {
       return def.redact(value, REDACTED);
     } catch (error) {
       this.deps.logger.debug("redact() threw; falling back to redaction token", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return REDACTED;
     }

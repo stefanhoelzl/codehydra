@@ -10,6 +10,8 @@ import {
   isValidMetadataKey,
   METADATA_KEY_REGEX,
   extractTags,
+  encodeTag,
+  tagKey,
   TAGS_METADATA_KEY_PREFIX,
   type WorkspaceTag,
 } from "./types";
@@ -193,6 +195,25 @@ describe("isValidMetadataKey - Metadata Key Validation", () => {
 describe("TAGS_METADATA_KEY_PREFIX", () => {
   it("should be 'tags.'", () => {
     expect(TAGS_METADATA_KEY_PREFIX).toBe("tags.");
+  });
+});
+
+describe("tagKey / encodeTag", () => {
+  it("stores a tag under tags.<name>", () => {
+    expect(tagKey("bugfix")).toBe("tags.bugfix");
+  });
+
+  it("encodes the presentation fields in the order given, leaving out undefined ones", () => {
+    expect(encodeTag({ color: "#3498db" })).toBe('{"color":"#3498db"}');
+    expect(encodeTag({ label: "L", color: "#000", description: undefined })).toBe(
+      '{"label":"L","color":"#000"}'
+    );
+    expect(encodeTag({})).toBe("{}");
+  });
+
+  it("round-trips through extractTags", () => {
+    const tag = { color: "#8b949e", label: "x", description: "why" };
+    expect(extractTags({ [tagKey("ext")]: encodeTag(tag) })).toEqual([{ name: "ext", ...tag }]);
   });
 });
 

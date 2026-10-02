@@ -33,11 +33,12 @@
  * - app-shutdown/stop: Dispose all listeners
  */
 
-import type { EventDeclarations, IntentModule } from "../intents/lib/module";
+import type { IntentModule } from "../intents/lib/module";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
 import type { Logger } from "../boundaries/platform/logging";
-import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
+import type { KeyboardInput } from "../boundaries/shell/view";
+import type { Unsubscribe } from "../shared/types";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
@@ -54,6 +55,7 @@ import {
 } from "../intents/set-shortcut-active";
 import { INTENT_SHORTCUT_KEY, type ShortcutKeyIntent } from "../intents/shortcut-key";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
@@ -344,7 +346,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   // While shortcut mode is active, a workspace:switched is navigation-initiated
   // (the user pressed an arrow/jump key). Record it so the resulting Electron
   // bounds-change blur does not exit shortcut mode.
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_WORKSPACE_SWITCHED]: {
       handler: async (): Promise<void> => {
         if (shortcutActive) {
@@ -352,12 +354,12 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
         }
       },
     },
-  };
+  });
 
   return {
     name: "shortcut",
     events,
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "ui-ready": true },
@@ -375,14 +377,10 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {
-            try {
-              dispose();
-            } catch {
-              // Best-effort: shutdown disposal is non-fatal
-            }
+            dispose();
           },
         },
       },
-    },
+    }),
   };
 }

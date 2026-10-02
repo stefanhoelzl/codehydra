@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
   import Icon from "../Icon.svelte";
+  import FieldShell, { fieldErrorId } from "./FieldShell.svelte";
   import FilterableDropdown, {
     type DropdownOption as FilterableOption,
   } from "../FilterableDropdown.svelte";
@@ -49,10 +50,12 @@
   }
 </script>
 
-<div class="form-field">
-  {#if section.label}
-    <vscode-label for="{section.id}-input">{section.label}</vscode-label>
-  {/if}
+<FieldShell
+  fieldId={section.id}
+  label={section.label}
+  labelFor="{section.id}-input"
+  error={section.error}
+>
   <div class="dropdown-wrapper">
     <FilterableDropdown
       id={section.id}
@@ -65,7 +68,7 @@
       autofocus={section.autofocus ?? false}
       selectOnFirstFocus={section.selectInitialValue ?? false}
       invalid={!!section.error}
-      describedBy={section.error ? `${section.id}-error` : undefined}
+      describedBy={section.error ? fieldErrorId(section.id) : undefined}
       onSelect={onPick}
       onInput={onType}
       onEnter={onSubmit}
@@ -76,30 +79,9 @@
       </div>
     {/if}
   </div>
-  {#if section.error}
-    <vscode-form-helper id="{section.id}-error">
-      <span class="field-error">{section.error}</span>
-    </vscode-form-helper>
-  {/if}
-</div>
+</FieldShell>
 
 <style>
-  /* Field wrapper: groups the field's label, control, and error tightly so
-     the error sits directly under its control (the form's section gap only
-     applies between sections). */
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-  }
-
-  /* Per-field validation error (slotted into <vscode-form-helper>). */
-  .field-error {
-    color: var(--ch-danger, #f14c4c);
-    font-size: 0.75rem;
-  }
-
   .dropdown-wrapper {
     position: relative;
     width: 100%;

@@ -26,8 +26,9 @@ import { z } from "zod/v4";
 import type { OperationRegistry } from "../../api/registry";
 import type { OperationName } from "../../api/names";
 import { PLUGIN_ACTION_NAMES } from "../../api/adapters/plugin-actions-map";
-import { isValidMetadataKey, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
+import { isValidMetadataKey, tagKey } from "../../shared/api/types";
 import { metadataTier } from "../../utils/metadata-tier";
+import { describeIssue } from "./util";
 
 /** The action that creates workspaces, with the automation-only fields. */
 export const CREATE_ACTION = "workspace.create";
@@ -45,7 +46,7 @@ const metadataSchema = z
     title: z.string().optional().describe("Sidebar title"),
     tags: z
       .record(
-        z.string().refine((name) => isValidMetadataKey(`${TAGS_METADATA_KEY_PREFIX}${name}`), {
+        z.string().refine((name) => isValidMetadataKey(tagKey(name)), {
           error: "not a valid tag name",
         }),
         tagSchema
@@ -113,17 +114,6 @@ export interface ItemSchemas {
   jsonSchema(): Record<string, unknown>;
 }
 
-function describeIssue(issue: z.core.$ZodIssue): string {
-  const at = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
-  if (issue.code === "unrecognized_keys") {
-    return `${at}unknown ${issue.keys.length === 1 ? "field" : "fields"} ${issue.keys.join(", ")}`;
-  }
-  if (issue.code === "invalid_key") {
-    return `${at}${issue.issues.map((keyIssue) => keyIssue.message).join("; ")}`;
-  }
-  return `${at}${issue.message}`;
-}
-
 export function createItemSchemas(registry: OperationRegistry): ItemSchemas {
   // An action the registry lacks has no schema to extend; it is simply not an
   // item (a registry built for a test holds only what the test needs).
@@ -153,7 +143,7 @@ export function createItemSchemas(registry: OperationRegistry): ItemSchemas {
       }
       const parsed = union.safeParse(raw);
       if (!parsed.success) {
-        throw new Error(`${action}: ${describeIssue(parsed.error.issues[0]!)}`);
+        throw new Error(`${action}: ${describeIssue(parsed.error.issues[0]!, "field")}`);
       }
       const input: Record<string, unknown> = { ...(parsed.data as Record<string, unknown>) };
       delete input["action"];

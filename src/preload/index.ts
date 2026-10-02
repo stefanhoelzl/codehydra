@@ -3,15 +3,11 @@
  * Exposes type-safe IPC API via contextBridge.
  */
 
+import type { Unsubscribe } from "../shared/types";
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { UiEvent } from "../shared/ui-event";
 import type { UiState } from "../shared/ui-state";
-
-/**
- * Function to unsubscribe from an event.
- */
-type Unsubscribe = () => void;
 
 /**
  * Creates a type-safe event subscription function.

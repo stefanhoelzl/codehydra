@@ -32,9 +32,8 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { storeBoolean, storeString } from "../boundaries/platform/store-definition";
@@ -44,6 +43,7 @@ import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { NotificationCard } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
+import { defineHooks } from "../intents/declarations";
 
 /** How often to re-check for updates while the app is running. */
 const PERIODIC_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -249,7 +249,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
 
   return {
     name: "auto-updater",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
@@ -299,14 +299,14 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
         // AppImage) never races our teardown; before "quit", whose own
         // app.quit() would otherwise install without the restart.
         handoff: {
-          handler: async (ctx: HookContext) => {
-            const intent = ctx.intent as AppShutdownIntent;
+          handler: async (ctx) => {
+            const { intent } = ctx;
             if (intent.payload.installUpdate) {
               deps.autoUpdater.quitAndInstall();
             }
           },
         },
       },
-    },
+    }),
   };
 }

@@ -4,7 +4,8 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type { WindowManager, Unsubscribe, Theme } from "./window-manager";
+import type { WindowManager, Theme } from "./window-manager";
+import type { Unsubscribe } from "../../shared/types";
 import type { WindowHandle } from "./types";
 import { createWindowHandle } from "./types";
 import type { ImageHandle } from "./image-types";

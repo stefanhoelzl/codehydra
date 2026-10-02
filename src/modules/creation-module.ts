@@ -25,8 +25,7 @@
  *   workspace's project, else the first open project.
  */
 
-import type { IntentModule, EventDeclarations } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
+import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -46,17 +45,14 @@ import {
   EVENT_CLONE_PROGRESS,
   INTENT_OPEN_PROJECT,
   type OpenProjectIntent,
-  type ProjectOpenedEvent,
-  type CloneProgressEvent,
 } from "../intents/open-project";
 import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
 import {
   EVENT_BASES_UPDATED,
   INTENT_GET_PROJECT_BASES,
-  type BasesUpdatedEvent,
   type GetProjectBasesIntent,
 } from "../intents/get-project-bases";
-import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import {
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
@@ -70,6 +66,7 @@ import {
   type LaunchOptionsResult,
 } from "../intents/agent-launch-options";
 import type { ProjectRef } from "../intents/contract";
+import { defineEvents } from "../intents/declarations";
 
 // =============================================================================
 // Dependencies
@@ -130,6 +127,74 @@ export function validateCloneUrl(url: string): string | null {
 }
 
 // =============================================================================
+// Form state
+// =============================================================================
+
+/** What the creation form shows. One per session: a reset starts from `initialForm()`. */
+interface FormState {
+  /** Backend the form currently targets (drives the per-backend fields). */
+  agentType: LifecycleAgentType | null;
+  /**
+   * Launch options the selected backend reported (via agent:get-launch-options).
+   * The form is agent-agnostic: it renders whatever options come back. Re-fetched
+   * on every form open / backend switch; the heavy work (e.g. parsing
+   * `claude --help`) is cached inside the provider, so re-querying is cheap.
+   */
+  launchOptions: LaunchOptionsResult | null;
+  /** The backend whose launch options are currently being fetched (if any). */
+  loadingLaunchOptionsFor: LifecycleAgentType | null;
+  projectRef: ProjectRef | null;
+  branches: readonly BaseInfo[];
+  branchesLoading: boolean;
+  branchesError: string | null;
+  /** Raw name field value (a branch ref after a suggestion pick). */
+  name: string;
+  base: string;
+  /**
+   * Prompt / agent-name / permission-mode field values.
+   *
+   * These are tracked (not just read from the submit snapshot) because the
+   * renderer unmounts the panel on every hide, so the module is the only thing
+   * that survives a close/reopen. Each is pushed back as a controlled `value`
+   * so the remounted Form restores what was typed instead of coming up blank.
+   */
+  prompt: string;
+  agentName: string;
+  permissionMode: string;
+  /**
+   * Whether the user has touched any field since the last reset. Drives the
+   * Reset button's enabled state ("as soon as any input was made"). Set from
+   * field-change events only, so the seeding openSession() does programmatically
+   * (selectProject) never counts as input.
+   */
+  dirty: boolean;
+  /** Native folder picker in flight. */
+  pickerBusy: boolean;
+  /** Form-level error (e.g. folder-open failure), shown above the footer. */
+  error: string | null;
+}
+
+function initialForm(): FormState {
+  return {
+    agentType: null,
+    launchOptions: null,
+    loadingLaunchOptionsFor: null,
+    projectRef: null,
+    branches: [],
+    branchesLoading: false,
+    branchesError: null,
+    name: "",
+    base: "",
+    prompt: "",
+    agentName: "",
+    permissionMode: "",
+    dirty: false,
+    pickerBusy: false,
+    error: null,
+  };
+}
+
+// =============================================================================
 // Module
 // =============================================================================
 
@@ -142,46 +207,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let projects: readonly Project[] = [];
   /** Agents available at the last session (re)open. */
   let availableAgents: readonly AgentInfo[] = [];
-  /** Backend the form currently targets (drives the per-backend fields). */
-  let selectedAgentType: LifecycleAgentType | null = null;
-  /**
-   * Launch options the selected backend reported (via agent:get-launch-options).
-   * The form is agent-agnostic: it renders whatever options come back. Re-fetched
-   * on every form open / backend switch; the heavy work (e.g. parsing
-   * `claude --help`) is cached inside the provider, so re-querying is cheap.
-   */
-  let launchOptions: LaunchOptionsResult | null = null;
-  /** The backend whose launch options are currently being fetched (if any). */
-  let loadingLaunchOptionsFor: LifecycleAgentType | null = null;
-  let selectedProjectRef: ProjectRef | null = null;
-  let branches: readonly BaseInfo[] = [];
-  let branchesLoading = false;
-  let branchesError: string | null = null;
-  /** Raw name field value (a branch ref after a suggestion pick). */
-  let nameValue = "";
-  let baseValue = "";
-  /**
-   * Prompt / agent-name / permission-mode field values.
-   *
-   * These are tracked (not just read from the submit snapshot) because the
-   * renderer unmounts the panel on every hide, so the module is the only thing
-   * that survives a close/reopen. Each is pushed back as a controlled `value`
-   * so the remounted Form restores what was typed instead of coming up blank.
-   */
-  let promptValue = "";
-  let agentNameValue = "";
-  let permissionModeValue = "";
-  /**
-   * Whether the user has touched any field since the last reset. Drives the
-   * Reset button's enabled state ("as soon as any input was made"). Set from
-   * field-change events only, so the seeding openSession() does programmatically
-   * (selectProject) never counts as input.
-   */
-  let dirty = false;
-  /** Native folder picker in flight. */
-  let pickerBusy = false;
-  /** Form-level error (e.g. folder-open failure), shown above the footer. */
-  let formError: string | null = null;
+  /** What the form shows; replaced whole when a session (re)opens. */
+  let form = initialForm();
   /** Project to seed the next reset with (most recently opened project). */
   let pendingSeedProjectRef: ProjectRef | null = null;
   /**
@@ -198,14 +225,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let selectionEpoch = 0;
 
   let handle: DialogHandle | null = null;
-  let lastConfigJson = "";
   /** Strips the autofocus flag for one config build (focus re-arm nudge). */
   let suppressAutofocus = false;
 
   // ---- Derived helpers ----
 
   function selectedProject(): Project | undefined {
-    return projects.find((p) => p.ref === selectedProjectRef);
+    return projects.find((p) => p.ref === form.projectRef);
   }
 
   /** The configured global default agent (already validated by the store). */
@@ -229,12 +255,12 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   /** Permission modes reported by the currently selected backend. */
   function currentPermissionModes(): readonly string[] {
-    return launchOptions?.permissionModes ?? [];
+    return form.launchOptions?.permissionModes ?? [];
   }
 
   /** True while the selected backend's launch options are being fetched. */
   function launchOptionsLoading(): boolean {
-    return loadingLaunchOptionsFor !== null && loadingLaunchOptionsFor === selectedAgentType;
+    return form.loadingLaunchOptionsFor !== null && form.loadingLaunchOptionsFor === form.agentType;
   }
 
   /**
@@ -245,8 +271,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * — the "default" entry, which omits the flag.
    */
   function currentPermissionMode(): string {
-    if (permissionModeValue === "") return "";
-    return currentPermissionModes().includes(permissionModeValue) ? permissionModeValue : "";
+    if (form.permissionMode === "") return "";
+    return currentPermissionModes().includes(form.permissionMode) ? form.permissionMode : "";
   }
 
   /** Permission-mode suggestions: the default entry plus the backend's modes. */
@@ -268,13 +294,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * values, and a late response is ignored if the backend changed meanwhile.
    */
   async function loadLaunchOptions(): Promise<void> {
-    const backend = selectedAgentType;
-    launchOptions = null;
+    const backend = form.agentType;
+    form.launchOptions = null;
     if (backend === null) {
       pushConfig();
       return;
     }
-    loadingLaunchOptionsFor = backend;
+    form.loadingLaunchOptionsFor = backend;
     pushConfig();
     try {
       const intent: GetLaunchOptionsIntent = {
@@ -282,13 +308,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         payload: { backend },
       };
       const result = await dispatcher.dispatch(intent);
-      if (selectedAgentType === backend) launchOptions = result;
+      if (form.agentType === backend) form.launchOptions = result;
     } catch (error) {
       logger.warn("Creation form: launch options fetch failed", {
         error: getErrorMessage(error),
       });
     } finally {
-      if (loadingLaunchOptionsFor === backend) loadingLaunchOptionsFor = null;
+      if (form.loadingLaunchOptionsFor === backend) form.loadingLaunchOptionsFor = null;
       pushConfig();
     }
   }
@@ -298,7 +324,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * ref (unique value) while displaying its derivable name — map it back.
    */
   function resolveName(raw: string): string {
-    const branch = branches.find((b) => b.name === raw && b.derives !== undefined);
+    const branch = form.branches.find((b) => b.name === raw && b.derives !== undefined);
     return branch?.derives ?? raw;
   }
 
@@ -318,10 +344,10 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   function isFormValid(): boolean {
     return (
       selectedProject() !== undefined &&
-      resolveName(nameValue).trim() !== "" &&
-      baseValue !== "" &&
-      nameError(nameValue) === null &&
-      !pickerBusy
+      resolveName(form.name).trim() !== "" &&
+      form.base !== "" &&
+      nameError(form.name) === null &&
+      !form.pickerBusy
     );
   }
 
@@ -340,8 +366,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   /** Branch list grouped Local/Remote (label = value = ref name). */
   function baseSuggestions(): DropdownSuggestionGroup[] {
-    const local = branches.filter((b) => !b.isRemote);
-    const remote = branches.filter((b) => b.isRemote);
+    const local = form.branches.filter((b) => !b.isRemote);
+    const remote = form.branches.filter((b) => b.isRemote);
     const groups: DropdownSuggestionGroup[] = [];
     if (local.length > 0) {
       groups.push({
@@ -364,7 +390,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * (what the input displays after a pick).
    */
   function nameSuggestions(): DropdownSuggestionGroup[] {
-    const derivable = branches.filter((b) => b.derives !== undefined);
+    const derivable = form.branches.filter((b) => b.derives !== undefined);
     const local = derivable.filter((b) => !b.isRemote);
     const remote = derivable.filter((b) => b.isRemote);
     const groups: DropdownSuggestionGroup[] = [];
@@ -385,7 +411,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   function buildConfig(): DialogConfig {
     const hasProject = selectedProject() !== undefined;
-    const currentNameError = nameError(nameValue);
+    const currentNameError = nameError(form.name);
     const sections: DialogSection[] = [
       { type: "text", content: "New workspace", style: "heading" },
       {
@@ -399,7 +425,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
             id: ACTION_OPEN_FOLDER,
             icon: "folder-opened",
             title: "Open project folder",
-            busy: pickerBusy,
+            busy: form.pickerBusy,
             // Without a project the picker buttons are the only way forward.
             ...(!hasProject && { autofocus: true }),
           },
@@ -408,7 +434,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
             id: ACTION_CLONE,
             icon: "source-control",
             title: "Clone from Git",
-            disabled: pickerBusy,
+            disabled: form.pickerBusy,
           },
           ...(projects.length > 0
             ? [
@@ -416,9 +442,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
                   type: "dropdown" as const,
                   id: FIELD_PROJECT,
                   suggestions: [{ items: projects.map((p) => ({ value: p.ref, label: p.name })) }],
-                  value: selectedProjectRef ?? "",
+                  value: form.projectRef ?? "",
                   changeEvent: true,
-                  disabled: pickerBusy,
+                  disabled: form.pickerBusy,
                 },
               ]
             : [
@@ -442,13 +468,13 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         // sight only and never re-seeds a live field, so echoing the user's own
         // text back can never race their typing — the reason this field was
         // left uncontrolled to begin with.
-        initialValue: nameValue,
+        initialValue: form.name,
         // A restored name arrives selected, so typing replaces it instead of
         // appending to text the user would have to clear by hand.
         selectInitialValue: true,
         placeholder: "Enter name or select branch...",
         changeEvent: true,
-        disabled: !hasProject || pickerBusy,
+        disabled: !hasProject || form.pickerBusy,
         ...(hasProject && !suppressAutofocus && { autofocus: true }),
         ...(currentNameError !== null && { error: currentNameError }),
       },
@@ -457,12 +483,12 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         id: FIELD_BASE,
         label: "Base Branch",
         suggestions: baseSuggestions(),
-        value: baseValue,
+        value: form.base,
         placeholder: "Select branch...",
         changeEvent: true,
-        loading: branchesLoading,
-        disabled: !hasProject || pickerBusy,
-        ...(branchesError !== null && { error: branchesError }),
+        loading: form.branchesLoading,
+        disabled: !hasProject || form.pickerBusy,
+        ...(form.branchesError !== null && { error: form.branchesError }),
       },
       {
         type: "input",
@@ -471,7 +497,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         multiline: true,
         rows: 3,
         // Seeded, not controlled — see FIELD_NAME above.
-        initialValue: promptValue,
+        initialValue: form.prompt,
         changeEvent: true,
         placeholder: "Optional prompt — sent as soon as the workspace is ready",
       },
@@ -484,7 +510,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         label: "Agent",
         searchable: false,
         suggestions: [{ items: availableAgents.map((a) => ({ value: a.agent, label: a.label })) }],
-        value: selectedAgentType ?? "",
+        value: form.agentType ?? "",
         changeEvent: true,
       });
     }
@@ -496,7 +522,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       id: FIELD_AGENT_NAME,
       label: "Agent name",
       // Seeded, not controlled — see FIELD_NAME above.
-      initialValue: agentNameValue,
+      initialValue: form.agentName,
       changeEvent: true,
       placeholder: "default",
     });
@@ -522,8 +548,8 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       });
     }
 
-    if (formError !== null) {
-      sections.push({ type: "text", content: formError, icon: "error" });
+    if (form.error !== null) {
+      sections.push({ type: "text", content: form.error, icon: "error" });
     }
 
     sections.push({
@@ -541,7 +567,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
           label: "Reset",
           variant: "secondary",
           role: "cancel",
-          disabled: !dirty,
+          disabled: !form.dirty,
         },
         {
           type: "button",
@@ -556,14 +582,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     return { sections, layout: "form" };
   }
 
-  /** Push the current config, skipping the update when nothing changed. */
+  /** Push the current config (the handle skips an unchanged one). */
   function pushConfig(): void {
-    if (!handle) return;
-    const config = buildConfig();
-    const json = JSON.stringify(config);
-    if (json === lastConfigJson) return;
-    lastConfigJson = json;
-    handle.update(config);
+    handle?.update(buildConfig());
   }
 
   // ---- Data fetching ----
@@ -588,16 +609,16 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
    * git-clone flows.
    */
   function selectProject(projectRef: ProjectRef, options?: { refocusName?: boolean }): void {
-    selectedProjectRef = projectRef;
-    branches = [];
-    branchesLoading = true;
-    branchesError = null;
+    form.projectRef = projectRef;
+    form.branches = [];
+    form.branchesLoading = true;
+    form.branchesError = null;
     // Seed the base field from the project's known default (computed at
     // project:open, carried on the project list) so it paints on the first
     // frame instead of after the git round-trip. The async list/refresh below
     // validates and, if needed, re-defaults it.
-    baseValue = projects.find((p) => p.ref === projectRef)?.defaultBaseBranch ?? "";
-    formError = null;
+    form.base = projects.find((p) => p.ref === projectRef)?.defaultBaseBranch ?? "";
+    form.error = null;
     const epoch = ++selectionEpoch;
     if (options?.refocusName) {
       suppressAutofocus = true;
@@ -613,15 +634,15 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     dispatcher.dispatch(intent).then(
       (result) => {
         if (epoch !== selectionEpoch) return;
-        branches = result.bases;
-        baseValue = pickDefaultBase(result.defaultBaseBranch, result.bases);
+        form.branches = result.bases;
+        form.base = pickDefaultBase(result.defaultBaseBranch, result.bases);
         // Loading stays on until bases:updated confirms the fresh list.
         pushConfig();
       },
       (error: unknown) => {
         if (epoch !== selectionEpoch) return;
-        branchesError = getErrorMessage(error);
-        branchesLoading = false;
+        form.branchesError = getErrorMessage(error);
+        form.branchesLoading = false;
         pushConfig();
       }
     );
@@ -648,33 +669,18 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   /** Open a fresh form session (the always-alive panel surface). */
   async function openSession(): Promise<void> {
-    selectedProjectRef = null;
-    branches = [];
-    branchesLoading = false;
-    branchesError = null;
-    nameValue = "";
-    baseValue = "";
-    promptValue = "";
-    agentNameValue = "";
-    permissionModeValue = "";
-    dirty = false;
-    pickerBusy = false;
-    formError = null;
-    launchOptions = null;
-    loadingLaunchOptionsFor = null;
+    form = initialForm();
 
     await refreshProjects();
     availableAgents = await deps.getAvailableAgents();
-    selectedAgentType = resolveInitialAgentType();
+    form.agentType = resolveInitialAgentType();
     const seed = computeSeedProject();
     if (seed !== null) {
-      selectedProjectRef = seed;
-      branchesLoading = true;
+      form.projectRef = seed;
+      form.branchesLoading = true;
     }
 
-    const config = buildConfig();
-    lastConfigJson = JSON.stringify(config);
-    const newHandle = ui.dialog(config, { kind: "modeless" });
+    const newHandle = ui.dialog(buildConfig(), { kind: "modeless" });
     handle = newHandle;
     wireSession(newHandle);
 
@@ -701,59 +707,66 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     }
   }
 
+  /**
+   * What a change to each field does, given the field's new value. Fields that
+   * are pushed back keep the config the renderer holds current, so a remounted
+   * panel restores what was typed (a changed `initialValue` never re-seeds a
+   * live field, so this is harmless to the field being edited).
+   */
+  const fieldChanges: Readonly<Record<string, (value: string) => void>> = {
+    [FIELD_PROJECT]: (raw) => {
+      // The dialog hands back a raw string; resolve it against the module's own
+      // project list rather than minting a brand from unvalidated UI input.
+      const picked = projects.find((p) => p.ref === raw)?.ref;
+      if (picked !== undefined && picked !== form.projectRef) selectProject(picked);
+    },
+    [FIELD_NAME]: (value) => {
+      form.name = value;
+      form.error = null;
+      // Picking an existing branch suggests its base.
+      const branch = form.branches.find((b) => b.name === value && b.derives !== undefined);
+      if (branch?.base !== undefined && form.branches.some((b) => b.name === branch.base)) {
+        form.base = branch.base;
+      }
+      pushConfig();
+    },
+    [FIELD_BASE]: (value) => {
+      form.base = value;
+      pushConfig();
+    },
+    [FIELD_PROMPT]: (value) => {
+      form.prompt = value;
+      pushConfig();
+    },
+    [FIELD_AGENT_NAME]: (value) => {
+      form.agentName = value;
+      pushConfig();
+    },
+    [FIELD_PERMISSION_MODE]: (value) => {
+      form.permissionMode = value;
+      pushConfig();
+    },
+    [FIELD_AGENT]: (value) => {
+      if (!isAvailableAgent(value) || value === form.agentType) return;
+      form.agentType = value;
+      // Fetch the new backend's launch options; loadLaunchOptions clears the
+      // stale options and re-renders (which drives whether the permission-mode
+      // field appears).
+      void loadLaunchOptions();
+    },
+  };
+
   function wireSession(sessionHandle: DialogHandle): void {
     sessionHandle.onChange((event) => {
       if (handle !== sessionHandle) return;
-      const data = event.data;
       // Any field-change event is user input by definition: the form's own
       // seeding goes through selectProject()/pushConfig(), never through the
       // renderer, so it cannot land here.
-      if (!dirty) {
-        dirty = true;
+      if (!form.dirty) {
+        form.dirty = true;
         pushConfig();
       }
-      if (event.fieldId === FIELD_PROJECT) {
-        // The dialog hands back a raw string; resolve it against the module's own
-        // project list rather than minting a brand from unvalidated UI input.
-        const raw = data[FIELD_PROJECT] ?? "";
-        const picked = projects.find((p) => p.ref === raw)?.ref;
-        if (picked !== undefined && picked !== selectedProjectRef) {
-          selectProject(picked);
-        }
-      } else if (event.fieldId === FIELD_NAME) {
-        nameValue = data[FIELD_NAME] ?? "";
-        formError = null;
-        // Picking an existing branch suggests its base.
-        const branch = branches.find((b) => b.name === nameValue && b.derives !== undefined);
-        if (branch?.base !== undefined && branches.some((b) => b.name === branch.base)) {
-          baseValue = branch.base;
-        }
-        pushConfig();
-      } else if (event.fieldId === FIELD_BASE) {
-        baseValue = data[FIELD_BASE] ?? "";
-        pushConfig();
-      } else if (event.fieldId === FIELD_PROMPT) {
-        // Pushed so the config the renderer holds carries the latest text when
-        // the panel next remounts. Harmless to the live field: a changed
-        // `initialValue` never re-seeds one.
-        promptValue = data[FIELD_PROMPT] ?? "";
-        pushConfig();
-      } else if (event.fieldId === FIELD_AGENT_NAME) {
-        agentNameValue = data[FIELD_AGENT_NAME] ?? "";
-        pushConfig();
-      } else if (event.fieldId === FIELD_PERMISSION_MODE) {
-        permissionModeValue = data[FIELD_PERMISSION_MODE] ?? "";
-        pushConfig();
-      } else if (event.fieldId === FIELD_AGENT) {
-        const next = data[FIELD_AGENT] ?? "";
-        if (isAvailableAgent(next) && next !== selectedAgentType) {
-          selectedAgentType = next;
-          // Fetch the new backend's launch options; loadLaunchOptions clears the
-          // stale options and re-renders (which drives whether the
-          // permission-mode field appears).
-          void loadLaunchOptions();
-        }
-      }
+      fieldChanges[event.fieldId]?.(event.data[event.fieldId] ?? "");
     });
 
     sessionHandle.onEvent((event) => {
@@ -780,17 +793,17 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   function handleCreate(data: Readonly<Record<string, string>>): void {
     // Adopt the snapshot (the debounced name change may not have arrived yet)
     // and re-validate before dispatching.
-    nameValue = data[FIELD_NAME] ?? nameValue;
-    baseValue = data[FIELD_BASE] ?? baseValue;
+    form.name = data[FIELD_NAME] ?? form.name;
+    form.base = data[FIELD_BASE] ?? form.base;
     const project = selectedProject();
-    const workspaceName = resolveName(nameValue).trim();
-    const base = baseValue;
+    const workspaceName = resolveName(form.name).trim();
+    const base = form.base;
 
     if (
       project === undefined ||
       workspaceName === "" ||
       base === "" ||
-      nameError(nameValue) !== null
+      nameError(form.name) !== null
     ) {
       pushConfig();
       return;
@@ -806,7 +819,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     // install — fall back to the module's own resolved selection rather than
     // treating that as "no backend" (which would drop permissionMode/agentName
     // into the option-less "default" arm).
-    const agentSelection = data[FIELD_AGENT] ?? selectedAgentType ?? "";
+    const agentSelection = data[FIELD_AGENT] ?? form.agentType ?? "";
 
     // The form knows the selected backend, so it always emits a typed arm
     // (carrying prompt + options); the resolver only persists it as the
@@ -863,9 +876,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   }
 
   function handleOpenFolder(): void {
-    if (pickerBusy) return;
-    pickerBusy = true;
-    formError = null;
+    if (form.pickerBusy) return;
+    form.pickerBusy = true;
+    form.error = null;
     pushConfig();
 
     // `initial`: the user is adding this project right now, so the add-project
@@ -873,7 +886,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     const intent: OpenProjectIntent = { type: INTENT_OPEN_PROJECT, payload: { initial: true } };
     dispatcher.dispatch(intent).then(
       (project) => {
-        pickerBusy = false;
+        form.pickerBusy = false;
         if (project === null) {
           // User canceled the native picker.
           pushConfig();
@@ -885,9 +898,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         });
       },
       (error: unknown) => {
-        pickerBusy = false;
-        formError = getErrorMessage(error);
-        logger.warn("Failed to open project from creation form", { error: formError });
+        form.pickerBusy = false;
+        form.error = getErrorMessage(error);
+        logger.warn("Failed to open project from creation form", { error: form.error });
         pushConfig();
       }
     );
@@ -1119,18 +1132,18 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   // ---- Domain event subscriptions ----
 
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_APP_STARTED]: {
       handler: async (): Promise<void> => {
         await openSession();
       },
     },
     [EVENT_PROJECT_OPENED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
+      handler: async (event): Promise<void> => {
         // Startup project restore happens before app:started — no session
         // exists and restored projects are not "freshly opened" seeds.
         if (handle === null) return;
-        const { project } = (event as ProjectOpenedEvent).payload;
+        const { project } = event.payload;
         // Seed the next reset with the freshly opened project; the live form
         // keeps the user's current selection (the project just joins the
         // dropdown list).
@@ -1143,43 +1156,43 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       handler: async (): Promise<void> => {
         if (handle === null) return;
         await refreshProjects();
-        if (selectedProjectRef !== null && selectedProject() === undefined) {
+        if (form.projectRef !== null && selectedProject() === undefined) {
           // The selected project was closed: fall back to the seed rule.
           const seed = computeSeedProject();
           if (seed !== null) {
             selectProject(seed);
             return;
           }
-          selectedProjectRef = null;
-          branches = [];
-          branchesLoading = false;
-          branchesError = null;
-          baseValue = "";
+          form.projectRef = null;
+          form.branches = [];
+          form.branchesLoading = false;
+          form.branchesError = null;
+          form.base = "";
         }
         pushConfig();
       },
     },
     [EVENT_BASES_UPDATED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as BasesUpdatedEvent).payload;
-        if (payload.projectRef !== selectedProjectRef) return;
-        branches = payload.bases;
-        branchesLoading = false;
-        branchesError = payload.bases.length === 0 ? "No base branches available" : null;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
+        if (payload.projectRef !== form.projectRef) return;
+        form.branches = payload.bases;
+        form.branchesLoading = false;
+        form.branchesError = payload.bases.length === 0 ? "No base branches available" : null;
         // The fresh list is authoritative: re-default a selection it no
         // longer contains.
-        if (!payload.bases.some((b) => b.name === baseValue)) {
-          baseValue = pickDefaultBase(payload.defaultBaseBranch, payload.bases);
+        if (!payload.bases.some((b) => b.name === form.base)) {
+          form.base = pickDefaultBase(payload.defaultBaseBranch, payload.bases);
         }
         pushConfig();
       },
     },
     [EVENT_CLONE_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
+      handler: async (event): Promise<void> => {
         // Inline progress in the clone sub-dialog (the clone-notification
         // module independently shows the sidebar notification). The event
         // carries progress 0-1; ProgressItem expects 0-100.
-        const payload = (event as CloneProgressEvent).payload;
+        const payload = event.payload;
         if (cloneDialog === null || cloneDialog.cloneUrl !== payload.url) return;
         cloneDialog.progress = {
           stage: payload.stage,
@@ -1189,14 +1202,14 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
+      handler: async (event): Promise<void> => {
         // The user moved on — a stale "recently opened project" seed should
         // not override the active workspace's project on the next reset.
         pendingSeedProjectRef = null;
         // Remember the active workspace's project for the seed. Only non-null
         // payloads update it: the deselect (null) the renderer fires when
         // showing the panel must not erase the project we want to seed.
-        const payload = (event as WorkspaceSwitchedEvent).payload;
+        const payload = event.payload;
         if (payload !== null) {
           lastActiveProjectRef = payload.projectRef;
           return;
@@ -1205,9 +1218,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         // input survives), which would leave an untouched form on whatever
         // project it was seeded with — follow the workspace the user came
         // from instead. A touched form keeps everything, project included.
-        if (handle === null || dirty || resetting || lastActiveProjectRef === null) return;
+        if (handle === null || form.dirty || resetting || lastActiveProjectRef === null) return;
         const project = projects.find((p) => p.ref === lastActiveProjectRef);
-        if (project !== undefined && project.ref !== selectedProjectRef) {
+        if (project !== undefined && project.ref !== form.projectRef) {
           selectProject(project.ref);
         }
       },
@@ -1227,7 +1240,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         pushConfig();
       },
     },
-  };
+  });
 
   return {
     name: "creation",

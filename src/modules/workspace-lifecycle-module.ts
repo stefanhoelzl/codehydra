@@ -65,8 +65,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
-import type { DomainEvent } from "../intents/lib/types";
+import type { HookOutput } from "../intents/lib/operation";
 import type { WorkspaceClosing, WorkspaceLocator, WorkspaceRef } from "../intents/contract";
 import {
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
@@ -75,34 +74,22 @@ import {
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
-  type ActivateHookInput,
   type SwitchWorkspaceHookResult,
-  type WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
-import {
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  type StateHookInput,
-  type StateHookResult,
-} from "../intents/resolve-workspace";
+import { RESOLVE_WORKSPACE_OPERATION_ID, type StateHookResult } from "../intents/resolve-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETE_FAILED,
-  type DeletePipelineHookInput,
-  type DeleteWorkspaceIntent,
   type ShutdownHookResult,
-  type WorkspaceDeletedEvent,
-  type WorkspaceDeleteFailedEvent,
 } from "../intents/delete-workspace";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_HIBERNATED,
   EVENT_WORKSPACE_HIBERNATE_FAILED,
-  type HibernatePipelineHookInput,
   type HibernateShutdownHookResult,
-  type WorkspaceHibernatedEvent,
-  type WorkspaceHibernateFailedEvent,
 } from "../intents/hibernate-workspace";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 /**
  * Capability the delete/hibernate "shutdown" claim provides. Teardown that must
@@ -153,7 +140,7 @@ export function createWorkspaceLifecycleModule(): IntentModule {
 
   return {
     name: "workspace-lifecycle",
-    hooks: {
+    hooks: defineHooks({
       // -----------------------------------------------------------------
       // resolve-workspace → state: contribute `active` and `closing`.
       //
@@ -163,8 +150,8 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       // -----------------------------------------------------------------
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         state: {
-          handler: async (ctx: HookContext): Promise<HookOutput<StateHookResult>> => {
-            const { workspaceRef } = ctx as StateHookInput;
+          handler: async (ctx): Promise<HookOutput<StateHookResult>> => {
+            const { workspaceRef } = ctx;
             const reason = closingReasonFor(workspaceRef);
             return {
               result: {
@@ -199,8 +186,8 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       // -----------------------------------------------------------------
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-            const { workspaceRef, active } = ctx as ActivateHookInput;
+          handler: async (ctx): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
+            const { workspaceRef, active } = ctx;
 
             // Deselect: clear the bookkeeping so a later switch back to this
             // workspace isn't short-circuited as already-active.
@@ -228,9 +215,9 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       // -----------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspaceRef } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+          handler: async (ctx): Promise<HookOutput<ShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
+            const { payload } = ctx.intent;
             claim(workspaceRef, payload.removeWorktree ? "delete" : "close");
             clearActiveIfMatches(workspaceRef);
             return { result: {}, provides: { [WORKSPACE_CLAIMED_CAPABILITY]: true } };
@@ -247,21 +234,21 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       // -----------------------------------------------------------------
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
-            const { workspaceRef } = ctx as HibernatePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<HibernateShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
             claim(workspaceRef, "hibernate");
             clearActiveIfMatches(workspaceRef);
             return { result: {}, provides: { [WORKSPACE_CLAIMED_CAPABILITY]: true } };
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       // Track the active workspace. `cachedActiveRef` is a UI-level cache; both
       // are cleared together on a null switch (nothing active).
       [EVENT_WORKSPACE_SWITCHED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceSwitchedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const payload = event.payload;
           if (payload === null) {
             cachedActiveRef = null;
             activeWorkspaceRef = null;
@@ -277,28 +264,28 @@ export function createWorkspaceLifecycleModule(): IntentModule {
       },
       // The worktree is gone (or the runtime teardown finished).
       [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          release((event as WorkspaceDeletedEvent).payload.workspaceRef);
+        handler: async (event): Promise<void> => {
+          release(event.payload.workspaceRef);
         },
       },
       // The workspace survived — blocked, or the user cancelled the dialog. It
       // must work again; leaving the claim set would gate its status reads and
       // its sidekick until the app restarts.
       [EVENT_WORKSPACE_DELETE_FAILED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          release((event as WorkspaceDeleteFailedEvent).payload.workspaceRef);
+        handler: async (event): Promise<void> => {
+          release(event.payload.workspaceRef);
         },
       },
       [EVENT_WORKSPACE_HIBERNATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          release((event as WorkspaceHibernatedEvent).payload.workspaceRef);
+        handler: async (event): Promise<void> => {
+          release(event.payload.workspaceRef);
         },
       },
       [EVENT_WORKSPACE_HIBERNATE_FAILED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          release((event as WorkspaceHibernateFailedEvent).payload.workspaceRef);
+        handler: async (event): Promise<void> => {
+          release(event.payload.workspaceRef);
         },
       },
-    },
+    }),
   };
 }

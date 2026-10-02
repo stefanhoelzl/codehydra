@@ -23,7 +23,7 @@ import {
   workspaceTargetShape,
 } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
 import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
@@ -125,10 +125,9 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
   ): Promise<WorkspaceStatus> {
     const { payload } = ctx.intent;
 
-    // 1. Dispatch shared workspace resolution
-    const { projectRef } = await ctx.dispatch<ResolveWorkspaceIntent>({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspaceRef: payload.workspaceRef },
+    // 1. Resolve the workspace
+    const { projectRef } = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef, {
+      withProject: false,
     });
 
     // 2. Optional refresh — fetch remotes so unmerged-commit counts reflect
@@ -153,10 +152,11 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     // remove` fail on Windows with "Permission denied" on the directory. The
     // freshness has to sit here, where the operation knows how long it just
     // spent, rather than being each handler's problem to remember.
-    const { workspacePath, closing } = await ctx.dispatch<ResolveWorkspaceIntent>({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspaceRef: payload.workspaceRef },
-    });
+    const { workspacePath, closing } = await resolveWorkspaceIdentity(
+      ctx.dispatch,
+      payload.workspaceRef,
+      { withProject: false }
+    );
 
     const getCtx: GetStatusHookInput = {
       intent: ctx.intent,

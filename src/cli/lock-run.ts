@@ -21,6 +21,7 @@
  * the command then runs under that outer hold and leaves it in place.
  */
 
+import { getErrorMessage } from "../shared/error-utils";
 import { OPERATION_CHANNEL_PREFIX } from "../api/adapters/api-server";
 import { DESCRIBE_CHANNEL, type OperationDescriptor } from "../api/adapters/describe";
 import { parseArgs, readFormat, UsageError } from "./args";
@@ -157,7 +158,7 @@ export async function lockRun(options: LockRunOptions): Promise<number> {
     return status;
   } catch (error: unknown) {
     const code = exitCodeFor(error);
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     options.stderr(renderError(message, code, json));
     return code;
   } finally {

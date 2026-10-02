@@ -13,9 +13,8 @@
  *    `before-worktree-deleted` hook runs.
  */
 
-import type { IntentModule, EventDeclarations, HookDeclarations } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { IntentModule } from "../intents/lib/module";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -33,23 +32,17 @@ import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
-import type {
-  WorkspaceDeletionProgressEvent,
-  WorkspaceDeletedEvent,
-  DeleteWorkspaceIntent,
-  DeletePipelineHookInput,
-  ConfirmHookResult,
-} from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent, ConfirmHookResult } from "../intents/delete-workspace";
 import {
   INTENT_GET_WORKSPACE_STATUS,
   type GetWorkspaceStatusIntent,
 } from "../intents/get-workspace-status";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
 import type { WorkspaceRef } from "../intents/contract";
+import { defineEvents, defineHooks, type HookInput } from "../intents/declarations";
 
 /** The progress row the repository's `before-worktree-deleted` hook owns. */
 const REPO_HOOK_OPERATION_ID = "repo-hook";
@@ -329,12 +322,12 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     }
   }
 
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_WORKSPACE_DELETION_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
+      handler: async (event): Promise<void> => {
         // Render from the event payload directly; the presenter stores the
         // canonical copy off the same event (single source of truth).
-        const progress = (event as WorkspaceDeletionProgressEvent).payload;
+        const progress = event.payload;
         const key = progress.workspaceRef;
 
         // If this workspace's dialog is currently showing, update it
@@ -352,8 +345,8 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
         const newRef = payload?.workspaceRef ?? null;
 
         // Close dialog if switching away from the workspace with deletion
@@ -372,14 +365,14 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { workspaceRef } = (event as WorkspaceDeletedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const { workspaceRef } = event.payload;
         if (activeDialog?.ref === workspaceRef) {
           closeActiveDialog();
         }
       },
     },
-  };
+  });
 
   /**
    * The "confirm" hook on workspace:delete (interactive dispatches only):
@@ -387,8 +380,9 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
    * warnings in when the background status check lands, and parks the
    * dispatch until the user answers.
    */
-  async function confirmRemove(ctx: HookContext): Promise<HookOutput<ConfirmHookResult>> {
-    const input = ctx as DeletePipelineHookInput;
+  async function confirmRemove(
+    input: HookInput<typeof DELETE_WORKSPACE_OPERATION_ID, "confirm">
+  ): Promise<HookOutput<ConfirmHookResult>> {
     let state: RemoveConfirmState = {
       workspaceName: input.workspaceName,
       checking: true,
@@ -450,11 +444,11 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   return {
     name: "deletion-dialog",
-    hooks: {
+    hooks: defineHooks({
       [DELETE_WORKSPACE_OPERATION_ID]: {
         confirm: { handler: confirmRemove },
       },
-    } satisfies HookDeclarations,
+    }),
     events,
   };
 }

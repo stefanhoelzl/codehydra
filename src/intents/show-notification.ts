@@ -34,7 +34,7 @@ import type { HookContext, Operation, OperationContext, OperationSchemas } from 
 import { type IntentOf } from "./lib/operation";
 import { onlyDefined, requireResult, throwHookErrors } from "./lib/hook-helpers";
 import { hookCtxSchema, workspaceRefSchema } from "./contract";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import type { NotificationConfig } from "../shared/notification-types";
 import type { DialogButton } from "../shared/dialog-types";
 
@@ -189,10 +189,7 @@ export class ShowNotificationOperation implements Operation<typeof schemas> {
 
     // An update keeps its attachment, so only a new card needs its workspace checked.
     if (workspaceRef !== undefined && id === undefined) {
-      await ctx.dispatch<ResolveWorkspaceIntent>({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspaceRef },
-      });
+      await resolveWorkspaceIdentity(ctx.dispatch, workspaceRef, { withProject: false });
     }
 
     const { results, errors } = await ctx.hooks.collect("show", { intent: ctx.intent });

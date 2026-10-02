@@ -375,7 +375,7 @@
              (filled = docked); the tooltip states the action. Mirrors Alt+X+P. -->
         <button
           type="button"
-          class="header-action"
+          class="ch-icon-button header-action"
           aria-label={docked ? "Undock sidebar" : "Dock sidebar"}
           aria-pressed={docked}
           title={docked ? "Undock sidebar" : "Dock sidebar"}
@@ -388,7 +388,7 @@
              count); the tooltip states the action. Mirrors Alt+X+T. -->
         <button
           type="button"
-          class="header-action"
+          class="ch-icon-button header-action"
           aria-pressed={hideHibernated}
           aria-label={hibernatedLabel}
           title={hibernatedLabel}
@@ -398,7 +398,7 @@
         </button>
         <button
           type="button"
-          class="header-action"
+          class="ch-icon-button header-action"
           aria-label="Settings"
           title="Settings"
           onclick={() => onOpenSettings()}
@@ -407,7 +407,7 @@
         </button>
         <button
           type="button"
-          class="header-action"
+          class="ch-icon-button header-action"
           aria-label="Help"
           title="Help"
           onclick={() => onOpenHelp()}
@@ -811,24 +811,6 @@
     align-items: center;
     gap: 2px;
     margin-right: 12px;
-  }
-
-  .header-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 6px;
-    color: var(--ch-foreground);
-    background: transparent;
-    border: none;
-    border-radius: var(--ch-radius-sm, 6px);
-    cursor: pointer;
-    opacity: 0.7;
-  }
-
-  .header-action:hover {
-    opacity: 1;
-    background: var(--ch-list-hover-bg);
   }
 
   .sidebar-header h2 {

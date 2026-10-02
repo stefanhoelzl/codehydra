@@ -28,11 +28,12 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem.state-mock";
-import type { AgentStatus } from "../types";
+import type { AgentActivity } from "../types";
 import { testPath } from "../../../shared/test-fixtures";
+import { workspaceRefSchema } from "../../../intents/contract";
 
 /** The ref every workspace in these tests is started with. */
-const WORKSPACE_REF = "ch::local::/test::workspace";
+const WORKSPACE_REF = workspaceRefSchema.parse("ch::local::/test::workspace");
 
 /**
  * Send a hook to the bridge server.
@@ -59,8 +60,6 @@ describe("ClaudeCodeProvider integration", () => {
   let mockPortManager: MockPortManager;
   let mockPathProvider: PathProvider;
   let mockFileSystem: MockFileSystemBoundary;
-
-  const workspacePath = testPath("/workspace/feature-a").toNative();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -97,7 +96,7 @@ describe("ClaudeCodeProvider integration", () => {
 
     provider = new ClaudeCodeProvider({
       serverManager,
-      workspacePath,
+      workspaceRef: WORKSPACE_REF,
       logger: SILENT_LOGGER,
     });
   });
@@ -109,15 +108,15 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("connect/disconnect/reconnect", () => {
     it("connect subscribes to status changes", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       // Send hooks to trigger status changes
       await sendHook(port, "SessionStart", {
-        workspacePath,
+        workspaceRef: WORKSPACE_REF,
         session_id: "test-session",
       });
 
@@ -125,27 +124,27 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("disconnect stops receiving status changes", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       // Disconnect
       provider.disconnect();
 
       // Send hook after disconnect
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
 
       // Should not receive status change
       expect(statusChanges).toEqual([]);
     });
 
     it("reconnect resubscribes to status changes", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       // Disconnect and reconnect
@@ -153,22 +152,22 @@ describe("ClaudeCodeProvider integration", () => {
       await provider.reconnect();
 
       // Send hook after reconnect
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
 
       expect(statusChanges).toEqual(["idle"]);
     });
 
     it("connect is idempotent", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
 
       await provider.connect(port);
       await provider.connect(port); // Second call should be no-op
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       // Should still work normally
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
       expect(statusChanges).toEqual(["idle"]);
     });
 
@@ -183,49 +182,49 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("status change forwarding", () => {
     it("forwards status changes from ServerManager", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       // Full status cycle
-      await sendHook(port, "SessionStart", { workspacePath });
-      await sendHook(port, "UserPromptSubmit", { workspacePath });
-      await sendHook(port, "Stop", { workspacePath });
-      await sendHook(port, "SessionEnd", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: WORKSPACE_REF });
+      await sendHook(port, "Stop", { workspaceRef: WORKSPACE_REF });
+      await sendHook(port, "SessionEnd", { workspaceRef: WORKSPACE_REF });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle", "none"]);
     });
 
     it("multiple subscribers receive changes", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges1: AgentStatus[] = [];
-      const statusChanges2: AgentStatus[] = [];
+      const statusChanges1: AgentActivity[] = [];
+      const statusChanges2: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges1.push(status));
       provider.onStatusChange((status) => statusChanges2.push(status));
 
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
 
       expect(statusChanges1).toEqual(["idle"]);
       expect(statusChanges2).toEqual(["idle"]);
     });
 
     it("unsubscribe stops notifications", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       const unsubscribe = provider.onStatusChange((status) => statusChanges.push(status));
 
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
       expect(statusChanges).toEqual(["idle"]);
 
       unsubscribe();
 
-      await sendHook(port, "UserPromptSubmit", { workspacePath });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: WORKSPACE_REF });
       expect(statusChanges).toEqual(["idle"]); // No new changes
     });
   });
@@ -236,18 +235,18 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("returns null before session starts", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
       expect(provider.getSession()).toBeNull();
     });
 
     it("returns session info after SessionStart hook", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
       await sendHook(port, "SessionStart", {
-        workspacePath,
+        workspaceRef: WORKSPACE_REF,
         session_id: "test-session-123",
       });
 
@@ -264,7 +263,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("returns environment variables after connect", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -302,13 +301,11 @@ describe("ClaudeCodeProvider integration", () => {
 
       const providerNoMcp = new ClaudeCodeProvider({
         serverManager: serverManagerNoMcp,
-        workspacePath,
+        workspaceRef: WORKSPACE_REF,
         logger: SILENT_LOGGER,
       });
 
-      const port = await serverManagerNoMcp.startServer(workspacePath, {
-        workspaceRef: WORKSPACE_REF,
-      });
+      const port = await serverManagerNoMcp.startServer(WORKSPACE_REF);
       await providerNoMcp.connect(port);
 
       const env = providerNoMcp.getEnvironmentVariables();
@@ -319,10 +316,10 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("includes initial prompt file path when prompt is set", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
 
       // Set initial prompt before connecting
-      await serverManager.setInitialPrompt(workspacePath, { prompt: "Hello!" });
+      await serverManager.setInitialPrompt(WORKSPACE_REF, { prompt: "Hello!" });
 
       await provider.connect(port);
 
@@ -332,7 +329,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("omits initial prompt file path when no prompt is set", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -340,9 +337,9 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("includes no-session marker path when marker is set", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
 
-      await serverManager.setNoSessionMarker(workspacePath);
+      await serverManager.setNoSessionMarker(WORKSPACE_REF);
 
       await provider.connect(port);
 
@@ -352,7 +349,7 @@ describe("ClaudeCodeProvider integration", () => {
     });
 
     it("omits no-session marker path when no marker is set", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
       const env = provider.getEnvironmentVariables();
@@ -362,10 +359,10 @@ describe("ClaudeCodeProvider integration", () => {
 
   describe("dispose", () => {
     it("clears all state", async () => {
-      const port = await serverManager.startServer(workspacePath, { workspaceRef: WORKSPACE_REF });
+      const port = await serverManager.startServer(WORKSPACE_REF);
       await provider.connect(port);
 
-      const statusChanges: AgentStatus[] = [];
+      const statusChanges: AgentActivity[] = [];
       provider.onStatusChange((status) => statusChanges.push(status));
 
       provider.dispose();
@@ -377,7 +374,7 @@ describe("ClaudeCodeProvider integration", () => {
       expect(provider.getEnvironmentVariables()).toEqual({});
 
       // Status changes should not be received
-      await sendHook(port, "SessionStart", { workspacePath });
+      await sendHook(port, "SessionStart", { workspaceRef: WORKSPACE_REF });
       expect(statusChanges).toEqual([]);
     });
 

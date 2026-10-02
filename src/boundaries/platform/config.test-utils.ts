@@ -6,11 +6,8 @@
  * createMockAccessor() for injecting cross-module accessors into deps.
  */
 import type { Config, ConfigSource } from "./config";
-import type {
-  PersistedAccessor,
-  DeprecatedPersistedAccessor,
-  PersistedKeyDefinition,
-} from "./store-definition";
+import type { PersistedAccessor } from "./store-definition";
+import { createMockPersistedStore } from "./persisted-store.test-utils";
 
 export interface CreateMockConfigOptions {
   /**
@@ -43,58 +40,14 @@ export interface CreateMockConfigOptions {
  * expect(agent.get()).toBe("opencode");
  */
 export function createMockConfig(options?: CreateMockConfigOptions): Config {
-  const store = new Map<string, unknown>(Object.entries(options?.defaults ?? {}));
+  const { store, defaultsByKey, definitionsByKey, register } = createMockPersistedStore(
+    options?.defaults,
+    { deprecatedReadOnly: true }
+  );
   const overrides = { ...(options?.overrides ?? {}) };
-  const defaultsByKey = new Map<string, unknown>();
-  const definitionsByKey = new Map<string, PersistedKeyDefinition<unknown>>();
-
-  function makeAccessor(key: string): PersistedAccessor<unknown> {
-    return {
-      name: key,
-      get default() {
-        return defaultsByKey.get(key);
-      },
-      get: () => store.get(key),
-      set: async (value: unknown) => {
-        store.set(key, value);
-      },
-      reset: async () => {
-        store.set(key, defaultsByKey.get(key));
-      },
-      isDefault: () => store.get(key) === defaultsByKey.get(key),
-    };
-  }
-
-  const register = ((
-    key: string,
-    definition: { default?: unknown; deprecated?: true }
-  ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor => {
-    defaultsByKey.set(key, definition.default);
-    definitionsByKey.set(key, definition as PersistedKeyDefinition<unknown>);
-    // Mirror production: registered defaults seed the store for unset keys,
-    // but never overwrite values pre-populated via the `defaults` option.
-    if (!store.has(key) && definition.default !== undefined) {
-      store.set(key, definition.default);
-    }
-    if (definition.deprecated) {
-      // Mirror production: deprecated keys are readable, not settable, and
-      // reset() strips them from the store.
-      return {
-        name: key,
-        get: () => store.get(key),
-        set: (): never => {
-          throw new Error(`Deprecated config key "${key}"`);
-        },
-        reset: async () => {
-          store.delete(key);
-        },
-      };
-    }
-    return makeAccessor(key);
-  }) as Config["register"];
 
   return {
-    register,
+    register: register as Config["register"],
     load: () => {},
     getEffective: () => Object.fromEntries(store),
     getDefinitions: () => definitionsByKey,

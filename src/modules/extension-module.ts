@@ -15,6 +15,7 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { HookOutput } from "../intents/lib/operation";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/errors/service-errors";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Manifest Types (internal to this module)
@@ -94,7 +95,7 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
 
   return {
     name: "extension",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
@@ -132,6 +133,6 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

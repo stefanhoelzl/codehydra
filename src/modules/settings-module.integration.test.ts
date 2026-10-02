@@ -24,7 +24,6 @@ import {
   storeFolder,
   storeNumber,
   storeString,
-  storeText,
 } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -101,11 +100,15 @@ function registerKeys(config: Config): void {
     description: "Liquid template for youtrack auto-workspaces",
     applies: "live",
     omit: true,
-    ...storeText({
-      nullable: true,
-      rows: 14,
-      helpPanel: TEMPLATE_HELP,
-      helpLabel: TEMPLATE_HELP_LABEL,
+    ...storeCustom<string | null>({
+      parse: (s) => (s === "" ? null : s),
+      validate: (v) => (v === null ? null : typeof v === "string" ? v : undefined),
+      settingsControl: {
+        kind: "text",
+        rows: 14,
+        helpPanel: TEMPLATE_HELP,
+        helpLabel: TEMPLATE_HELP_LABEL,
+      },
     }),
   });
 }

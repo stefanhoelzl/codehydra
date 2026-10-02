@@ -13,15 +13,12 @@
 
 import { parse } from "yaml";
 import { isValidLiquidTemplate, renderTemplate } from "../../utils/liquid/liquid-renderer";
+import { isPlainObject } from "./util";
 
 export type TemplateScalar = string | number | boolean | null;
 export type TemplateValue = TemplateScalar | TemplateValue[] | TemplateObject;
 export interface TemplateObject {
   readonly [key: string]: TemplateValue;
-}
-
-function isPlainObject(value: unknown): value is TemplateObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stringLeaves(value: unknown, out: string[]): void {
@@ -45,7 +42,8 @@ export function parseTemplate(text: string): TemplateObject {
   stringLeaves(parsed, leaves);
   const invalid = leaves.find((leaf) => !isValidLiquidTemplate(leaf));
   if (invalid !== undefined) throw new Error(`invalid Liquid in the template: ${invalid}`);
-  return parsed;
+  // A YAML mapping holds only what YAML can write: template values.
+  return parsed as TemplateObject;
 }
 
 /** Render a template for one item: string leaves through Liquid, the rest as written. */

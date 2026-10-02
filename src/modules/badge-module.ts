@@ -22,6 +22,7 @@ import type { ImageBoundary } from "../boundaries/shell/image";
 import type { ImageHandle } from "../boundaries/shell/image-types";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { Logger } from "../boundaries/platform/logging";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // BadgeManager (module-private implementation)
@@ -403,8 +404,8 @@ export function createBadgeModule(deps: BadgeModuleDeps): IntentModule {
 
   return {
     name: "badge",
-    events: cache.events,
-    hooks: {
+    events: defineEvents(cache.events),
+    hooks: defineHooks({
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
@@ -412,6 +413,6 @@ export function createBadgeModule(deps: BadgeModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

@@ -12,7 +12,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
 import { storeBoolean, storeEnum } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
@@ -20,12 +20,10 @@ import type { BinaryType } from "../utils/binary-resolution/types";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   type DeleteHookResult,
-  type DeletePipelineHookInput,
   type DetectHookResult,
 } from "../intents/delete-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
-  type ResolveHookInput,
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
 
@@ -36,6 +34,7 @@ import type { NotificationConfig } from "../shared/notification-types";
 import type { WorkspacePath } from "../intents/contract";
 import { Path } from "../utils/path/path";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { defineHooks } from "../intents/declarations";
 
 interface DebugModuleDeps {
   readonly configService: Config;
@@ -86,13 +85,13 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
   return {
     name: "debug",
     requires: { development: true },
-    hooks: {
+    hooks: defineHooks({
       // --- Blocking PIDs scenario ---
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
+          handler: async (ctx): Promise<HookOutput<DeleteHookResult>> => {
             if (!isActive("debug.blocking-pids")) return { result: {} };
-            const { projectPath, workspacePath, workspaceName } = ctx as DeletePipelineHookInput;
+            const { projectPath, workspacePath, workspaceName } = ctx;
             const projectRef = projectRefFor(projectPath);
             debugWorkspaces.set(workspacePath, {
               workspaceRef: makeWorkspaceRef(projectRef, workspaceName),
@@ -129,8 +128,8 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       // --- Blocking PIDs: resolve cached workspace identity ---
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
-            const { payload } = (ctx as ResolveHookInput).intent;
+          handler: async (ctx): Promise<HookOutput<ResolveHookResult>> => {
+            const { payload } = ctx.intent;
             for (const cached of debugWorkspaces.values()) {
               // A path compares as a path: a caller may hand it over in the OS's form.
               const byPath =
@@ -183,7 +182,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }
 

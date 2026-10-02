@@ -1,62 +1,13 @@
 /**
- * Shared test fixtures for creating mock domain objects.
- * Used by both main process and renderer test utilities.
- *
- * Uses v2 API types (Project with id, Workspace with projectId).
+ * Shared test fixtures: fixture paths and small test utilities.
+ * Used by both main process and renderer tests.
  */
 
-import type { Project, Workspace, ProjectId, WorkspaceName } from "./api/types";
 import { workspacePathSchema, projectPathSchema } from "../intents/contract";
 import { Path } from "../utils/path/path";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import { tmpdir } from "node:os";
-import type { ProjectPath, WorkspacePath } from "../intents/contract";
-
-/**
- * Default project ID used in test fixtures.
- */
-const DEFAULT_PROJECT_ID = "test-project-12345678" as ProjectId;
-
-// =============================================================================
-// Workspace Mock Factory
-// =============================================================================
-
-/**
- * Partial workspace override that accepts plain strings for convenience in tests.
- * branch can be explicitly set to null (detached HEAD state).
- */
-export type WorkspaceOverrides = Partial<
-  Omit<Workspace, "name" | "projectId" | "branch" | "metadata">
-> & {
-  name?: string;
-  projectId?: ProjectId;
-  branch?: string | null;
-  metadata?: Record<string, string>;
-};
-
-/**
- * Creates a mock Workspace with sensible defaults.
- * Uses v2 API types (includes projectId).
- *
- * Default workspace simulates a git worktree at /test/project/.worktrees/feature-1
- *
- * @param overrides - Optional properties to override defaults (accepts plain strings for name)
- */
-export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspace {
-  const name = overrides.name ?? "feature-1";
-  // Use "in" check to allow explicit null for branch (detached HEAD)
-  const branch = "branch" in overrides ? overrides.branch : name;
-
-  return {
-    ref: overrides.ref ?? makeWorkspaceRef(projectRefFor(projPath("/test/project")), name),
-    projectId: overrides.projectId ?? DEFAULT_PROJECT_ID,
-    name: name as WorkspaceName,
-    branch,
-    metadata: { base: branch ?? "main", ...overrides.metadata },
-    path: wsPath(overrides.path ?? `/test/project/.worktrees/${name}`),
-    ...(overrides.url !== undefined ? { url: overrides.url } : {}),
-  };
-}
+import type { ProjectPath, WorkspacePath, WorkspaceRef } from "../intents/contract";
+import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Branded path helpers (tests)
@@ -181,79 +132,28 @@ export function wsPath(p: string): WorkspacePath {
 }
 
 // =============================================================================
-// Project Mock Factory
+// Workspace refs (tests)
 // =============================================================================
 
 /**
- * Options for creating a mock project.
+ * The ref of workspace `name` in the checkout project at `projectPath`.
+ *
+ * The path is used as given (not rooted under {@link FIXTURE_ROOT}): pass the
+ * same value the code under test registers the project with.
  */
-export interface MockProjectOptions {
-  /**
-   * If true, include a default workspace in the project.
-   * Defaults to false for backward compatibility with main process tests.
-   */
-  includeDefaultWorkspace?: boolean;
+export function workspaceRefIn(projectPath: string, name: string): WorkspaceRef {
+  return makeWorkspaceRef(projectRefFor(projectPath), name);
 }
 
 /**
- * Partial project override that accepts looser types for convenience in tests.
+ * The ref a fixture workspace goes by, from its path: named after its directory,
+ * in the checkout project at `projectPath` — by default its parent directory.
+ * A test whose workspaces live elsewhere than directly in their project (a
+ * `workspaces/` sibling, a fixed root) passes its project explicitly.
  */
-export type ProjectOverrides = Partial<Omit<Project, "workspaces">> & {
-  workspaces?: WorkspaceOverrides[] | readonly Workspace[];
-};
-
-/**
- * Creates a mock Project with sensible defaults.
- * Uses v2 API types (Project with id).
- *
- * Default project simulates a git repository at /test/project with one workspace.
- * Set `options.includeDefaultWorkspace = false` (or pass `workspaces: []`) to exclude workspaces.
- *
- * @param overrides - Optional properties to override defaults
- * @param options - Options for project creation
- */
-export function createMockProject(
-  overrides: ProjectOverrides = {},
-  options: MockProjectOptions = {}
-): Project {
-  const projectId = overrides.id ?? DEFAULT_PROJECT_ID;
-  const path = projPath(overrides.path ?? "/test/project");
-  const ref = overrides.ref ?? projectRefFor(path, overrides.remoteUrl);
-  // Default to including a workspace (matches renderer test expectations)
-  const { includeDefaultWorkspace = true } = options;
-
-  // Convert workspace overrides to Workspace objects
-  let workspaces: readonly Workspace[];
-  if (overrides.workspaces) {
-    workspaces = overrides.workspaces.map((w) => {
-      // Check if it's already a Workspace (has projectId as branded type)
-      if ("projectId" in w && typeof w.projectId === "string" && w.projectId.includes("-")) {
-        return w as Workspace;
-      }
-      // Otherwise treat as WorkspaceOverrides
-      return createMockWorkspace({
-        ...w,
-        projectId,
-        ref: w.ref ?? makeWorkspaceRef(ref, w.name ?? "feature-1"),
-      });
-    });
-  } else if (includeDefaultWorkspace) {
-    workspaces = [createMockWorkspace({ projectId, ref: makeWorkspaceRef(ref, "feature-1") })];
-  } else {
-    workspaces = [];
-  }
-
-  return {
-    ref,
-    id: projectId,
-    name: overrides.name ?? "test-project",
-    path,
-    workspaces,
-    ...(overrides.defaultBaseBranch !== undefined
-      ? { defaultBaseBranch: overrides.defaultBaseBranch }
-      : {}),
-    ...(overrides.remoteUrl !== undefined ? { remoteUrl: overrides.remoteUrl } : {}),
-  };
+export function testWorkspaceRef(workspacePath: string, projectPath?: string): WorkspaceRef {
+  const path = new Path(workspacePath);
+  return workspaceRefIn(projectPath ?? path.dirname.toString(), path.basename);
 }
 
 // =============================================================================

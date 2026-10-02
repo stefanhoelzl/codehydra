@@ -26,7 +26,6 @@
 
 import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
-import type { DomainEvent } from "../../intents/lib/types";
 import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
@@ -44,14 +43,7 @@ import type { DialogConfig, DialogSection, ProgressItem } from "../../shared/dia
 import { getErrorMessage } from "../../shared/errors/service-errors";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../../intents/app-shutdown";
-import {
-  EVENT_AGENT_STATUS_UPDATED,
-  type AgentStatusUpdatedEvent,
-} from "../../intents/update-agent-status";
-import {
-  EVENT_WORKSPACE_DELETED,
-  type WorkspaceDeletedEvent,
-} from "../../intents/delete-workspace";
+import { createWorkspaceStatusCache } from "../workspace-status-cache";
 import type { UiPresenter } from "../presentation/presentation-module";
 import type { DialogHandle } from "../presentation/sessions";
 import { notify } from "../presentation/notification-card";
@@ -66,7 +58,8 @@ import {
   type MigrationReport,
 } from "./migrate";
 import { convertMigrationAdoptions, type ConvertAdoptionsDeps } from "./convert-adoptions";
-import type { WorkspaceRef } from "../../intents/contract";
+import { workspaceNameOf } from "../../utils/ref";
+import { defineEvents, defineHooks } from "../../intents/declarations";
 
 export const ROOT_STATE_KEY = "paths.workspaces";
 export const PENDING_ROOT_STATE_KEY = "paths.workspaces-pending";
@@ -106,6 +99,8 @@ export interface WorkspacesRootModuleDeps {
   /** Restarts the app once a migration is requested. */
   readonly app: Pick<AppBoundary, "relaunch">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
+  /** Host platform, for the project ids a migration renames screenshot dirs by. */
+  readonly platform: MigrationDeps["platform"];
   readonly logger: Logger;
 }
 
@@ -204,8 +199,8 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
   // Agent activity, for the confirmation
   // ---------------------------------------------------------------------------
 
-  /** Names of the workspaces whose agents are working, by workspace ref. */
-  const busy = new Map<WorkspaceRef, string>();
+  /** Agent status per workspace; the confirmation names the ones working. */
+  const agents = createWorkspaceStatusCache();
 
   // ---------------------------------------------------------------------------
   // Checks on the new folder
@@ -360,7 +355,10 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
 
   function confirmConfig(to: Path): DialogConfig {
     const from = root.current();
-    const working = [...busy.values()].sort();
+    const working = [...agents.statuses]
+      .filter(([, status]) => status.status === "busy" || status.status === "mixed")
+      .map(([ref]) => workspaceNameOf(ref))
+      .sort();
     return {
       sections: [
         ...header("Migrate and restart?", from, to),
@@ -650,6 +648,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
                 gitClient: deps.gitClient,
                 projectsDir,
                 screenshotsDir: pathProvider.dataPath("screenshots"),
+                platform: deps.platform,
                 commit: (left) => commitMigration(to, left),
                 logger,
               },
@@ -683,7 +682,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
 
   const module: IntentModule = {
     name: "workspaces-root",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         migrations: {
           handler: async (): Promise<void> => {
@@ -693,24 +692,8 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
           },
         },
       },
-    },
-    events: {
-      [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-          if (status.status === "busy" || status.status === "mixed") {
-            busy.set(workspace.ref, workspace.name);
-          } else {
-            busy.delete(workspace.ref);
-          }
-        },
-      },
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          busy.delete((event as WorkspaceDeletedEvent).payload.workspaceRef);
-        },
-      },
-    },
+    }),
+    events: defineEvents(agents.events),
   };
 
   return { module, root, settingsRow };

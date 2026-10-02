@@ -9,8 +9,7 @@
  */
 
 import type { AgentModuleProvider } from "../agent-module-provider";
-import type { WorkspacePath } from "../../../shared/ipc";
-import { Path } from "../../../utils/path/path";
+import type { WorkspaceRef } from "../../../intents/contract";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
 import type { AgentBinaryResolver } from "../binary-resolver";
@@ -50,7 +49,7 @@ export function createOpenCodeModuleProvider(
    * Persists across provider recreations (e.g., server restart) so we can
    * restore the attached state without waiting for a new MCP request.
    */
-  const tuiAttachedWorkspaces = new Set<WorkspacePath>();
+  const tuiAttachedWorkspaces = new Set<WorkspaceRef>();
 
   return createAgentModuleProvider<OpenCodeProvider>(
     {
@@ -73,8 +72,13 @@ export function createOpenCodeModuleProvider(
       binaryEnv: (resolved) => ({ _CH_OPENCODE_BIN: resolved.path }),
 
       // --- Provider lifecycle ---
-      createProvider: (workspacePath) =>
-        new OpenCodeProvider(workspacePath, logger, serverManager.getWorkspaceRef(workspacePath)),
+      createProvider: (workspaceRef) => {
+        const workspacePath = serverManager.getWorkspacePath(workspaceRef);
+        if (workspacePath === undefined) {
+          throw new Error(`No OpenCode server is tracked for ${workspaceRef}`);
+        }
+        return new OpenCodeProvider(workspaceRef, workspacePath, logger);
+      },
 
       connectProvider: async (provider, port) => {
         await provider.connect(port);
@@ -83,14 +87,14 @@ export function createOpenCodeModuleProvider(
 
       initialStatus: (provider) => countsToStatus(provider.getEffectiveCounts()),
 
-      onProviderAdded: (path, provider) => {
-        if (tuiAttachedWorkspaces.has(path)) {
+      onProviderAdded: (workspaceRef, provider) => {
+        if (tuiAttachedWorkspaces.has(workspaceRef)) {
           provider.markActive();
         }
       },
 
       // Send the initial prompt (if any) once the provider is registered.
-      onProviderRegistered: async (workspacePath, provider, extra) => {
+      onProviderRegistered: async (workspaceRef, provider, extra) => {
         const pendingPrompt = extra as PendingPrompt | undefined;
         if (!pendingPrompt) return;
 
@@ -106,12 +110,12 @@ export function createOpenCodeModuleProvider(
           );
           if (!promptResult.ok) {
             logger
-              .scoped({ path: workspacePath })
+              .scoped({ workspace: workspaceRef })
               .error("Failed to send initial prompt", { error: promptResult.error.message });
           }
         } else {
           logger
-            .scoped({ path: workspacePath })
+            .scoped({ workspace: workspaceRef })
             .error("Failed to create session for initial prompt", {
               error: sessionResult.error.message,
             });
@@ -119,12 +123,11 @@ export function createOpenCodeModuleProvider(
       },
 
       // --- Workspace start ---
-      startServer: async (workspacePath, options, resolved) => {
+      startServer: async (workspaceRef, workspacePath, options, resolved) => {
         // OpenCode applies the named agent/model per message, so a prompt is
         // required to act on them; without a prompt there's nothing to send.
-        const ip = options?.initialPrompt;
-        await serverManager.startServer(workspacePath, {
-          workspaceRef: options.workspaceRef,
+        const ip = options.initialPrompt;
+        await serverManager.startServer(workspaceRef, workspacePath, {
           ...(ip?.prompt && {
             initialPrompt: {
               prompt: ip.prompt,
@@ -134,39 +137,37 @@ export function createOpenCodeModuleProvider(
           }),
           // The bash tool runs inside this server, so this is where the
           // workspace environment has to be for the agent's commands to see it.
-          ...(options?.env !== undefined && { env: options.env }),
+          ...(options.env !== undefined && { env: options.env }),
           binary: resolved,
         });
       },
 
       // onProviderRegistered has sent the prompt by now (startWorkspace awaits it).
-      afterProviderReady: async (_workspacePath, options) => {
-        options?.onInitialPromptDelivered?.();
+      afterProviderReady: async (_workspaceRef, options) => {
+        options.onInitialPromptDelivered?.();
       },
 
       // --- Terminal lifecycle + TUI tracking ---
       wireExtraCallbacks: (ctx) => {
-        serverManager.setMarkActiveHandler((wp) => {
-          const path = wp as WorkspacePath;
-          tuiAttachedWorkspaces.add(path);
-          ctx.getProvider(path)?.markActive();
+        serverManager.setMarkActiveHandler((workspaceRef) => {
+          tuiAttachedWorkspaces.add(workspaceRef);
+          ctx.getProvider(workspaceRef)?.markActive();
         });
       },
 
-      applyTerminalLifecycle: (workspacePath, event, ctx) => {
+      applyTerminalLifecycle: (workspaceRef, event, ctx) => {
         if (event === "open") {
           // Clears the loading screen (workspace-ready) and marks active (TUI attached),
           // mirroring the old WrapperStart bridge route.
-          serverManager.triggerWrapperStart(workspacePath);
+          serverManager.triggerWrapperStart(workspaceRef);
         } else {
-          const path = new Path(workspacePath).toString() as WorkspacePath;
-          tuiAttachedWorkspaces.delete(path);
-          ctx.getProvider(path)?.detachTui();
+          tuiAttachedWorkspaces.delete(workspaceRef);
+          ctx.getProvider(workspaceRef)?.detachTui();
         }
       },
 
-      clearWorkspaceTracking: (path) => {
-        tuiAttachedWorkspaces.delete(path);
+      clearWorkspaceTracking: (workspaceRef) => {
+        tuiAttachedWorkspaces.delete(workspaceRef);
       },
 
       onDispose: () => {

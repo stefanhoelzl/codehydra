@@ -3,7 +3,7 @@
  * Defines hook payloads and status mapping for the Claude Code agent.
  */
 
-import type { AgentStatus } from "../types";
+import type { AgentActivity } from "../types";
 
 /**
  * All Claude Code hook names.
@@ -72,14 +72,12 @@ export interface ClaudeCodeBackgroundTask {
 }
 
 /**
- * Extended payload with workspace path added by hook-handler.
+ * Extended payload with the workspace ref added by hook-handler.
  * This is what the bridge server receives.
  */
 export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
   /** Workspace ref (added by hook-handler from `_CH_WORKSPACE`) */
   readonly workspaceRef?: string;
-  /** Workspace path, for the lifecycle the server manager reports to itself */
-  readonly workspacePath?: string;
   /**
    * The session's inbox (added by hook-handler to SessionStart only, from the
    * CLAUDE_CODE_MESSAGING_* variables Claude exports to hooks). Absent when the
@@ -95,7 +93,7 @@ export interface ClaudeCodeBridgePayload extends ClaudeCodeHookPayload {
  * Status change resulting from a hook.
  * null means no status change should occur.
  */
-export type HookStatusChange = AgentStatus | null;
+export type HookStatusChange = AgentActivity | null;
 
 /**
  * How a hook is registered in Claude's `--settings` file.

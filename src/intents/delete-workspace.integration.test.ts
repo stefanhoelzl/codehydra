@@ -47,6 +47,7 @@ import type {
 import type { HookContext, HookOutput, OperationContext } from "./lib/operation";
 import type {
   BlockingProcess,
+  DeletionOperation,
   DeletionProgress,
   ProjectId,
   WorkspaceName,
@@ -95,7 +96,7 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, ProjectRef, WorkspaceRef } from "./contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
@@ -397,7 +398,7 @@ function createTestHarness(options?: {
     for (const project of await appState.getAllProjects()) {
       for (const ws of project.workspaces) {
         const name = ws.path.slice(ws.path.lastIndexOf("/") + 1);
-        if (makeWorkspaceRef(projectRefFor(project.path), name) === ref) return wsPath(ws.path);
+        if (workspaceRefIn(project.path, name) === ref) return wsPath(ws.path);
       }
     }
     return undefined;
@@ -726,7 +727,7 @@ function createTestHarness(options?: {
                 candidates.push({
                   projectRef: projectRefFor(project.path),
                   projectName: project.name,
-                  workspaceRef: makeWorkspaceRef(projectRefFor(project.path), workspaceName),
+                  workspaceRef: workspaceRefIn(project.path, workspaceName),
                   workspaceName,
                 });
               }
@@ -828,6 +829,16 @@ function createTestHarness(options?: {
 // =============================================================================
 // Tests
 // =============================================================================
+
+/** A workspace-lock handler whose detect() reports `blockingProcesses` and finds no CWD holders. */
+function lockHandlerDetecting(blockingProcesses: BlockingProcess[]) {
+  return {
+    detect: vi.fn().mockResolvedValue(blockingProcesses),
+    detectCwd: vi.fn().mockResolvedValue([]),
+    killProcesses: vi.fn().mockResolvedValue(undefined),
+    closeHandles: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe("DeleteWorkspaceOperation.normalDeletion", () => {
   it("test 1: normal deletion completes all hooks", async () => {
@@ -1024,12 +1035,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     // Make first delete fail, second succeed
     const gitWorktreeProvider = {
@@ -1089,12 +1095,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
       { pid: 9999, name: "code.exe", commandLine: "code .", files: ["file.txt"], cwd: null },
     ];
 
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     const harness = createTestHarness({
       workspaceLockHandler,
@@ -1129,12 +1130,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     const gitWorktreeProvider = {
       removeWorkspace: vi.fn().mockImplementation(async () => {
@@ -1177,6 +1173,51 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
       projectPath: PROJECT_PATH,
       workspacePath: WORKSPACE_PATH,
     });
+  });
+});
+
+describe("DeleteWorkspaceOperation killing-blockers on a failed removal", () => {
+  function failingHarness(killProcesses: () => Promise<void>): TestHarness {
+    const workspaceLockHandler = {
+      detect: vi
+        .fn()
+        .mockResolvedValue([
+          { pid: 1111, name: "node.exe", commandLine: "node", files: ["a.js"], cwd: null },
+        ]),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockImplementation(killProcesses),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+    const harness = createTestHarness({ workspaceLockHandler });
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = vi
+      .fn()
+      .mockRejectedValue(new Error("Permission denied"));
+    return harness;
+  }
+
+  function finalKillRow(harness: TestHarness): DeletionOperation | undefined {
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(true);
+    return finalProgress.operations.find((op) => op.id === "killing-blockers");
+  }
+
+  it("reports the kill step when the retried removal fails again", async () => {
+    const harness = failingHarness(async () => undefined);
+
+    await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111] }));
+
+    expect(finalKillRow(harness)).toMatchObject({ status: "done" });
+  });
+
+  it("reports a failed kill when the forced removal fails", async () => {
+    const harness = failingHarness(async () => {
+      throw new Error("could not kill 1111");
+    });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111], force: true }));
+
+    expect(finalKillRow(harness)).toMatchObject({ status: "error" });
   });
 });
 
@@ -1290,12 +1331,7 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     const gitWorktreeProvider = {
       removeWorkspace: vi.fn().mockImplementation(async () => {
@@ -1334,6 +1370,26 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
 });
 
 describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
+  const WORKSPACE_PATH_C = wsPath("/test/project/workspaces/feature-c");
+
+  /** Workspaces A (active, the one deleted), B and C — so auto-select (B) and a user's move (C) differ. */
+  function createThreeWorkspaceHarness() {
+    return createTestHarness({
+      activeWorkspacePath: WORKSPACE_PATH,
+      initialProjects: [
+        {
+          path: PROJECT_PATH,
+          name: "test-project",
+          workspaces: [
+            { path: WORKSPACE_PATH, branch: "feature-a", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_B, branch: "feature-b", metadata: { base: "main" } },
+            { path: WORKSPACE_PATH_C, branch: "feature-c", metadata: { base: "main" } },
+          ],
+        },
+      ],
+    });
+  }
+
   it("test 8: active workspace switches to best candidate on delete", async () => {
     const harness = createTestHarness({
       activeWorkspacePath: WORKSPACE_PATH,
@@ -1406,21 +1462,7 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
     // switch decision happens after the interactive confirm (a dialog the user
     // sits in front of) and the teardown. A user who moves away in that window
     // has said where they want to be (PostHog issue 019fb79f).
-    const WORKSPACE_PATH_C = wsPath("/test/project/workspaces/feature-c");
-    const harness = createTestHarness({
-      activeWorkspacePath: WORKSPACE_PATH,
-      initialProjects: [
-        {
-          path: PROJECT_PATH,
-          name: "test-project",
-          workspaces: [
-            { path: WORKSPACE_PATH, branch: "feature-a", metadata: { base: "main" } },
-            { path: WORKSPACE_PATH_B, branch: "feature-b", metadata: { base: "main" } },
-            { path: WORKSPACE_PATH_C, branch: "feature-c", metadata: { base: "main" } },
-          ],
-        },
-      ],
-    });
+    const harness = createThreeWorkspaceHarness();
 
     // The user switches to C before the teardown starts. Auto-select would pick
     // B (the nearest candidate to the deleted A), so the two outcomes differ.
@@ -1448,21 +1490,7 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
     // seconds — killing terminals and stopping servers — and the user can
     // switch inside it. Deleting test-0 and moving to test-2 mid-teardown used
     // to land the user on test-1 two seconds later (reported against 718304f0).
-    const WORKSPACE_PATH_C = wsPath("/test/project/workspaces/feature-c");
-    const harness = createTestHarness({
-      activeWorkspacePath: WORKSPACE_PATH,
-      initialProjects: [
-        {
-          path: PROJECT_PATH,
-          name: "test-project",
-          workspaces: [
-            { path: WORKSPACE_PATH, branch: "feature-a", metadata: { base: "main" } },
-            { path: WORKSPACE_PATH_B, branch: "feature-b", metadata: { base: "main" } },
-            { path: WORKSPACE_PATH_C, branch: "feature-c", metadata: { base: "main" } },
-          ],
-        },
-      ],
-    });
+    const harness = createThreeWorkspaceHarness();
 
     // The switch lands during shutdown — after the active workspace was read,
     // before the switch decision. Auto-select would pick B, so the two
@@ -1726,7 +1754,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     const intent: DeleteWorkspaceIntent = {
       type: INTENT_DELETE_WORKSPACE,
       payload: {
-        workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/unknown")), "workspace"),
+        workspaceRef: workspaceRefIn(projPath("/unknown"), "workspace"),
         keepBranch: true,
         force: false,
         removeWorktree: true,
@@ -1735,7 +1763,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
 
     // Normal mode: shared resolve operation should throw when workspace not found
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
-      `Workspace not found: ${makeWorkspaceRef(projectRefFor(projPath("/unknown")), "workspace")}`
+      `Workspace not found: ${workspaceRefIn(projPath("/unknown"), "workspace")}`
     );
   });
 });
@@ -1798,9 +1826,15 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
     expect(finalProgress.payload.completed).toBe(true);
     expect(finalProgress.payload.hasErrors).toBe(true);
 
-    // workspace:delete-failed should have been emitted (resets idempotency)
+    // workspace:delete-failed should have been emitted (resets idempotency),
+    // naming the workspace by the identity its ref carries
     const failedEvents = emittedEvents.filter((e) => e.type === EVENT_WORKSPACE_DELETE_FAILED);
     expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]!.payload).toEqual({
+      workspaceRef: WORKSPACE_REF,
+      projectRef: PROJECT_REF,
+      workspaceName: WORKSPACE_NAME,
+    });
 
     // workspace:deleted should NOT have been emitted
     const deletedEvents = emittedEvents.filter((e) => e.type === EVENT_WORKSPACE_DELETED);
@@ -1815,12 +1849,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
       { pid: 7777, name: "node.exe", commandLine: "node", files: ["x.js"], cwd: null },
     ];
 
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     const harness = createTestHarness({
       workspaceLockHandler,
@@ -1977,12 +2006,7 @@ describe("DeleteWorkspaceOperation.preflight", () => {
       { pid: 7777, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
     ];
 
-    const workspaceLockHandler = {
-      detect: vi.fn().mockResolvedValue(blockingProcesses),
-      detectCwd: vi.fn().mockResolvedValue([]),
-      killProcesses: vi.fn().mockResolvedValue(undefined),
-      closeHandles: vi.fn().mockResolvedValue(undefined),
-    };
+    const workspaceLockHandler = lockHandlerDetecting(blockingProcesses);
 
     const harness = createTestHarness({ workspaceLockHandler });
     // Stands in for the worktree module: dirty workspace, ignoreWarnings honored.

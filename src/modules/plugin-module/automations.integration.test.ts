@@ -70,8 +70,8 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
-import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor, workspaceNameOf } from "../../utils/ref";
+import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { projectRefFor, workspaceNameOf } from "../../utils/ref";
 
 const DEFAULT_INTERVAL_MS = 60 * 1000;
 
@@ -210,7 +210,7 @@ const PROJECT_PATH = testPath("/home/user/projects/repo").toNative();
 /** The branded path a workspace of this project gets — normalized, as production mints it. */
 /** The ref of this project's workspace `name`. */
 function refOf(name: string): WorkspaceRef {
-  return makeWorkspaceRef(projectRefFor(projPath(PROJECT_PATH)), name);
+  return workspaceRefIn(projPath(PROJECT_PATH), name);
 }
 
 function workspacePathOf(name: string): WorkspacePath {
@@ -219,7 +219,7 @@ function workspacePathOf(name: string): WorkspacePath {
 
 function workspaceNamed(name: string, metadata: Record<string, string> = {}): Workspace {
   return {
-    ref: makeWorkspaceRef(projectRefFor(projPath(PROJECT_PATH)), name),
+    ref: workspaceRefIn(projPath(PROJECT_PATH), name),
     projectId: "project-1" as ProjectId,
     name: name as WorkspaceName,
     branch: name,
@@ -433,13 +433,15 @@ function createSetup(options?: {
     // data rendered through its template, rewritten to the create-item shape. A
     // template that names another action is rendered as it is.
     runScript: async (source) => {
-      if (cmd.exitCode !== 0) return null;
+      if (cmd.exitCode !== 0) {
+        return { ok: false, failure: `exit ${cmd.exitCode}`, temporary: false };
+      }
       const legacy = parseSources(sourcesYaml).sources.find((s) => s.name === source.name)!;
       const template =
         legacy.template["action"] === undefined
           ? convertLegacyTemplate(legacy.template, legacy.mode, () => {})
           : legacy.template;
-      return cmd.items.map((data) => renderInput(template, data));
+      return { ok: true, items: cmd.items.map((data) => renderInput(template, data)) };
     },
     // The engine's side of the item contract; the schemas themselves are items.ts's.
     parseItem: (raw) => {
@@ -455,13 +457,16 @@ function createSetup(options?: {
       if (failingActions.has(action)) throw new Error(`${action} refused`);
       invoked.push({ action, input });
     },
-    reportError: (source, message) =>
-      notify(dispatcher, {
-        type: "error",
-        title: "Plugin failed",
-        message: `${source.id}: ${message}`,
-        dismissible: true,
-      }),
+    errors: {
+      failure: (source, message) =>
+        notify(dispatcher, {
+          type: "error",
+          title: "Plugin failed",
+          message: `${source.id}: ${message}`,
+          dismissible: true,
+        }),
+      success: () => {},
+    },
   });
   const module: IntentModule = {
     name: "automations",

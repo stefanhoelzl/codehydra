@@ -26,6 +26,7 @@
 -->
 <script lang="ts">
   import type { DialogConfig, DialogKind } from "@shared/dialog-types";
+  import { dialogHeading } from "$lib/utils/dialog-heading";
   import Form from "./form/Form.svelte";
   import ErrorBoundary from "./ErrorBoundary.svelte";
 
@@ -45,11 +46,7 @@
 
   const { dialogId, config, kind, focusOwned = true }: Props = $props();
 
-  /** Derive heading text from sections for the accessible name. */
-  const heading = $derived.by(() => {
-    const headingSection = config?.sections.find((s) => s.type === "text" && s.style === "heading");
-    return headingSection?.type === "text" ? headingSection.content : "Panel";
-  });
+  const heading = $derived(dialogHeading(config, "Panel"));
 </script>
 
 <section

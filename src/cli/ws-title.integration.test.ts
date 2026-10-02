@@ -12,17 +12,17 @@ import { describe, it, expect } from "vitest";
 import { run } from "./run";
 import { EXIT } from "./output";
 import { CallError, type Client } from "./client";
-import { attachApiServerAdapter, type ApiResult } from "../api/adapters/api-server";
+import { attachApiServerAdapter } from "../api/adapters/api-server";
+import type { ApiResult } from "../shared/api-protocol";
 import { createRegistry } from "../api/entries";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { createLockModule } from "../modules/lock-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { schemas as setMetadataSchemas, type SetMetadataPayload } from "../intents/set-metadata";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
-import { testPath } from "../shared/test-fixtures";
+import { testPath, workspaceRefIn } from "../shared/test-fixtures";
 
-const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
+const WS = workspaceRefIn(testPath("/repo").toString(), "feature");
 
 /** A `ch` client wired straight into a CLI connection, recording metadata writes. */
 function wire(): { client: Client; writes: SetMetadataPayload[] } {

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
-import { ShellError, isShellErrorWithCode } from "../../shared/errors/shell-errors";
+import { ShellError } from "../../shared/errors/shell-errors";
 
 const windowHandle = { id: "window-1", __brand: "WindowHandle" as const };
 
@@ -172,11 +172,9 @@ describe("ViewBoundary (integration)", () => {
       expect(() => viewLayer.send(fakeHandle, "channel", {})).toThrow(ShellError);
 
       // Verify error code
-      try {
-        viewLayer.destroy(fakeHandle);
-      } catch (error) {
-        expect(isShellErrorWithCode(error, "VIEW_NOT_FOUND")).toBe(true);
-      }
+      expect(() => viewLayer.destroy(fakeHandle)).toThrow(
+        expect.objectContaining({ code: "VIEW_NOT_FOUND" })
+      );
     });
   });
 });

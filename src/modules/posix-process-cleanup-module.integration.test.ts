@@ -107,7 +107,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toEqual([
       { pid: 1234, name: "bash", cwd: "/workspaces/feature-1" },
@@ -132,7 +136,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toHaveLength(1);
     expect(result[0]!.pid).toBe(1234);
@@ -145,7 +153,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toEqual([]);
   });
@@ -155,7 +167,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", exitCode: 1 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toEqual([]);
   });
@@ -166,7 +182,7 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", stderr: "lsof error", exitCode: 2 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
+    const { processes: result } = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
 
     expect(result).toEqual([]);
     const warnings = logger.getMessagesByLevel("warn");
@@ -174,7 +190,7 @@ describe("detectCwdProcesses", () => {
     expect(warnings[0]!.message).toBe("Process detection failed");
   });
 
-  it("returns empty array on timeout", async () => {
+  it("reports a timeout rather than an empty result", async () => {
     const logger = createBehavioralLogger();
     const runner = createMockProcessRunner({
       onSpawn: () => ({ stdout: "", exitCode: null, running: true }),
@@ -182,7 +198,7 @@ describe("detectCwdProcesses", () => {
 
     const result = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
 
-    expect(result).toEqual([]);
+    expect(result).toEqual({ processes: [], timedOut: true });
     const warnings = logger.getMessagesByLevel("warn");
     expect(warnings).toHaveLength(1);
     expect(warnings[0]!.message).toBe("Process detection timed out");
@@ -202,7 +218,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toHaveLength(2);
     expect(result[0]!.pid).toBe(process.pid);
@@ -216,7 +236,11 @@ describe("detectCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const { processes: result } = await detectCwdProcesses(
+      runner,
+      "/workspaces/feature-1",
+      SILENT_LOGGER
+    );
 
     expect(result).toEqual([]);
   });
@@ -323,28 +347,53 @@ describe("PosixProcessCleanupModule Integration", () => {
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("swallows errors from detection", async () => {
+    it("reports a timed-out detection on the release result without failing", async () => {
       runner = createMockProcessRunner({
         onSpawn: () => ({ exitCode: null, running: true }),
       });
 
       const dispatcher = createReleaseSetup(runner);
-      const result = await dispatcher.dispatch(makeDeleteIntent());
+      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
 
-      // No error propagated
-      expect(result).toEqual({});
+      expect(result.error).toContain("scan timed out");
     });
 
-    it("does not fail when a process survives the kill", async () => {
+    it("reports a thrown detection error on the release result", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => {
+          throw new Error("spawn exploded");
+        },
+      });
+
+      const dispatcher = createReleaseSetup(runner);
+      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
+
+      expect(result.error).toBe("spawn exploded");
+    });
+
+    it("names the processes that survive the kill on the release result", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({
+          stdout: "p1234\ncbash\nn/workspaces/feature-1\np5678\ncnode\nn/workspaces/feature-1\n",
+          exitCode: 0,
+        }),
+        onKill: (pid) => ({ success: pid !== 1234 }),
+      });
+
+      const dispatcher = createReleaseSetup(runner);
+      const result = (await dispatcher.dispatch(makeDeleteIntent())) as { error?: string };
+
+      expect(result.error).toBe("Could not terminate: bash (pid 1234)");
+    });
+
+    it("reports nothing when every detected process is killed", async () => {
       runner = createMockProcessRunner({
         onSpawn: () => ({ stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }),
-        onKill: () => ({ success: false }),
       });
 
       const dispatcher = createReleaseSetup(runner);
       const result = await dispatcher.dispatch(makeDeleteIntent());
 
-      // No error propagated
       expect(result).toEqual({});
     });
 
@@ -379,15 +428,13 @@ describe("PosixProcessCleanupModule Integration", () => {
       }
     );
 
-    function createHibernateReleaseSetup(r: MockProcessRunner) {
+    function createHibernateReleaseSetup(r: MockProcessRunner, logger = SILENT_LOGGER) {
       const dispatcher = new Dispatcher({
         logger: createMockLogger(),
         initialCapabilities: { posix: true },
       });
       dispatcher.registerOperation(hibernateReleaseOperation);
-      dispatcher.registerModule(
-        createPosixProcessCleanupModule({ processRunner: r, logger: SILENT_LOGGER })
-      );
+      dispatcher.registerModule(createPosixProcessCleanupModule({ processRunner: r, logger }));
       return dispatcher;
     }
 
@@ -420,15 +467,21 @@ describe("PosixProcessCleanupModule Integration", () => {
       expect(runner.$.killedPids).toEqual([1234]);
     });
 
-    it("swallows errors from detection during hibernation", async () => {
+    it("logs, rather than reports, a survivor during hibernation", async () => {
       runner = createMockProcessRunner({
-        onSpawn: () => ({ exitCode: null, running: true }),
+        onSpawn: () => ({ stdout: "p1234\ncbash\nn/workspaces/feature-1\n", exitCode: 0 }),
+        onKill: () => ({ success: false }),
       });
+      const logger = createBehavioralLogger();
 
-      const dispatcher = createHibernateReleaseSetup(runner);
+      const dispatcher = createHibernateReleaseSetup(runner, logger);
       const result = await dispatcher.dispatch(makeHibernateIntent());
 
       expect(result).toEqual({});
+      const warnings = logger.getMessagesByLevel("warn");
+      expect(
+        warnings.find((w) => w.message === "CWD process cleanup failed")?.context
+      ).toMatchObject({ error: "Could not terminate: bash (pid 1234)" });
     });
   });
 });

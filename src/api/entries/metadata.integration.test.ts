@@ -20,8 +20,7 @@ import { createMockGitClient } from "../../boundaries/platform/git-client.state-
 import { createFileSystemMock } from "../../boundaries/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../boundaries/platform/git-worktree-provider";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import { projPath, testPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import { ApiError } from "../errors";
 import type { OperationName } from "../names";
@@ -79,7 +78,7 @@ async function setup() {
 
   const call = (name: OperationName, input: Record<string, unknown>): Promise<unknown> => {
     const ctx: OperationContext = {
-      workspaceRef: makeWorkspaceRef(projectRefFor(projPath(PROJECT_ROOT.toString())), "feature-x"),
+      workspaceRef: workspaceRefIn(projPath(PROJECT_ROOT.toString()), "feature-x"),
       cwd: null,
       signal: new AbortController().signal,
     };

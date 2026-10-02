@@ -4,6 +4,8 @@
  */
 
 import type { PromptModel } from "../../shared/api/types";
+import type { WorkspaceRef } from "../../intents/contract";
+import type { Path } from "../../utils/path/path";
 
 /**
  * Resolved per-workspace agent launch config handed to a provider once the
@@ -44,11 +46,12 @@ export interface McpConfig {
 // Re-export AggregatedAgentStatus from shared/ipc (single source of truth)
 export type { AggregatedAgentStatus, InternalAgentCounts } from "../../shared/ipc";
 
-/** Agent types supported by CodeHydra */
-export type AgentType = "opencode" | "claude";
-
-/** Agent status for a single workspace */
-export type AgentStatus = "none" | "idle" | "busy";
+/**
+ * What a single workspace's agent is doing: no session, waiting on the user, or
+ * working. The per-agent input to the aggregated `AgentStatus` the rest of the
+ * app sees (see status-utils.ts).
+ */
+export type AgentActivity = "none" | "idle" | "busy";
 
 import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 // Re-export platform types from canonical location
@@ -72,51 +75,51 @@ export type RestartServerResult =
 /**
  * Server lifecycle manager for an agent (one server per workspace).
  *
- * Note: Uses string paths for API compatibility with existing code.
- * Implementations should use Path internally and convert at boundaries.
+ * Workspaces are named by ref; the path is given once, at start, for what
+ * runs in the workspace's directory or is generated for it.
  */
 export interface AgentServerManager {
   /**
    * Start server for a workspace, returns allocated port. `workspaceRef` is what
    * the agent and its hooks name the workspace by (`_CH_WORKSPACE`).
    */
-  startServer(workspacePath: string, options: { readonly workspaceRef: string }): Promise<number>;
+  startServer(workspaceRef: WorkspaceRef, workspacePath: Path): Promise<number>;
 
   /** Stop server for a workspace */
-  stopServer(workspacePath: string): Promise<StopServerResult>;
+  stopServer(workspaceRef: WorkspaceRef): Promise<StopServerResult>;
 
   /** Restart server for a workspace, preserving the same port */
-  restartServer(workspacePath: string): Promise<RestartServerResult>;
+  restartServer(workspaceRef: WorkspaceRef): Promise<RestartServerResult>;
 
   /** Callback when server starts successfully */
   onServerStarted(
-    callback: (workspacePath: string, port: number, ...args: unknown[]) => void
+    callback: (workspaceRef: WorkspaceRef, port: number, ...args: unknown[]) => void
   ): () => void;
 
   /** Callback when server stops */
-  onServerStopped(callback: (workspacePath: string, ...args: unknown[]) => void): () => void;
+  onServerStopped(callback: (workspaceRef: WorkspaceRef, ...args: unknown[]) => void): () => void;
 
   /** Set handler called when workspace becomes active (WrapperStart / first idle) */
-  setMarkActiveHandler(handler: (workspacePath: string) => void): void;
+  setMarkActiveHandler(handler: (workspaceRef: WorkspaceRef) => void): void;
 
   /**
    * Set the initial prompt for a workspace.
    * Optional - only Claude Code implements this method.
    * Should be called after startServer() but before the workspace view is created.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    * @param config - Resolved agent launch configuration
    */
-  setInitialPrompt?(workspacePath: string, config: AgentPromptConfig): Promise<void>;
+  setInitialPrompt?(workspaceRef: WorkspaceRef, config: AgentPromptConfig): Promise<void>;
 
   /**
    * Create a no-session marker for a new workspace.
    * Optional - only Claude Code implements this method.
    * The marker signals the wrapper to skip --continue on first launch.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    */
-  setNoSessionMarker?(workspacePath: string): Promise<void>;
+  setNoSessionMarker?(workspaceRef: WorkspaceRef): Promise<void>;
 
   /** Configure MCP server connection for agent integration */
   setMcpConfig(config: McpConfig): void;
@@ -193,7 +196,7 @@ export interface AgentProvider {
   reconnect(): Promise<void>;
 
   /** Subscribe to status changes - callback receives computed status */
-  onStatusChange(callback: (status: AgentStatus) => void): () => void;
+  onStatusChange(callback: (status: AgentActivity) => void): () => void;
 
   /** Get session info for TUI attachment */
   getSession(): AgentSessionInfo | null;

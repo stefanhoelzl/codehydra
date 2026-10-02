@@ -26,6 +26,7 @@ import type { Operation, OperationContext, OperationSchemas, HookContext } from 
 import { type IntentOf } from "./lib/operation";
 import { agentTypeSchema, setupRowIdSchema, setupRowStatusSchema, hookCtxSchema } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
+import { errorCode, getErrorMessage } from "../shared/error-utils";
 
 export const INTENT_SETUP = "app:setup" as const;
 export const SETUP_OPERATION_ID = "setup";
@@ -125,8 +126,8 @@ export const schemas = {
   hooks: {
     "show-ui": { input: bareSetupHookInputSchema },
     "hide-ui": { input: bareSetupHookInputSchema },
-    binary: { input: binaryInputSchema },
-    extensions: { input: extensionsInputSchema },
+    binary: { input: binaryInputSchema, frames: setupProgressSchema },
+    extensions: { input: extensionsInputSchema, frames: setupProgressSchema },
   },
   events: {
     [EVENT_SETUP_PROGRESS]: setupProgressSchema,
@@ -184,13 +185,11 @@ export class SetupOperation implements Operation<typeof schemas> {
       const { errors: showUiErrors } = await ctx.hooks.collect("show-ui", hookCtx);
       throwHookErrors(showUiErrors, "app:setup show-ui hooks failed");
 
-      // Streaming handlers (binary/extensions) yield SetupProgressPayload frames; the
-      // operation emits setup:progress for each. A yielded frame is untyped at the collect
-      // boundary, so it is parsed against the event's own schema before being emitted — the
-      // same schema the dispatcher would apply at emit, applied here so a malformed frame
-      // fails at its source rather than as an opaque emit error.
-      const emitProgress = (frame: unknown): void => {
-        void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: setupProgressSchema.parse(frame) });
+      // Streaming handlers (binary/extensions) yield SetupProgressPayload frames — the
+      // hook points' `frames` schema, validated by the dispatcher at the source — and the
+      // operation emits setup:progress for each.
+      const emitProgress = (frame: SetupProgressPayload): void => {
+        void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: frame });
       };
 
       // Hook 2: "binary" -- Update binary progress (downloads if needed)
@@ -223,11 +222,8 @@ export class SetupOperation implements Operation<typeof schemas> {
       // Control returns to AppStartOperation (no dispatch)
     } catch (error) {
       // Emit domain event for error handling
-      const message = error instanceof Error ? error.message : String(error);
-      const code =
-        error instanceof Error && "code" in error
-          ? (error as Error & { code?: string }).code
-          : undefined;
+      const message = getErrorMessage(error);
+      const code = errorCode(error);
       // Conditionally include code only when defined (exactOptionalPropertyTypes)
       const event: SetupErrorEvent = {
         type: EVENT_SETUP_ERROR,

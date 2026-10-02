@@ -21,6 +21,7 @@ import { ShowNotificationOperation } from "../../intents/show-notification";
 import { CloseNotificationOperation } from "../../intents/close-notification";
 import { NotificationManager } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
+import { defineHooks } from "../../intents/declarations";
 
 /** Per-card state exposed for assertions. */
 export interface MockNotification {
@@ -110,7 +111,7 @@ export function createMockNotificationManager(): MockNotificationManager {
     dispatcher.registerOperation(new CloseNotificationOperation());
     dispatcher.registerModule({
       name: "notifications-mock",
-      hooks: createNotificationHooks(manager),
+      hooks: defineHooks(createNotificationHooks(manager)),
     });
   }
 

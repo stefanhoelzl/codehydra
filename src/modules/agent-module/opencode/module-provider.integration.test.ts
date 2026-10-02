@@ -10,7 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createOpenCodeModuleProvider, type OpenCodeModuleProviderDeps } from "./module-provider";
 import type { AgentModuleProvider } from "../agent-module-provider";
-import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
+import type { AggregatedAgentStatus } from "../../../shared/ipc";
+import { Path } from "../../../utils/path/path";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import {
@@ -19,8 +20,8 @@ import {
   type FakeBinaryResolver,
 } from "../module-provider.test-utils";
 import type { ResolvedAgentBinary } from "../binary-resolver";
-import { wsPath, testPath } from "../../../shared/test-fixtures";
-import { workspaceRefSchema } from "../../../intents/contract";
+import { testPath } from "../../../shared/test-fixtures";
+import { workspaceRefSchema, type WorkspaceRef } from "../../../intents/contract";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -102,14 +103,16 @@ vi.mock("./provider", () => ({
 // Helpers
 // =============================================================================
 
-// Minted the way production does — normalized — because the provider registry is
-// keyed on `new Path(...).toString()`, so a raw native path would never match.
-const WS_PATH = wsPath("/workspace/feature-a");
+const WS_PATH = testPath("/workspace/feature-a").toNative();
 const WS_REF = workspaceRefSchema.parse("ch::local::/workspace::feature-a");
-const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
+const WS_REF_B = workspaceRefSchema.parse("ch::local::/workspace::feature-b");
 
-type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
-type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
+type ServerStartedHandler = (
+  workspaceRef: WorkspaceRef,
+  port: number,
+  pendingPrompt: unknown
+) => void;
+type ServerStoppedHandler = (workspaceRef: WorkspaceRef, isRestart: boolean) => void;
 
 /**
  * Create a mock OpenCodeServerManager with vi.fn() stubs.
@@ -121,7 +124,7 @@ function createMockServerManager(): OpenCodeServerManager & {
   return createServerManagerBase({
     setMarkActiveHandler: vi.fn(),
     triggerWrapperStart: vi.fn(),
-    getWorkspaceRef: vi.fn(),
+    getWorkspacePath: vi.fn(() => new Path(WS_PATH)),
   }) as unknown as OpenCodeServerManager & {
     _triggerStarted: ServerStartedHandler;
     _triggerStopped: ServerStoppedHandler;
@@ -135,12 +138,12 @@ function createMockServerManager(): OpenCodeServerManager & {
 async function initializeAndStart(
   moduleProvider: AgentModuleProvider,
   serverManager: ReturnType<typeof createMockServerManager>,
-  workspacePath: string = WS_PATH,
+  workspaceRef: WorkspaceRef = WS_REF,
   port = 8080,
   pendingPrompt?: unknown
 ): Promise<InstanceType<typeof MockOpenCodeProvider>> {
   moduleProvider.initialize(null);
-  serverManager._triggerStarted(workspacePath, port, pendingPrompt);
+  serverManager._triggerStarted(workspaceRef, port, pendingPrompt);
   // Wait for the full handleServerStarted chain to settle.
   // addProvider is called after connect+fetchStatus, and it calls onStatusChange.
   await vi.waitFor(() => {
@@ -299,7 +302,7 @@ describe("OpenCode module provider", () => {
       const firstProvider = await initializeAndStart(provider, serverManager);
 
       // Trigger again for same path - should reconnect, not create new
-      serverManager._triggerStarted(WS_PATH, 8081, undefined);
+      serverManager._triggerStarted(WS_REF, 8081, undefined);
       await vi.waitFor(() => {
         expect(firstProvider.reconnect).toHaveBeenCalled();
       });
@@ -317,15 +320,15 @@ describe("OpenCode module provider", () => {
     it("open triggers wrapper-start (loading-screen clear + mark active)", async () => {
       await initializeAndStart(provider, serverManager);
 
-      provider.applyTerminalLifecycle(WS_PATH, "open");
+      provider.applyTerminalLifecycle(WS_REF, "open");
 
-      expect(serverManager.triggerWrapperStart).toHaveBeenCalledWith(WS_PATH);
+      expect(serverManager.triggerWrapperStart).toHaveBeenCalledWith(WS_REF);
     });
 
     it("close detaches the TUI on the provider (status → none)", async () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
-      provider.applyTerminalLifecycle(WS_PATH, "close");
+      provider.applyTerminalLifecycle(WS_REF, "close");
 
       expect(mockProv.detachTui).toHaveBeenCalledOnce();
     });
@@ -334,7 +337,7 @@ describe("OpenCode module provider", () => {
       await initializeAndStart(provider, serverManager);
 
       // Different workspace with no provider — must not throw.
-      expect(() => provider.applyTerminalLifecycle(WS_PATH_B, "close")).not.toThrow();
+      expect(() => provider.applyTerminalLifecycle(WS_REF_B, "close")).not.toThrow();
     });
   });
 
@@ -348,7 +351,7 @@ describe("OpenCode module provider", () => {
       const mockProv = await initializeAndStart(
         provider,
         serverManager,
-        WS_PATH,
+        WS_REF,
         8080,
         pendingPrompt
       );
@@ -366,7 +369,7 @@ describe("OpenCode module provider", () => {
       const mockProv = await initializeAndStart(
         provider,
         serverManager,
-        WS_PATH,
+        WS_REF,
         8080,
         pendingPrompt
       );
@@ -396,7 +399,7 @@ describe("OpenCode module provider", () => {
       const mockProv = await initializeAndStart(
         provider,
         serverManager,
-        WS_PATH,
+        WS_REF,
         8080,
         pendingPrompt
       );
@@ -417,7 +420,7 @@ describe("OpenCode module provider", () => {
       const mockProv = await initializeAndStart(
         provider,
         serverManager,
-        WS_PATH,
+        WS_REF,
         8080,
         pendingPrompt
       );
@@ -438,7 +441,7 @@ describe("OpenCode module provider", () => {
       mockProv.getEffectiveCounts.mockReturnValue({ idle: 0, busy: 0 });
 
       // The status is set during addProvider which already ran
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
       expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
     });
 
@@ -449,7 +452,7 @@ describe("OpenCode module provider", () => {
 
       await initializeAndStart(provider, serverManager);
 
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
       expect(status).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
     });
 
@@ -460,12 +463,12 @@ describe("OpenCode module provider", () => {
 
       await initializeAndStart(provider, serverManager);
 
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
       expect(status).toEqual({ status: "busy", counts: { idle: 0, busy: 1 } });
     });
 
     it("reports status change via onStatusChange callback", async () => {
-      const statusChanges: Array<{ path: WorkspacePath; status: AggregatedAgentStatus }> = [];
+      const statusChanges: Array<{ path: WorkspaceRef; status: AggregatedAgentStatus }> = [];
       provider.onStatusChange((path, status) => {
         statusChanges.push({ path, status });
       });
@@ -478,7 +481,7 @@ describe("OpenCode module provider", () => {
 
       const busyChange = statusChanges.find((c) => c.status.status === "busy");
       expect(busyChange).toBeDefined();
-      expect(busyChange!.path).toBe(WS_PATH);
+      expect(busyChange!.path).toBe(WS_REF);
       expect(busyChange!.status).toEqual({ status: "busy", counts: { idle: 0, busy: 1 } });
     });
 
@@ -515,14 +518,14 @@ describe("OpenCode module provider", () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
       // Simulate server restart: stop (disconnect) then start (reconnect)
-      serverManager._triggerStopped(WS_PATH, true);
+      serverManager._triggerStopped(WS_REF, true);
 
       // Provider should be disconnected
       expect(mockProv.disconnect).toHaveBeenCalledOnce();
 
       // Now simulate restart completion - triggers reconnect on existing provider
       mockProv.getEffectiveCounts.mockReturnValue({ idle: 1, busy: 0 });
-      serverManager._triggerStarted(WS_PATH, 8080, undefined);
+      serverManager._triggerStarted(WS_REF, 8080, undefined);
 
       await vi.waitFor(() => {
         expect(mockProv.reconnect).toHaveBeenCalled();
@@ -549,7 +552,7 @@ describe("OpenCode module provider", () => {
         logger: SILENT_LOGGER,
       });
 
-      await expect(provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF })).rejects.toThrow(
+      await expect(provider.startWorkspace(WS_REF, new Path(WS_PATH))).rejects.toThrow(
         "No opencode binary"
       );
       expect(serverManager.startServer).not.toHaveBeenCalled();
@@ -561,14 +564,13 @@ describe("OpenCode module provider", () => {
       const initialPrompt = { prompt: "build feature X", agentName: "coder" };
       // startServer will trigger the callback
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
-        serverManager._triggerStarted(WS_PATH, 8080, undefined);
+        serverManager._triggerStarted(WS_REF, 8080, undefined);
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF, initialPrompt });
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), { initialPrompt });
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
-        workspaceRef: WS_REF,
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_REF, new Path(WS_PATH), {
         initialPrompt,
         binary: BINARY,
       });
@@ -577,15 +579,14 @@ describe("OpenCode module provider", () => {
     it("reports the prompt delivered once it has been sent", async () => {
       provider.initialize(null);
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
-        serverManager._triggerStarted(WS_PATH, 8080, { prompt: "build feature X" });
+        serverManager._triggerStarted(WS_REF, 8080, { prompt: "build feature X" });
         return 8080;
       });
       const onInitialPromptDelivered = vi.fn(() => {
         expect(getLatestMockProvider().sendPrompt).toHaveBeenCalled();
       });
 
-      await provider.startWorkspace(WS_PATH, {
-        workspaceRef: WS_REF,
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
         initialPrompt: { prompt: "build feature X" },
         onInitialPromptDelivered,
       });
@@ -597,14 +598,13 @@ describe("OpenCode module provider", () => {
       provider.initialize(null);
 
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
-        serverManager._triggerStarted(WS_PATH, 8080, undefined);
+        serverManager._triggerStarted(WS_REF, 8080, undefined);
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
-        workspaceRef: WS_REF,
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_REF, new Path(WS_PATH), {
         binary: BINARY,
       });
     });
@@ -613,17 +613,15 @@ describe("OpenCode module provider", () => {
       provider.initialize(null);
 
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
-        serverManager._triggerStarted(WS_PATH, 8080, undefined);
+        serverManager._triggerStarted(WS_REF, 8080, undefined);
         return 8080;
       });
 
-      await provider.startWorkspace(WS_PATH, {
-        workspaceRef: WS_REF,
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
         env: { DATABASE_URL: "postgres://x" },
       });
 
-      expect(serverManager.startServer).toHaveBeenCalledWith(WS_PATH, {
-        workspaceRef: WS_REF,
+      expect(serverManager.startServer).toHaveBeenCalledWith(WS_REF, new Path(WS_PATH), {
         env: { DATABASE_URL: "postgres://x" },
         binary: BINARY,
       });
@@ -633,11 +631,11 @@ describe("OpenCode module provider", () => {
       provider.initialize(null);
 
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
-        serverManager._triggerStarted(WS_PATH, 8080, undefined);
+        serverManager._triggerStarted(WS_REF, 8080, undefined);
         return 8080;
       });
 
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).toEqual({
         _CH_OPENCODE_PORT: "8080",
@@ -651,7 +649,7 @@ describe("OpenCode module provider", () => {
       // startServer does not trigger callback
       vi.mocked(serverManager.startServer).mockResolvedValue(8080);
 
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).toEqual({ _CH_OPENCODE_BIN: "/bundles/opencode/1.0.223/opencode" });
     });
@@ -663,16 +661,16 @@ describe("OpenCode module provider", () => {
 
   describe("stopWorkspace", () => {
     it("delegates to serverManager.stopServer", async () => {
-      const result = await provider.stopWorkspace(WS_PATH);
-      expect(serverManager.stopServer).toHaveBeenCalledWith(WS_PATH);
+      const result = await provider.stopWorkspace(WS_REF);
+      expect(serverManager.stopServer).toHaveBeenCalledWith(WS_REF);
       expect(result).toEqual({ success: true });
     });
   });
 
   describe("restartWorkspace", () => {
     it("delegates to serverManager.restartServer", async () => {
-      const result = await provider.restartWorkspace(WS_PATH);
-      expect(serverManager.restartServer).toHaveBeenCalledWith(WS_PATH);
+      const result = await provider.restartWorkspace(WS_REF);
+      expect(serverManager.restartServer).toHaveBeenCalledWith(WS_REF);
       expect(result).toEqual({ success: true, port: 8080 });
     });
   });
@@ -685,7 +683,7 @@ describe("OpenCode module provider", () => {
     it("disconnects provider on restart stop", async () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
-      serverManager._triggerStopped(WS_PATH, true);
+      serverManager._triggerStopped(WS_REF, true);
 
       expect(mockProv.disconnect).toHaveBeenCalledOnce();
       expect(mockProv.dispose).not.toHaveBeenCalled();
@@ -694,7 +692,7 @@ describe("OpenCode module provider", () => {
     it("removes and disposes provider on full stop", async () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
-      serverManager._triggerStopped(WS_PATH, false);
+      serverManager._triggerStopped(WS_REF, false);
 
       expect(mockProv.dispose).toHaveBeenCalledOnce();
     });
@@ -706,7 +704,7 @@ describe("OpenCode module provider", () => {
       });
 
       await initializeAndStart(provider, serverManager);
-      serverManager._triggerStopped(WS_PATH, false);
+      serverManager._triggerStopped(WS_REF, false);
 
       const lastStatus = statusChanges[statusChanges.length - 1];
       expect(lastStatus).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
@@ -719,7 +717,7 @@ describe("OpenCode module provider", () => {
 
   describe("getStatus", () => {
     it("returns none for unknown workspace", () => {
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
       expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
     });
   });
@@ -728,12 +726,12 @@ describe("OpenCode module provider", () => {
     it("returns session info from provider", async () => {
       await initializeAndStart(provider, serverManager);
 
-      const session = provider.getSession(WS_PATH);
+      const session = provider.getSession(WS_REF);
       expect(session).toEqual({ port: 8080, sessionId: "s1" });
     });
 
     it("returns null for unknown workspace", () => {
-      const session = provider.getSession(WS_PATH);
+      const session = provider.getSession(WS_REF);
       expect(session).toBeNull();
     });
   });
@@ -773,7 +771,7 @@ describe("OpenCode module provider", () => {
 
       await initializeAndStart(provider, serverManager);
 
-      markActiveHandler(WS_PATH);
+      markActiveHandler(WS_REF);
       expect(getLatestMockProvider().markActive).toHaveBeenCalled();
     });
 
@@ -782,10 +780,10 @@ describe("OpenCode module provider", () => {
 
       // Mark active before provider exists
       const markActiveHandler = vi.mocked(serverManager.setMarkActiveHandler).mock.calls[0]![0];
-      markActiveHandler(WS_PATH);
+      markActiveHandler(WS_REF);
 
       // Now create the provider - should be marked active immediately in addProvider
-      serverManager._triggerStarted(WS_PATH, 8080, undefined);
+      serverManager._triggerStarted(WS_REF, 8080, undefined);
       await vi.waitFor(() => {
         expect(getLatestMockProvider().onStatusChange).toHaveBeenCalled();
       });
@@ -804,13 +802,13 @@ describe("OpenCode module provider", () => {
 
       // Mark active
       const markActiveHandler = vi.mocked(serverManager.setMarkActiveHandler).mock.calls[0]![0];
-      markActiveHandler(WS_PATH);
+      markActiveHandler(WS_REF);
 
       // Clear tracking
-      provider.clearWorkspaceTracking(WS_PATH);
+      provider.clearWorkspaceTracking(WS_REF);
 
       // Now create a provider - should NOT be marked active
-      serverManager._triggerStarted(WS_PATH, 8080, undefined);
+      serverManager._triggerStarted(WS_REF, 8080, undefined);
       await vi.waitFor(() => {
         expect(getLatestMockProvider().onStatusChange).toHaveBeenCalled();
       });
@@ -822,14 +820,14 @@ describe("OpenCode module provider", () => {
       provider.initialize(null);
 
       const markActiveHandler = vi.mocked(serverManager.setMarkActiveHandler).mock.calls[0]![0];
-      markActiveHandler(WS_PATH);
-      markActiveHandler(WS_PATH_B);
+      markActiveHandler(WS_REF);
+      markActiveHandler(WS_REF_B);
 
-      // Clear only WS_PATH
-      provider.clearWorkspaceTracking(WS_PATH);
+      // Clear only WS_REF
+      provider.clearWorkspaceTracking(WS_REF);
 
-      // Start WS_PATH_B - should still be marked active
-      serverManager._triggerStarted(WS_PATH_B, 8081, undefined);
+      // Start WS_REF_B - should still be marked active
+      serverManager._triggerStarted(WS_REF_B, 8081, undefined);
       await vi.waitFor(() => {
         expect(getLatestMockProvider().onStatusChange).toHaveBeenCalled();
       });
@@ -859,11 +857,11 @@ describe("OpenCode module provider", () => {
       await provider.dispose();
 
       // After dispose, getStatus returns none
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
       expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
 
       // After dispose, getSession returns null
-      const session = provider.getSession(WS_PATH);
+      const session = provider.getSession(WS_REF);
       expect(session).toBeNull();
     });
 
@@ -886,7 +884,7 @@ describe("OpenCode module provider", () => {
       provider.initialize(null);
 
       // Start workspace A
-      serverManager._triggerStarted(WS_PATH, 8080, undefined);
+      serverManager._triggerStarted(WS_REF, 8080, undefined);
       await vi.waitFor(() => {
         expect(getLatestMockProvider().onStatusChange).toHaveBeenCalled();
       });
@@ -896,7 +894,7 @@ describe("OpenCode module provider", () => {
       expect(callbackA).not.toBeNull();
 
       // Start workspace B
-      serverManager._triggerStarted(WS_PATH_B, 8081, undefined);
+      serverManager._triggerStarted(WS_REF_B, 8081, undefined);
       await vi.waitFor(() => {
         // Wait for B's onStatusChange (different instance than A)
         expect(getLatestMockProvider()).not.toBe(provA);
@@ -906,8 +904,8 @@ describe("OpenCode module provider", () => {
       // Change A to busy via the captured callback
       callbackA("busy");
 
-      const statusA = provider.getStatus(WS_PATH);
-      const statusB = provider.getStatus(WS_PATH_B);
+      const statusA = provider.getStatus(WS_REF);
+      const statusB = provider.getStatus(WS_REF_B);
 
       expect(statusA.status).toBe("busy");
       expect(statusB.status).toBe("none"); // B has default getEffectiveCounts: {idle:0, busy:0}

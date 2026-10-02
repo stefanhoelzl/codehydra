@@ -15,6 +15,8 @@
 
 import { autoUpdater } from "electron-updater";
 import type { Logger } from "../boundaries/platform/logging";
+import type { SupportedPlatform } from "../boundaries/platform/platform-info";
+import { getErrorMessage } from "../shared/error-utils";
 
 /**
  * Callback type for update detected events (update-available, before download).
@@ -33,6 +35,8 @@ export type DownloadProgressCallback = (info: { percent: number }) => void;
 export interface AutoUpdaterDeps {
   readonly logger: Logger;
   readonly isDevelopment: boolean;
+  /** Host platform: which builds can update themselves depends on it. */
+  readonly platform: SupportedPlatform;
 }
 
 /**
@@ -47,6 +51,7 @@ export interface AutoUpdaterDeps {
 export class AutoUpdater {
   private readonly logger: Logger;
   private readonly isDevelopment: boolean;
+  private readonly platform: SupportedPlatform;
   private readonly detectedCallbacks: Set<UpdateDetectedCallback> = new Set();
   private readonly progressCallbacks: Set<DownloadProgressCallback> = new Set();
   private disposed = false;
@@ -54,6 +59,7 @@ export class AutoUpdater {
   constructor(deps: AutoUpdaterDeps) {
     this.logger = deps.logger;
     this.isDevelopment = deps.isDevelopment;
+    this.platform = deps.platform;
 
     if (!this.isDevelopment) {
       // Configure electron-updater
@@ -126,7 +132,7 @@ export class AutoUpdater {
       return found;
     } catch (error) {
       this.logger.warn("Update check failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return false;
     }
@@ -143,7 +149,7 @@ export class AutoUpdater {
       await autoUpdater.downloadUpdate();
     } catch (error) {
       this.logger.warn("Update download failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       throw error;
     }
@@ -199,7 +205,7 @@ export class AutoUpdater {
   }
 
   private isPlatformSupported(): boolean {
-    const platform = process.platform;
+    const platform = this.platform;
     const isAppImage = process.env.APPIMAGE !== undefined;
     const isWindowsPortable = process.env.PORTABLE_EXECUTABLE_FILE !== undefined;
     const isNsis = platform === "win32" && !isWindowsPortable;
@@ -236,7 +242,7 @@ export class AutoUpdater {
         callback(info.version);
       } catch (error) {
         this.logger.warn("Update detected callback error", {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }
@@ -260,7 +266,7 @@ export class AutoUpdater {
         callback(info);
       } catch (error) {
         this.logger.warn("Download progress callback error", {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }

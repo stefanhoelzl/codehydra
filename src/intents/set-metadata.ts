@@ -15,12 +15,12 @@ import type { OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
-  projectIdSchema,
-  workspaceNameSchema,
+  workspaceIdentityPayloadSchema,
   workspaceRefSchema,
   workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { workspaceIdentityPayload } from "./lib/workspace-identity";
 
 export const INTENT_SET_METADATA = "workspace:set-metadata" as const;
 export const EVENT_METADATA_CHANGED = "workspace:metadata-changed" as const;
@@ -40,9 +40,7 @@ export const setMetadataPayloadSchema = z
 
 export const metadataChangedPayloadSchema = z
   .object({
-    projectId: projectIdSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
     key: z.string(),
     value: z.string().nullable(),
   })
@@ -99,16 +97,13 @@ export class SetMetadataOperation extends WorkspaceHookOperation<typeof schemas>
     super(SET_METADATA_OPERATION_ID, {
       hookPoint: "set",
       buildInput: (intent, target) => ({ intent, ...target }),
-      resolveProject: true,
       errorLabel: "set-metadata set hooks failed",
       extract: () => undefined,
-      onSuccess: ({ intent, resolved, project }) =>
+      onSuccess: ({ intent, identity }) =>
         ({
           type: EVENT_METADATA_CHANGED,
           payload: {
-            projectId: project!.projectId,
-            workspaceName: resolved.workspaceName,
-            workspaceRef: resolved.workspaceRef,
+            ...workspaceIdentityPayload(identity),
             key: intent.payload.key,
             value: intent.payload.value,
           },

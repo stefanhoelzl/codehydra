@@ -46,19 +46,14 @@ export type ForwardedEvent = (typeof FORWARDED_EVENTS)[number];
  * The workspace an event concerns, when it names one.
  *
  * Used to keep a workspace-scoped client from seeing another workspace's
- * activity. An event with no workspace — a clone, a project opening — concerns
- * the instance as a whole and reaches every client.
+ * activity. Every workspace event names its workspace by a top-level
+ * `workspaceRef` (`workspaceIdentityPayloadSchema` in intents/contract). An
+ * event with no workspace — a clone, a project opening, a creation that has no
+ * ref yet — concerns the instance as a whole and reaches every client.
  */
 export function eventWorkspaceRef(payload: unknown): string | undefined {
-  if (payload === null || typeof payload !== "object") return undefined;
-  const record = payload as Record<string, unknown>;
-
-  if (typeof record.workspaceRef === "string") return record.workspaceRef;
-  // agent:status-updated carries the workspace itself rather than a bare ref.
-  const workspace = record.workspace;
-  if (workspace !== null && typeof workspace === "object") {
-    const ref = (workspace as Record<string, unknown>).ref;
-    if (typeof ref === "string") return ref;
+  if (payload === null || typeof payload !== "object" || !("workspaceRef" in payload)) {
+    return undefined;
   }
-  return undefined;
+  return typeof payload.workspaceRef === "string" ? payload.workspaceRef : undefined;
 }

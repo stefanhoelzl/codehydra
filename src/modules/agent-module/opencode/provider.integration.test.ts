@@ -16,6 +16,8 @@ import type * as ClientModule from "./client";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import { OpenCodeProvider } from "./provider";
+import { Path } from "../../../utils/path/path";
+import { workspaceRefSchema } from "../../../intents/contract";
 
 const sdk = vi.hoisted(() => ({ current: null as MockSdkClient | null }));
 
@@ -41,7 +43,11 @@ describe("OpenCodeProvider.sendMessage", () => {
 
   beforeEach(async () => {
     sdk.current = createSdkClientMock();
-    provider = new OpenCodeProvider("/workspace/feature-a", SILENT_LOGGER);
+    provider = new OpenCodeProvider(
+      workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
+      new Path("/workspace/feature-a"),
+      SILENT_LOGGER
+    );
     await provider.connect(8080);
   });
 

@@ -17,13 +17,13 @@ import { expect } from "vitest";
 import type {
   ViewBoundary,
   WindowOpenHandler,
-  Unsubscribe,
   KeyboardInput,
   RenderProcessGoneDetails,
   UncaughtExceptionDetails,
   ChildFrameNavigation,
   ChildFrameLoadFailure,
 } from "./view";
+import type { Unsubscribe } from "../../shared/types";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type {

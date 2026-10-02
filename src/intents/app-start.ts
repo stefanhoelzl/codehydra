@@ -395,43 +395,36 @@ export class AppStartOperation implements Operation<typeof schemas> {
       // Dispatch app:setup if needed (blocking sub-operation)
       // Setup manages its own UI (shows/hides setup screen)
       // Retry loop: if setup fails and retry is supported, wait via the await-retry hook
-      if (checkResult.needsSetup) {
-        phase = "setup";
-        let setupComplete = false;
-        while (!setupComplete) {
-          try {
-            await ctx.dispatch({
-              type: INTENT_SETUP,
-              payload: {
-                needsBinaryDownload: checkResult.needsBinaryDownload,
-                missingBinaries: checkResult.missingBinaries,
-                needsExtensions: checkResult.needsExtensions,
-                extensionInstallPlan: checkResult.extensionInstallPlan,
-                configuredAgent: agent,
-              },
+      // Retry loop: if setup fails and retry is supported, wait via the await-retry hook,
+      // then re-run the checks; setup runs again only while they still report it needed.
+      if (checkResult.needsSetup) phase = "setup";
+      while (checkResult.needsSetup) {
+        try {
+          await ctx.dispatch({
+            type: INTENT_SETUP,
+            payload: {
+              needsBinaryDownload: checkResult.needsBinaryDownload,
+              missingBinaries: checkResult.missingBinaries,
+              needsExtensions: checkResult.needsExtensions,
+              extensionInstallPlan: checkResult.extensionInstallPlan,
+              configuredAgent: agent,
+            },
+          });
+          break;
+        } catch (setupError) {
+          // Setup failed -- error event already emitted by SetupOperation
+          if (!retrySupported) {
+            // No retry support -- propagate the error with original cause
+            throw new Error("Setup failed and no retry mechanism available", {
+              cause: setupError,
             });
-            setupComplete = true;
-          } catch (setupError) {
-            // Setup failed -- error event already emitted by SetupOperation
-            // If retry is supported, wait for user to click retry. The "await-retry"
-            // hook point blocks (host-side, in the UI handler) until the user clicks
-            // Retry and returns data — no closure crosses the hook contract.
-            if (retrySupported) {
-              const { errors: retryErrors } = await ctx.hooks.collect("await-retry", hookCtx);
-              throwHookErrors(retryErrors, "app:start await-retry hooks failed");
-              // Re-run check hooks to get fresh preflight state for retry
-              checkResult = await this.runChecks(ctx, agent, extensionRequirements);
-              if (!checkResult.needsSetup) {
-                setupComplete = true;
-              }
-              // Otherwise loop continues to retry app:setup
-            } else {
-              // No retry support -- propagate the error with original cause
-              throw new Error("Setup failed and no retry mechanism available", {
-                cause: setupError,
-              });
-            }
           }
+          // The "await-retry" hook point blocks (host-side, in the UI handler) until the
+          // user clicks Retry and returns data — no closure crosses the hook contract.
+          const { errors: retryErrors } = await ctx.hooks.collect("await-retry", hookCtx);
+          throwHookErrors(retryErrors, "app:start await-retry hooks failed");
+          // Re-run check hooks to get fresh preflight state for retry
+          checkResult = await this.runChecks(ctx, agent, extensionRequirements);
         }
       }
 

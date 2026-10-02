@@ -10,6 +10,7 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import * as zlib from "node:zlib";
 import { ArchiveError, getErrorMessage } from "../../shared/errors/service-errors.js";
+import { errorCode } from "../../shared/error-utils.js";
 import { Path } from "../../utils/path/path.js";
 
 /**
@@ -19,12 +20,6 @@ import { Path } from "../../utils/path/path.js";
  * `processed / total` yields a valid completion fraction.
  */
 export type ExtractProgressCallback = (processed: number, total: number) => void;
-
-/** The `code` a thrown value carries (Node errno, tar's `TAR_*`, zlib's `Z_*`), if any. */
-function errorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
-}
 
 /**
  * Map an extraction failure to an ArchiveError. Shared by both extractors.

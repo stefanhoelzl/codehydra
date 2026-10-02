@@ -32,8 +32,7 @@ import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { Path } from "../utils/path/path";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "./contract";
 
 // =============================================================================
@@ -42,7 +41,7 @@ import type { WorkspaceRef } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -293,13 +292,13 @@ describe("GetWorkspaceStatus Operation", () => {
       });
 
       const error = await setup.dispatcher
-        .dispatch(statusIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")))
+        .dispatch(statusIntent(workspaceRefIn(PROJECT_ROOT, "nonexistent")))
         .then(() => expect.unreachable("should have thrown"))
         .catch((e: unknown) => e);
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain(
-        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
+        `Workspace not found: ${workspaceRefIn(PROJECT_ROOT, "nonexistent")}`
       );
     });
   });

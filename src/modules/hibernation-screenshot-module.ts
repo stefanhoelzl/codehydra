@@ -17,25 +17,20 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Logger } from "../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import type { DomainEvent } from "../intents/lib/types";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
   type CaptureHookResult,
-  type HibernatePipelineHookInput,
 } from "../intents/hibernate-workspace";
-import {
-  WAKE_WORKSPACE_OPERATION_ID,
-  type CleanupHookResult,
-  type WakePipelineHookInput,
-} from "../intents/wake-workspace";
-import { EVENT_WORKSPACE_DELETED, type WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { WAKE_WORKSPACE_OPERATION_ID, type CleanupHookResult } from "../intents/wake-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 export interface HibernationScreenshotModuleDeps {
   readonly fileSystem: FileSystemBoundary;
@@ -73,11 +68,11 @@ export function createHibernationScreenshotModule(
 
   return {
     name: "hibernation-screenshot",
-    hooks: {
+    hooks: defineHooks({
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         capture: {
-          handler: async (ctx: HookContext): Promise<HookOutput<CaptureHookResult>> => {
-            const { active, projectId, workspaceName } = ctx as HibernatePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<CaptureHookResult>> => {
+            const { active, projectId, workspaceName } = ctx;
             try {
               // Only the visible iframe has pixels to capture; a background
               // workspace's iframe is display:none. (Previously this captured
@@ -105,19 +100,19 @@ export function createHibernationScreenshotModule(
       },
       [WAKE_WORKSPACE_OPERATION_ID]: {
         cleanup: {
-          handler: async (ctx: HookContext): Promise<HookOutput<CleanupHookResult>> => {
-            const { projectId, workspaceName } = ctx as WakePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<CleanupHookResult>> => {
+            const { projectId, workspaceName } = ctx;
             const filePath = buildScreenshotPath(pathProvider, projectId, workspaceName);
             await deletePath(filePath);
             return { result: {} };
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceDeletedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const payload = event.payload;
           const filePath = buildScreenshotPath(
             pathProvider,
             payload.projectId,
@@ -126,6 +121,6 @@ export function createHibernationScreenshotModule(
           await deletePath(filePath);
         },
       },
-    },
+    }),
   };
 }

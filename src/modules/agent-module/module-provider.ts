@@ -23,13 +23,15 @@ import type {
   AgentProvider,
   AgentServerManager,
   AgentSessionInfo,
-  AgentStatus,
+  AgentActivity,
   McpConfig,
   StopServerResult,
   RestartServerResult,
 } from "./types";
 import type { AgentType, AgentLifecycleEvent } from "../../shared/api-protocol";
-import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
+import type { AggregatedAgentStatus } from "../../shared/ipc";
+import type { WorkspaceRef } from "../../intents/contract";
+import type { Path } from "../../utils/path/path";
 import type { DownloadProgressCallback } from "../../utils/binary-download";
 import {
   binaryNotReadyError,
@@ -38,6 +40,7 @@ import {
 } from "./binary-resolver";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../shared/errors/service-errors";
+import { toError } from "../../shared/error-utils";
 import type { Logger } from "../../boundaries/platform/logging";
 import { createNoneStatus, convertToAggregatedStatus } from "./status-utils";
 import { AgentUnreachableError } from "./types";
@@ -51,7 +54,7 @@ import { AgentUnreachableError } from "./types";
  * that need to reach a registered provider (e.g. terminal lifecycle routing).
  */
 export interface SpecContext<P extends AgentProvider> {
-  getProvider(path: WorkspacePath): P | undefined;
+  getProvider(workspaceRef: WorkspaceRef): P | undefined;
 }
 
 /**
@@ -108,41 +111,39 @@ export interface AgentModuleSpec<P extends AgentProvider> {
   // --- Provider lifecycle ---
 
   /** Construct the per-workspace provider (not yet connected). */
-  createProvider(workspacePath: WorkspacePath): P;
+  createProvider(workspaceRef: WorkspaceRef): P;
 
   /** Connect the provider to the server (plus any initial fetch). */
   connectProvider(provider: P, port: number): Promise<void>;
 
   /** Status seed used on registration and after reconnect. */
-  initialStatus(provider: P): AgentStatus;
+  initialStatus(provider: P): AgentActivity;
 
   /**
    * Called after the provider is registered on first start. `extra` is the
    * third argument of the server manager's onServerStarted callback
    * (e.g. OpenCode's pending prompt), untyped at this boundary.
    */
-  onProviderRegistered?(path: WorkspacePath, provider: P, extra: unknown): Promise<void>;
+  onProviderRegistered?(workspaceRef: WorkspaceRef, provider: P, extra: unknown): Promise<void>;
 
   // --- Workspace start ---
 
   /** Start the agent server for a workspace, running `binary`. */
   startServer(
-    workspacePath: string,
+    workspaceRef: WorkspaceRef,
+    workspacePath: Path,
     options: WorkspaceStartOptions,
     binary: ResolvedAgentBinary
   ): Promise<void>;
 
   /** Called after the provider is ready (e.g. Claude's prompt file plumbing). */
-  afterProviderReady?(
-    workspacePath: string,
-    options: WorkspaceStartOptions | undefined
-  ): Promise<void>;
+  afterProviderReady?(workspaceRef: WorkspaceRef, options: WorkspaceStartOptions): Promise<void>;
 
   // --- Terminal lifecycle + per-workspace tracking ---
 
   /** Apply an agent terminal lifecycle transition (reported by the sidekick). */
   applyTerminalLifecycle(
-    workspacePath: string,
+    workspaceRef: WorkspaceRef,
     event: AgentLifecycleEvent,
     ctx: SpecContext<P>
   ): void;
@@ -151,10 +152,10 @@ export interface AgentModuleSpec<P extends AgentProvider> {
   wireExtraCallbacks?(ctx: SpecContext<P>): void;
 
   /** Called when a provider is registered, before the status seed is emitted. */
-  onProviderAdded?(path: WorkspacePath, provider: P): void;
+  onProviderAdded?(workspaceRef: WorkspaceRef, provider: P): void;
 
   /** Remove agent-specific tracking state for a workspace. */
-  clearWorkspaceTracking?(path: WorkspacePath): void;
+  clearWorkspaceTracking?(workspaceRef: WorkspaceRef): void;
 
   /** Clear agent-specific state on dispose. */
   onDispose?(): void;
@@ -195,23 +196,23 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   // ===========================================================================
 
   /** Per-workspace provider instances. */
-  const providers = new Map<WorkspacePath, P>();
+  const providers = new Map<WorkspaceRef, P>();
 
   /** Cached aggregated status per workspace, as the agent reported it (for deduplication). */
-  const statusCache = new Map<WorkspacePath, AggregatedAgentStatus>();
+  const statusCache = new Map<WorkspaceRef, AggregatedAgentStatus>();
 
   /**
    * Workspaces with a modal open in their editor. Overlaid on `statusCache`:
    * such a workspace reads idle whatever its agent reports (see `effectiveStatus`).
    */
-  const modalOpen = new Set<WorkspacePath>();
+  const modalOpen = new Set<WorkspaceRef>();
 
   /** Tracks pending handleServerStarted() promises for startWorkspace(). */
-  const serverStartedPromises = new Map<string, Promise<void>>();
+  const serverStartedPromises = new Map<WorkspaceRef, Promise<void>>();
 
   /** Status change subscribers. */
   const statusChangeListeners = new Set<
-    (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void
+    (workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void
   >();
 
   /** Cleanup functions for onServerStarted/onServerStopped callbacks. */
@@ -222,16 +223,16 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   let callbacksWired = false;
 
   const ctx: SpecContext<P> = {
-    getProvider: (path) => providers.get(path),
+    getProvider: (workspaceRef) => providers.get(workspaceRef),
   };
 
   // ===========================================================================
   // Provider management helpers
   // ===========================================================================
 
-  function notifyStatusChange(path: WorkspacePath, status: AggregatedAgentStatus): void {
+  function notifyStatusChange(workspaceRef: WorkspaceRef, status: AggregatedAgentStatus): void {
     for (const listener of statusChangeListeners) {
-      listener(path, status);
+      listener(workspaceRef, status);
     }
   }
 
@@ -240,14 +241,14 @@ export function createAgentModuleProvider<P extends AgentProvider>(
    * which parks the workspace on the user — idle even when the agent is still
    * working or has no session.
    */
-  function effectiveStatus(path: WorkspacePath): AggregatedAgentStatus {
-    if (modalOpen.has(path)) return convertToAggregatedStatus("idle");
-    return statusCache.get(path) ?? createNoneStatus();
+  function effectiveStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
+    if (modalOpen.has(workspaceRef)) return convertToAggregatedStatus("idle");
+    return statusCache.get(workspaceRef) ?? createNoneStatus();
   }
 
-  function handleStatusUpdate(path: WorkspacePath, agentStatus: AgentStatus): void {
+  function handleStatusUpdate(workspaceRef: WorkspaceRef, agentStatus: AgentActivity): void {
     const status = convertToAggregatedStatus(agentStatus);
-    const previous = statusCache.get(path);
+    const previous = statusCache.get(workspaceRef);
     const hasChanged =
       !previous ||
       previous.status !== status.status ||
@@ -255,46 +256,46 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       previous.counts.busy !== status.counts.busy;
 
     if (hasChanged) {
-      statusCache.set(path, status);
+      statusCache.set(workspaceRef, status);
       // While parked, the agent's changes are recorded but not reported: the
       // workspace keeps reading idle until the modal closes.
-      if (!modalOpen.has(path)) notifyStatusChange(path, status);
+      if (!modalOpen.has(workspaceRef)) notifyStatusChange(workspaceRef, status);
     }
   }
 
-  function addProvider(path: WorkspacePath, provider: P): void {
-    if (providers.has(path)) return;
+  function addProvider(workspaceRef: WorkspaceRef, provider: P): void {
+    if (providers.has(workspaceRef)) return;
 
-    provider.onStatusChange((status) => handleStatusUpdate(path, status));
+    provider.onStatusChange((status) => handleStatusUpdate(workspaceRef, status));
 
-    spec.onProviderAdded?.(path, provider);
+    spec.onProviderAdded?.(workspaceRef, provider);
 
-    providers.set(path, provider);
-    handleStatusUpdate(path, spec.initialStatus(provider));
+    providers.set(workspaceRef, provider);
+    handleStatusUpdate(workspaceRef, spec.initialStatus(provider));
   }
 
-  function removeProvider(path: WorkspacePath): void {
-    const provider = providers.get(path);
+  function removeProvider(workspaceRef: WorkspaceRef): void {
+    const provider = providers.get(workspaceRef);
     if (provider) {
       provider.dispose();
-      providers.delete(path);
-      statusCache.delete(path);
-      notifyStatusChange(path, effectiveStatus(path));
+      providers.delete(workspaceRef);
+      statusCache.delete(workspaceRef);
+      notifyStatusChange(workspaceRef, effectiveStatus(workspaceRef));
     }
   }
 
-  function disconnectProvider(path: WorkspacePath): void {
-    const provider = providers.get(path);
+  function disconnectProvider(workspaceRef: WorkspaceRef): void {
+    const provider = providers.get(workspaceRef);
     if (provider) {
       provider.disconnect();
     }
   }
 
-  async function reconnectProvider(path: WorkspacePath): Promise<void> {
-    const provider = providers.get(path);
+  async function reconnectProvider(workspaceRef: WorkspaceRef): Promise<void> {
+    const provider = providers.get(workspaceRef);
     if (provider) {
       await provider.reconnect();
-      handleStatusUpdate(path, spec.initialStatus(provider));
+      handleStatusUpdate(workspaceRef, spec.initialStatus(provider));
     }
   }
 
@@ -303,48 +304,42 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   // ===========================================================================
 
   async function handleServerStarted(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     port: number,
     extra: unknown
   ): Promise<void> {
+    const log = logger.scoped({ workspace: workspaceRef });
     try {
       // Check if this is a restart (provider already exists from disconnect)
-      if (providers.has(workspacePath)) {
+      if (providers.has(workspaceRef)) {
         try {
-          await reconnectProvider(workspacePath);
-          logger
-            .scoped({ path: workspacePath })
-            .info("Reconnected agent provider after restart", { port, agentType: spec.type });
+          await reconnectProvider(workspaceRef);
+          log.info("Reconnected agent provider after restart", { port, agentType: spec.type });
         } catch (error) {
-          logger
-            .scoped({ path: workspacePath })
-            .error(
-              "Failed to reconnect agent provider",
-              { port, agentType: spec.type },
-              error instanceof Error ? error : undefined
-            );
+          log.error(
+            "Failed to reconnect agent provider",
+            { port, agentType: spec.type },
+            toError(error)
+          );
         }
         return;
       }
 
-      // First start: create the agent-specific provider
-      const provider = spec.createProvider(workspacePath);
-
       try {
+        // First start: create the agent-specific provider
+        const provider = spec.createProvider(workspaceRef);
         await spec.connectProvider(provider, port);
-        addProvider(workspacePath, provider);
-        await spec.onProviderRegistered?.(workspacePath, provider, extra);
+        addProvider(workspaceRef, provider);
+        await spec.onProviderRegistered?.(workspaceRef, provider, extra);
       } catch (error) {
-        logger
-          .scoped({ path: workspacePath })
-          .error(
-            "Failed to initialize agent provider",
-            { port, agentType: spec.type },
-            error instanceof Error ? error : undefined
-          );
+        log.error(
+          "Failed to initialize agent provider",
+          { port, agentType: spec.type },
+          toError(error)
+        );
       }
     } finally {
-      serverStartedPromises.delete(workspacePath);
+      serverStartedPromises.delete(workspaceRef);
     }
   }
 
@@ -354,17 +349,17 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     spec.wireExtraCallbacks?.(ctx);
 
-    serverStartedCleanupFn = spec.serverManager.onServerStarted((workspacePath, port, ...extra) => {
-      const promise = handleServerStarted(workspacePath as WorkspacePath, port, extra[0]);
-      serverStartedPromises.set(workspacePath, promise);
+    serverStartedCleanupFn = spec.serverManager.onServerStarted((workspaceRef, port, ...extra) => {
+      const promise = handleServerStarted(workspaceRef, port, extra[0]);
+      serverStartedPromises.set(workspaceRef, promise);
     });
 
-    serverStoppedCleanupFn = spec.serverManager.onServerStopped((workspacePath, ...args) => {
+    serverStoppedCleanupFn = spec.serverManager.onServerStopped((workspaceRef, ...args) => {
       const isRestart = args[0] === true;
       if (isRestart) {
-        disconnectProvider(workspacePath as WorkspacePath);
+        disconnectProvider(workspaceRef);
       } else {
-        removeProvider(workspacePath as WorkspacePath);
+        removeProvider(workspaceRef);
       }
     });
   }
@@ -449,8 +444,9 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     // --- Per-workspace ---
     async startWorkspace(
-      workspacePath: string,
-      options: WorkspaceStartOptions
+      workspaceRef: WorkspaceRef,
+      workspacePath: Path,
+      options: WorkspaceStartOptions = {}
     ): Promise<WorkspaceStartResult> {
       // Snapshot once: the server and the terminal must run the same binary
       // even if a background download lands meanwhile.
@@ -458,63 +454,62 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       if (binary === null) {
         throw binaryNotReadyError(binaryName);
       }
-      await spec.startServer(workspacePath, options, binary);
+      await spec.startServer(workspaceRef, workspacePath, options, binary);
 
       // Wait for the handleServerStarted callback to complete
-      const promise = serverStartedPromises.get(workspacePath);
+      const promise = serverStartedPromises.get(workspaceRef);
       if (promise) {
         await promise;
       }
 
-      await spec.afterProviderReady?.(workspacePath, options);
+      await spec.afterProviderReady?.(workspaceRef, options);
 
-      const providerEnv =
-        providers.get(workspacePath as WorkspacePath)?.getEnvironmentVariables() ?? {};
+      const providerEnv = providers.get(workspaceRef)?.getEnvironmentVariables() ?? {};
       return {
         envVars: { ...providerEnv, ...spec.binaryEnv(binary) },
       };
     },
 
-    async stopWorkspace(workspacePath: string): Promise<StopServerResult> {
-      return spec.serverManager.stopServer(workspacePath);
+    async stopWorkspace(workspaceRef: WorkspaceRef): Promise<StopServerResult> {
+      return spec.serverManager.stopServer(workspaceRef);
     },
 
-    async restartWorkspace(workspacePath: string): Promise<RestartServerResult> {
-      return spec.serverManager.restartServer(workspacePath);
+    async restartWorkspace(workspaceRef: WorkspaceRef): Promise<RestartServerResult> {
+      return spec.serverManager.restartServer(workspaceRef);
     },
 
-    applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void {
-      spec.applyTerminalLifecycle(workspacePath, event, ctx);
+    applyTerminalLifecycle(workspaceRef: WorkspaceRef, event: AgentLifecycleEvent): void {
+      spec.applyTerminalLifecycle(workspaceRef, event, ctx);
     },
 
-    setModalOpen(workspacePath: WorkspacePath, open: boolean): void {
-      if (open) modalOpen.add(workspacePath);
-      else modalOpen.delete(workspacePath);
+    setModalOpen(workspaceRef: WorkspaceRef, open: boolean): void {
+      if (open) modalOpen.add(workspaceRef);
+      else modalOpen.delete(workspaceRef);
       // Reported unconditionally rather than deduplicated: an `agent.status.set`
       // nudge reaches the UI without passing through here, so the last status
       // this core reported is not necessarily what the UI shows.
-      notifyStatusChange(workspacePath, effectiveStatus(workspacePath));
+      notifyStatusChange(workspaceRef, effectiveStatus(workspaceRef));
     },
 
     // --- Query ---
-    getStatus(workspacePath: WorkspacePath): AggregatedAgentStatus {
-      return effectiveStatus(workspacePath);
+    getStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus {
+      return effectiveStatus(workspaceRef);
     },
 
-    getSession(workspacePath: WorkspacePath): AgentSessionInfo | null {
-      return providers.get(workspacePath)?.getSession() ?? null;
+    getSession(workspaceRef: WorkspaceRef): AgentSessionInfo | null {
+      return providers.get(workspaceRef)?.getSession() ?? null;
     },
 
     // --- Messages ---
     async sendMessage(
-      workspacePath: WorkspacePath,
+      workspaceRef: WorkspaceRef,
       message: AgentMessage,
       options: AgentMessageOptions
     ): Promise<void> {
       // A provider that is still being registered (the server just started)
       // is the one the message is for.
-      await serverStartedPromises.get(workspacePath);
-      const provider = providers.get(workspacePath);
+      await serverStartedPromises.get(workspaceRef);
+      const provider = providers.get(workspaceRef);
       if (provider === undefined) {
         throw new AgentUnreachableError(
           `No ${spec.displayName} agent is running in this workspace.`
@@ -525,19 +520,19 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     // --- Events ---
     onStatusChange(
-      callback: (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void
+      callback: (workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void
     ): () => void {
       statusChangeListeners.add(callback);
       return () => statusChangeListeners.delete(callback);
     },
 
     // --- Cleanup ---
-    clearWorkspaceTracking(workspacePath: WorkspacePath): void {
+    clearWorkspaceTracking(workspaceRef: WorkspaceRef): void {
       // The API server reports the close when the workspace's socket drops,
       // but that report resolves the agent from metadata that teardown may
       // already have removed, so it can land in another agent's module.
-      modalOpen.delete(workspacePath);
-      spec.clearWorkspaceTracking?.(workspacePath);
+      modalOpen.delete(workspaceRef);
+      spec.clearWorkspaceTracking?.(workspaceRef);
     },
   };
 }

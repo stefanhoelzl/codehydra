@@ -12,6 +12,7 @@
  */
 
 import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { SupportedPlatform } from "../boundaries/platform/platform-info";
 import type { AsyncWatcher } from "../boundaries/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
@@ -21,13 +22,14 @@ import type { Config } from "../boundaries/platform/config";
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { storeString } from "../boundaries/platform/store-definition";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_START_OPERATION_ID, type InitResult } from "../intents/app-start";
 import {
   APP_SHUTDOWN_OPERATION_ID,
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
 } from "../intents/app-shutdown";
 import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Constants
@@ -154,6 +156,8 @@ export interface ElectronLifecycleModuleDeps {
   };
   readonly appLayer: Pick<AppBoundary, "setAppUserModelId" | "ensureSingleInstance">;
   readonly buildInfo: { isPackaged: boolean };
+  /** Host platform: macOS keeps the app running once its last window closes. */
+  readonly platform: SupportedPlatform;
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly asyncWatcher: Pick<AsyncWatcher, "check">;
   readonly powerMonitor: { on(event: string, callback: () => void): void };
@@ -264,7 +268,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
   }
 
   deps.app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") shutdown();
+    if (deps.platform !== "darwin") shutdown();
   });
 
   deps.app.on("before-quit", (event) => {
@@ -275,7 +279,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
 
   return {
     name: "electron-lifecycle",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<HookOutput<ConfigureResult>> => {
@@ -341,7 +345,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
           },
         },
         init: {
-          handler: async (): Promise<HookOutput> => {
+          handler: async (): Promise<HookOutput<InitResult>> => {
             deps.asyncWatcher.check();
             await deps.app.whenReady();
             return { provides: { "app-ready": true } };
@@ -373,6 +377,6 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
           },
         },
       },
-    },
+    }),
   };
 }

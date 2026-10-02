@@ -95,6 +95,16 @@ function createMockLogger(): Logger & {
   return logger;
 }
 
+/** An operation `id` for `intentType` that only collects `hookPoint` with `{ intent }`. */
+function collectingOp(intentType: string, id: string, hookPoint: string) {
+  return defineOp(intentType, {
+    id,
+    execute: async (ctx) => {
+      await ctx.hooks.collect(hookPoint, { intent: ctx.intent });
+    },
+  });
+}
+
 function createDispatcher(
   options?: Partial<{ logger: Logger; initialCapabilities: Record<string, unknown> }>
 ): Dispatcher {
@@ -465,14 +475,7 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("execute", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "execute"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -582,14 +585,7 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -628,14 +624,7 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -675,14 +664,7 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -723,14 +705,7 @@ describe("Dispatcher", () => {
       dispatcher.registerModule(moduleA);
       dispatcher.registerModule(moduleB);
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("execute", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "execute"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -772,6 +747,81 @@ describe("Dispatcher", () => {
     });
   });
 
+  describe("hooks.collect() yield frames", () => {
+    const frameSchemas = {
+      type: "test:action",
+      payload: z.unknown(),
+      hooks: { stream: { frames: z.object({ percent: z.number() }) } },
+    } satisfies OperationSchemas;
+
+    function streamingSetup(frames: readonly unknown[]): {
+      dispatcher: Dispatcher;
+      run: () => Promise<{ seen: unknown[]; errors: readonly Error[]; finished: boolean }>;
+    } {
+      const dispatcher = createDispatcher();
+      let finished = false;
+      dispatcher.registerModule({
+        name: "streamer",
+        hooks: {
+          "stream-op": {
+            stream: {
+              handler: async function* () {
+                for (const frame of frames) yield frame;
+                finished = true;
+              },
+            },
+          },
+        },
+      });
+      const seen: unknown[] = [];
+      let errors: readonly Error[] = [];
+      const op: Operation<typeof frameSchemas> = {
+        id: "stream-op",
+        schemas: frameSchemas,
+        execute: async (ctx) => {
+          ({ errors } = await ctx.hooks.collect(
+            "stream",
+            { intent: ctx.intent },
+            {
+              // Typed from the hook point's frames schema: no narrowing here.
+              onYield: (frame) => {
+                seen.push(frame.percent);
+              },
+            }
+          ));
+        },
+      };
+      dispatcher.registerOperation(op);
+      return {
+        dispatcher,
+        run: async () => {
+          await dispatcher.dispatch(createActionIntent());
+          return { seen, errors, finished };
+        },
+      };
+    }
+
+    it("hands each frame to onYield validated against the hook point's frames schema", async () => {
+      const { run } = streamingSetup([{ percent: 10 }, { percent: 90 }]);
+
+      const { seen, errors, finished } = await run();
+
+      expect(seen).toEqual([10, 90]);
+      expect(errors).toEqual([]);
+      expect(finished).toBe(true);
+    });
+
+    it("reports a malformed frame as the handler's error and stops draining it", async () => {
+      const { run } = streamingSetup([{ percent: 10 }, { percent: "half" }, { percent: 90 }]);
+
+      const { seen, errors, finished } = await run();
+
+      expect(seen).toEqual([10]);
+      expect(errors).toHaveLength(1);
+      expect(finished).toBe(false);
+    });
+  });
+
   describe("AsyncLocalStorage causation", () => {
     it("hook handler inherits causation via ALS when calling dispatcher.dispatch() directly", async () => {
       const logger = createMockLogger();
@@ -789,14 +839,7 @@ describe("Dispatcher", () => {
       );
 
       // Parent operation with a hook point
-      dispatcher.registerOperation(
-        defineOp("test:parent", {
-          id: "parent-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:parent", "parent-op", "run"));
 
       // Hook handler dispatches directly on the dispatcher (not via ctx.dispatch)
       // — simulating what hook modules do in practice
@@ -1237,14 +1280,7 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1290,14 +1326,7 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1323,14 +1352,7 @@ describe("Dispatcher", () => {
         },
       });
 
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 
@@ -1365,14 +1387,7 @@ describe("Dispatcher", () => {
       };
 
       dispatcher.registerModule(testModule);
-      dispatcher.registerOperation(
-        defineOp("test:action", {
-          id: "action-op",
-          execute: async (ctx) => {
-            await ctx.hooks.collect("run", { intent: ctx.intent });
-          },
-        })
-      );
+      dispatcher.registerOperation(collectingOp("test:action", "action-op", "run"));
 
       await dispatcher.dispatch(createActionIntent());
 

@@ -7,9 +7,9 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
+import { defineEvents } from "../intents/declarations";
 
 export interface DevtoolsModuleDeps {
   readonly viewManager: Pick<IViewManager, "getUIDevtoolsTarget">;
@@ -19,16 +19,16 @@ export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
   return {
     name: "devtools",
     requires: { development: true },
-    events: {
+    events: defineEvents({
       [EVENT_SHORTCUT_KEY_PRESSED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { key } = (event as ShortcutKeyPressedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { key } = event.payload;
 
           if (key === "d") {
             deps.viewManager.getUIDevtoolsTarget().toggle();
           }
         },
       },
-    },
+    }),
   };
 }

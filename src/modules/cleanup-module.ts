@@ -28,6 +28,7 @@ import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 import { FileSystemError } from "../shared/errors/service-errors";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Rules
@@ -293,7 +294,7 @@ export function createCleanupModule(deps: CleanupModuleDeps): IntentModule {
 
   return {
     name: "cleanup",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         start: {
           handler: (): Promise<void> => {
@@ -305,6 +306,6 @@ export function createCleanupModule(deps: CleanupModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

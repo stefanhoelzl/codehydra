@@ -45,7 +45,6 @@
 
 import { gzipSync } from "node:zlib";
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -60,20 +59,14 @@ import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { ViewBoundary, UncaughtExceptionDetails } from "../boundaries/shell/view";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { ANY_VALUE } from "../intents/lib/operation";
-import type { HookOutput, HookContext } from "../intents/lib/operation";
-import {
-  APP_START_OPERATION_ID,
-  APP_START_ERROR_HOOK,
-  type AppStartErrorHookContext,
-} from "../intents/app-start";
+import type { HookOutput } from "../intents/lib/operation";
+import { APP_START_OPERATION_ID, APP_START_ERROR_HOOK } from "../intents/app-start";
 import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../intents/app-shutdown";
-import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
-import {
-  EVENT_BUG_REPORT_SUBMITTED,
-  type BugReportSubmittedEvent,
-} from "../intents/submit-bug-report";
+import { EVENT_BUG_REPORT_SUBMITTED } from "../intents/submit-bug-report";
 import { fromSerializedError } from "../shared/error-utils";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Constants
@@ -420,7 +413,7 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
 
   return {
     name: "error-report",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<HookOutput<Record<string, never>>> => {
@@ -443,8 +436,8 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         // composition root shows the native box and quits. Gated on telemetry, like
         // the other automatic crash reports; the manual bug-report path is separate.
         [APP_START_ERROR_HOOK]: {
-          handler: async (ctx: HookContext): Promise<HookOutput<Record<string, never>>> => {
-            const { error, phase } = ctx as AppStartErrorHookContext;
+          handler: async (ctx): Promise<HookOutput<void>> => {
+            const { error, phase } = ctx;
             if (deps.telemetryEnabled.get()) {
               try {
                 // The contract carries the failure as plain data; PostHog groups issues by
@@ -455,23 +448,23 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
                 // Best-effort: reporting must never block or alter the fatal path.
               }
             }
-            return { result: {} };
+            return {};
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       [EVENT_SHORTCUT_KEY_PRESSED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { key } = (event as ShortcutKeyPressedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { key } = event.payload;
           if (key === "b") {
             openDialog();
           }
         },
       },
       [EVENT_BUG_REPORT_SUBMITTED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { description } = (event as BugReportSubmittedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { description } = event.payload;
 
           // The module owns log-gathering for every bug report, so both the
           // dialog and the MCP report_bug tool only need to supply a
@@ -488,6 +481,6 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
           await deps.boundary.flush();
         },
       },
-    },
+    }),
   };
 }

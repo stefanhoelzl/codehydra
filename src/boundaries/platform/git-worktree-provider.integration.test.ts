@@ -7,19 +7,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
 import { createMockGitClient } from "./git-client.state-mock";
+import { MAIN_ONLY, testProject } from "./git-worktree-provider.test-utils";
 import {
   createFileSystemMock,
   createSpyFileSystemBoundary,
   directory,
   symlink,
   file,
+  type MockFileSystemBoundary,
 } from "./filesystem.state-mock";
 import { SILENT_LOGGER, createMockLogger } from "./logging";
 import { WorkspaceError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
-import type { IGitClient } from "./git-client";
 import type { FileSystemBoundary } from "./filesystem";
-import type { Logger } from "./logging";
 import { projPath, testPath } from "../../shared/test-fixtures";
 import { sep } from "node:path";
 
@@ -38,20 +38,6 @@ async function readMetadataFile(
   }
 }
 
-/** Construct a provider the way production does: new + validateRepository + registerProject. */
-async function createProvider(
-  projectRoot: Path,
-  gitClient: IGitClient,
-  workspacesDir: Path,
-  fileSystemLayer: FileSystemBoundary,
-  logger: Logger
-): Promise<GitWorktreeProvider> {
-  const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
-  await provider.validateRepository(projectRoot);
-  provider.registerProject(projectRoot, workspacesDir);
-  return provider;
-}
-
 describe("GitWorktreeProvider integration", () => {
   const PROJECT_ROOT = testPath("/project");
   const WORKSPACES_DIR = testPath("/workspaces");
@@ -61,6 +47,7 @@ describe("GitWorktreeProvider integration", () => {
     },
   });
   const worktreeLogger = SILENT_LOGGER;
+  const { gitRepo, providerFor } = testProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   describe("managed-worktree filtering", () => {
     /**
@@ -68,38 +55,28 @@ describe("GitWorktreeProvider integration", () => {
      * elsewhere, one an agent left behind on a detached HEAD.
      */
     function mixedRepo(branchConfigs: Record<string, Record<string, string>> = {}) {
-      return createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-a", "feature/login"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-a",
-                path: "/workspaces/feature-a",
-                branch: "feature-a",
-              },
-              {
-                name: "repo-login",
-                path: "/code/repo-login",
-                branch: "feature/login",
-              },
-              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
-            ],
-            branchConfigs: { "feature-a": { "codehydra.base": "main" }, ...branchConfigs },
+      return gitRepo({
+        branches: ["main", "feature-a", "feature/login"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-a",
+            path: "/workspaces/feature-a",
+            branch: "feature-a",
           },
-        },
+          {
+            name: "repo-login",
+            path: "/code/repo-login",
+            branch: "feature/login",
+          },
+          { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+        ],
+        branchConfigs: { "feature-a": { "codehydra.base": "main" }, ...branchConfigs },
       });
     }
 
     it("keeps its own worktrees and skips every other one", async () => {
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mixedRepo(),
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mixedRepo(), mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
 
@@ -108,13 +85,7 @@ describe("GitWorktreeProvider integration", () => {
 
     it("logs each skipped worktree so a missing tab stays diagnosable", async () => {
       const logger = createMockLogger();
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mixedRepo(),
-        WORKSPACES_DIR,
-        mockFs,
-        logger
-      );
+      const provider = await providerFor(mixedRepo(), mockFs, logger);
 
       await provider.discover(PROJECT_ROOT);
 
@@ -132,13 +103,7 @@ describe("GitWorktreeProvider integration", () => {
       const client = mixedRepo({
         "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
 
@@ -153,13 +118,7 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("still names its own worktrees after their branch", async () => {
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mixedRepo(),
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mixedRepo(), mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
 
@@ -167,22 +126,12 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("names its own detached worktree after the branch its directory encodes", async () => {
-      const client = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature/x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature%x", path: "/workspaces/feature%x", branch: null }],
-          },
-        },
+      const client = gitRepo({
+        branches: ["main", "feature/x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature%x", path: "/workspaces/feature%x", branch: null }],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
 
@@ -191,55 +140,43 @@ describe("GitWorktreeProvider integration", () => {
   });
 
   describe("adoption", () => {
-    function repoWithExternalWorktree(fileSystem?: ReturnType<typeof createFileSystemMock>) {
-      return createMockGitClient({
-        ...(fileSystem && { fileSystem }),
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature/login"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "repo-login",
-                path: "/code/repo-login",
-                branch: "feature/login",
-              },
-              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
-            ],
-          },
+    function repoWithExternalWorktree(fileSystem?: MockFileSystemBoundary) {
+      return gitRepo(
+        {
+          branches: ["main", "feature/login"],
+          currentBranch: "main",
+          worktrees: [
+            {
+              name: "repo-login",
+              path: "/code/repo-login",
+              branch: "feature/login",
+            },
+            { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+          ],
         },
-      });
+        fileSystem
+      );
     }
 
     it("lists what discover() skips, detached worktrees included", async () => {
-      const client = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-a", "feature/login"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-a",
-                path: "/workspaces/feature-a",
-                branch: "feature-a",
-              },
-              {
-                name: "repo-login",
-                path: "/code/repo-login",
-                branch: "feature/login",
-              },
-              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
-            ],
+      const client = gitRepo({
+        branches: ["main", "feature-a", "feature/login"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-a",
+            path: "/workspaces/feature-a",
+            branch: "feature-a",
           },
-        },
+          {
+            name: "repo-login",
+            path: "/code/repo-login",
+            branch: "feature/login",
+          },
+          { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, mockFs);
 
       const unmanaged = await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR);
 
@@ -247,31 +184,21 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("omits an already-adopted worktree from the offer", async () => {
-      const client = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature/login"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "repo-login",
-                path: "/code/repo-login",
-                branch: "feature/login",
-              },
-            ],
-            branchConfigs: {
-              "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
-            },
+      const client = gitRepo({
+        branches: ["main", "feature/login"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "repo-login",
+            path: "/code/repo-login",
+            branch: "feature/login",
           },
+        ],
+        branchConfigs: {
+          "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, mockFs);
 
       expect(await provider.listUnmanagedWorktrees(PROJECT_ROOT, WORKSPACES_DIR)).toEqual([]);
     });
@@ -279,13 +206,7 @@ describe("GitWorktreeProvider integration", () => {
     it("adopting makes the worktree discoverable across a restart", async () => {
       const fs = createFileSystemMock();
       const client = repoWithExternalWorktree(fs);
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
       expect(await provider.discover(PROJECT_ROOT)).toEqual([]);
 
       const adopted = await provider.adoptWorktree(
@@ -296,13 +217,7 @@ describe("GitWorktreeProvider integration", () => {
       expect(adopted.name).toBe("feature/login");
 
       // A fresh provider over the same repo: the tag lives in the metadata file, not memory.
-      const restarted = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const restarted = await providerFor(client, fs);
       expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual([
         "feature/login",
       ]);
@@ -312,23 +227,19 @@ describe("GitWorktreeProvider integration", () => {
       // A workspaces-root migration leaves worktrees where they were; their agent
       // later checks out a temporary branch the adoption tag is not on.
       const oldWorkspacesDir = testPath("/old-root/projects/repo-1234/workspaces");
-      const client = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature/login", "tmp/squash"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature%login",
-                path: "/old-root/projects/repo-1234/workspaces/feature%login",
-                branch: "tmp/squash",
-              },
-              { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
-            ],
-            branchConfigs: {
-              "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
-            },
+      const client = gitRepo({
+        branches: ["main", "feature/login", "tmp/squash"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature%login",
+            path: "/old-root/projects/repo-1234/workspaces/feature%login",
+            branch: "tmp/squash",
           },
+          { name: "wt-8fa2", path: "/tmp/wt-8fa2", branch: null },
+        ],
+        branchConfigs: {
+          "feature/login": { "codehydra.tags.external": '{"color":"#8b949e"}' },
         },
       });
       const provider = new GitWorktreeProvider(client, mockFs, worktreeLogger);
@@ -348,24 +259,12 @@ describe("GitWorktreeProvider integration", () => {
     it("adopts a detached worktree, named after its directory", async () => {
       const fs = createFileSystemMock();
       const client = repoWithExternalWorktree(fs);
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       const adopted = await provider.adoptWorktree(PROJECT_ROOT, testPath("/tmp/wt-8fa2"), null);
       expect(adopted.name).toBe("wt-8fa2");
 
-      const restarted = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const restarted = await providerFor(client, fs);
       expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toEqual(["wt-8fa2"]);
     });
 
@@ -373,13 +272,7 @@ describe("GitWorktreeProvider integration", () => {
       const fs = createFileSystemMock();
       const client = repoWithExternalWorktree(fs);
       vi.spyOn(fs, "writeFile").mockRejectedValue(new Error("disk is read-only"));
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       await expect(
         provider.adoptWorktree(PROJECT_ROOT, testPath("/code/repo-login"), "feature/login")
@@ -390,22 +283,8 @@ describe("GitWorktreeProvider integration", () => {
   describe("metadata.base persistence", () => {
     it("creates workspace with metadata.base and retrieves via discover()", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY, fs);
+      const provider = await providerFor(mockClient, fs);
 
       // Create workspace with base branch "main"
       const created = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -419,35 +298,15 @@ describe("GitWorktreeProvider integration", () => {
 
     it("metadata.base survives provider instance recreation", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY, fs);
 
       // Create with first provider instance
-      const provider1 = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider1 = await providerFor(mockClient, fs);
       await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       // Create new provider instance and verify metadata.base persists
       // (using same mockClient which retains state)
-      const provider2 = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider2 = await providerFor(mockClient, fs);
       const discovered = await provider2.discover(PROJECT_ROOT);
 
       expect(discovered).toHaveLength(1);
@@ -455,29 +314,19 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("workspace without config returns empty metadata", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "no-config-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "no-config-branch",
-                path: "/workspaces/no-config-branch",
-                branch: "no-config-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "no-config-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "no-config-branch",
+            path: "/workspaces/no-config-branch",
+            branch: "no-config-branch",
           },
-        },
+        ],
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       const discovered = await provider.discover(PROJECT_ROOT);
 
       expect(discovered).toHaveLength(1);
@@ -486,22 +335,8 @@ describe("GitWorktreeProvider integration", () => {
 
     it("stores metadata.base as a protected key in the worktree's metadata file", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY, fs);
+      const provider = await providerFor(mockClient, fs);
       await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       expect(
@@ -520,32 +355,22 @@ describe("GitWorktreeProvider integration", () => {
 
   describe("discover name resolution", () => {
     it("returns branch name (not sanitized basename) for workspaces with /", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature/login"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature%login",
-                path: "/workspaces/feature%login",
-                branch: "feature/login",
-              },
-            ],
-            branchConfigs: {
-              "feature/login": { "codehydra.base": "main" },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "feature/login"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature%login",
+            path: "/workspaces/feature%login",
+            branch: "feature/login",
           },
+        ],
+        branchConfigs: {
+          "feature/login": { "codehydra.base": "main" },
         },
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
       expect(discovered).toHaveLength(1);
@@ -554,29 +379,19 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("falls back to filesystem name for detached HEAD workspaces", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "detached-ws",
-                path: "/workspaces/detached-ws",
-                branch: null,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "detached-ws",
+            path: "/workspaces/detached-ws",
+            branch: null,
           },
-        },
+        ],
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
       expect(discovered).toHaveLength(1);
@@ -588,22 +403,8 @@ describe("GitWorktreeProvider integration", () => {
   describe("metadata setMetadata/getMetadata", () => {
     it("setMetadata persists and getMetadata retrieves", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY, fs);
+      const provider = await providerFor(mockClient, fs);
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       await provider.setMetadata(workspace.path, "note", "WIP feature");
@@ -615,32 +416,12 @@ describe("GitWorktreeProvider integration", () => {
 
     it("metadata survives provider recreation", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider1 = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY, fs);
+      const provider1 = await providerFor(mockClient, fs);
       const workspace = await provider1.createWorkspace(PROJECT_ROOT, "feature-x", "main");
       await provider1.setMetadata(workspace.path, "note", "test note");
 
-      const provider2 = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider2 = await providerFor(mockClient, fs);
       // Must discover to populate workspace registry before getMetadata
       await provider2.discover(PROJECT_ROOT);
       const metadata = await provider2.getMetadata(workspace.path);
@@ -650,29 +431,19 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("getMetadata returns empty metadata for workspace without config", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "no-config-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "no-config-branch",
-                path: "/workspaces/no-config-branch",
-                branch: "no-config-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "no-config-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "no-config-branch",
+            path: "/workspaces/no-config-branch",
+            branch: "no-config-branch",
           },
-        },
+        ],
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       await provider.discover(PROJECT_ROOT);
       const metadata = await provider.getMetadata(testPath("/workspaces/no-config-branch"));
 
@@ -680,21 +451,8 @@ describe("GitWorktreeProvider integration", () => {
     });
 
     it("invalid key format throws WorkspaceError with INVALID_METADATA_KEY code", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       try {
@@ -708,22 +466,8 @@ describe("GitWorktreeProvider integration", () => {
 
     it("setMetadata with null deletes the key", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY, fs);
+      const provider = await providerFor(mockClient, fs);
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
       await provider.setMetadata(workspace.path, "note", "test note");
@@ -744,25 +488,13 @@ describe("GitWorktreeProvider", () => {
   );
   const mockFs = createFileSystemMock();
   const worktreeLogger = SILENT_LOGGER;
+  const { gitRepo, providerFor } = testProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   describe("create (factory)", () => {
     it("creates provider for valid git repository", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       expect(provider).toBeInstanceOf(GitWorktreeProvider);
     });
@@ -784,29 +516,14 @@ describe("GitWorktreeProvider", () => {
         repositories: {},
       });
 
-      await expect(
-        createProvider(PROJECT_ROOT, mockClient, WORKSPACES_DIR, mockFs, worktreeLogger)
-      ).rejects.toThrow(WorkspaceError);
+      await expect(providerFor(mockClient, mockFs)).rejects.toThrow(WorkspaceError);
     });
   });
 
   describe("discover", () => {
     it("returns empty array when only main worktree exists", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -814,30 +531,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("excludes main worktree from results", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-branch",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-branch"
-                ).toNative(),
-                branch: "feature-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-branch",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-branch"
+            ).toNative(),
+            branch: "feature-branch",
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -846,30 +553,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles detached HEAD workspaces", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "detached-workspace",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached"
-                ).toNative(),
-                branch: null,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "detached-workspace",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached"
+            ).toNative(),
+            branch: null,
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -878,37 +575,27 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns multiple workspaces", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-a", "feature-b"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-a",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-a"
-                ).toNative(),
-                branch: "feature-a",
-              },
-              {
-                name: "feature-b",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-b"
-                ).toNative(),
-                branch: "feature-b",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-a", "feature-b"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-a",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-a"
+            ).toNative(),
+            branch: "feature-a",
           },
-        },
+          {
+            name: "feature-b",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-b"
+            ).toNative(),
+            branch: "feature-b",
+          },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -916,37 +603,27 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips corrupted worktree entries without throwing", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-valid", "unnamed-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-valid",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-valid"
-                ).toNative(),
-                branch: "feature-valid",
-              },
-              {
-                name: "",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/unnamed"
-                ).toNative(),
-                branch: "unnamed-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-valid", "unnamed-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-valid",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-valid"
+            ).toNative(),
+            branch: "feature-valid",
           },
-        },
+          {
+            name: "",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/unnamed"
+            ).toNative(),
+            branch: "unnamed-branch",
+          },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // Should not throw and should handle gracefully
       const workspaces = await provider.discover(PROJECT_ROOT);
@@ -957,33 +634,23 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns baseBranch from config when set", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-              },
-            ],
-            branchConfigs: {
-              "feature-x": { "codehydra.base": "develop" },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
           },
+        ],
+        branchConfigs: {
+          "feature-x": { "codehydra.base": "develop" },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -992,50 +659,40 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("metadata comes from config only, no fallback for missing base", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "branch-a", "branch-b"],
-            currentBranch: "main",
-            worktrees: [
-              // Has config
-              {
-                name: "workspace-a",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-a"
-                ).toNative(),
-                branch: "branch-a",
-              },
-              // No config
-              {
-                name: "workspace-b",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-b"
-                ).toNative(),
-                branch: "branch-b",
-              },
-              // No config, no branch (detached)
-              {
-                name: "workspace-c",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-c"
-                ).toNative(),
-                branch: null,
-              },
-            ],
-            branchConfigs: {
-              "branch-a": { "codehydra.base": "configured-base" },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "branch-a", "branch-b"],
+        currentBranch: "main",
+        worktrees: [
+          // Has config
+          {
+            name: "workspace-a",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-a"
+            ).toNative(),
+            branch: "branch-a",
           },
+          // No config
+          {
+            name: "workspace-b",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-b"
+            ).toNative(),
+            branch: "branch-b",
+          },
+          // No config, no branch (detached)
+          {
+            name: "workspace-c",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/workspace-c"
+            ).toNative(),
+            branch: null,
+          },
+        ],
+        branchConfigs: {
+          "branch-a": { "codehydra.base": "configured-base" },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -1053,37 +710,27 @@ describe("GitWorktreeProvider", () => {
 
   describe("discover - metadata", () => {
     it("returns full metadata from config (multiple keys)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-              },
-            ],
-            branchConfigs: {
-              "feature-x": {
-                "codehydra.base": "main",
-                "codehydra.note": "WIP auth feature",
-                "codehydra.model": "claude-4",
-              },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
+          },
+        ],
+        branchConfigs: {
+          "feature-x": {
+            "codehydra.base": "main",
+            "codehydra.note": "WIP auth feature",
+            "codehydra.model": "claude-4",
           },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -1099,21 +746,11 @@ describe("GitWorktreeProvider", () => {
 
   describe("config read batching (regression)", () => {
     it("listBases reads no git config", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "a", "b", "c", "d"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "a", "b", "c", "d"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       const spy = vi.spyOn(mockClient, "getGitConfig");
 
       await provider.listBases(PROJECT_ROOT);
@@ -1122,45 +759,37 @@ describe("GitWorktreeProvider", () => {
     });
     it("discover reads git config once while unmigrated, never after", async () => {
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "a", "b", "c"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "a",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/a"
-                ).toNative(),
-                branch: "a",
-              },
-              {
-                name: "b",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/b"
-                ).toNative(),
-                branch: "b",
-              },
-              {
-                name: "c",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/c"
-                ).toNative(),
-                branch: "c",
-              },
-            ],
-          },
+      const mockClient = gitRepo(
+        {
+          branches: ["main", "a", "b", "c"],
+          currentBranch: "main",
+          worktrees: [
+            {
+              name: "a",
+              path: testPath(
+                "/home/user/app-data/projects/my-repo-abc12345/workspaces/a"
+              ).toNative(),
+              branch: "a",
+            },
+            {
+              name: "b",
+              path: testPath(
+                "/home/user/app-data/projects/my-repo-abc12345/workspaces/b"
+              ).toNative(),
+              branch: "b",
+            },
+            {
+              name: "c",
+              path: testPath(
+                "/home/user/app-data/projects/my-repo-abc12345/workspaces/c"
+              ).toNative(),
+              branch: "c",
+            },
+          ],
         },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
+        fs
       );
+      const provider = await providerFor(mockClient, fs);
       const spy = vi.spyOn(mockClient, "getGitConfig");
 
       await provider.discover(PROJECT_ROOT);
@@ -1173,22 +802,12 @@ describe("GitWorktreeProvider", () => {
 
   describe("listBases", () => {
     it("returns local and remote branches", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature"],
-            remoteBranches: ["origin/main"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature"],
+        remoteBranches: ["origin/main"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1198,22 +817,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns derives for local branch without worktree", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            // No worktrees for feature-x
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        // No worktrees for feature-x
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1222,30 +831,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("excludes derives for local branch with worktree", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1254,22 +853,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns derives for remote without local counterpart", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature-payments"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature-payments"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1278,22 +867,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("excludes derives for remote with local counterpart", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-payments"],
-            remoteBranches: ["origin/feature-payments"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-payments"],
+        remoteBranches: ["origin/feature-payments"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1302,22 +881,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("deduplicates remotes for derives (prefers origin)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature-x", "upstream/feature-x"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature-x", "upstream/feature-x"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1330,31 +899,21 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns the base recorded for a local branch's workspace", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: new Path(WORKSPACES_DIR, "feature-x").toString(),
-                branch: "feature-x",
-              },
-            ],
-            branchConfigs: {
-              "feature-x": { "codehydra.base": "develop" },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+            branch: "feature-x",
           },
+        ],
+        branchConfigs: {
+          "feature-x": { "codehydra.base": "develop" },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       await provider.discover(PROJECT_ROOT);
 
       const bases = await provider.listBases(PROJECT_ROOT);
@@ -1363,23 +922,13 @@ describe("GitWorktreeProvider", () => {
       expect(featureX?.base).toBe("develop");
     });
     it("returns base from matching remote when no config", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            remoteBranches: ["origin/feature-x"],
-            currentBranch: "main",
-            // No config for feature-x
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        remoteBranches: ["origin/feature-x"],
+        currentBranch: "main",
+        // No config for feature-x
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1388,22 +937,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns undefined base when no config and no matching remote", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            // No config, no matching remote
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        // No config, no matching remote
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1412,22 +951,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns full ref as base for remote branches", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature-x"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature-x"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1436,22 +965,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles remote branch with slashes in name", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature/login"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature/login"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -1462,22 +981,12 @@ describe("GitWorktreeProvider", () => {
 
   describe("updateBases", () => {
     it("returns success when fetch succeeds", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remotes: ["origin"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remotes: ["origin"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.updateBases(PROJECT_ROOT);
 
@@ -1486,22 +995,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns empty arrays when no remotes exist", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remotes: [],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remotes: [],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.updateBases(PROJECT_ROOT);
 
@@ -1512,21 +1011,8 @@ describe("GitWorktreeProvider", () => {
 
   describe("createWorkspace", () => {
     it("creates workspace and returns workspace info", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
@@ -1537,21 +1023,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("sanitizes branch names with slashes", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "user/feature", "main");
 
@@ -1562,21 +1035,11 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("creates workspace using existing branch when baseBranch matches branch name", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "existing-branch"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "existing-branch"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspace = await provider.createWorkspace(
         PROJECT_ROOT,
@@ -1593,21 +1056,11 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("creates workspace for existing branch with different baseBranch and saves base in config", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "existing-branch"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "existing-branch"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // Should succeed even though baseBranch differs from branch name
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "existing-branch", "main");
@@ -1619,30 +1072,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when branch is already checked out in worktree", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "checked-out-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "existing-workspace",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/existing-workspace"
-                ).toNative(),
-                branch: "checked-out-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "checked-out-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "existing-workspace",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/existing-workspace"
+            ).toNative(),
+            branch: "checked-out-branch",
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       await expect(
         provider.createWorkspace(PROJECT_ROOT, "checked-out-branch", "checked-out-branch")
@@ -1653,21 +1096,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when branch is checked out in main worktree", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       await expect(provider.createWorkspace(PROJECT_ROOT, "main", "main")).rejects.toThrow(
         WorkspaceError
@@ -1678,22 +1108,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("ignores remote branches when checking for existing branch", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature-x"], // Remote branch with same name
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature-x"], // Remote branch with same name
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // Should create new local branch even though remote exists
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "origin/feature-x", "main");
@@ -1703,21 +1123,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns workspace with metadata.base set", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
 
@@ -1725,22 +1132,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("creates workspace with tracking (new branch from tracking ref)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/feature-login"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/feature-login"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const workspace = await provider.createWorkspace(
         PROJECT_ROOT,
@@ -1756,22 +1153,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("reconfigures upstream when tracking is set and branch already exists", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "review-pr-42"],
-            remoteBranches: ["origin/feature-login"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "review-pr-42"],
+        remoteBranches: ["origin/feature-login"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       await provider.createWorkspace(
         PROJECT_ROOT,
@@ -1790,22 +1177,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles multi-segment branch names in tracking ref", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "review-pr-99"],
-            remoteBranches: ["origin/feature/nested/branch"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "review-pr-99"],
+        remoteBranches: ["origin/feature/nested/branch"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       await provider.createWorkspace(
         PROJECT_ROOT,
@@ -1824,21 +1201,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws when tracking ref is not a known remote branch", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       await expect(
         provider.createWorkspace(PROJECT_ROOT, "review-pr-42", "main", "origin/nonexistent")
@@ -1854,22 +1218,12 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
 
@@ -1884,22 +1238,12 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
@@ -1909,21 +1253,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("throws WorkspaceError when trying to remove main worktree", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       await expect(provider.removeWorkspace(PROJECT_ROOT, PROJECT_ROOT, false)).rejects.toThrow(
         WorkspaceError
@@ -1934,22 +1265,12 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/detached").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            worktrees: [{ name: "detached", path: worktreePath.toString(), branch: null }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        worktrees: [{ name: "detached", path: worktreePath.toString(), branch: null }],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
@@ -1964,22 +1285,12 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
@@ -1993,23 +1304,13 @@ describe("GitWorktreeProvider", () => {
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       // Worktree is NOT in the list - already removed
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            // No worktrees
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        // No worktrees
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // Should NOT throw - returns success (worktree already gone)
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
@@ -2023,23 +1324,13 @@ describe("GitWorktreeProvider", () => {
       );
       // Worktree is NOT in the list - already unregistered from previous attempt
       // But branch still exists
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            // No worktrees
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        // No worktrees
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
@@ -2053,23 +1344,13 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // First call - actually removes
       const result1 = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
@@ -2087,23 +1368,15 @@ describe("GitWorktreeProvider", () => {
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
+      const mockClient = gitRepo(
+        {
+          branches: ["main", "feature-x"],
+          currentBranch: "main",
+          worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
         },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
+        fs
       );
+      const provider = await providerFor(mockClient, fs);
       await provider.discover(PROJECT_ROOT);
       await provider.setMetadata(worktreePath, "note", "WIP feature");
 
@@ -2116,31 +1389,21 @@ describe("GitWorktreeProvider", () => {
 
   describe("isDirty", () => {
     it("returns false for clean workspace", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-                isDirty: false,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
+            isDirty: false,
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const dirty = await provider.isDirty(
         new Path(
@@ -2152,31 +1415,21 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns true when workspace has modified files", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-                isDirty: true,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
+            isDirty: true,
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const dirty = await provider.isDirty(
         new Path(
@@ -2188,22 +1441,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns true when main worktree is dirty", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            mainIsDirty: true,
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        mainIsDirty: true,
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const dirty = await provider.isDirty(PROJECT_ROOT);
 
@@ -2213,32 +1456,22 @@ describe("GitWorktreeProvider", () => {
 
   describe("countUnmergedCommits", () => {
     it("returns count when base is in metadata", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-                unmergedCommits: 5,
-              },
-            ],
-            branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
+            unmergedCommits: 5,
           },
-        },
+        ],
+        branchConfigs: { "feature-x": { "codehydra.base": "main" } },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       const wsPath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
@@ -2250,30 +1483,20 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns 0 for detached HEAD", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "detached",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached"
-                ).toNative(),
-                branch: null,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "detached",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/detached"
+            ).toNative(),
+            branch: null,
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       const wsPath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/detached").toNative()
       );
@@ -2285,21 +1508,8 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns 0 when workspace is not registered", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const mockClient = gitRepo(MAIN_ONLY);
+      const provider = await providerFor(mockClient, mockFs);
 
       const count = await provider.countUnmergedCommits(testPath("/nonexistent"));
 
@@ -2307,32 +1517,22 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("falls back to defaultBase when no base in metadata", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            remoteBranches: ["origin/main"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-                unmergedCommits: 2,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        remoteBranches: ["origin/main"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
+            unmergedCommits: 2,
           },
-        },
+        ],
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       const wsPath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
@@ -2346,24 +1546,14 @@ describe("GitWorktreeProvider", () => {
 
   describe("defaultBase", () => {
     it("returns the remote default branch recorded in the origin HEAD symref", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: [],
-            remoteBranches: ["origin/develop", "origin/main"],
-            remotes: ["origin"],
-            remoteHeads: { origin: "develop" },
-            currentBranch: null,
-          },
-        },
+      const mockClient = gitRepo({
+        branches: [],
+        remoteBranches: ["origin/develop", "origin/main"],
+        remotes: ["origin"],
+        remoteHeads: { origin: "develop" },
+        currentBranch: null,
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2371,23 +1561,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns the local branch when the symref default has no remote-tracking entry", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["develop", "feature"],
-            remotes: ["origin"],
-            remoteHeads: { origin: "develop" },
-            currentBranch: "feature",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["develop", "feature"],
+        remotes: ["origin"],
+        remoteHeads: { origin: "develop" },
+        currentBranch: "feature",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2395,26 +1575,16 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips a stale symref pointing at a branch missing from the base list", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: [],
-            remoteBranches: ["origin/main"],
-            remotes: ["origin"],
-            // Stale: remote renamed master -> main, symref not yet updated
-            remoteHeads: { origin: "master" },
-            currentBranch: null,
-            headBranch: null,
-          },
-        },
+      const mockClient = gitRepo({
+        branches: [],
+        remoteBranches: ["origin/main"],
+        remotes: ["origin"],
+        // Stale: remote renamed master -> main, symref not yet updated
+        remoteHeads: { origin: "master" },
+        currentBranch: null,
+        headBranch: null,
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2422,25 +1592,15 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("falls back to the repo HEAD symref when no remote HEAD symref exists (bare clone)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: [],
-            remoteBranches: ["origin/develop", "origin/feature"],
-            remotes: ["origin"],
-            // Bare clone predating set-head: HEAD dangles but names the clone-time default
-            currentBranch: null,
-            headBranch: "develop",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: [],
+        remoteBranches: ["origin/develop", "origin/feature"],
+        remotes: ["origin"],
+        // Bare clone predating set-head: HEAD dangles but names the clone-time default
+        currentBranch: null,
+        headBranch: "develop",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2448,21 +1608,11 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("falls back to the checked-out branch for a local-only repo without main/master", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["develop", "feature"],
-            currentBranch: "develop",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["develop", "feature"],
+        currentBranch: "develop",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2470,25 +1620,15 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("reflects the remote default after updateBases heals a missing symref", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: [],
-            remoteBranches: ["origin/develop", "origin/master"],
-            remotes: ["origin"],
-            serverDefaultBranch: "develop",
-            currentBranch: null,
-            headBranch: null,
-          },
-        },
+      const mockClient = gitRepo({
+        branches: [],
+        remoteBranches: ["origin/develop", "origin/master"],
+        remotes: ["origin"],
+        serverDefaultBranch: "develop",
+        currentBranch: null,
+        headBranch: null,
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       // Before refresh: no symref answer, legacy fallback picks origin/master
       expect(await provider.defaultBase(PROJECT_ROOT)).toBe("origin/master");
@@ -2500,23 +1640,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("prefers origin/main over local main", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature"],
-            remoteBranches: ["origin/main"],
-            remotes: ["origin"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature"],
+        remoteBranches: ["origin/main"],
+        remotes: ["origin"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2524,21 +1654,11 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns local main when origin/main does not exist", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2546,23 +1666,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("prefers origin/master over local master when no main exists", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["master", "feature"],
-            remoteBranches: ["origin/master"],
-            remotes: ["origin"],
-            currentBranch: "master",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["master", "feature"],
+        remoteBranches: ["origin/master"],
+        remotes: ["origin"],
+        currentBranch: "master",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2570,21 +1680,11 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns local master when only master exists (no main or remotes)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["master", "feature"],
-            currentBranch: "master",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["master", "feature"],
+        currentBranch: "master",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2592,23 +1692,13 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns origin/main when both main and master exist", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["master", "main", "feature"],
-            remoteBranches: ["origin/main", "origin/master"],
-            remotes: ["origin"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["master", "main", "feature"],
+        remoteBranches: ["origin/main", "origin/master"],
+        remotes: ["origin"],
+        currentBranch: "main",
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2616,22 +1706,12 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns undefined when no symref answer exists and neither main nor master exists", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["feature", "develop"],
-            currentBranch: "feature",
-            headBranch: null,
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["feature", "develop"],
+        currentBranch: "feature",
+        headBranch: null,
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -2643,26 +1723,16 @@ describe("GitWorktreeProvider", () => {
     it("keeps metadata for an existing branch that has no worktree", async () => {
       // A worktree removed outside CodeHydra leaves this shape; the branch may
       // still hold unmerged work, so its metadata must survive.
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [],
-            branchConfigs: { "feature-x": { "codehydra.base": "main" } },
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [],
+        branchConfigs: { "feature-x": { "codehydra.base": "main" } },
       });
       const spyFs = createSpyFileSystemBoundary({
         entries: { [WORKSPACES_DIR.toString()]: directory() },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2674,20 +1744,16 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("removes orphaned directories", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
-                branch: "feature-x",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
+            branch: "feature-x",
           },
-        },
+        ],
       });
       // Mock fs with registered worktree and an orphan
       const spyFs = createSpyFileSystemBoundary({
@@ -2697,13 +1763,7 @@ describe("GitWorktreeProvider", () => {
           [new Path(WORKSPACES_DIR, "orphan-workspace").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2716,20 +1776,16 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips registered workspaces", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
-                branch: "feature-x",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: projPath(new Path(WORKSPACES_DIR, "feature-x").toString()),
+            branch: "feature-x",
           },
-        },
+        ],
       });
       const spyFs = createSpyFileSystemBoundary({
         entries: {
@@ -2737,13 +1793,7 @@ describe("GitWorktreeProvider", () => {
           [new Path(WORKSPACES_DIR, "feature-x").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2752,14 +1802,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips symlinks", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
@@ -2768,13 +1811,7 @@ describe("GitWorktreeProvider", () => {
           ),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2783,27 +1820,14 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("skips files", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "some-file.txt").toString()]: file(""),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2812,14 +1836,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("validates paths stay within workspacesDir", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
@@ -2828,13 +1845,7 @@ describe("GitWorktreeProvider", () => {
       // Manually add an entry with a suspicious name using setEntry
       spyFs.$.setEntry(new Path(WORKSPACES_DIR, "../../../etc"), directory());
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2843,14 +1854,7 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("returns CleanupResult with counts", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
@@ -2858,13 +1862,7 @@ describe("GitWorktreeProvider", () => {
           [new Path(WORKSPACES_DIR, "orphan-2").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2873,23 +1871,10 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles missing workspacesDir", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Empty mock - no workspacesDir means readdir throws ENOENT
       const mockFsNotFound = createFileSystemMock();
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFsNotFound,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFsNotFound);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2898,27 +1883,14 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("handles empty workspacesDir", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Workspaces dir exists but is empty
       const mockFsEmpty = createFileSystemMock({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFsEmpty,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFsEmpty);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2929,20 +1901,16 @@ describe("GitWorktreeProvider", () => {
     it("normalizes paths when comparing", async () => {
       // Worktree path has a trailing separator - Path normalizes it automatically.
       // Native, with the OS separator, because that is what `git worktree list` prints.
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: new Path(WORKSPACES_DIR, "feature-x").toNative() + sep,
-                branch: "feature-x",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: new Path(WORKSPACES_DIR, "feature-x").toNative() + sep,
+            branch: "feature-x",
           },
-        },
+        ],
       });
       const spyFs = createSpyFileSystemBoundary({
         entries: {
@@ -2950,13 +1918,7 @@ describe("GitWorktreeProvider", () => {
           [new Path(WORKSPACES_DIR, "feature-x").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, spyFs);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -2972,23 +1934,15 @@ describe("GitWorktreeProvider", () => {
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
+      const mockClient = gitRepo(
+        {
+          branches: ["main", "feature-x"],
+          currentBranch: "main",
+          worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
         },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
+        fs
       );
+      const provider = await providerFor(mockClient, fs);
       await provider.discover(PROJECT_ROOT);
 
       await provider.setMetadata(worktreePath, "note", "WIP feature");
@@ -3013,23 +1967,15 @@ describe("GitWorktreeProvider", () => {
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
       const fs = createFileSystemMock();
-      const mockClient = createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
-          },
+      const mockClient = gitRepo(
+        {
+          branches: ["main", "feature-x"],
+          currentBranch: "main",
+          worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: null }],
         },
-      });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
+        fs
       );
+      const provider = await providerFor(mockClient, fs);
       await provider.discover(PROJECT_ROOT);
 
       await provider.setMetadata(worktreePath, "hibernated", "true");
@@ -3057,20 +2003,18 @@ describe("GitWorktreeProvider", () => {
       } = {}
     ) {
       const featureBranch = extra.featureBranch ?? "feature-x";
-      return createMockGitClient({
-        fileSystem: fs,
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", featureBranch, ...(extra.branches ?? [])],
-            currentBranch: "main",
-            worktrees: [
-              { name: "feature-x", path: FEATURE_PATH.toString(), branch: featureBranch },
-              ...(extra.worktrees ?? []),
-            ],
-            branchConfigs: extra.branchConfigs ?? {},
-          },
+      return gitRepo(
+        {
+          branches: ["main", featureBranch, ...(extra.branches ?? [])],
+          currentBranch: "main",
+          worktrees: [
+            { name: "feature-x", path: FEATURE_PATH.toString(), branch: featureBranch },
+            ...(extra.worktrees ?? []),
+          ],
+          branchConfigs: extra.branchConfigs ?? {},
         },
-      });
+        fs
+      );
     }
 
     it("moves a branch's config into its worktree's file, sorted by tier, and drops the config", async () => {
@@ -3086,13 +2030,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       const [workspace] = await provider.discover(PROJECT_ROOT);
 
@@ -3151,9 +2089,7 @@ describe("GitWorktreeProvider", () => {
     it("leaves a workspace that already has a file alone", async () => {
       const fs = createFileSystemMock();
       const client = legacyRepo(fs);
-      await (
-        await createProvider(PROJECT_ROOT, client, WORKSPACES_DIR, fs, worktreeLogger)
-      ).discover(PROJECT_ROOT);
+      await (await providerFor(client, fs)).discover(PROJECT_ROOT);
 
       const provider = new GitWorktreeProvider(client, fs, worktreeLogger, () => ({
         agent: "claude",
@@ -3168,13 +2104,7 @@ describe("GitWorktreeProvider", () => {
 
     it("writes an empty file for a workspace without config", async () => {
       const fs = createFileSystemMock();
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        legacyRepo(fs),
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(legacyRepo(fs), fs);
 
       await provider.discover(PROJECT_ROOT);
 
@@ -3195,13 +2125,7 @@ describe("GitWorktreeProvider", () => {
         worktrees: [{ name: "theirs", path: "/elsewhere/theirs", branch: "theirs" }],
         branchConfigs: { theirs: { "codehydra.title": "Not ours" } },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       await provider.discover(PROJECT_ROOT);
 
@@ -3216,13 +2140,7 @@ describe("GitWorktreeProvider", () => {
       const client = legacyRepo(fs, {
         branchConfigs: { "long-gone": { "codehydra.base": "main", "codehydra.tags.new": "{}" } },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       await provider.discover(PROJECT_ROOT);
 
@@ -3235,13 +2153,7 @@ describe("GitWorktreeProvider", () => {
         branchConfigs: { "feature-x": { "codehydra.base": "main" } },
       });
       vi.spyOn(fs, "writeFile").mockRejectedValue(new Error("disk full"));
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       await provider.discover(PROJECT_ROOT);
 
@@ -3258,25 +2170,16 @@ describe("GitWorktreeProvider", () => {
         worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
         branchConfigs: { "feature/login": { "codehydra.tags.external": "{}" } },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        client,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(client, fs);
 
       await provider.discover(PROJECT_ROOT);
 
-      const restarted = await createProvider(
-        PROJECT_ROOT,
+      const restarted = await providerFor(
         legacyRepo(fs, {
           branches: ["feature/login"],
           worktrees: [{ name: "repo-login", path: "/code/repo-login", branch: "feature/login" }],
         }),
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
+        fs
       );
       expect((await restarted.discover(PROJECT_ROOT)).map((w) => w.name)).toContain(
         "feature/login"
@@ -3288,19 +2191,11 @@ describe("GitWorktreeProvider", () => {
       const before = legacyRepo(fs, {
         branchConfigs: { "feature-x": { "codehydra.title": "Login flow" } },
       });
-      await (
-        await createProvider(PROJECT_ROOT, before, WORKSPACES_DIR, fs, worktreeLogger)
-      ).discover(PROJECT_ROOT);
+      await (await providerFor(before, fs)).discover(PROJECT_ROOT);
 
       // `git branch -m feature-x renamed`: same worktree, same git directory
       const after = legacyRepo(fs, { featureBranch: "renamed" });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        after,
-        WORKSPACES_DIR,
-        fs,
-        worktreeLogger
-      );
+      const provider = await providerFor(after, fs);
       const [workspace] = await provider.discover(PROJECT_ROOT);
 
       // The name was recorded on first discovery and is the workspace's identity
@@ -3315,29 +2210,19 @@ describe("GitWorktreeProvider", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-            branchConfigs: {
-              "feature-x": {
-                "codehydra.base": "develop",
-                "codehydra.note": "WIP",
-                "codehydra.model": "claude-4",
-              },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+        branchConfigs: {
+          "feature-x": {
+            "codehydra.base": "develop",
+            "codehydra.note": "WIP",
+            "codehydra.model": "claude-4",
           },
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
       await provider.discover(PROJECT_ROOT);
 
       const metadata = await provider.getMetadata(worktreePath);
@@ -3353,43 +2238,33 @@ describe("GitWorktreeProvider", () => {
 
   describe("stale worktree handling", () => {
     it("discover() excludes prunable worktrees from results", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "valid-branch", "stale-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "valid-ws",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/valid-ws"
-                ).toNative(),
-                branch: "valid-branch",
-              },
-              {
-                name: "stale-ws",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws"
-                ).toNative(),
-                branch: "stale-branch",
-                prunable: true,
-              },
-            ],
-            branchConfigs: {
-              "valid-branch": { "codehydra.base": "main" },
-              "stale-branch": { "codehydra.base": "main" },
-            },
+      const mockClient = gitRepo({
+        branches: ["main", "valid-branch", "stale-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "valid-ws",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/valid-ws"
+            ).toNative(),
+            branch: "valid-branch",
           },
+          {
+            name: "stale-ws",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws"
+            ).toNative(),
+            branch: "stale-branch",
+            prunable: true,
+          },
+        ],
+        branchConfigs: {
+          "valid-branch": { "codehydra.base": "main" },
+          "stale-branch": { "codehydra.base": "main" },
         },
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const discovered = await provider.discover(PROJECT_ROOT);
       expect(discovered).toHaveLength(1);
@@ -3397,67 +2272,47 @@ describe("GitWorktreeProvider", () => {
     });
 
     it("discover() calls pruneWorktrees when stale entries exist", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "stale-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "stale-ws",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws"
-                ).toNative(),
-                branch: "stale-branch",
-                prunable: true,
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "stale-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "stale-ws",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/stale-ws"
+            ).toNative(),
+            branch: "stale-branch",
+            prunable: true,
           },
-        },
+        ],
       });
 
       const pruneSpy = vi.spyOn(mockClient, "pruneWorktrees");
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       await provider.discover(PROJECT_ROOT);
       expect(pruneSpy).toHaveBeenCalledWith(PROJECT_ROOT);
     });
 
     it("discover() does not call pruneWorktrees when all entries are healthy", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "healthy-branch"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "healthy-ws",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/healthy-ws"
-                ).toNative(),
-                branch: "healthy-branch",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "healthy-branch"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "healthy-ws",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/healthy-ws"
+            ).toNative(),
+            branch: "healthy-branch",
           },
-        },
+        ],
       });
 
       const pruneSpy = vi.spyOn(mockClient, "pruneWorktrees");
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       await provider.discover(PROJECT_ROOT);
       expect(pruneSpy).not.toHaveBeenCalled();
@@ -3468,20 +2323,16 @@ describe("GitWorktreeProvider", () => {
 describe("GitWorktreeProvider bare repository support", () => {
   const PROJECT_ROOT = testPath("/bare-project");
   const WORKSPACES_DIR = testPath("/workspaces");
-  const worktreeLogger = SILENT_LOGGER;
+  const { gitRepo, providerFor } = testProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   describe("listBases", () => {
     it("returns branches from bare repos as local (git treats them as refs/heads/*)", async () => {
       // In bare repos, branches are stored in refs/heads/* (not refs/remotes/*)
       // so they appear as local branches to git. This is correct git behavior.
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "develop", "feature-x"],
-            isBare: true,
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "develop", "feature-x"],
+        isBare: true,
+        currentBranch: "main",
       });
       const mockFs = createFileSystemMock({
         entries: {
@@ -3489,13 +2340,7 @@ describe("GitWorktreeProvider bare repository support", () => {
         },
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -3505,15 +2350,11 @@ describe("GitWorktreeProvider bare repository support", () => {
     });
 
     it("returns local and remote branches correctly for regular repos", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "develop"],
-            remoteBranches: ["origin/main"],
-            isBare: false,
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "develop"],
+        remoteBranches: ["origin/main"],
+        isBare: false,
+        currentBranch: "main",
       });
       const mockFs = createFileSystemMock({
         entries: {
@@ -3521,13 +2362,7 @@ describe("GitWorktreeProvider bare repository support", () => {
         },
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
+      const provider = await providerFor(mockClient, mockFs);
 
       const bases = await provider.listBases(PROJECT_ROOT);
 
@@ -3544,25 +2379,16 @@ describe("GitWorktreeProvider isDirty", () => {
   const PROJECT_ROOT = testPath("/project");
   const WORKSPACES_DIR = testPath("/workspaces");
   const WORKSPACE_PATH = testPath("/workspaces/feature-x");
+  const { gitRepo, providerFor } = testProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   it("returns false when the workspace directory no longer exists (deletion race)", async () => {
     // getStatus throws because the worktree isn't a known repo, and the
     // directory is absent from the filesystem — the deleted-workspace race.
-    const mockClient = createMockGitClient({
-      repositories: {
-        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
-      },
-    });
+    const mockClient = gitRepo(MAIN_ONLY);
     const mockFs = createFileSystemMock({
       entries: { [WORKSPACES_DIR.toString()]: directory() },
     });
-    const provider = await createProvider(
-      PROJECT_ROOT,
-      mockClient,
-      WORKSPACES_DIR,
-      mockFs,
-      SILENT_LOGGER
-    );
+    const provider = await providerFor(mockClient, mockFs);
 
     expect(await provider.isDirty(WORKSPACE_PATH)).toBe(false);
   });
@@ -3573,11 +2399,7 @@ describe("GitWorktreeProvider isDirty", () => {
     // small `.git` marker before locked files clear). git then reports "not a
     // git repository" while readdir on the directory still succeeds — this must
     // still be treated as the deletion race, not surfaced as an error.
-    const mockClient = createMockGitClient({
-      repositories: {
-        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
-      },
-    });
+    const mockClient = gitRepo(MAIN_ONLY);
     const mockFs = createFileSystemMock({
       entries: {
         [WORKSPACES_DIR.toString()]: directory(),
@@ -3586,13 +2408,7 @@ describe("GitWorktreeProvider isDirty", () => {
         [new Path(WORKSPACE_PATH, "src").toString()]: directory(),
       },
     });
-    const provider = await createProvider(
-      PROJECT_ROOT,
-      mockClient,
-      WORKSPACES_DIR,
-      mockFs,
-      SILENT_LOGGER
-    );
+    const provider = await providerFor(mockClient, mockFs);
 
     expect(await provider.isDirty(WORKSPACE_PATH)).toBe(false);
   });
@@ -3600,11 +2416,7 @@ describe("GitWorktreeProvider isDirty", () => {
   it("rethrows the git error when the path is still a git worktree", async () => {
     // getStatus fails for a genuine reason but the `.git` marker is present — the
     // error must surface (the delete-preflight dirty check depends on this).
-    const mockClient = createMockGitClient({
-      repositories: {
-        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
-      },
-    });
+    const mockClient = gitRepo(MAIN_ONLY);
     const mockFs = createFileSystemMock({
       entries: {
         [WORKSPACES_DIR.toString()]: directory(),
@@ -3612,13 +2424,7 @@ describe("GitWorktreeProvider isDirty", () => {
         [new Path(WORKSPACE_PATH, ".git").toString()]: file("gitdir: /project/.git/worktrees/x"),
       },
     });
-    const provider = await createProvider(
-      PROJECT_ROOT,
-      mockClient,
-      WORKSPACES_DIR,
-      mockFs,
-      SILENT_LOGGER
-    );
+    const provider = await providerFor(mockClient, mockFs);
 
     await expect(provider.isDirty(WORKSPACE_PATH)).rejects.toThrow();
   });

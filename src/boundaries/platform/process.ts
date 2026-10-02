@@ -5,6 +5,8 @@
 import type { Readable } from "node:stream";
 import { execa } from "execa";
 import type { Logger } from "./logging";
+import { raceTimeout, TIMED_OUT } from "../../utils/timeout";
+import { errorCode, getErrorMessage } from "../../shared/error-utils";
 
 /**
  * Platform detection for kill logic.
@@ -261,11 +263,6 @@ export interface ProcessRunner {
 type ExecaSubprocess = ReturnType<typeof execa>;
 
 /**
- * Symbol used to indicate timeout in Promise.race.
- */
-const TIMEOUT_SYMBOL = Symbol("timeout");
-
-/**
  * Every descendant of `pid` alive right now, found level by level with
  * `pgrep -P` (available wherever `pkill` is: procps on Linux, base macOS).
  *
@@ -366,7 +363,7 @@ function pidExists(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    return errorCode(error) === "EPERM";
   }
 }
 
@@ -512,13 +509,9 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     }
 
     // Race between process completion and timeout
-    const timeoutPromise = new Promise<typeof TIMEOUT_SYMBOL>((resolve) => {
-      setTimeout(() => resolve(TIMEOUT_SYMBOL), timeout);
-    });
+    const raceResult = await raceTimeout(processPromise, timeout);
 
-    const raceResult = await Promise.race([processPromise, timeoutPromise]);
-
-    if (raceResult === TIMEOUT_SYMBOL) {
+    if (raceResult === TIMED_OUT) {
       // Timeout occurred, process is still running
       this.logger.silly("Wait timeout", {
         command: this.loggableCommand,
@@ -944,7 +937,7 @@ export class ExecaProcessRunner implements ProcessRunner {
       // free", so a failed scan is indistinguishable from an empty one.
       this.logger.warn("Port listener scan failed", {
         port,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return [];
     }

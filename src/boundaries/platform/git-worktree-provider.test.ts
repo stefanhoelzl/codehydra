@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { GitWorktreeProvider, parseBranchConfigs } from "./git-worktree-provider";
+import { parseBranchConfigs } from "./git-worktree-provider";
 import { WorkspaceError } from "../../shared/errors/service-errors";
 import {
   createFileSystemMock,
@@ -18,23 +18,7 @@ import { createMockLogger } from "./logging.test-utils";
 import { delay, testPath } from "@shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import { createMockGitClient } from "./git-client.state-mock";
-import type { IGitClient } from "./git-client";
-import type { FileSystemBoundary } from "./filesystem";
-import type { Logger } from "./logging";
-
-/** Construct a provider the way production does: new + validateRepository + registerProject. */
-async function createProvider(
-  projectRoot: Path,
-  gitClient: IGitClient,
-  workspacesDir: Path,
-  fileSystemLayer: FileSystemBoundary,
-  logger: Logger
-): Promise<GitWorktreeProvider> {
-  const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
-  await provider.validateRepository(projectRoot);
-  provider.registerProject(projectRoot, workspacesDir);
-  return provider;
-}
+import { MAIN_ONLY, testProject } from "./git-worktree-provider.test-utils";
 
 describe("parseBranchConfigs", () => {
   it("groups prefix-stripped keys by branch", () => {
@@ -82,6 +66,7 @@ describe("GitWorktreeProvider error injection", () => {
   const WORKSPACES_DIR = testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces");
   const mockFs = createFileSystemMock();
   const mockLogger = createMockLogger();
+  const { gitRepo, providerFor } = testProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   describe("provider construction", () => {
     it("throws WorkspaceError when git client throws", async () => {
@@ -92,41 +77,29 @@ describe("GitWorktreeProvider error injection", () => {
       // Override to throw an error
       mockClient.isRepositoryRoot = vi.fn().mockRejectedValue(new Error("Path does not exist"));
 
-      await expect(
-        createProvider(PROJECT_ROOT, mockClient, WORKSPACES_DIR, mockFs, mockLogger)
-      ).rejects.toThrow(WorkspaceError);
+      await expect(providerFor(mockClient, mockFs, mockLogger)).rejects.toThrow(WorkspaceError);
     });
   });
 
   describe("discover", () => {
     it("logs warning and uses fallback when getGitConfig throws", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [
-              {
-                name: "feature-x",
-                path: testPath(
-                  "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
-                ).toNative(),
-                branch: "feature-x",
-              },
-            ],
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: testPath(
+              "/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x"
+            ).toNative(),
+            branch: "feature-x",
           },
-        },
+        ],
       });
       // Override to throw an error
       mockClient.getGitConfig = vi.fn().mockRejectedValue(new Error("Config read failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       const workspaces = await provider.discover(PROJECT_ROOT);
 
@@ -138,14 +111,10 @@ describe("GitWorktreeProvider error injection", () => {
 
   describe("updateBases", () => {
     it("returns partial failure when some fetches fail", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remotes: ["origin", "backup"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remotes: ["origin", "backup"],
+        currentBranch: "main",
       });
       // Override fetch to fail for backup remote
       const originalFetch = mockClient.fetch.bind(mockClient);
@@ -156,13 +125,7 @@ describe("GitWorktreeProvider error injection", () => {
         return originalFetch(repoPath, remote);
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       const result = await provider.updateBases(PROJECT_ROOT);
 
@@ -175,15 +138,11 @@ describe("GitWorktreeProvider error injection", () => {
     it("removes stale remote refs after fetch (prune behavior)", async () => {
       // Setup: Repository has a remote branch that will be "deleted on remote"
       // The mock simulates prune by removing the stale branch when fetch is called
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            remoteBranches: ["origin/main", "origin/stale-feature"],
-            remotes: ["origin"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"],
+        remoteBranches: ["origin/main", "origin/stale-feature"],
+        remotes: ["origin"],
+        currentBranch: "main",
       });
 
       // Verify stale branch exists before fetch
@@ -202,13 +161,7 @@ describe("GitWorktreeProvider error injection", () => {
         return originalFetch(repoPath, remote);
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       // Act: Call updateBases which triggers fetch with prune
       await provider.updateBases(PROJECT_ROOT);
@@ -223,24 +176,11 @@ describe("GitWorktreeProvider error injection", () => {
 
   describe("createWorkspace", () => {
     it("rolls back branch on worktree creation failure", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override addWorktree to fail
       mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow();
 
@@ -249,24 +189,14 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("throws WorkspaceError when git createBranch fails", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"], // Branch doesn't exist - will try to create
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main"], // Branch doesn't exist - will try to create
+        currentBranch: "main",
       });
       // Make createBranch fail
       mockClient.createBranch = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow(
         WorkspaceError
@@ -274,27 +204,14 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("passes through error message without adding redundant prefix", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       mockClient.createBranch = vi
         .fn()
         .mockRejectedValue(
           new Error("Failed to create branch feature-x: fatal: not a valid object name: 'main'")
         );
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow(
         "Failed to create branch feature-x: fatal: not a valid object name: 'main'"
@@ -302,24 +219,14 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("does not rollback branch when worktree creation fails for existing branch", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "existing-branch"],
-            currentBranch: "main",
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "existing-branch"],
+        currentBranch: "main",
       });
       // Override addWorktree to fail
       mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       await expect(
         provider.createWorkspace(PROJECT_ROOT, "existing-branch", "existing-branch")
@@ -330,24 +237,11 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("logs warning and continues if setBranchConfig fails", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override setBranchConfig to fail
       mockClient.setBranchConfig = vi.fn().mockRejectedValue(new Error("Config write failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       // Should NOT throw - workspace is created successfully
       const workspace = await provider.createWorkspace(PROJECT_ROOT, "feature-x", "main");
@@ -361,14 +255,10 @@ describe("GitWorktreeProvider error injection", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
       mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("git error"));
       const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
@@ -380,13 +270,7 @@ describe("GitWorktreeProvider error injection", () => {
       });
 
       const spyFs = createSpyFileSystemBoundary();
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, spyFs, mockLogger);
 
       const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
@@ -406,14 +290,10 @@ describe("GitWorktreeProvider error injection", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
       mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Worktree error"));
       mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch error"));
@@ -421,13 +301,7 @@ describe("GitWorktreeProvider error injection", () => {
       const spyFs = createSpyFileSystemBoundary();
       spyFs.rm = vi.fn().mockRejectedValue(new Error("rm failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, spyFs, mockLogger);
 
       // Should throw the original worktree error (not the rm error)
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
@@ -439,25 +313,15 @@ describe("GitWorktreeProvider error injection", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
       // Override deleteBranch to fail
       mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch deletion failed"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       // Should throw branch error since worktree succeeded
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
@@ -469,14 +333,10 @@ describe("GitWorktreeProvider error injection", () => {
       const worktreePath = new Path(
         testPath("/home/user/app-data/projects/my-repo-abc12345/workspaces/feature-x").toNative()
       );
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
       });
       mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("git worktree error"));
 
@@ -494,13 +354,7 @@ describe("GitWorktreeProvider error injection", () => {
           )
         );
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, spyFs, mockLogger);
 
       // Should throw the original git error (not the ETIMEDOUT error)
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, false)).rejects.toThrow(
@@ -511,24 +365,11 @@ describe("GitWorktreeProvider error injection", () => {
 
   describe("defaultBase", () => {
     it("returns undefined when listBases() throws (error handling)", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override listBranches to throw
       mockClient.listBranches = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       const result = await provider.defaultBase(PROJECT_ROOT);
 
@@ -536,23 +377,13 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("reuses pre-fetched bases instead of enumerating branches again", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "origin/main"],
-            currentBranch: "main",
-            remotes: ["origin"],
-          },
-        },
+      const mockClient = gitRepo({
+        branches: ["main", "origin/main"],
+        currentBranch: "main",
+        remotes: ["origin"],
       });
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       const listBranchesSpy = vi.spyOn(mockClient, "listBranches");
       const bases = await provider.listBases(PROJECT_ROOT);
@@ -569,14 +400,7 @@ describe("GitWorktreeProvider error injection", () => {
   describe("cleanupOrphanedWorkspaces", () => {
     it("re-checks registration before delete (TOCTOU protection)", async () => {
       let listWorktreesCallCount = 0;
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override listWorktrees to add worktree on second call
       const originalListWorktrees = mockClient.listWorktrees.bind(mockClient);
       mockClient.listWorktrees = vi.fn().mockImplementation(async (repoPath: Path) => {
@@ -603,13 +427,7 @@ describe("GitWorktreeProvider error injection", () => {
           [new Path(WORKSPACES_DIR, "orphan-workspace").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, spyFs, mockLogger);
 
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
 
@@ -619,14 +437,7 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("fails silently on rm error", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       const orphanPath = new Path(WORKSPACES_DIR, "orphan-workspace");
       const spyFs = createSpyFileSystemBoundary({
         entries: {
@@ -639,13 +450,7 @@ describe("GitWorktreeProvider error injection", () => {
         new FileSystemError("EACCES", orphanPath.toNative(), "Permission denied")
       );
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        spyFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, spyFs, mockLogger);
 
       // Should NOT throw
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
@@ -656,24 +461,11 @@ describe("GitWorktreeProvider error injection", () => {
     });
 
     it("fails silently when listWorktrees throws", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override listWorktrees to throw
       mockClient.listWorktrees = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFs, mockLogger);
 
       // Should NOT throw
       const result = await provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);
@@ -684,14 +476,7 @@ describe("GitWorktreeProvider error injection", () => {
 
     it("returns early if already in progress", async () => {
       let slowResolve: (() => void) | null = null;
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main"],
-            currentBranch: "main",
-          },
-        },
-      });
+      const mockClient = gitRepo(MAIN_ONLY);
       // Override listWorktrees to be slow on first call
       let callCount = 0;
       mockClient.listWorktrees = vi.fn().mockImplementation(async () => {
@@ -719,13 +504,7 @@ describe("GitWorktreeProvider error injection", () => {
           [new Path(WORKSPACES_DIR, "orphan").toString()]: directory(),
         },
       });
-      const provider = await createProvider(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFsWithOrphan,
-        mockLogger
-      );
+      const provider = await providerFor(mockClient, mockFsWithOrphan, mockLogger);
 
       // Start first cleanup (will hang on listWorktrees)
       const firstCleanup = provider.cleanupOrphanedWorkspaces(PROJECT_ROOT);

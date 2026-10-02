@@ -29,7 +29,7 @@ import type { HookContext, Operation, OperationContext, OperationSchemas } from 
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 import { throwHookErrors } from "./lib/hook-helpers";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "./wake-workspace";
 import { INTENT_GET_WORKSPACE_STATUS, type GetWorkspaceStatusIntent } from "./get-workspace-status";
@@ -131,9 +131,8 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
     const { workspaceRef } = payload;
 
-    const resolved = await ctx.dispatch<ResolveWorkspaceIntent>({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspaceRef },
+    const resolved = await resolveWorkspaceIdentity(ctx.dispatch, workspaceRef, {
+      withProject: false,
     });
     if (resolved.closing !== null) {
       return {

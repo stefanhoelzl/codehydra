@@ -10,9 +10,8 @@
  * - close-project / close: filesystem cleanup (delete cloned directory if requested)
  */
 
-import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import type { WorkspacesRoot } from "./workspaces-root/workspaces-root";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
@@ -21,18 +20,15 @@ import { Path } from "../utils/path/path";
 import { projectPathSchema } from "../intents/contract";
 import { expandGitUrl, extractRepoName, isLocalGitOrigin } from "../utils/url-utils";
 import { managedClonePath } from "../boundaries/platform/paths";
-import type {
-  OpenProjectIntent,
-  ResolveHookResult,
-  CloneProgressFrame,
-} from "../intents/open-project";
+import type { ResolveHookResult, CloneProgressFrame } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { streamProgress } from "../intents/lib/hook-helpers";
-import type { CloseHookInput, CloseHookResult } from "../intents/close-project";
+import type { CloseHookResult } from "../intents/close-project";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { notify } from "./presentation/notification-card";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Factory
@@ -49,7 +45,7 @@ export function createRemoteProjectModule(deps: {
 
   return {
     name: "remote-project",
-    hooks: {
+    hooks: defineHooks({
       // -----------------------------------------------------------------------
       // open-project
       // -----------------------------------------------------------------------
@@ -58,9 +54,9 @@ export function createRemoteProjectModule(deps: {
           // Streaming handler: yield clone-progress frames; the open-project operation
           // adds the url and emits clone:progress. Returns the resolved paths.
           handler: async function* (
-            ctx: HookContext
+            ctx
           ): AsyncGenerator<CloneProgressFrame, HookOutput<ResolveHookResult>, void> {
-            const intent = ctx.intent as OpenProjectIntent;
+            const { intent } = ctx;
             const { git } = intent.payload;
 
             if (!git) {
@@ -127,8 +123,8 @@ export function createRemoteProjectModule(deps: {
         // close: filesystem cleanup only — delete cloned directory if requested
         // Uses remoteUrl from hook context (provided by resolve-project results)
         close: {
-          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
-            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
+          handler: async (ctx): Promise<HookOutput<CloseHookResult>> => {
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx;
 
             if (!removeLocalRepo || !remoteUrl) {
               return { result: {} };
@@ -141,16 +137,18 @@ export function createRemoteProjectModule(deps: {
             // leave the app inconsistent without saving the clone. Matches
             // the local branch of removeLocalRepo in LocalProjectModule —
             // one flag, one failure story.
-            const cloneDir = nodePath.dirname(new Path(projectPath).toString());
+            const cloneDir = new Path(projectPath).dirname;
             try {
               await fs.rm(cloneDir, { recursive: true, force: true });
             } catch (error: unknown) {
               const message = getErrorMessage(error);
-              logger.warn("Failed to remove clone directory", { cloneDir, error: message });
+              logger
+                .scoped({ path: cloneDir.toString() })
+                .warn("Failed to remove clone directory", { error: message });
               notify(dispatcher, {
                 type: "error",
                 title: "Could not remove the cloned repository",
-                message: `${cloneDir} is still on disk: ${message}`,
+                message: `${cloneDir.toString()} is still on disk: ${message}`,
                 dismissible: true,
               });
             }
@@ -159,6 +157,6 @@ export function createRemoteProjectModule(deps: {
           },
         },
       },
-    },
+    }),
   };
 }

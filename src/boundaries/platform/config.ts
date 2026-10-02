@@ -537,7 +537,7 @@ export class DefaultConfig implements Config {
           .debug("Config rewritten (unknown keys stripped)");
       } catch (error) {
         this.deps.logger.scoped({ path: configPath.toString() }).warn("Config rewrite failed", {
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     }

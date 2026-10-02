@@ -20,7 +20,8 @@
 
 import { expect } from "vitest";
 import type { WebContents } from "electron";
-import type { WindowBoundary, WindowOptions, ContentView, Unsubscribe } from "./window";
+import type { WindowBoundary, WindowOptions, ContentView } from "./window";
+import type { Unsubscribe } from "../../shared/types";
 import type { WindowHandle, Rectangle } from "./types";
 import type { ImageHandle } from "./image-types";
 import { ShellError } from "../../shared/errors/shell-errors";

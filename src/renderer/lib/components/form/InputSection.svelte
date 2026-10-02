@@ -7,6 +7,7 @@
   onInput; Enter in a single-line field reports onSubmit.
 -->
 <script lang="ts">
+  import FieldShell, { fieldErrorId } from "./FieldShell.svelte";
   import type { InputSectionConfig } from "./types";
   import { isPlainEnter } from "$lib/utils/keyboard";
 
@@ -88,10 +89,7 @@
   }
 </script>
 
-<div class="form-field">
-  {#if section.label}
-    <vscode-label for={section.id}>{section.label}</vscode-label>
-  {/if}
+<FieldShell fieldId={section.id} label={section.label} labelFor={section.id} error={section.error}>
   {#if section.multiline}
     <textarea
       class="input-textarea"
@@ -104,7 +102,7 @@
       data-autofocus={section.autofocus || undefined}
       aria-label={section.label ? undefined : (section.placeholder ?? "Text input")}
       aria-invalid={section.error ? "true" : undefined}
-      aria-describedby={section.error ? `${section.id}-error` : undefined}
+      aria-describedby={section.error ? fieldErrorId(section.id) : undefined}
       {value}
       use:seedCursor={{
         initialValue: section.initialValue,
@@ -125,7 +123,7 @@
         data-autofocus={section.autofocus || undefined}
         aria-label={section.label ? undefined : (section.placeholder ?? "Text input")}
         aria-invalid={section.error ? "true" : undefined}
-        aria-describedby={section.error ? `${section.id}-error` : undefined}
+        aria-describedby={section.error ? fieldErrorId(section.id) : undefined}
         {value}
         oninput={(e: Event) => {
           onInput((e.currentTarget as HTMLInputElement).value);
@@ -135,7 +133,7 @@
       {#if section.masked}
         <button
           type="button"
-          class="reveal-btn"
+          class="ch-icon-button"
           aria-label={revealed ? "Hide value" : "Reveal value"}
           aria-pressed={revealed}
           onclick={() => (revealed = !revealed)}
@@ -145,30 +143,9 @@
       {/if}
     </div>
   {/if}
-  {#if section.error}
-    <vscode-form-helper id="{section.id}-error">
-      <span class="field-error">{section.error}</span>
-    </vscode-form-helper>
-  {/if}
-</div>
+</FieldShell>
 
 <style>
-  /* Field wrapper: groups the field's label, control, and error tightly so
-     the error sits directly under its control (the form's section gap only
-     applies between sections). */
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-  }
-
-  /* Per-field validation error (slotted into <vscode-form-helper>). */
-  .field-error {
-    color: var(--ch-danger, #f14c4c);
-    font-size: 0.75rem;
-  }
-
   .input-textarea {
     width: 100%;
     min-height: 30vh;
@@ -217,23 +194,5 @@
     display: flex;
     align-items: center;
     gap: 0.25rem;
-  }
-
-  .reveal-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 6px;
-    color: var(--ch-foreground);
-    background: transparent;
-    border: none;
-    border-radius: var(--ch-radius-sm, 6px);
-    cursor: pointer;
-    opacity: 0.7;
-  }
-
-  .reveal-btn:hover {
-    opacity: 1;
-    background: var(--ch-list-hover-bg);
   }
 </style>

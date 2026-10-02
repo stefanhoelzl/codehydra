@@ -14,10 +14,9 @@ import { OperationRegistry } from "./registry";
 import { ApiError } from "./errors";
 import { defineEntry } from "./types";
 import type { AnyOperationEntry, OperationContext } from "./types";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
-import { testPath } from "../shared/test-fixtures";
+import { testPath, workspaceRefIn } from "../shared/test-fixtures";
 
-const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
+const WS = workspaceRefIn(testPath("/repo").toString(), "feature");
 const IN_WORKSPACE: OperationContext = {
   workspaceRef: WS,
   cwd: null,

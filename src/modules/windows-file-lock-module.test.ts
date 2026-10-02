@@ -14,30 +14,11 @@ import {
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
+import { createDetectJson } from "./windows-file-lock-module.test-utils";
 
 // =============================================================================
 // Test Helpers
 // =============================================================================
-
-function createDetectJson(
-  blocking: Array<{
-    pid: number;
-    name: string;
-    commandLine: string;
-    files?: string[];
-    cwd?: string | null;
-  }>
-): string {
-  return JSON.stringify({
-    blocking: blocking.map((p) => ({
-      pid: p.pid,
-      name: p.name,
-      commandLine: p.commandLine,
-      files: p.files ?? [],
-      cwd: p.cwd ?? null,
-    })),
-  });
-}
 
 const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
 

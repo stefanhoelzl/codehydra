@@ -8,7 +8,8 @@
 
 import type { WorkspaceRef } from "../../intents/contract";
 import type { AgentType, AgentLifecycleEvent } from "../../shared/api-protocol";
-import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
+import type { AggregatedAgentStatus } from "../../shared/ipc";
+import type { Path } from "../../utils/path/path";
 import type {
   AgentMessage,
   AgentMessageOptions,
@@ -25,11 +26,6 @@ import type { DownloadProgressCallback } from "../../utils/binary-download";
  * Options for starting a workspace.
  */
 export interface WorkspaceStartOptions {
-  /**
-   * The workspace's ref. The agent learns it as `_CH_WORKSPACE` (its MCP server
-   * and every `ch` it runs name their workspace by it), and its hooks report by it.
-   */
-  readonly workspaceRef: WorkspaceRef;
   readonly initialPrompt?: AgentPromptConfig;
   /**
    * Called once the agent has taken `initialPrompt` over — from then on the
@@ -121,18 +117,24 @@ export interface AgentModuleProvider {
   dispose(): Promise<void>;
 
   // --- Per-workspace ---
+  //
+  // Workspaces are named by ref throughout. The agent learns its workspace's ref
+  // as `_CH_WORKSPACE` (its MCP server and every `ch` it runs name their
+  // workspace by it), and its hooks report by it. The path is given once, at
+  // start, for what runs in the workspace's directory.
 
   /** Start agent for a workspace, returns environment variables for the view */
   startWorkspace(
-    workspacePath: string,
+    workspaceRef: WorkspaceRef,
+    workspacePath: Path,
     options?: WorkspaceStartOptions
   ): Promise<WorkspaceStartResult>;
 
   /** Stop agent for a workspace */
-  stopWorkspace(workspacePath: string): Promise<StopServerResult>;
+  stopWorkspace(workspaceRef: WorkspaceRef): Promise<StopServerResult>;
 
   /** Restart agent for a workspace */
-  restartWorkspace(workspacePath: string): Promise<RestartServerResult>;
+  restartWorkspace(workspaceRef: WorkspaceRef): Promise<RestartServerResult>;
 
   /**
    * Apply an agent terminal lifecycle transition (reported by the sidekick).
@@ -142,7 +144,7 @@ export interface AgentModuleProvider {
    * Replaces the wrapper-synthesized WrapperStart/WrapperEnd POSTs. Idempotent and
    * a no-op for unknown/untracked workspaces.
    */
-  applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void;
+  applyTerminalLifecycle(workspaceRef: WorkspaceRef, event: AgentLifecycleEvent): void;
 
   /**
    * Record whether a modal is open in the workspace's editor. While one is, the
@@ -151,7 +153,7 @@ export interface AgentModuleProvider {
    * workspace's effective status, so a nudge from `agent.status.set` is
    * corrected on the next edge.
    */
-  setModalOpen(workspacePath: WorkspacePath, open: boolean): void;
+  setModalOpen(workspaceRef: WorkspaceRef, open: boolean): void;
 
   // --- Query ---
 
@@ -162,10 +164,10 @@ export interface AgentModuleProvider {
   getLaunchOptions?(): Promise<AgentLaunchOptions>;
 
   /** Get aggregated status for a workspace (with the open-modal overlay applied) */
-  getStatus(workspacePath: WorkspacePath): AggregatedAgentStatus;
+  getStatus(workspaceRef: WorkspaceRef): AggregatedAgentStatus;
 
   /** Get session info for TUI attachment */
-  getSession(workspacePath: WorkspacePath): AgentSessionInfo | null;
+  getSession(workspaceRef: WorkspaceRef): AgentSessionInfo | null;
 
   // --- Messages ---
 
@@ -175,7 +177,7 @@ export interface AgentModuleProvider {
    * of this type, or it is not reachable within `options.waitMs`.
    */
   sendMessage(
-    workspacePath: WorkspacePath,
+    workspaceRef: WorkspaceRef,
     message: AgentMessage,
     options: AgentMessageOptions
   ): Promise<void>;
@@ -184,11 +186,11 @@ export interface AgentModuleProvider {
 
   /** Subscribe to status changes across all workspaces */
   onStatusChange(
-    callback: (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void
+    callback: (workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void
   ): () => void;
 
   // --- Cleanup ---
 
   /** Remove all tracking state for a workspace */
-  clearWorkspaceTracking(workspacePath: WorkspacePath): void;
+  clearWorkspaceTracking(workspaceRef: WorkspaceRef): void;
 }

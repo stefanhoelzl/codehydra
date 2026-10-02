@@ -22,6 +22,21 @@ import type { ProcessRunner, SpawnedProcess } from "./process";
 export const isWindows: boolean = process.platform === "win32";
 
 /**
+ * Check if a process is running using signal 0.
+ */
+export function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+/**
  * Spawn a long-running process (no children).
  * Cross-platform using Node.js setTimeout.
  *

@@ -7,13 +7,13 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import { Path } from "../utils/path/path";
 import { SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
-import type { SetMetadataIntent, SetHookInput } from "../intents/set-metadata";
 import { GET_METADATA_OPERATION_ID } from "../intents/get-metadata";
-import type { GetMetadataHookResult, GetHookInput } from "../intents/get-metadata";
+import type { GetMetadataHookResult } from "../intents/get-metadata";
+import { defineHooks } from "../intents/declarations";
 
 interface MetadataModuleDeps {
   readonly gitWorktreeProvider: GitWorktreeProvider;
@@ -22,12 +22,12 @@ interface MetadataModuleDeps {
 export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
   return {
     name: "metadata",
-    hooks: {
+    hooks: defineHooks({
       [SET_METADATA_OPERATION_ID]: {
         set: {
-          handler: async (ctx: HookContext) => {
-            const { workspacePath } = ctx as SetHookInput;
-            const intent = ctx.intent as SetMetadataIntent;
+          handler: async (ctx) => {
+            const { workspacePath } = ctx;
+            const { intent } = ctx;
             await deps.gitWorktreeProvider.setMetadata(
               new Path(workspacePath),
               intent.payload.key,
@@ -38,13 +38,13 @@ export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
       },
       [GET_METADATA_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<HookOutput<GetMetadataHookResult>> => {
-            const { workspacePath } = ctx as GetHookInput;
+          handler: async (ctx): Promise<HookOutput<GetMetadataHookResult>> => {
+            const { workspacePath } = ctx;
             const metadata = await deps.gitWorktreeProvider.getMetadata(new Path(workspacePath));
             return { result: { metadata } };
           },
         },
       },
-    },
+    }),
   };
 }

@@ -10,13 +10,11 @@
  * Everything distribution-specific (download coordinates, serve args, readiness
  * probe, URL scheme) is delegated to an `IdeServer` descriptor (see `./types`).
  *
- * Internal state: server port set by `start` hook, read by `finalize` hook.
+ * The server serves on the configured `ide-server.port`; workspace URLs use it.
  */
 
-import { join, delimiter } from "node:path";
-
 import type { IntentModule } from "../../intents/lib/module";
-import type { HookContext, HookOutput } from "../../intents/lib/operation";
+import type { HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type {
@@ -38,33 +36,23 @@ import type { DownloadProgressCallback, DownloadRequest } from "../../utils/bina
 import { downloadBinary, isBinaryInstalled } from "../../utils/binary-download";
 import type { ArchiveExtractor } from "../../boundaries/platform/archive-extractor";
 import type { BinaryType } from "../../utils/binary-resolution/types";
-import type {
-  CheckDepsHookContext,
-  CheckDepsResult,
-  ConfigureResult,
-} from "../../intents/app-start";
-import type {
-  BinaryHookInput,
-  ExtensionsHookInput,
-  SetupProgressPayload,
-} from "../../intents/setup";
-import type { FinalizeHookInput, FinalizeHookResult } from "../../intents/open-workspace";
-import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
-import type { DeleteHookResult, DeletePipelineHookInput } from "../../intents/delete-workspace";
+import type { CheckDepsResult, ConfigureResult } from "../../intents/app-start";
+import type { SetupProgressPayload } from "../../intents/setup";
+import type { FinalizeHookResult } from "../../intents/open-workspace";
+import type { DeleteHookResult } from "../../intents/delete-workspace";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import {
   APP_RESUME_OPERATION_ID,
   APP_RESUME_HOOK_RESUME,
   type ResumeHookResult,
-  type AppResumeIntent,
 } from "../../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
-import { streamProgress } from "../../intents/lib/hook-helpers";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../../utils/extension";
 import { Path } from "../../utils/path/path";
+import { streamDownloadProgress } from "../../utils/binary-download/setup-progress";
 import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
 import type { Config } from "../../boundaries/platform/config";
 import {
@@ -84,23 +72,22 @@ import {
   type LocalFileRequest,
 } from "./local-files";
 import type { IdeServer } from "./types";
+import { buildServeEnv } from "./serve-env";
 import type { UiPresenter } from "../presentation/presentation-module";
 import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
 import type { DialogHandle } from "../presentation/sessions";
+import { defineHooks } from "../../intents/declarations";
 
 // =============================================================================
 // Internal Types
 // =============================================================================
-
-/** State of the IDE server instance. */
-type InstanceState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
 /** Internal configuration for the IDE server instance. */
 interface IdeServerConfig {
   readonly runtimeDir: string;
   readonly extensionsDir: string;
   readonly userDataDir: string;
-  readonly binDir: string;
+  readonly binDir: Path;
   apiPort: number | undefined;
 }
 
@@ -159,18 +146,6 @@ function getIdeServerPort(buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">
     return IDE_SERVER_PORT;
   }
   return derivePortFromString(buildInfo.gitBranch ?? "development");
-}
-
-/**
- * Format a remote-cli's leading arguments for the platform's wrapper script.
- * Windows re-parses the expanded `%VAR%`, so each token is quoted; POSIX passes
- * them through unquoted (current distributions use no leading arguments there).
- */
-function formatRemoteCliArgs(args: readonly string[], platform: SupportedPlatform): string {
-  if (platform === "win32") {
-    return args.map((arg) => `"${arg}"`).join(" ");
-  }
-  return args.join(" ");
 }
 
 /**
@@ -303,7 +278,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     runtimeDir: deps.pathProvider.dataPath("runtime").toNative(),
     extensionsDir: deps.pathProvider.dataPath("vscode/extensions").toNative(),
     userDataDir: deps.pathProvider.dataPath("vscode/user-data").toNative(),
-    binDir: deps.pathProvider.dataPath("bin").toNative(),
+    binDir: deps.pathProvider.dataPath("bin"),
     apiPort: undefined,
   };
 
@@ -375,17 +350,16 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   // Process lifecycle closure state
   // -------------------------------------------------------------------------
 
-  let state: InstanceState = "stopped";
-  let currentPort: number | null = null;
-  let currentPid: number | null = null;
+  /** The spawned server; null before a start, after a stop, and once a start fails. */
   let serverProcess: SpawnedProcess | null = null;
+  /**
+   * The start in flight or done, resolving to the port served. Null while
+   * stopped, so the next `ensureRunning` starts afresh; a failed start clears it.
+   */
   let startPromise: Promise<number> | null = null;
   // Set by app:shutdown. A start still in flight then ends as cancelled rather
   // than failed: its server was killed (or must never be spawned) on purpose.
   let shuttingDown = false;
-
-  // Internal state: port set by start hook, read by finalize hook
-  let ideServerPort = 0;
 
   // -------------------------------------------------------------------------
   // Webview shell interception
@@ -527,7 +501,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
   // -------------------------------------------------------------------------
 
   async function checkHealth(port: number): Promise<boolean> {
-    if (!serverProcess || currentPid === null) {
+    if (serverProcess?.pid === undefined) {
       // stop() ran (shutdown, or a resume restart): there is no server left to
       // become healthy, so polling on would only wait out the timeout.
       logger.warn("Health check failed: process not available");
@@ -757,8 +731,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       await resolvePortConflict(port);
     }
 
-    currentPort = port;
-
     const ide = getIdeServer();
     const args = [
       ...ide.buildServeArgs({
@@ -769,45 +741,15 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     ];
 
     try {
-      // Create clean environment without VS Code/IDE-server variables
-      const cleanEnv = { ...process.env };
-
-      // Remove all VSCODE_* variables
-      for (const key of Object.keys(cleanEnv)) {
-        if (key.startsWith("VSCODE_")) {
-          delete cleanEnv[key];
-        }
-      }
-
-      // Prepend binDir to PATH
-      const existingPath = cleanEnv.PATH ?? cleanEnv.Path ?? "";
-      cleanEnv.PATH = config.binDir + delimiter + existingPath;
-      delete cleanEnv.Path;
-
-      // Set EDITOR and GIT_SEQUENCE_EDITOR
-      const isWindows = process.platform === "win32";
-      const codeCmd = isWindows
-        ? `"${join(config.binDir, "code.cmd")}"`
-        : join(config.binDir, "code");
-      const editorValue = `${codeCmd} --wait --reuse-window`;
-      cleanEnv.EDITOR = editorValue;
-      cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
-
-      // Distribution-specific environment (from the active IdeServer descriptor)
-      Object.assign(cleanEnv, ide.serveEnv());
-
-      // Set API server port for VS Code extension communication
-      if (config.apiPort !== undefined) {
-        cleanEnv._CH_API_PORT = String(config.apiPort);
-      }
-
-      // Concrete wrapper invocations resolved from the active descriptor, so
-      // the wrapper scripts stay distribution-agnostic.
       const { binaryPath, prefixArgs, ideServerDir } = resolveIdeServerPaths();
-      const remoteCli = ide.remoteCli(ideServerDir, deps.platform);
-      cleanEnv._CH_IDE_REMOTE_CLI = remoteCli.exe;
-      cleanEnv._CH_IDE_REMOTE_CLI_ARGS = formatRemoteCliArgs(remoteCli.args, deps.platform);
-      cleanEnv._CH_IDE_NODE = ide.nodeBinary(ideServerDir, deps.platform);
+      const env = buildServeEnv({
+        env: process.env,
+        binDir: config.binDir,
+        platform: deps.platform,
+        ide,
+        ideServerDir,
+        apiPort: config.apiPort,
+      });
 
       // A shutdown that ran before the spawn found nothing to stop, so a server
       // spawned now would outlive the app.
@@ -815,21 +757,18 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         throw new IdeServerError("shutting down");
       }
 
-      serverProcess = processRunner.run(binaryPath, [...prefixArgs, ...args], {
+      const spawned = processRunner.run(binaryPath, [...prefixArgs, ...args], {
         cwd: config.runtimeDir,
-        env: cleanEnv,
+        env,
       });
-
-      currentPid = serverProcess.pid ?? null;
+      serverProcess = spawned;
 
       await waitForServerHealthy(port);
 
-      logger.info("Started", { port, pid: currentPid ?? 0 });
+      logger.info("Started", { port, pid: spawned.pid ?? 0 });
       return port;
     } catch (error: unknown) {
       const proc = serverProcess;
-      currentPort = null;
-      currentPid = null;
       serverProcess = null;
 
       // Kill the orphaned process to release the port
@@ -846,38 +785,25 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
     }
   }
 
-  async function ensureRunning(): Promise<number> {
-    if (state === "running" && currentPort !== null) {
-      return currentPort;
-    }
-
-    if (state === "starting" && startPromise !== null) {
-      return startPromise;
-    }
-
-    state = "starting";
-    startPromise = doStart();
-
-    try {
-      const port = await startPromise;
-      state = "running";
-      return port;
-    } catch (error: unknown) {
-      state = "failed";
-      startPromise = null;
-      throw error;
-    }
+  function ensureRunning(): Promise<number> {
+    if (startPromise !== null) return startPromise;
+    const attempt = doStart();
+    startPromise = attempt;
+    // A failed start is not memoized: the next call (a resume) tries again.
+    attempt.catch(() => {
+      if (startPromise === attempt) startPromise = null;
+    });
+    return attempt;
   }
 
   async function stop(): Promise<void> {
     const proc = serverProcess;
-    const pid = currentPid;
-    if (state === "stopped" || proc === null) {
+    if (proc === null) {
       return;
     }
+    const pid = proc.pid ?? 0;
 
-    logger.info("Stopping", { pid: pid ?? 0 });
-    state = "stopping";
+    logger.info("Stopping", { pid });
 
     try {
       const result = await proc.kill(
@@ -886,18 +812,15 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       );
 
       if (!result.success) {
-        logger.warn("Failed to kill IDE server", { pid: pid ?? 0 });
+        logger.warn("Failed to kill IDE server", { pid });
       }
 
       logger.info("Stopped", {
-        pid: pid ?? 0,
+        pid,
         success: result.success,
         reason: result.reason ?? "none",
       });
     } finally {
-      state = "stopped";
-      currentPort = null;
-      currentPid = null;
       serverProcess = null;
       startPromise = null;
     }
@@ -970,7 +893,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
 
   const module: IntentModule = {
     name: "ide-server",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         // -------------------------------------------------------------------
         // app-start -> before-ready: declare required scripts
@@ -985,8 +908,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         // app-start -> check-deps: preflight IDE server binary + extensions
         // -------------------------------------------------------------------
         "check-deps": {
-          handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
-            const { extensionRequirements } = ctx as CheckDepsHookContext;
+          handler: async (ctx): Promise<HookOutput<CheckDepsResult>> => {
+            const { extensionRequirements } = ctx;
             const missingBinaries: BinaryType[] = [];
 
             // Check IDE server binary
@@ -1027,7 +950,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         // -------------------------------------------------------------------
         start: {
           requires: { apiPort: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<HookOutput> => {
+          handler: async (ctx): Promise<HookOutput<void>> => {
             // Read apiPort from capabilities (provided by api-server-module)
             const apiPort = ctx.capabilities?.apiPort as number | null;
             if (apiPort !== null) {
@@ -1079,17 +1002,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
             // check has app:shutdown kill the server under it; that is the app
             // quitting, not failing to start, so it provides no port instead of
             // failing app:start.
+            let port: number;
             try {
-              await ensureRunning();
+              port = await ensureRunning();
             } catch (error) {
               if (!shuttingDown) throw error;
               logger.info("Start cancelled by shutdown", { error: getErrorMessage(error) });
               return {};
             }
-            const port = currentPort!;
-
-            // Update internal port (consumed by finalize hook for workspace URLs)
-            ideServerPort = port;
 
             return { provides: { ideServerPort: port } };
           },
@@ -1101,14 +1021,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       // -------------------------------------------------------------------
       [APP_RESUME_OPERATION_ID]: {
         [APP_RESUME_HOOK_RESUME]: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResumeHookResult>> => {
-            const port = currentPort;
-            if (port === null) {
-              // Never started — nothing to probe or restart.
+          handler: async (ctx): Promise<HookOutput<ResumeHookResult>> => {
+            if (startPromise === null) {
+              // Never started (or stopped) — nothing to probe or restart.
               return {};
             }
+            const port = getPort();
 
-            const { sleptMs = 0 } = (ctx.intent as AppResumeIntent).payload;
+            const { sleptMs = 0 } = ctx.intent.payload;
 
             try {
               await waitForHealthy({
@@ -1174,41 +1094,19 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       [SETUP_OPERATION_ID]: {
         binary: {
           // Streaming handler: yield progress frames; the setup operation emits them.
-          handler: async function* (
-            ctx: HookContext
-          ): AsyncGenerator<SetupProgressPayload, void, void> {
-            const hookCtx = ctx as BinaryHookInput;
-            const missingBinaries = hookCtx.missingBinaries ?? [];
+          handler: async function* (ctx): AsyncGenerator<SetupProgressPayload, void, void> {
+            const missingBinaries = ctx.missingBinaries ?? [];
 
             if (!missingBinaries.includes(getIdeServer().id)) {
               yield { id: "vscode", status: "done" };
               return;
             }
 
-            yield { id: "vscode", status: "running", message: "Downloading..." };
             try {
-              yield* streamProgress<SetupProgressPayload>(async (emit) => {
-                let lastKey = "";
-                await downloadIdeServer((p) => {
-                  const pct = p.totalBytes
-                    ? Math.floor((p.bytesDownloaded / p.totalBytes) * 100)
-                    : undefined;
-                  // Throttle: only forward when the phase or integer % changes.
-                  const key = `${p.phase}:${pct ?? "x"}`;
-                  if (key === lastKey) return;
-                  lastKey = key;
-                  const message = p.phase === "downloading" ? "Downloading..." : "Extracting...";
-                  emit({
-                    id: "vscode",
-                    status: "running",
-                    message,
-                    ...(pct !== undefined && { progress: pct }),
-                  });
-                });
-              });
-              yield { id: "vscode", status: "done" };
+              yield* streamDownloadProgress("vscode", (onProgress) =>
+                downloadIdeServer(onProgress)
+              );
             } catch (error) {
-              yield { id: "vscode", status: "failed", error: getErrorMessage(error) };
               throw new SetupError(
                 `Failed to download IDE server: ${getErrorMessage(error)}`,
                 "BINARY_DOWNLOAD_FAILED"
@@ -1222,11 +1120,8 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
         // -------------------------------------------------------------------
         extensions: {
           // Streaming handler: yield progress frames; the setup operation emits them.
-          handler: async function* (
-            ctx: HookContext
-          ): AsyncGenerator<SetupProgressPayload, void, void> {
-            const hookCtx = ctx as ExtensionsHookInput;
-            const installPlan = hookCtx.extensionInstallPlan ?? [];
+          handler: async function* (ctx): AsyncGenerator<SetupProgressPayload, void, void> {
+            const installPlan = ctx.extensionInstallPlan ?? [];
 
             if (installPlan.length === 0) {
               yield { id: "setup", status: "done" };
@@ -1294,13 +1189,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       // -------------------------------------------------------------------
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput<FinalizeHookResult>> => {
+          handler: async (ctx): Promise<HookOutput<FinalizeHookResult>> => {
             let workspaceUrl: string;
-            const finalizeCtx = ctx as FinalizeHookInput;
             const ide = getIdeServer();
 
             try {
-              const workspacePathObj = new Path(finalizeCtx.workspacePath);
+              const workspacePathObj = new Path(ctx.workspacePath);
               // No claudeProcessWrapper and no claudeCode.environmentVariables:
               // CodeHydra launches Claude itself, via the sidekick typing
               // `ch claude` into the agent terminal, and hands that terminal its
@@ -1312,14 +1206,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
                 "chat.agent.enabled": false,
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
-              workspaceUrl = ide.urlForWorkspace(ideServerPort, wsFilePath.toString());
+              workspaceUrl = ide.urlForWorkspace(getPort(), wsFilePath.toString());
             } catch (error) {
               logger
-                .scoped({ path: finalizeCtx.workspacePath })
+                .scoped({ path: ctx.workspacePath })
                 .warn("Failed to ensure workspace file, using folder URL", {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: getErrorMessage(error),
                 });
-              workspaceUrl = ide.urlForFolder(ideServerPort, finalizeCtx.workspacePath);
+              workspaceUrl = ide.urlForFolder(getPort(), ctx.workspacePath);
             }
 
             return { result: { workspaceUrl } };
@@ -1332,9 +1226,9 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
       // -------------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
-            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+          handler: async (ctx): Promise<HookOutput<DeleteHookResult>> => {
+            const { workspacePath: wsPath } = ctx;
+            const { payload } = ctx.intent;
 
             try {
               const workspacePath = new Path(wsPath);
@@ -1354,7 +1248,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IdeServerModul
           },
         },
       },
-    },
+    }),
   };
 
   return {

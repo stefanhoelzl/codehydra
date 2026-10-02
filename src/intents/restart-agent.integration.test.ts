@@ -32,8 +32,8 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
 import type { WorkspacePath, WorkspaceRef } from "./contract";
 
 // =============================================================================
@@ -42,7 +42,7 @@ import type { WorkspacePath, WorkspaceRef } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -192,6 +192,7 @@ describe("RestartAgent Operation", () => {
       expect(event.payload.projectId).toBe(projectId);
       expect(event.payload.workspaceName).toBe(workspaceName);
       expect(event.payload.workspaceRef).toBe(WORKSPACE_REF);
+      expect(event.payload.projectRef).toBe(projectRefFor(PROJECT_ROOT));
       expect(event.payload.port).toBe(9090);
     });
 
@@ -221,12 +222,8 @@ describe("RestartAgent Operation", () => {
       });
 
       await expect(
-        setup.dispatcher.dispatch(
-          restartIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"))
-        )
-      ).rejects.toThrow(
-        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
-      );
+        setup.dispatcher.dispatch(restartIntent(workspaceRefIn(PROJECT_ROOT, "nonexistent")))
+      ).rejects.toThrow(`Workspace not found: ${workspaceRefIn(PROJECT_ROOT, "nonexistent")}`);
     });
   });
 

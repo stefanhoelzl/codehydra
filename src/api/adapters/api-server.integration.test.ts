@@ -9,7 +9,8 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { z } from "zod/v4";
-import { attachApiServerAdapter, type AdapterSocket, type ApiResult } from "./api-server";
+import { attachApiServerAdapter, type AdapterSocket } from "./api-server";
+import type { ApiResult } from "../../shared/api-protocol";
 import { OperationRegistry } from "../registry";
 import { ApiError } from "../errors";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
@@ -18,11 +19,10 @@ import { createLockModule } from "../../modules/lock-module";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry } from "../types";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import { createRegistry } from "../entries";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { targetFields } from "../entries/target";
-import { testPath } from "../../shared/test-fixtures";
+import { testPath, workspaceRefIn } from "../../shared/test-fixtures";
 
 /** The real registry, for the tests that assert on the real mappings. */
 function realRegistry() {
@@ -42,7 +42,7 @@ function realRegistry() {
   );
 }
 
-const WS = makeWorkspaceRef(projectRefFor(testPath("/repo").toString()), "feature");
+const WS = workspaceRefIn(testPath("/repo").toString(), "feature");
 
 /** A socket that records handlers so a test can emit into them directly. */
 function fakeSocket() {

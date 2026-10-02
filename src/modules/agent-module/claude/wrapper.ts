@@ -23,6 +23,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
+import { errorCode, getErrorMessage } from "../../../shared/error-utils";
+import { cmdCommandLine } from "../cmd-quote";
 
 /**
  * Config read from initial-prompt.json file.
@@ -90,18 +92,12 @@ function getInitialPromptConfig(
     return config;
   } catch (error) {
     // File not found is expected on restart (consumed on first launch)
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
+    if (errorCode(error) === "ENOENT") {
       return undefined;
     }
 
     // Log warning for unexpected errors but don't fail
-    console.warn(
-      `Warning: Failed to read initial prompt file: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.warn(`Warning: Failed to read initial prompt file: ${getErrorMessage(error)}`);
 
     // Try to clean up anyway
     try {
@@ -201,29 +197,18 @@ export interface RunClaudeDeps {
 }
 
 /**
- * Quote an argument for cmd.exe. Wraps in double quotes and doubles any
- * embedded quotes so cmd.exe parses it as a single token. Used together
- * with windowsVerbatimArguments to bypass Node's arg mangling.
- */
-function quoteForCmd(arg: string): string {
-  return `"${arg.replace(/"/g, '""')}"`;
-}
-
-/**
  * Default dependencies using real implementations.
  *
  * Node's `shell: true` joins the file + args with single spaces and wraps the
  * whole line in one outer pair of quotes — it does NOT quote individual args.
  * Args containing spaces (like a prompt "hello world") therefore get split
- * by cmd.exe's tokenizer. Pre-quote each arg ourselves so the inner tokens
- * survive cmd.exe's parse after /S strips the outer pair.
+ * by cmd.exe's tokenizer. Pre-quote every part ourselves (cmd-quote.ts) so the
+ * inner tokens survive cmd.exe's parse after /S strips the outer pair.
  */
 const defaultDeps: RunClaudeDeps = {
   spawnSync: (command, args, options) => {
     if (options.shell && process.platform === "win32") {
-      const quotedCommand = quoteForCmd(command);
-      const quotedArgs = args.map(quoteForCmd);
-      const result = spawnSync(quotedCommand, quotedArgs, {
+      const result = spawnSync(cmdCommandLine(command, args), [], {
         stdio: "inherit",
         shell: true,
       });

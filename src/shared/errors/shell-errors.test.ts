@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ShellError, isShellError, isShellErrorWithCode } from "./shell-errors";
+import { ShellError } from "./shell-errors";
 
 describe("ShellError", () => {
   describe("constructor", () => {
@@ -49,46 +49,5 @@ describe("ShellError", () => {
 
       expect(error).toBeInstanceOf(ShellError);
     });
-  });
-});
-
-describe("isShellError", () => {
-  it("returns true for ShellError instances", () => {
-    const error = new ShellError("VIEW_NOT_FOUND", "View not found");
-
-    expect(isShellError(error)).toBe(true);
-  });
-
-  it("returns false for regular Error", () => {
-    const error = new Error("Regular error");
-
-    expect(isShellError(error)).toBe(false);
-  });
-
-  it("returns false for non-Error values", () => {
-    expect(isShellError(null)).toBe(false);
-    expect(isShellError(undefined)).toBe(false);
-    expect(isShellError("error")).toBe(false);
-    expect(isShellError({ code: "WINDOW_NOT_FOUND" })).toBe(false);
-  });
-});
-
-describe("isShellErrorWithCode", () => {
-  it("returns true when error has matching code", () => {
-    const error = new ShellError("SESSION_NOT_FOUND", "Session not found");
-
-    expect(isShellErrorWithCode(error, "SESSION_NOT_FOUND")).toBe(true);
-  });
-
-  it("returns false when error has different code", () => {
-    const error = new ShellError("WINDOW_NOT_FOUND", "Window not found");
-
-    expect(isShellErrorWithCode(error, "VIEW_NOT_FOUND")).toBe(false);
-  });
-
-  it("returns false for non-ShellError", () => {
-    const error = new Error("Regular error");
-
-    expect(isShellErrorWithCode(error, "WINDOW_NOT_FOUND")).toBe(false);
   });
 });

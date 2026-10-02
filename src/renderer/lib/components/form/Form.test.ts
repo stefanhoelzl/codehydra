@@ -1517,6 +1517,23 @@ describe("Form component", () => {
         expect(document.activeElement).toHaveAttribute("aria-checked", "true");
       });
     });
+
+    it("leaves no deferred focus callback pending after unmount", async () => {
+      vi.useFakeTimers();
+      try {
+        const { rerender, unmount } = renderForm(twoDropdowns("a"));
+        await vi.runAllTimersAsync();
+        // A config update defers both the focus-follow and the orphan check.
+        await rerender({ dialogId: "test-dialog", config: twoDropdowns("b") });
+        expect(vi.getTimerCount()).toBe(2);
+
+        unmount();
+
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ---- Focus ownership ----

@@ -55,7 +55,7 @@
     {/if}
     <button
       type="button"
-      class="setting-reset"
+      class="ch-icon-button setting-reset"
       class:hidden={!section.resetId}
       aria-label="Reset to default"
       title="Reset to default"
@@ -228,21 +228,6 @@
      when inactive (visibility: hidden) so control widths don't jump row to row. */
   .setting-reset {
     flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 6px;
-    color: var(--ch-foreground);
-    background: transparent;
-    border: none;
-    border-radius: var(--ch-radius-sm, 6px);
-    cursor: pointer;
-    opacity: 0.7;
-  }
-
-  .setting-reset:hover {
-    opacity: 1;
-    background: var(--ch-list-hover-bg);
   }
 
   .setting-reset.hidden {

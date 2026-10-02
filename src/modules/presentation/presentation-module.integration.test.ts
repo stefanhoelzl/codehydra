@@ -92,7 +92,7 @@ import {
   type ShowNotificationPayload,
   type ShowNotificationResult,
 } from "../../intents/show-notification";
-import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
+import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 
 // =============================================================================
@@ -102,6 +102,8 @@ import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = projPath("/projects/alpha");
 const PROJECT_REF = projectRefFor(PROJECT_PATH);
+/** A row's snapshot key: its workspace ref. */
+const keyOf = (name: string): string => makeWorkspaceRef(PROJECT_REF, name);
 // Local copies of the sidebar-width default/floor (the source constants are no
 // longer exported; the tests only need values that match main.ts's inlined
 // 250, which is stable).
@@ -241,7 +243,7 @@ function makeWorkspace(
   options?: { url?: string; metadata?: Record<string, string> }
 ): Workspace {
   return {
-    ref: makeWorkspaceRef(projectRefFor(PROJECT_PATH), name),
+    ref: workspaceRefIn(PROJECT_PATH, name),
     projectId: PROJECT_ID,
     name: name as WorkspaceName,
     branch: name,
@@ -301,7 +303,7 @@ async function openProject(module: IntentModule, project: Project): Promise<void
       metadata: workspace.metadata,
       workspaceUrl: workspace.url,
       stealFocus: false,
-      reopened: true,
+      fresh: false,
       source: "open-project",
     });
   }
@@ -535,7 +537,7 @@ describe("PresentationModule - ui:state snapshots", () => {
             remote: false,
             workspaces: [
               {
-                key: `${PROJECT_ID}/main`,
+                key: keyOf("main"),
                 name: "main",
                 status: "ready",
                 hibernated: false,
@@ -551,8 +553,8 @@ describe("PresentationModule - ui:state snapshots", () => {
         hideHibernated: false,
         mode: "overlay",
       },
-      frames: { [`${PROJECT_ID}/main`]: "http://127.0.0.1:1/main" },
-      main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
+      frames: { [keyOf("main")]: "http://127.0.0.1:1/main" },
+      main: { kind: "workspace", frameKey: keyOf("main") },
       theme: "dark",
       labelScroll: "hover",
       silent: false,
@@ -640,7 +642,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     const snapshot = lastSnapshot(deps);
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
-        key: `${PROJECT_ID}/feat`,
+        key: keyOf("feat"),
         name: "feat",
         status: "creating",
         hibernated: false,
@@ -653,7 +655,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     // creating workspace (blank behind the dialog) and the mid-session loading
     // system dialog covers it.
     expect(snapshot.frames).toEqual({});
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
     // Mid-session loading is a "panel" (no blur/dim over the live sidebar), not a
     // blocking modal — rendered below the sidebar by PanelView, like the deletion
     // panel. A panel does not count as a modal, so the mode is not "dialog".
@@ -679,13 +681,14 @@ describe("PresentationModule - ui:state snapshots", () => {
       branch: "feat",
       metadata: { base: "main" },
       workspaceUrl: "http://127.0.0.1:1/feat",
+      fresh: true,
     });
     await flush();
 
     const snapshot = lastSnapshot(deps);
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
-        key: `${PROJECT_ID}/feat`,
+        key: keyOf("feat"),
         name: "feat",
         status: "ready",
         hibernated: false,
@@ -694,8 +697,8 @@ describe("PresentationModule - ui:state snapshots", () => {
         active: true,
       },
     ]);
-    expect(snapshot.frames).toEqual({ [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat" });
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(snapshot.frames).toEqual({ [keyOf("feat")]: "http://127.0.0.1:1/feat" });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
   });
 
   it("a background workspace:loading shows the placeholder without taking the view", async () => {
@@ -721,7 +724,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       ["agent-made", "creating", false],
       ["feat", "ready", true],
     ]);
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
   });
 
   it("a creating placeholder survives switching away from it", async () => {
@@ -768,6 +771,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
+      fresh: true,
     });
     await flush();
 
@@ -778,7 +782,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       ["deps", "ready", false],
       ["feat", "ready", true],
     ]);
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
   });
 
   it("workspace:created adopts the new workspace when nothing is active", async () => {
@@ -794,10 +798,11 @@ describe("PresentationModule - ui:state snapshots", () => {
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
+      fresh: true,
     });
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/deps` });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("deps") });
   });
 
   it("workspace:loading is name-guarded against existing workspaces", async () => {
@@ -882,7 +887,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     await flush();
 
-    const frameKey = `${PROJECT_ID}/feat`;
+    const frameKey = keyOf("feat");
     expect(lastSnapshot(deps).frames).toEqual({ [frameKey]: "http://127.0.0.1:1/feat" });
 
     const progressBase = {
@@ -1010,12 +1015,11 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
     await emit(module, EVENT_AGENT_STATUS_UPDATED, {
-      workspace: {
-        ref: workspace.ref,
-        projectId: PROJECT_ID,
-        name: workspace.name,
-        active: false,
-      },
+      workspaceRef: workspace.ref,
+      projectRef: PROJECT_REF,
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      active: false,
       status: { status: "busy", counts: { idle: 1, busy: 2 } },
     });
     await flush();
@@ -1200,7 +1204,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.active).toBe(false);
     // The frame stays mounted: deselecting must not tear down the workspace.
     expect(lastSnapshot(deps).frames).toEqual({
-      [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat",
+      [keyOf("feat")]: "http://127.0.0.1:1/feat",
     });
   });
 
@@ -1224,7 +1228,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     active = { projectId: PROJECT_ID, workspaceName: workspace.name, ref: workspace.ref };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
-    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("feat") });
 
     active = null;
     await emit(module, EVENT_WORKSPACE_SWITCHED, null);
@@ -1278,7 +1282,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     const snapshot = lastSnapshot(deps);
     expect(snapshot.sidebar.projects).toHaveLength(1);
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/a` });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: keyOf("a") });
   });
 
   it("theme changes re-push with the new theme", async () => {
@@ -1504,7 +1508,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "remove-workspace",
-      key: `${PROJECT_ID}/main`,
+      key: keyOf("main"),
     });
 
     expect(dispatched).toEqual([
@@ -1529,13 +1533,13 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "remove-workspace",
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
 
     expect(dispatched).toHaveLength(0);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledWith("Dropped remove-workspace for unknown key", {
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
   });
 
@@ -1551,7 +1555,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "remove-workspace",
-      key: `${PROJECT_ID}/feat`,
+      key: keyOf("feat"),
     });
 
     expect(dispatched).toHaveLength(0);
@@ -1566,7 +1570,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "switch-workspace",
-      key: `${PROJECT_ID}/main`,
+      key: keyOf("main"),
     });
 
     expect(dispatched).toEqual([
@@ -1592,13 +1596,13 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "switch-workspace",
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
 
     expect(dispatched).toHaveLength(0);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledWith("Dropped switch-workspace for unknown key", {
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
   });
 
@@ -1611,7 +1615,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "wake-workspace",
-      key: `${PROJECT_ID}/main`,
+      key: keyOf("main"),
     });
 
     expect(dispatched).toEqual([
@@ -1627,13 +1631,13 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "wake-workspace",
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
 
     expect(dispatched).toHaveLength(0);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledWith("Dropped wake-workspace for unknown key", {
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
   });
 
@@ -1646,7 +1650,7 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "hibernate-workspace",
-      key: `${PROJECT_ID}/main`,
+      key: keyOf("main"),
     });
 
     expect(dispatched).toEqual([
@@ -1662,13 +1666,13 @@ describe("PresentationModule - ui:event routing", () => {
 
     emitUiEvent(deps, {
       kind: "hibernate-workspace",
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
 
     expect(dispatched).toHaveLength(0);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledWith("Dropped hibernate-workspace for unknown key", {
-      key: `${PROJECT_ID}/vanished`,
+      key: keyOf("vanished"),
     });
   });
 
@@ -2548,7 +2552,11 @@ describe("PresentationModule - shortcut navigation", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
     // Mark c idle; b is hibernated (skipped) and would otherwise be the next.
     await emit(module, EVENT_AGENT_STATUS_UPDATED, {
-      workspace: { ref: c.ref, projectId: PROJECT_ID, name: c.name, active: false },
+      workspaceRef: c.ref,
+      projectRef: PROJECT_REF,
+      projectId: PROJECT_ID,
+      workspaceName: c.name,
+      active: false,
       status: { status: "idle", counts: { idle: 1, busy: 0 } },
     });
     const dispatched = recordDispatches(deps);
@@ -2844,7 +2852,7 @@ describe("PresentationModule - reloadFrame", () => {
     await flush();
 
     expect(module.reloadFrame(workspace.ref)).toBe(true);
-    expect(deps.viewManager.reloadFrame).toHaveBeenCalledWith(`${PROJECT_ID}/feat`);
+    expect(deps.viewManager.reloadFrame).toHaveBeenCalledWith(keyOf("feat"));
   });
 
   it("does nothing for a hibernated workspace, which has no frame", async () => {
@@ -2887,8 +2895,8 @@ describe("PresentationModule - push logging", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
 
-    expect(lastSnapshot(deps).frames).toEqual({ [`${PROJECT_ID}/feat`]: workspace.url });
-    expect(loggedProjection(deps).frames).toEqual([`${PROJECT_ID}/feat`]);
+    expect(lastSnapshot(deps).frames).toEqual({ [keyOf("feat")]: workspace.url });
+    expect(loggedProjection(deps).frames).toEqual([keyOf("feat")]);
   });
 
   it("projects dialogs to id + kind, dropping the config", async () => {
@@ -3073,7 +3081,7 @@ describe("PresentationModule - attention highlight", () => {
 
     module.dialog(ATTENTION, {
       kind: "modal",
-      workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/projects/beta")), "feat"),
+      workspaceRef: workspaceRefIn(projPath("/projects/beta"), "feat"),
     });
     await flush();
 
@@ -3424,7 +3432,7 @@ describe("PresentationModule - loading rows", () => {
       metadata: workspace.metadata,
       workspaceUrl: `http://127.0.0.1:1/${workspace.name}`,
       stealFocus: false,
-      reopened: true,
+      fresh: false,
       source: "open-project",
     };
   }
@@ -3476,7 +3484,7 @@ describe("PresentationModule - loading rows", () => {
       ["a", "ready", false],
       ["b", "ready", false],
     ]);
-    expect(lastSnapshot(deps).frames).toEqual({ [`${PROJECT_ID}/a`]: "http://127.0.0.1:1/a" });
+    expect(lastSnapshot(deps).frames).toEqual({ [keyOf("a")]: "http://127.0.0.1:1/a" });
   });
 
   it("an active loading workspace shows the loading panel over its missing frame", async () => {
@@ -3487,7 +3495,7 @@ describe("PresentationModule - loading rows", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/a` });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("a") });
     expect(currentSystemDialog(deps).kind).toBe("panel");
     expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
     expect(lastSnapshot(deps).mode).not.toBe("dialog");
@@ -3568,7 +3576,7 @@ describe("PresentationModule - loading rows", () => {
 
     // The row's Retry echoes the key as wake-workspace.
     dispatched.length = 0;
-    emitUiEvent(deps, { kind: "wake-workspace", key: `${PROJECT_ID}/a` });
+    emitUiEvent(deps, { kind: "wake-workspace", key: keyOf("a") });
     await flush();
     expect(dispatched).toEqual([
       { type: "workspace:wake", payload: { workspaceRef: workspace.ref, source: "ui-ipc" } },
@@ -3592,7 +3600,7 @@ describe("PresentationModule - loading rows", () => {
     });
     const dispatched = recordDispatches(deps);
 
-    emitUiEvent(deps, { kind: "switch-workspace", key: `${PROJECT_ID}/deps` });
+    emitUiEvent(deps, { kind: "switch-workspace", key: keyOf("deps") });
     await flush();
     expect(dispatched).toEqual([]);
     expect(rows(deps)).toEqual([
@@ -3609,6 +3617,7 @@ describe("PresentationModule - loading rows", () => {
       branch: "deps",
       metadata: {},
       workspaceUrl: "http://127.0.0.1:1/deps",
+      fresh: true,
       stealFocus: false,
     });
     expect(dispatched).toEqual([
@@ -3681,7 +3690,7 @@ describe("PresentationModule - startup screen", () => {
     active = { projectId: PROJECT_ID, workspaceName: beta.name, ref: beta.ref };
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(beta));
     await flush();
-    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/beta` });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "workspace", frameKey: keyOf("beta") });
     expect(rows(deps)).toEqual([
       ["alpha", "ready", false],
       ["beta", "loading", true],

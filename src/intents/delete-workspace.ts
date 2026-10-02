@@ -35,8 +35,6 @@ import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import type {
-  ProjectId,
-  WorkspaceName,
   DeletionProgress,
   DeletionOperation,
   DeletionOperationId,
@@ -47,17 +45,22 @@ import {
   blockingProcessSchema,
   deletionProgressSchema,
   hookCtxSchema,
-  projectIdSchema,
   projectPathSchema,
   projectRefSchema,
+  workspaceIdentityPayloadSchema,
   workspaceNameSchema,
+  workspaceRefIdentitySchema,
   workspaceRefSchema,
   workspaceTargetShape,
 } from "./contract";
-import type { ProjectRef, WorkspaceRef } from "./contract";
+import type { WorkspaceIdentityPayload, WorkspaceRef } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
-import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import {
+  resolveWorkspaceIdentity,
+  workspaceIdentityPayload,
+  workspaceRefIdentity,
+} from "./lib/workspace-identity";
+import { activeWorkspaceRef } from "./lib/active-workspace";
 import { throwHookErrors, collectErrorMessages, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
@@ -176,6 +179,18 @@ export const preDeleteResultSchema = z
   .readonly();
 
 /**
+ * Progress frame a "pre-delete" handler yields the moment it has real work to do
+ * (the hook point's `frames` schema, validated by the dispatcher).
+ *
+ * Its only job is to say "a gate is actually running here". Most repositories
+ * define no hook at all, and a progress row for a step that will never do
+ * anything is noise on every deletion in every project — so the row is created
+ * by this frame rather than unconditionally by the operation.
+ */
+export const preDeleteStartedFrameSchema = z.object({ started: z.literal(true) }).readonly();
+export type PreDeleteStartedFrame = z.infer<typeof preDeleteStartedFrameSchema>;
+
+/**
  * Per-handler result for the "shutdown" hook point.
  * AgentModule may provide serverName and error.
  *
@@ -241,10 +256,7 @@ const flushInputSchema = hookCtxSchema(deleteWorkspacePayloadSchema, flushEnrich
 
 const workspaceDeletedSchema = z
   .object({
-    projectId: projectIdSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
-    projectRef: projectRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
     /**
      * True when the dispatch removed (or force-abandoned) the git worktree;
      * false for runtime-only teardown (removeWorktree: false — e.g. the
@@ -255,7 +267,12 @@ const workspaceDeletedSchema = z
   })
   .readonly();
 
-const workspaceDeleteFailedSchema = z.object({ workspaceRef: workspaceRefSchema }).readonly();
+/**
+ * The dispatch ended without deleting the workspace (failed, refused or
+ * canceled). Carries only the identity the ref names by itself: it is also
+ * emitted when the ref never resolved, and no project id exists then.
+ */
+const workspaceDeleteFailedSchema = z.object(workspaceRefIdentitySchema.shape).readonly();
 
 /**
  * This operation's contract bundle. Exported so consumers (and tests) can take a typed view
@@ -269,7 +286,11 @@ export const schemas = {
     confirm: { input: deletePipelineInputSchema, result: confirmResultSchema },
     preflight: { input: deletePipelineInputSchema, result: preflightResultSchema },
     shutdown: { input: deletePipelineInputSchema, result: shutdownResultSchema },
-    "pre-delete": { input: deletePipelineInputSchema, result: preDeleteResultSchema },
+    "pre-delete": {
+      input: deletePipelineInputSchema,
+      result: preDeleteResultSchema,
+      frames: preDeleteStartedFrameSchema,
+    },
     release: { input: deletePipelineInputSchema, result: releaseResultSchema },
     delete: { input: deletePipelineInputSchema, result: deleteResultSchema },
     detect: { input: deletePipelineInputSchema, result: detectResultSchema },
@@ -390,30 +411,6 @@ function mergeDetect(
 }
 
 // =============================================================================
-// Pre-delete streaming frame (yielded by the "pre-delete" hook; not schematized —
-// yield frames are pure data forwarded to onYield, not validated at the boundary).
-// =============================================================================
-
-/**
- * Yielded by a "pre-delete" handler the moment it has real work to do.
- *
- * Its only job is to say "a gate is actually running here". Most repositories
- * define no hook at all, and a progress row for a step that will never do
- * anything is noise on every deletion in every project — so the row is created
- * by this frame rather than unconditionally by the operation.
- */
-export interface PreDeleteStartedFrame {
-  readonly started: true;
-}
-
-/** Narrow an onYield frame to a PreDeleteStartedFrame. */
-export function isPreDeleteStartedFrame(frame: unknown): frame is PreDeleteStartedFrame {
-  return (
-    typeof frame === "object" && frame !== null && "started" in frame && frame.started === true
-  );
-}
-
-// =============================================================================
 // Emit function type (for threading ctx.emit through private methods)
 // =============================================================================
 
@@ -424,27 +421,24 @@ type EmitFn = OperationContext<DeleteWorkspaceIntent, typeof schemas>["emit"];
 // Pipeline State (for progress emission)
 // =============================================================================
 
+/** What the pipeline has learned so far; filled in stage by stage as it runs. */
 interface PipelineState {
-  readonly shutdown?: MergedShutdown;
+  shutdown?: MergedShutdown;
   /** The repository has a "pre-delete" hook, so its row is listed from the start. */
-  readonly repoHookPresent?: boolean;
-  readonly preDelete?: MergedErrors;
-  readonly release?: MergedErrors;
-  readonly del?: MergedErrors;
-  readonly detect?: MergedDetect;
-  readonly flush?: MergedErrors;
+  repoHookPresent?: boolean;
+  preDelete?: MergedErrors;
+  release?: MergedErrors;
+  del?: MergedErrors;
+  detect?: MergedDetect;
+  flush?: MergedErrors;
 }
 
 // =============================================================================
 // Operation
 // =============================================================================
 
-/** Resolved identity from dispatch, needed for events and progress. */
-interface ResolvedIdentity {
-  readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
-  readonly projectRef: ProjectRef;
-}
+/** Resolved identity from dispatch, carried by every event and progress report. */
+type ResolvedIdentity = WorkspaceIdentityPayload;
 
 /** Return value of runPipeline, carrying resolved identity for emitEvent. */
 interface PipelineResult {
@@ -466,13 +460,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     const emitEvent = (identity: ResolvedIdentity): void => {
       const event: WorkspaceDeletedEvent = {
         type: EVENT_WORKSPACE_DELETED,
-        payload: {
-          projectId: identity.projectId,
-          workspaceName: identity.workspaceName,
-          workspaceRef: payload.workspaceRef,
-          projectRef: identity.projectRef,
-          worktreeRemoved: payload.removeWorktree,
-        },
+        payload: { ...identity, worktreeRemoved: payload.removeWorktree },
       };
       ctx.emit(event);
     };
@@ -500,7 +488,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
           // auto-switch — no workspace went away.
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
-            payload: { workspaceRef: payload.workspaceRef },
+            payload: workspaceRefIdentity(payload.workspaceRef),
           };
           ctx.emit(failedEvent);
           return { started: false };
@@ -511,7 +499,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
           // Emit delete-failed to reset idempotency, allowing retry dispatch
           const failedEvent: WorkspaceDeleteFailedEvent = {
             type: EVENT_WORKSPACE_DELETE_FAILED,
-            payload: { workspaceRef: payload.workspaceRef },
+            payload: workspaceRefIdentity(payload.workspaceRef),
           };
           ctx.emit(failedEvent);
         } else {
@@ -521,7 +509,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         // Preflight or unexpected error — emit delete-failed for idempotency reset, then propagate
         const failedEvent: WorkspaceDeleteFailedEvent = {
           type: EVENT_WORKSPACE_DELETE_FAILED,
-          payload: { workspaceRef: payload.workspaceRef },
+          payload: workspaceRefIdentity(payload.workspaceRef),
         };
         ctx.emit(failedEvent);
         throw error;
@@ -532,7 +520,9 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       if (failed) return { started: true };
     }
 
-    await this.autoSwitchIfBecameActive(ctx, payload.workspaceRef);
+    // If the user navigated to the workspace after the initial switch-away,
+    // switch again before the deletion completes.
+    await this.autoSwitchIfActive(ctx, payload.workspaceRef);
     return { started: true };
   }
 
@@ -543,10 +533,10 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     // --- Resolve (workspaceRef → path, project, workspaceName, projectId) ---
-    const { workspacePath, projectRef, projectPath, workspaceName, active, projectId } =
-      await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
+    const resolved = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
+    const { workspacePath, projectRef, projectPath, workspaceName, active } = resolved;
 
-    const identity: ResolvedIdentity = { projectId, workspaceName, projectRef };
+    const identity: ResolvedIdentity = workspaceIdentityPayload(resolved);
     const target = { workspaceRef: payload.workspaceRef, workspacePath, projectRef, projectPath };
 
     // --- Confirm (interactive dispatches only) ---
@@ -628,7 +618,16 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         repoHookPresent
       );
     } catch {
-      this.emitPipelineProgress(emit, identity, effectivePayload, {}, true, true);
+      this.emitPipelineProgress(
+        emit,
+        identity,
+        effectivePayload,
+        {},
+        {
+          completed: true,
+          hasErrors: true,
+        }
+      );
       return { hasErrors: true, identity };
     }
   }
@@ -644,34 +643,30 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // The row is listed from the first progress event, so it never appears
     // mid-list — but only on the path that will actually run the stage: a
     // runtime-only teardown stops before it, and force skips it outright.
-    const repoHookRow = repoHookPresent && payload.removeWorktree && !payload.force;
-    const withRepoHook = <T extends PipelineState>(state: T): T & PipelineState =>
-      repoHookRow ? { ...state, repoHookPresent: true } : state;
+    const state: PipelineState =
+      repoHookPresent && payload.removeWorktree && !payload.force ? { repoHookPresent: true } : {};
+    /** Report the pipeline as still running, `step` in progress. */
+    const report = (step: DeletionOperationId): void =>
+      this.emitPipelineProgress(emit, identity, payload, state, {
+        completed: false,
+        hasErrors: false,
+        currentStep: step,
+      });
+    /** Report the pipeline as finished and return its result. */
+    const finish = (hasErrors: boolean): PipelineResult => {
+      this.emitPipelineProgress(emit, identity, payload, state, { completed: true, hasErrors });
+      return { hasErrors, identity };
+    };
 
     // --- Shutdown ---
-    this.emitPipelineProgress(
-      emit,
-      identity,
-      payload,
-      withRepoHook({}),
-      false,
-      false,
-      "kill-terminals"
-    );
+    report("kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } = await ctx.hooks.collect(
       "shutdown",
       pipelineCtx
     );
     const shutdown = mergeShutdown(shutdownResults, shutdownCollectErrors);
-    this.emitPipelineProgress(
-      emit,
-      identity,
-      payload,
-      withRepoHook({ shutdown }),
-      false,
-      false,
-      "cleanup-workspace"
-    );
+    state.shutdown = shutdown;
+    report("cleanup-workspace");
 
     // Dispatch workspace:switch(auto) if the deleted workspace is the one on
     // screen. Auto-select mode finds the best candidate via find-candidates.
@@ -690,30 +685,17 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // moves it, so with nobody switching it still names the workspace being
     // deleted. (The `active` flag on workspace:resolve is a different field,
     // and that one is cleared during shutdown.)
-    const activeNow = await this.activeWorkspaceRef(ctx);
-
-    if (activeNow === payload.workspaceRef && !payload.skipSwitch) {
-      try {
-        const switchIntent: SwitchWorkspaceIntent = {
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: { auto: true, currentRef: payload.workspaceRef, focus: true },
-        };
-        await ctx.dispatch(switchIntent);
-      } catch {
-        // Best-effort: switch failure doesn't fail the deletion
-      }
+    if (!payload.skipSwitch) {
+      await this.autoSwitchIfActive(ctx, payload.workspaceRef);
     }
 
-    const shutdownFailed = shutdown.errors.length > 0;
-    if (shutdownFailed && !payload.force) {
-      this.emitPipelineProgress(emit, identity, payload, withRepoHook({ shutdown }), true, true);
-      return { hasErrors: true, identity };
+    if (shutdown.errors.length > 0 && !payload.force) {
+      return finish(true);
     }
 
     // When removeWorktree is false, skip "release" and "delete" hooks (runtime teardown only)
     if (!payload.removeWorktree) {
-      this.emitPipelineProgress(emit, identity, payload, withRepoHook({ shutdown }), true, false);
-      return { hasErrors: false, identity };
+      return finish(false);
     }
 
     // --- Pre-delete (the repository's own gate) ---
@@ -721,25 +703,16 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     // what cleans up after a handler that left a process holding the worktree.
     // Skipped in force mode — force is how the user escapes a gate that refuses
     // or hangs, and the progress panel's Dismiss button takes exactly that path.
-    let preDelete: MergedErrors | undefined;
     if (!payload.force) {
       let started = false;
       const { results: preDeleteResults, errors: preDeleteCollectErrors } = await ctx.hooks.collect(
         "pre-delete",
         pipelineCtx,
         {
-          onYield: (frame) => {
-            if (!isPreDeleteStartedFrame(frame) || started) return;
+          onYield: () => {
+            if (started) return;
             started = true;
-            this.emitPipelineProgress(
-              emit,
-              identity,
-              payload,
-              withRepoHook({ shutdown }),
-              false,
-              false,
-              "repo-hook"
-            );
+            report("repo-hook");
           },
         }
       );
@@ -751,22 +724,14 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       const messages = [...refusals, ...preDeleteCollectErrors.map((e) => e.message)];
 
       if (messages.length > 0) {
-        preDelete = { errors: messages };
-        this.emitPipelineProgress(
-          emit,
-          identity,
-          payload,
-          withRepoHook({ shutdown, preDelete }),
-          true,
-          true
-        );
-        return { hasErrors: true, identity };
+        state.preDelete = { errors: messages };
+        return finish(true);
       }
 
       // Only keep a clean row when a handler reported for duty. Without a yield
       // no hook existed, and the step must leave no trace on the panel.
       if (started) {
-        preDelete = { errors: [] };
+        state.preDelete = { errors: [] };
       }
     }
 
@@ -775,29 +740,15 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       "release",
       pipelineCtx
     );
-    const release = mergeErrors(releaseResults, releaseCollectErrors);
-    this.emitPipelineProgress(
-      emit,
-      identity,
-      payload,
-      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release }),
-      false,
-      false,
-      "cleanup-workspace"
-    );
+    state.release = mergeErrors(releaseResults, releaseCollectErrors);
+    report("cleanup-workspace");
 
     // --- Flush (kill provided PIDs from previous attempt) ---
-    let flush: MergedErrors | undefined;
+    // Its row is reported whatever the removal does next: on a failed removal
+    // (forced, or followed by blocker detection) whether the kill worked is part
+    // of the explanation, not something to drop.
     if (payload.blockingPids && payload.blockingPids.length > 0) {
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        withRepoHook({ shutdown, ...(preDelete && { preDelete }), release }),
-        false,
-        false,
-        "killing-blockers"
-      );
+      report("killing-blockers");
       const flushCtx: FlushHookInput = {
         ...pipelineCtx,
         blockingPids: payload.blockingPids,
@@ -806,7 +757,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
         "flush",
         flushCtx
       );
-      flush = mergeErrors(flushResults, flushCollectErrors);
+      state.flush = mergeErrors(flushResults, flushCollectErrors);
     }
 
     // --- Delete ---
@@ -814,109 +765,53 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       "delete",
       pipelineCtx
     );
-    const del = mergeErrors(deleteResults, deleteCollectErrors);
+    state.del = mergeErrors(deleteResults, deleteCollectErrors);
 
-    const deleteFailed = del.errors.length > 0;
-    if (!deleteFailed) {
-      // Success
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        withRepoHook({
-          shutdown,
-          ...(preDelete && { preDelete }),
-          release,
-          del,
-          ...(flush && { flush }),
-        }),
-        true,
-        false
-      );
-      return { hasErrors: false, identity };
+    if (state.del.errors.length === 0) {
+      return finish(false);
     }
 
-    // Delete failed — if force mode, emit and return
+    // Delete failed — if force mode, report it and stop
     if (payload.force) {
-      const hasErrors = shutdownFailed || deleteFailed;
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del }),
-        true,
-        hasErrors
-      );
-      return { hasErrors, identity };
+      return finish(true);
     }
 
     // --- Detect blockers (full scan after failure) ---
-    this.emitPipelineProgress(
-      emit,
-      identity,
-      payload,
-      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del }),
-      false,
-      false,
-      "detecting-blockers"
-    );
+    report("detecting-blockers");
     const { results: detectResults, errors: detectCollectErrors } = await ctx.hooks.collect(
       "detect",
       pipelineCtx
     );
-    const detect = mergeDetect(detectResults, detectCollectErrors);
-
-    // Emit progress with blockers and return failure
-    this.emitPipelineProgress(
-      emit,
-      identity,
-      payload,
-      withRepoHook({ shutdown, ...(preDelete && { preDelete }), release, del, detect }),
-      true,
-      true
-    );
-    return { hasErrors: true, identity };
+    state.detect = mergeDetect(detectResults, detectCollectErrors);
+    return finish(true);
   }
 
-  /**
-   * If the user navigated to the workspace after the initial switch-away,
-   * we must switch again before emitting workspace:deleted.
-   */
   /**
    * The workspace currently on screen, or null when none is. Best-effort: a
    * failure answers null, which reads as "nothing claimed the surface" — the
    * same answer as an ordinary teardown, so a lookup failure never moves a
    * user who had gone somewhere else.
    */
-  private async activeWorkspaceRef(
+  private async activeRefOrNull(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>
   ): Promise<WorkspaceRef | null> {
-    try {
-      const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {},
-      });
-      return activeRef?.ref ?? null;
-    } catch {
-      return null;
-    }
+    return activeWorkspaceRef(ctx.dispatch).catch(() => null);
   }
 
-  private async autoSwitchIfBecameActive(
+  /**
+   * Switch away from `workspaceRef` (auto-select) if it is the one on screen.
+   * Best-effort: a failed switch never fails the deletion.
+   */
+  private async autoSwitchIfActive(
     ctx: OperationContext<DeleteWorkspaceIntent, typeof schemas>,
     workspaceRef: WorkspaceRef
   ): Promise<void> {
+    if ((await this.activeRefOrNull(ctx)) !== workspaceRef) return;
     try {
-      const activeRef = await ctx.dispatch<GetActiveWorkspaceIntent>({
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {},
+      await ctx.dispatch<SwitchWorkspaceIntent>({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentRef: workspaceRef, focus: true },
       });
-      if (activeRef?.ref === workspaceRef) {
-        await ctx.dispatch<SwitchWorkspaceIntent>({
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: { auto: true, currentRef: workspaceRef, focus: true },
-        });
-      }
     } catch {
       // Best-effort
     }
@@ -929,11 +824,14 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     emit: EmitFn,
     identity: ResolvedIdentity,
     payload: DeleteWorkspacePayload,
-    state: PipelineState,
-    completed = false,
-    hasErrors = false,
-    currentStep?: DeletionOperationId
+    state: Readonly<PipelineState>,
+    progress: {
+      readonly completed: boolean;
+      readonly hasErrors: boolean;
+      readonly currentStep?: DeletionOperationId;
+    }
   ): void {
+    const { completed, hasErrors, currentStep } = progress;
     const operations: DeletionOperation[] = [];
 
     const applyCurrentStep = (
@@ -1059,9 +957,7 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
     const progressEvent: WorkspaceDeletionProgressEvent = {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: {
-        workspaceRef: payload.workspaceRef,
-        workspaceName: identity.workspaceName,
-        projectId: identity.projectId,
+        ...identity,
         keepBranch: payload.keepBranch,
         operations,
         completed,

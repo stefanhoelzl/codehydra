@@ -15,6 +15,7 @@
  * back into zod only for the SDK to convert forward again.
  */
 
+import { getErrorMessage } from "../shared/error-utils";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -171,7 +172,7 @@ export async function serveMcp(client: Client, version: string): Promise<void> {
     } catch (error: unknown) {
       // Reported as a tool error rather than thrown: a failed operation is a
       // result the agent should read and act on, not a broken server.
-      return toolResult(error instanceof Error ? error.message : String(error), true);
+      return toolResult(getErrorMessage(error), true);
     }
   });
 

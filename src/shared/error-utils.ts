@@ -25,11 +25,28 @@ export function getErrorMessage(error: unknown, fallback?: string): string {
 }
 
 /**
+ * Coerce a thrown value to an `Error`, wrapping a non-Error (`throw "boom"`) so
+ * callers can rethrow or reject with a real one.
+ */
+export function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/**
+ * The string `code` a thrown value carries (Node errno, tar's `TAR_*`, zlib's
+ * `Z_*`, …), if any. The one way to classify an error — never its message.
+ */
+export function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+/**
  * True when `error` is a Node "no such file or directory" (ENOENT) error.
  * Used to distinguish "file doesn't exist yet" from real read failures.
  */
 export function isEnoent(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "ENOENT";
+  return errorCode(error) === "ENOENT";
 }
 
 /**

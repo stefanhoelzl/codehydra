@@ -11,65 +11,42 @@
  */
 
 import type { IntentModule } from "../../intents/lib/module";
-import { ANY_VALUE, type HookContext, type HookOutput } from "../../intents/lib/operation";
+import { ANY_VALUE, type HookOutput } from "../../intents/lib/operation";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
-import type { AgentType } from "../../shared/api-protocol";
-import type { WorkspacePath } from "../../shared/ipc";
-import type { WorkspaceRef } from "../../intents/contract";
+import type { AgentType, WorkspaceRef } from "../../intents/contract";
 import { Path } from "../../utils/path/path";
+import { streamDownloadProgress } from "../../utils/binary-download/setup-progress";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type {
-  CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
   RegisterAgentResult,
-  SaveAgentHookInput,
 } from "../../intents/app-start";
-import type { BinaryHookInput, SetupProgressPayload } from "../../intents/setup";
-import type {
-  SetupHookInput,
-  SetupHookResult,
-  OpenWorkspaceIntent,
-} from "../../intents/open-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  ShutdownHookResult,
-  DeletePipelineHookInput,
-} from "../../intents/delete-workspace";
-import type {
-  HibernatePipelineHookInput,
-  HibernateShutdownHookResult,
-} from "../../intents/hibernate-workspace";
+import type { SetupProgressPayload } from "../../intents/setup";
+import type { SetupHookResult } from "../../intents/open-workspace";
+import type { ShutdownHookResult } from "../../intents/delete-workspace";
+import type { HibernateShutdownHookResult } from "../../intents/hibernate-workspace";
 import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../../intents/hibernate-workspace";
-import type { GetStatusHookInput, GetStatusHookResult } from "../../intents/get-workspace-status";
-import type {
-  GetAgentSessionHookInput,
-  GetAgentSessionHookResult,
-} from "../../intents/get-agent-session";
-import type { RestartAgentHookInput, RestartAgentHookResult } from "../../intents/restart-agent";
+import type { GetStatusHookResult } from "../../intents/get-workspace-status";
+import type { GetAgentSessionHookResult } from "../../intents/get-agent-session";
+import type { RestartAgentHookResult } from "../../intents/restart-agent";
 import {
   SEND_AGENT_MESSAGE_OPERATION_ID,
-  type SendAgentMessageIntent,
-  type SendHookInput,
   type SendHookResult,
 } from "../../intents/send-agent-message";
-import type { AgentLifecycleHookInput } from "../../intents/agent-lifecycle";
-import type { ModalHookInput } from "../../intents/vscode-modal-changed";
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { APP_READY_OPERATION_ID, type AvailableAgentsResult } from "../../intents/app-ready";
 import {
   GET_LAUNCH_OPTIONS_OPERATION_ID,
-  type LaunchOptionsHookInput,
   type LaunchOptionsHookResult,
 } from "../../intents/agent-launch-options";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
-import { streamProgress } from "../../intents/lib/hook-helpers";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import {
   CAPABILITY_AGENT_STOPPED,
@@ -89,6 +66,7 @@ import { AgentUnreachableError, type AgentPromptConfig, type McpConfig } from ".
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
 import { MODAL_RECORDED_CAPABILITY } from "../terminal-focus-module";
 import type { AgentModuleProvider } from "./agent-module-provider";
+import { defineHooks } from "../../intents/declarations";
 
 // =============================================================================
 // Dependency Interfaces
@@ -186,20 +164,11 @@ export function createAgentModule(
   /** Cleanup function for onStatusChange subscription. */
   let statusChangeCleanup: (() => void) | null = null;
 
-  /**
-   * Each workspace's ref by its path, learned when its agent is set up. The
-   * provider runs the agent in the workspace's directory and knows it by that
-   * path; the status it reports leaves this module named by ref.
-   */
-  const refsByPath = new Map<string, WorkspaceRef>();
-
   /** Initialize the provider on demand. Idempotent. */
   function ensureInitialized(): void {
     if (initialized) return;
     provider.initialize(capturedMcpConfig);
-    statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
-      const workspaceRef = refsByPath.get(new Path(workspacePath).toString());
-      if (workspaceRef === undefined) return;
+    statusChangeCleanup = provider.onStatusChange((workspaceRef, status) => {
       void deps.dispatcher.dispatch<UpdateAgentStatusIntent>(
         {
           type: INTENT_UPDATE_AGENT_STATUS,
@@ -217,12 +186,12 @@ export function createAgentModule(
    * to propagate the error (delete in non-force mode does; hibernate doesn't).
    */
   async function stopAgentForWorkspace(
-    workspacePath: string,
+    workspaceRef: WorkspaceRef,
     logTag: string
   ): Promise<{ error?: string }> {
     try {
-      const stopResult = await provider.stopWorkspace(workspacePath);
-      provider.clearWorkspaceTracking(workspacePath as WorkspacePath);
+      const stopResult = await provider.stopWorkspace(workspaceRef);
+      provider.clearWorkspaceTracking(workspaceRef);
       if (!stopResult.success) {
         return { error: stopResult.error ?? "Failed to stop server" };
       }
@@ -257,7 +226,7 @@ export function createAgentModule(
 
   return {
     name: `${provider.type}-agent`,
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<HookOutput<ConfigureResult>> => {
@@ -282,16 +251,15 @@ export function createAgentModule(
         },
 
         "save-agent": {
-          handler: async (ctx: HookContext) => {
-            const { selectedAgent } = ctx as SaveAgentHookInput;
+          handler: async (ctx) => {
+            const { selectedAgent } = ctx;
             if (selectedAgent !== provider.type) return;
 
             try {
               await deps.agentConfig.set(selectedAgent);
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error);
               throw new SetupError(
-                `Failed to save agent selection: ${message}`,
+                `Failed to save agent selection: ${getErrorMessage(error)}`,
                 "CONFIG_SAVE_FAILED"
               );
             }
@@ -301,8 +269,8 @@ export function createAgentModule(
         // Runs after agent selection, so `configuredAgent` is the agent the user just
         // picked (or the one already in config.json) — never null.
         "check-deps": {
-          handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
-            const { configuredAgent } = ctx as CheckDepsHookContext;
+          handler: async (ctx): Promise<HookOutput<CheckDepsResult>> => {
+            const { configuredAgent } = ctx;
             if (configuredAgent !== provider.type) return { result: {} };
 
             const missingBinaries: BinaryType[] = [];
@@ -354,8 +322,8 @@ export function createAgentModule(
 
       [GET_LAUNCH_OPTIONS_OPERATION_ID]: {
         "launch-options": {
-          handler: async (ctx: HookContext): Promise<HookOutput<LaunchOptionsHookResult>> => {
-            const { backend } = ctx as LaunchOptionsHookInput;
+          handler: async (ctx): Promise<HookOutput<LaunchOptionsHookResult>> => {
+            const { backend } = ctx;
             // Only the module matching the requested backend contributes.
             if (backend !== provider.type || provider.getLaunchOptions === undefined) {
               return { result: {} };
@@ -389,43 +357,21 @@ export function createAgentModule(
       [SETUP_OPERATION_ID]: {
         binary: {
           // Streaming handler: yield progress frames; the setup operation emits them.
-          handler: async function* (
-            ctx: HookContext
-          ): AsyncGenerator<SetupProgressPayload, void, void> {
-            const hookCtx = ctx as BinaryHookInput;
-            const missingBinaries = hookCtx.missingBinaries ?? [];
+          handler: async function* (ctx): AsyncGenerator<SetupProgressPayload, void, void> {
+            const missingBinaries = ctx.missingBinaries ?? [];
 
-            if (hookCtx.configuredAgent !== provider.type) return;
+            if (ctx.configuredAgent !== provider.type) return;
 
             if (!missingBinaries.includes(provider.binaryType)) {
               yield { id: "agent", status: "done" };
               return;
             }
 
-            yield { id: "agent", status: "running", message: "Downloading..." };
             try {
-              yield* streamProgress<SetupProgressPayload>(async (emit) => {
-                let lastKey = "";
-                await provider.downloadBinary((p) => {
-                  const pct = p.totalBytes
-                    ? Math.floor((p.bytesDownloaded / p.totalBytes) * 100)
-                    : undefined;
-                  // Throttle: only forward when the phase or integer % changes.
-                  const key = `${p.phase}:${pct ?? "x"}`;
-                  if (key === lastKey) return;
-                  lastKey = key;
-                  const message = p.phase === "downloading" ? "Downloading..." : "Extracting...";
-                  emit({
-                    id: "agent",
-                    status: "running",
-                    message,
-                    ...(pct !== undefined && { progress: pct }),
-                  });
-                });
-              });
-              yield { id: "agent", status: "done" };
+              yield* streamDownloadProgress("agent", (onProgress) =>
+                provider.downloadBinary(onProgress)
+              );
             } catch (error) {
-              yield { id: "agent", status: "failed", error: getErrorMessage(error) };
               throw new SetupError(
                 `Failed to download ${provider.binaryType}: ${getErrorMessage(error)}`,
                 "BINARY_DOWNLOAD_FAILED"
@@ -438,37 +384,34 @@ export function createAgentModule(
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
+          handler: async (ctx): Promise<HookOutput<SetupHookResult>> => {
             ensureInitialized();
 
-            const setupCtx = ctx as SetupHookInput;
-            const intent = ctx.intent as OpenWorkspaceIntent;
-            const { workspaceRef, workspacePath } = setupCtx;
-            refsByPath.set(new Path(workspacePath).toString(), workspaceRef);
+            const { intent } = ctx;
+            const { workspaceRef, workspacePath, fresh } = ctx;
 
             // A reopened workspace whose agent never took its prompt over (the app
             // quit first) gets it again, and starts as fresh as a new one.
-            const existing = intent.payload.existingWorkspace;
-            const hasPending = existing?.metadata[PENDING_PROMPT_METADATA_KEY] !== undefined;
-            const spec =
-              existing === undefined ? intent.payload.agent : pendingAgentSpec(existing.metadata);
+            const existingMetadata = intent.payload.existingWorkspace?.metadata ?? {};
+            const hasPending =
+              !fresh && existingMetadata[PENDING_PROMPT_METADATA_KEY] !== undefined;
+            const spec = fresh ? intent.payload.agent : pendingAgentSpec(existingMetadata);
             const initialPrompt = agentPromptConfigFor(spec, provider.type);
 
-            if (existing === undefined && initialPrompt !== undefined) {
+            if (fresh && initialPrompt !== undefined) {
               await setPendingPrompt(workspaceRef, JSON.stringify(spec));
             } else if (hasPending && initialPrompt === undefined) {
               // Unreadable, or nothing this agent can use: drop it rather than keep it forever.
               await setPendingPrompt(workspaceRef, null);
             }
 
-            const result = await provider.startWorkspace(workspacePath, {
-              workspaceRef,
+            const result = await provider.startWorkspace(workspaceRef, new Path(workspacePath), {
               ...(initialPrompt !== undefined && {
                 initialPrompt,
                 onInitialPromptDelivered: () => void setPendingPrompt(workspaceRef, null),
               }),
-              isNewWorkspace: existing === undefined || initialPrompt !== undefined,
-              env: setupCtx.workspaceEnv,
+              isNewWorkspace: fresh || initialPrompt !== undefined,
+              env: ctx.workspaceEnv,
             });
 
             return {
@@ -483,11 +426,10 @@ export function createAgentModule(
         // travels over, so it waits for that close to finish.
         shutdown: {
           requires: { agent: provider.type, [CAPABILITY_AGENT_STOPPED]: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspacePath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const result = await stopAgentForWorkspace(workspacePath, "delete shutdown");
-            refsByPath.delete(new Path(workspacePath).toString());
+          handler: async (ctx): Promise<HookOutput<ShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
+            const { payload } = ctx.intent;
+            const result = await stopAgentForWorkspace(workspaceRef, "delete shutdown");
             if (result.error && !payload.force) {
               throw new Error(result.error);
             }
@@ -503,9 +445,9 @@ export function createAgentModule(
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
-            const { workspacePath } = ctx as HibernatePipelineHookInput;
-            await stopAgentForWorkspace(workspacePath, "hibernate shutdown");
+          handler: async (ctx): Promise<HookOutput<HibernateShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
+            await stopAgentForWorkspace(workspaceRef, "hibernate shutdown");
             return { result: {} };
           },
         },
@@ -514,11 +456,11 @@ export function createAgentModule(
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
-            const { workspacePath } = ctx as GetStatusHookInput;
+          handler: async (ctx): Promise<HookOutput<GetStatusHookResult>> => {
+            const { workspaceRef } = ctx;
             return {
               result: {
-                agentStatus: provider.getStatus(workspacePath as WorkspacePath),
+                agentStatus: provider.getStatus(workspaceRef),
               },
             };
           },
@@ -528,11 +470,11 @@ export function createAgentModule(
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<GetAgentSessionHookResult>> => {
-            const { workspacePath } = ctx as GetAgentSessionHookInput;
+          handler: async (ctx): Promise<HookOutput<GetAgentSessionHookResult>> => {
+            const { workspaceRef } = ctx;
             return {
               result: {
-                session: provider.getSession(workspacePath as WorkspacePath),
+                session: provider.getSession(workspaceRef),
               },
             };
           },
@@ -542,9 +484,9 @@ export function createAgentModule(
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<RestartAgentHookResult>> => {
-            const { workspacePath } = ctx as RestartAgentHookInput;
-            const result = await provider.restartWorkspace(workspacePath);
+          handler: async (ctx): Promise<HookOutput<RestartAgentHookResult>> => {
+            const { workspaceRef } = ctx;
+            const result = await provider.restartWorkspace(workspaceRef);
             if (result.success) {
               return { result: { port: result.port } };
             } else {
@@ -557,11 +499,11 @@ export function createAgentModule(
       [SEND_AGENT_MESSAGE_OPERATION_ID]: {
         send: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HookOutput<SendHookResult>> => {
-            const { workspacePath, waitMs } = ctx as SendHookInput;
-            const { text, from } = (ctx.intent as SendAgentMessageIntent).payload;
+          handler: async (ctx): Promise<HookOutput<SendHookResult>> => {
+            const { workspaceRef, waitMs } = ctx;
+            const { text, from } = ctx.intent.payload;
             try {
-              await provider.sendMessage(workspacePath, { text, from }, { waitMs });
+              await provider.sendMessage(workspaceRef, { text, from }, { waitMs });
             } catch (error) {
               // No agent to take it is the target's state, not a fault.
               if (error instanceof AgentUnreachableError) {
@@ -577,9 +519,9 @@ export function createAgentModule(
       [AGENT_LIFECYCLE_OPERATION_ID]: {
         lifecycle: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<void> => {
-            const { workspacePath, event } = ctx as AgentLifecycleHookInput;
-            provider.applyTerminalLifecycle(workspacePath, event);
+          handler: async (ctx): Promise<void> => {
+            const { workspaceRef, event } = ctx;
+            provider.applyTerminalLifecycle(workspaceRef, event);
           },
         },
       },
@@ -589,12 +531,12 @@ export function createAgentModule(
         // re-reports is never acted on against a stale modal state.
         modal: {
           requires: { agent: provider.type, [MODAL_RECORDED_CAPABILITY]: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<void> => {
-            const { workspacePath, open } = ctx as ModalHookInput;
-            provider.setModalOpen(workspacePath, open);
+          handler: async (ctx): Promise<void> => {
+            const { workspaceRef, open } = ctx;
+            provider.setModalOpen(workspaceRef, open);
           },
         },
       },
-    },
+    }),
   };
 }

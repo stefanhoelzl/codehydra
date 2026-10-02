@@ -37,7 +37,6 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { WorkspaceRef } from "../intents/contract";
@@ -51,21 +50,20 @@ import type {
 } from "../api/entries/deps";
 import { workspaceNameOf } from "../utils/ref";
 import { formatAge } from "../utils/age";
-import { TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
+import { encodeTag, tagKey } from "../shared/api/types";
+import { getErrorMessage } from "../shared/error-utils";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../intents/set-metadata";
-import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
-import { EVENT_WORKSPACE_DELETED, type WorkspaceDeletedEvent } from "../intents/delete-workspace";
-import {
-  EVENT_WORKSPACE_HIBERNATED,
-  type WorkspaceHibernatedEvent,
-} from "../intents/hibernate-workspace";
+import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_HIBERNATED } from "../intents/hibernate-workspace";
+import { defineEvents } from "../intents/declarations";
 
 /**
  * Metadata keys of the two sidebar tags. Fixed rather than derived from the lock
  * name: git config rejects `_` in a variable name, and lock names allow it.
  */
-export const LOCK_TAG_KEY = `${TAGS_METADATA_KEY_PREFIX}lock`;
-export const LOCK_WAIT_TAG_KEY = `${TAGS_METADATA_KEY_PREFIX}lock-wait`;
+export const LOCK_TAG_KEY = tagKey("lock");
+export const LOCK_WAIT_TAG_KEY = tagKey("lock-wait");
 
 const HELD_ICON = "🔒";
 const WAITING_ICON = "⏳";
@@ -152,7 +150,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     const heldTag =
       held.length === 0
         ? null
-        : JSON.stringify({
+        : encodeTag({
             label: `${HELD_ICON} ${held.map((l) => l.key.name).join(", ")}`,
             // A lock taken with no reason still names itself in the label; its line
             // in the tooltip is just the name.
@@ -166,7 +164,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
     const waitingTag =
       waiting.length === 0
         ? null
-        : JSON.stringify({
+        : encodeTag({
             label: `${WAITING_ICON} ${waiting.map((l) => l.key.name).join(", ")}`,
             description: waiting
               .map((l) => {
@@ -212,7 +210,7 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
           // Forget what we thought we wrote, so the next change retries it.
           written.delete(workspace);
           logger.scoped({ workspace: workspaceRef }).warn("Failed to update lock tags", {
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       });
@@ -462,7 +460,9 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       }
       const cycle = deadlockVia(workspace, lock);
       if (cycle !== null) {
-        logger.info("Lock take refused: deadlock", { lock: key.name, workspace: workspaceRef });
+        logger
+          .scoped({ workspace: workspaceRef })
+          .info("Lock take refused: deadlock", { lock: key.name });
         return Promise.reject(
           new ApiError(
             "conflict",
@@ -525,10 +525,10 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
   return {
     name: "lock",
     locks: table,
-    events: {
+    events: defineEvents({
       [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef } = (event as WorkspaceDeletedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef } = event.payload;
           // Mark first, so the release below does not try to write tags into a
           // worktree that no longer exists. A runtime-only teardown (project
           // close) leaves the worktree, and its stale tags are reconciled when the
@@ -539,8 +539,8 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
         },
       },
       [EVENT_WORKSPACE_HIBERNATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          releaseWorkspace((event as WorkspaceHibernatedEvent).payload.workspaceRef, "hibernated");
+        handler: async (event): Promise<void> => {
+          releaseWorkspace(event.payload.workspaceRef, "hibernated");
         },
       },
       // Startup re-discovery, wake, and project re-open all come through here.
@@ -548,8 +548,8 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
       // tags left behind by a previous run (or a teardown) are cleared, and a lock
       // taken since is kept.
       [EVENT_WORKSPACE_CREATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef, metadata } = (event as WorkspaceCreatedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, metadata } = event.payload;
           const workspace = workspaceRef;
           gone.delete(workspace);
           const held = metadata[LOCK_TAG_KEY] ?? null;
@@ -559,6 +559,6 @@ export function createLockModule(deps: LockModuleDeps): LockModule {
           refreshTags([workspaceRef]);
         },
       },
-    },
+    }),
   };
 }

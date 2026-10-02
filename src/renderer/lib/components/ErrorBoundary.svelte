@@ -23,6 +23,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { createLogger } from "$lib/logging";
+  import { toError } from "@shared/error-utils";
 
   interface Props {
     /** Names the walled-off region in logs / telemetry (e.g. "dialog:abc"). */
@@ -42,7 +43,7 @@
   const logger = createLogger("ui");
 
   function onerror(error: unknown): void {
-    const err = error instanceof Error ? error : new Error(String(error));
+    const err = toError(error);
     logger.error(`UI boundary "${label}" caught an error`, {
       message: err.message,
       stack: err.stack ?? null,

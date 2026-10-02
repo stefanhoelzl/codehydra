@@ -21,17 +21,22 @@
  * The view-model mirrors today's renderer store semantics (projects store,
  * creating placeholders, deletion lifecycle, agent status, active workspace,
  * theme). The creation panel is derived, not tracked: it is the main view's
- * ground state whenever no workspace is active. Workspace keys are
- * presenter-assigned and opaque to the renderer. Pushing starts at the
- * renderer's ui-connected handshake; the startup screen gives way to the
- * sidebar once every startup project:open has announced its workspaces (see
- * endStartup), while they are still opening.
+ * ground state whenever no workspace is active. A row's key is its workspace
+ * ref, opaque to the renderer. Pushing starts at the renderer's ui-connected
+ * handshake; the startup screen gives way to the sidebar once every startup
+ * project:open has announced its workspaces (see startup-surface.ts), while
+ * they are still opening.
+ *
+ * The factory is wiring: the view-model lives in view-model.ts, and three
+ * collaborators share it with the snapshot scheduler — the startup/loading
+ * system dialog (startup-surface.ts), running plugin hooks (running-hooks.ts)
+ * and shortcut navigation (navigation.ts).
  */
 
-import type { IntentModule, EventDeclarations } from "../../intents/lib/module";
+import type { IntentModule } from "../../intents/lib/module";
 import type { IntentInterceptor } from "../../intents/lib/dispatcher";
-import type { DomainEvent, Intent } from "../../intents/lib/types";
-import type { HookContext, HookOutput } from "../../intents/lib/operation";
+import type { Intent } from "../../intents/lib/types";
+import type { HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { IDispatcher } from "../../intents/lib/dispatcher";
 import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/logging";
@@ -42,42 +47,17 @@ import type { StateService } from "../../boundaries/platform/state-service";
 import type { IViewManager } from "../../boundaries/shell/view-manager.interface";
 import type { Theme } from "../../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../../shared/api/interfaces";
-import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../../shared/api/types";
+import type { AgentStatus, DeletionProgress } from "../../shared/api/types";
 import { extractTags, readTitle, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
-import {
-  APP_SHUTDOWN_OPERATION_ID,
-  INTENT_APP_SHUTDOWN,
-  type AppShutdownIntent,
-} from "../../intents/app-shutdown";
-import { EVENT_APP_STARTED } from "../../intents/app-ready";
-import {
-  APP_START_OPERATION_ID,
-  type ShowUIHookResult,
-  type AgentSelectionHookContext,
-} from "../../intents/app-start";
-import {
-  SETUP_OPERATION_ID,
-  EVENT_SETUP_PROGRESS,
-  EVENT_SETUP_ERROR,
-  type SetupProgressEvent,
-  type SetupErrorEvent,
-} from "../../intents/setup";
-import type { LifecycleAgentType } from "../../shared/ipc";
-import {
-  EVENT_PROJECT_OPENED,
-  EVENT_PROJECT_OPEN_FAILED,
-  INTENT_OPEN_PROJECT,
-  type OpenProjectIntent,
-  type ProjectOpenedEvent,
-  type ProjectOpenFailedEvent,
-} from "../../intents/open-project";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { SETUP_OPERATION_ID } from "../../intents/setup";
+import { EVENT_PROJECT_OPENED } from "../../intents/open-project";
 import {
   EVENT_PROJECT_CLOSED,
   INTENT_CLOSE_PROJECT,
   CLOSE_PROJECT_OPERATION_ID,
-  type ProjectClosedEvent,
   type CloseProjectIntent,
-  type CloseConfirmHookInput,
   type CloseConfirmHookResult,
 } from "../../intents/close-project";
 import {
@@ -87,9 +67,6 @@ import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspacePayload,
   type WorkspaceOpenSource,
-  type WorkspaceCreatedEvent,
-  type WorkspaceLoadingEvent,
-  type WorkspaceCreateFailedEvent,
 } from "../../intents/open-workspace";
 import {
   CAPABILITY_AGENT_STOPPED,
@@ -97,40 +74,23 @@ import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
   INTENT_DELETE_WORKSPACE,
-  type DeletePipelineHookInput,
   type DeleteWorkspaceIntent,
   type ShutdownHookResult,
-  type WorkspaceDeletedEvent,
-  type WorkspaceDeletionProgressEvent,
 } from "../../intents/delete-workspace";
 import {
   EVENT_WORKSPACE_SWITCHED,
   INTENT_SWITCH_WORKSPACE,
-  type WorkspaceSwitchedEvent,
   type SwitchWorkspaceIntent,
 } from "../../intents/switch-workspace";
-import {
-  INTENT_GET_ACTIVE_WORKSPACE,
-  type GetActiveWorkspaceIntent,
-} from "../../intents/get-active-workspace";
-import {
-  EVENT_AGENT_STATUS_UPDATED,
-  type AgentStatusUpdatedEvent,
-} from "../../intents/update-agent-status";
-import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../../intents/set-metadata";
-import {
-  EVENT_SHORTCUT_ACTIVE_CHANGED,
-  type ShortcutActiveChangedEvent,
-} from "../../intents/set-shortcut-active";
-import {
-  EVENT_SHORTCUT_KEY_PRESSED,
-  type ShortcutKeyPressedEvent,
-} from "../../intents/shortcut-key";
+import { activeWorkspaceRef } from "../../intents/lib/active-workspace";
+import { EVENT_AGENT_STATUS_UPDATED } from "../../intents/update-agent-status";
+import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
+import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import {
   INTENT_HIBERNATE_WORKSPACE,
   HIBERNATE_WORKSPACE_OPERATION_ID,
   type HibernateWorkspaceIntent,
-  type HibernatePipelineHookInput,
   type PrepareCaptureHookResult,
   type CleanupCaptureHookResult,
 } from "../../intents/hibernate-workspace";
@@ -138,19 +98,11 @@ import {
   INTENT_WAKE_WORKSPACE,
   EVENT_WORKSPACE_WAKE_FAILED,
   type WakeWorkspaceIntent,
-  type WorkspaceWakeFailedEvent,
 } from "../../intents/wake-workspace";
-import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
-import type { UIMode } from "../../shared/ipc";
+import { isShortcutKey } from "../../shared/shortcuts";
+import type { AggregatedAgentStatus, UIMode } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
-import type {
-  DialogActionEvent,
-  DialogConfig,
-  DialogSection,
-  DialogKind,
-  ProgressItem,
-} from "../../shared/dialog-types";
-import type { NotificationConfig } from "../../shared/notification-types";
+import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
 import { uiEventSchema } from "../../shared/ui-event";
 import {
   clampSidebarWidthMin,
@@ -177,8 +129,21 @@ import {
 } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { ProjectPath, ProjectRef, WorkspaceRef } from "../../intents/contract";
+import type { WorkspaceRef } from "../../intents/contract";
 import { makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
+import { createWorkspaceStatusCache } from "../workspace-status-cache";
+import { createRunningHooks, type RunningHook } from "./running-hooks";
+import { createStartupSurface } from "./startup-surface";
+import { createShortcutNavigation } from "./navigation";
+import {
+  PresentationModel,
+  fromMetadata,
+  type ProjectModel,
+  type RowEntry,
+  type WorkspaceEntry,
+  type WorkspaceModel,
+} from "./view-model";
+import { defineEvents, defineHooks, type HookInput } from "../../intents/declarations";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
@@ -222,28 +187,7 @@ export interface PresentationModuleDeps {
 /** Allowed values for the `sidebar.label-scroll` config key. */
 const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
-/**
- * A blocking plugin hook that is running, and how to stop it.
- *
- * Registered by the hooks module for the length of one process, so every
- * surface that could leave the user staring at a hook that never ends has a
- * Cancel to offer.
- */
-export interface RunningHook {
-  readonly workspaceRef: WorkspaceRef;
-  readonly workspaceName: string;
-  /** The hook's on-disk entry name — what the user sees. */
-  readonly entry: string;
-  /**
-   * Where its Cancel lives. An `open` hook is offered on the loading surface
-   * (the startup screen, the active workspace's loading panel) or, when none
-   * shows it, on a sidebar notification. A `delete` hook is offered by the
-   * deletion panel, which calls `cancelRunningHooks`.
-   */
-  readonly phase: "open" | "delete";
-  /** Kill it. Idempotent; the run then fails as a canceled hook. */
-  cancel(): void;
-}
+export type { RunningHook } from "./running-hooks";
 
 /**
  * The UI presenter: an IntentModule that also exposes the imperative dialog
@@ -294,48 +238,8 @@ function toLoggerName(name: string): LoggerName {
 }
 
 // =============================================================================
-// Internal view-model
+// Row helpers
 // =============================================================================
-
-/**
- * Semantic workspace view-model. The UI cares about meanings, not metadata:
- * domain metadata is interpreted once at event intake (hibernated flag,
- * tags) and raw metadata is never stored.
- */
-interface WorkspaceModel {
-  /** The workspace's identity; known from the start, a creation's placeholder included. */
-  readonly ref: WorkspaceRef;
-  readonly name: string;
-  /**
-   * User-given display title (metadata `title`); undefined when unset, so the
-   * row falls back to `name`. Display-only — `name` stays the identity.
-   */
-  title: string | undefined;
-  hibernated: boolean;
-  tags: WorkspaceTag[];
-  url: string | undefined;
-  /**
-   * Where the workspace is in its open: `creating` (a new worktree, no path
-   * yet), `loading` (a discovered worktree whose workspace:open has not
-   * finished), `ready`, or `open-failed` (that open failed; `openError` says
-   * why). Deletion is tracked apart, in `deletions`.
-   */
-  phase: WorkspacePhase;
-  openError?: string;
-}
-
-type WorkspacePhase = "creating" | "loading" | "ready" | "open-failed";
-
-/** Interpret a workspace's domain metadata into the semantic model fields. */
-function fromMetadata(
-  metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "tags" | "title"> {
-  return {
-    hibernated: metadata["hibernated"] === "true",
-    tags: extractTags(metadata),
-    title: readTitle(metadata["title"]),
-  };
-}
 
 /**
  * Distill the domain DeletionProgress into the render-ready row field: keep
@@ -354,16 +258,6 @@ function toUiDeletionProgress(progress: DeletionProgress): UiDeletionProgress {
     hasErrors: progress.hasErrors,
     blockingProcessCount: progress.blockingProcesses?.length ?? 0,
   };
-}
-
-interface ProjectModel {
-  readonly ref: ProjectRef;
-  readonly id: string;
-  readonly name: string;
-  readonly path: ProjectPath;
-  readonly remoteUrl: string | undefined;
-  /** Keyed by workspace name (unique per project); insertion-ordered. */
-  readonly workspaces: Map<string, WorkspaceModel>;
 }
 
 const AGENT_NONE: AgentStatus = { type: "none" };
@@ -554,6 +448,13 @@ function projectForLog(state: UiState): string {
   return JSON.stringify(projected);
 }
 
+/** The row view of a tracked agent status (absent = no agent). */
+function toAgentStatus(status: AggregatedAgentStatus | undefined): AgentStatus {
+  if (status === undefined || status.status === "none") return AGENT_NONE;
+  const { idle, busy } = status.counts;
+  return { type: status.status, counts: { idle, busy, total: idle + busy } };
+}
+
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
   const logger = deps.loggingService.createLogger("presenter");
 
@@ -613,10 +514,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // State (mirrors the renderer stores' semantics)
   // ---------------------------------------------------------------------------
 
-  /** Keyed by projectId; insertion-ordered. */
-  const projects = new Map<string, ProjectModel>();
-  /** Agent status keyed by workspace ref. */
-  const agentStatuses = new Map<WorkspaceRef, AgentStatus>();
+  /** Projects and workspace rows, indexed by ref; the active workspace. */
+  const model = new PresentationModel();
+  /** Agent status by workspace ref. */
+  const agents = createWorkspaceStatusCache(() => scheduleUpdate());
   /**
    * Deletion lifecycle keyed by workspace ref (absent = not deleting). The
    * single source of truth for deletion progress: the row's render-ready
@@ -638,10 +539,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * exit is still talking over.
    */
   const framesReleased = new Set<WorkspaceRef>();
-  /** Hibernation screenshot data URLs keyed by workspace key (null = missing). */
-  const screenshots = new Map<string, string | null>();
-  const screenshotLoads = new Set<string>();
-  let activeKey: string | null = null;
+  /** Hibernation screenshot data URLs keyed by workspace ref (null = missing). */
+  const screenshots = new Map<WorkspaceRef, string | null>();
+  const screenshotLoads = new Set<WorkspaceRef>();
   let theme: Theme = "dark";
   /**
    * The snapshot stream gate. Set true on the `ui-connected` handshake (App
@@ -650,107 +550,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * subscribed. The genesis snapshot is flushed immediately on connect.
    */
   let connected = false;
+  /**
+   * A push is queued or under way: further schedule requests ride on it. Held
+   * through the reconciliation at the top of push(), whose own dialog and
+   * notification mutations that push already carries.
+   */
   let pushScheduled = false;
   let themeUnsubscribe: Unsubscribe | null = null;
-
-  // ---------------------------------------------------------------------------
-  // Startup flow view-model (boot splash, first-run setup, agent-selection,
-  // workspace loading). Everything the user sees before app:started — and the
-  // mid-session "workspace still creating" overlay — is a single reconciled
-  // "system dialog". The startup surfaces are modals over a blank
-  // `main: { kind: "starting" }` base; the mid-session loading overlay is a
-  // "panel" (no blur/dim) below the sidebar over the not-yet-mounted frame.
-  // `reconcileSystemDialog()` (run inside push) projects it from state.
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Startup phase. "starting" is the genesis state (boot splash); "agent-selection"
-   * is pushed by app:start's picker hook and "setup" by the app:setup hooks;
-   * "running" is reached once app:start's `start` hook fires (app:ready dispatched)
-   * and stays until app:started, after which the normal main logic owns the view.
-   */
-  type StartupPhase = "starting" | "setup" | "agent-selection" | "running" | "done";
-  let startupPhase: StartupPhase = "starting";
-
-  /** A first-run setup progress row, accumulated from setup:progress events. */
-  interface SetupRow {
-    readonly id: string;
-    readonly label: string;
-    readonly status: "pending" | "running" | "done" | "error";
-    readonly message?: string;
-    readonly progress?: number;
-  }
-
-  const SETUP_ROW_LABELS: Record<string, string> = {
-    vscode: "VSCode",
-    agent: "Agent",
-    setup: "Setup",
-  };
-  const SETUP_ROW_IDS = ["vscode", "agent", "setup"] as const;
-  /** Accumulated setup row state, keyed by row id (persists across progress). */
-  const setupRows = new Map<string, SetupRow>();
-  let setupError: { message: string } | undefined;
-
-  /** Reset the three setup rows to pending (entering the setup phase). */
-  function resetSetupRows(): void {
-    setupRows.clear();
-    setupError = undefined;
-    for (const id of SETUP_ROW_IDS) {
-      setupRows.set(id, { id, label: SETUP_ROW_LABELS[id] ?? id, status: "pending" });
-    }
-  }
-
-  /** Current setup rows in canonical (vscode, agent, setup) order. */
-  function setupRowList(): SetupRow[] {
-    return SETUP_ROW_IDS.map(
-      (id) => setupRows.get(id) ?? { id, label: SETUP_ROW_LABELS[id] ?? id, status: "pending" }
-    );
-  }
-
-  /** Available agents for the picker (set by the agent-selection hook). */
-  let agentOptions: AgentSelectionHookContext["availableAgents"] = [];
-  /** Resolve/reject the parked agent-selection hook (set while awaiting a pick).
-   *  A pick resolves it; app:shutdown rejects it so app:setup unwinds WITHOUT
-   *  reaching save-agent (nothing persisted; next launch re-prompts). */
-  let agentSelectionResolve: ((agent: LifecycleAgentType) => void) | null = null;
-  let agentSelectionReject: ((reason: Error) => void) | null = null;
-  /** Resolve/reject app:start's waitForRetry (set while awaiting a setup retry).
-   *  The Retry button resolves it; app:shutdown rejects it to unwind app:start. */
-  let retryResolve: (() => void) | null = null;
-  let retryReject: ((reason: Error) => void) | null = null;
-
-  /**
-   * The single modal dialog projecting the startup surfaces + the mid-session
-   * loading overlay. Reconciled from state in push(); its action events (agent
-   * pick, setup Retry/Quit) route here via `handleSystemAction`.
-   */
-  let systemDialog: DialogHandle | null = null;
-  /** JSON of the last-applied system-dialog config (null = closed). Guards
-   *  reconcile against redundant updates (and thus push loops). */
-  let systemDialogConfigJson: string | null = null;
-  /** Kind of the currently-open system dialog (null = closed). A dialog's kind
-   *  is immutable, so a kind change (e.g. boot "running" loading modal → the
-   *  mid-session loading panel, both carrying the identical spinner config)
-   *  forces a close + reopen rather than an update(). */
-  let systemDialogKind: DialogKind | null = null;
-  /** True only while push() is reconciling: suppresses the dialog mutations'
-   *  own scheduleUpdate (the in-flight push already carries them). */
-  let inPush = false;
-  /** Set once app:shutdown starts: the system dialog stays closed thereafter. */
-  let shuttingDown = false;
-  /** Running plugin hooks by registration id (see `trackRunningHook`). */
-  const runningHooks = new Map<number, RunningHook>();
-  let nextRunningHookId = 0;
-  /**
-   * Hooks old enough for a notification. Most hooks finish in well under a
-   * second, and a card per background creation that flashes and vanishes would
-   * be noise; only one still running after the grace period gets a card.
-   */
-  const notifiableHooks = new Set<number>();
-  const hookNotificationTimers = new Map<number, ReturnType<typeof setTimeout>>();
-  /** The sidebar notification standing in for a hook no loading surface shows. */
-  /** Card id per hook, from the NotificationManager. */
-  const hookNotifications = new Map<number, string>();
 
   // --- UI mode inputs (main-owned). Mode = shortcut > dialog > hover >
   //     workspace, computed in buildMode() from these four signals.
@@ -765,10 +571,42 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   let capturing = false;
 
-  /** Presenter-assigned opaque workspace identity. Never leaves main except inside UiState. */
-  function workspaceKey(projectId: string, workspaceName: string): string {
-    return `${projectId}/${workspaceName}`;
-  }
+  // ---------------------------------------------------------------------------
+  // Collaborators: running plugin hooks, the startup/loading system dialog,
+  // shortcut navigation. Each gets the model and scheduleUpdate.
+  // ---------------------------------------------------------------------------
+
+  const runningHooks = createRunningHooks({
+    notifications,
+    scheduleUpdate,
+    projectName: (workspaceRef) => {
+      const projectRef = projectRefOf(workspaceRef);
+      return model.projects.get(projectRef)?.name ?? projectNameOf(projectRef);
+    },
+  });
+
+  const startup = createStartupSurface({
+    dialogs,
+    model,
+    runningHooks,
+    dispatcher: deps.dispatcher,
+    logger,
+    scheduleUpdate,
+    rows: currentRows,
+    retryOpen,
+    deleteWorkspace: dispatchInteractiveDelete,
+  });
+
+  const runShortcutKey = createShortcutNavigation({
+    model,
+    rows: currentRows,
+    rowStatus,
+    dispatch: dispatchDetached,
+    deleteWorkspace: dispatchInteractiveDelete,
+    toggleHideHibernated,
+    toggleSidebarMode: () =>
+      setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked"),
+  });
 
   /** Whether a workspace's IDE frame is in the snapshot's `frames` region. */
   function isFrameMounted(workspace: WorkspaceModel): boolean {
@@ -777,50 +615,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   function reloadFrame(workspaceRef: WorkspaceRef): boolean {
-    for (const project of projects.values()) {
-      for (const workspace of project.workspaces.values()) {
-        if (workspace.ref !== workspaceRef) continue;
-        if (!isFrameMounted(workspace)) return false;
-        deps.viewManager.reloadFrame(workspaceKey(project.id, workspace.name));
-        return true;
-      }
-    }
-    return false;
-  }
-
-  function findProjectByRef(projectRef: ProjectRef): ProjectModel | undefined {
-    for (const project of projects.values()) {
-      if (project.ref === projectRef) return project;
-    }
-    return undefined;
-  }
-
-  function findByKey(
-    key: string
-  ): { project: ProjectModel; workspace: WorkspaceModel } | undefined {
-    for (const project of projects.values()) {
-      for (const workspace of project.workspaces.values()) {
-        if (workspaceKey(project.id, workspace.name) === key) return { project, workspace };
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Set the active workspace.
-   *
-   * Deliberately does NOT evict a creating placeholder when the active
-   * workspace moves away from it. The legacy renderer did (applyActiveWorkspace)
-   * because its placeholders were keyed by a synthetic path and
-   * workspace:created inserted a *different* row under the real path, so the
-   * synthetic one had to be swept. Rows are keyed by workspace name here and
-   * workspace:created swaps the placeholder in place, so evicting only made an
-   * in-flight creation vanish from the sidebar until it finished — then pop
-   * back. A placeholder's lifetime is owned solely by workspace:created (swap)
-   * and workspace:create-failed (remove).
-   */
-  function applyActiveKey(next: string | null): void {
-    activeKey = next;
+    const found = model.find(workspaceRef);
+    if (found === undefined || !isFrameMounted(found.workspace)) return false;
+    deps.viewManager.reloadFrame(workspaceRef);
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -838,26 +636,23 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * async: the first snapshot carries null and a re-push follows once the
    * PNG is loaded (or confirmed missing).
    */
-  function resolveScreenshot(
-    key: string,
-    project: ProjectModel,
-    workspace: WorkspaceModel
-  ): string | null {
-    const cached = screenshots.get(key);
+  function resolveScreenshot({ project, workspace }: WorkspaceEntry): string | null {
+    const ref = workspace.ref;
+    const cached = screenshots.get(ref);
     if (cached !== undefined) return cached;
-    if (!screenshotLoads.has(key)) {
-      screenshotLoads.add(key);
+    if (!screenshotLoads.has(ref)) {
+      screenshotLoads.add(ref);
       const filePath = buildScreenshotPath(deps.pathProvider, project.id, workspace.name);
       deps.fileSystem
         .readFileBuffer(filePath)
         .then((png) => {
-          screenshots.set(key, `data:image/png;base64,${png.toString("base64")}`);
+          screenshots.set(ref, `data:image/png;base64,${png.toString("base64")}`);
         })
         .catch(() => {
-          screenshots.set(key, null);
+          screenshots.set(ref, null);
         })
         .finally(() => {
-          screenshotLoads.delete(key);
+          screenshotLoads.delete(ref);
           scheduleUpdate();
         });
     }
@@ -865,20 +660,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
-   * Build a UiWorkspaceRow for a workspace in a project (single source of
-   * truth for both the snapshot and shortcut navigation, so they always agree
-   * on ordering and status).
+   * Build a UiWorkspaceRow for a workspace (single source of truth for both
+   * the snapshot and shortcut navigation, so they always agree on ordering and
+   * status). The row's key is the workspace ref.
    */
-  function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
-    const key = workspaceKey(project.id, workspace.name);
+  function buildRow(workspace: WorkspaceModel): UiWorkspaceRow {
     const progress = deletions.get(workspace.ref);
-    const agent = agentStatuses.get(workspace.ref) ?? AGENT_NONE;
+    const agent = toAgentStatus(agents.statuses.get(workspace.ref));
     // A workspace still being created has its ref already, so the first
     // hook-trust question (raised during after-worktree-created) marks its
     // placeholder row too.
     const waitingOnUser = dialogs.needsAttentionFor(workspace.ref);
     return {
-      key,
+      key: workspace.ref,
       name: workspace.name,
       ...(workspace.title !== undefined && { title: workspace.title }),
       status: rowStatus(workspace),
@@ -891,38 +685,36 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       agent: waitingOnUser ? withAttention(agent) : agent,
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
-      active: key === activeKey,
+      active: workspace.ref === model.activeRef,
       ...(workspace.openError !== undefined && { openError: workspace.openError }),
       // Derive the render-ready row view from the full tracked progress.
       ...(progress && { deletionProgress: toUiDeletionProgress(progress) }),
     };
   }
 
-  /** A workspace row plus the model objects it was built from. */
-  interface RowEntry {
-    readonly row: UiWorkspaceRow;
-    readonly project: ProjectModel;
-    readonly workspace: WorkspaceModel;
+  /** Projects in display order, each with its rows in display order (AaBbCc). */
+  function sortedProjects(): Array<[ProjectModel, WorkspaceModel[]]> {
+    return [...model.workspacesByProject()]
+      .sort(([a], [b]) => compareDisplayNames(a.name, b.name))
+      .map(([project, workspaces]) => [
+        project,
+        workspaces.sort((a, b) => compareDisplayNames(a.name, b.name)),
+      ]);
   }
 
   /**
    * All workspace rows in sidebar display order — the authoritative ordering
-   * shared by the snapshot (buildSnapshot) and shortcut navigation. Projects
-   * and workspaces sort by display name (AaBbCc). When `sidebar.hide-hibernated`
-   * is on, hibernated rows are omitted so keyboard navigation matches the
-   * visible list (up/down can never land on a hidden row).
+   * shared by the snapshot (buildSnapshot) and shortcut navigation. When
+   * `sidebar.hide-hibernated` is on, hibernated rows are omitted so keyboard
+   * navigation matches the visible list (up/down can never land on a hidden row).
    */
   function currentRows(): RowEntry[] {
     const hideHibernated = hideHibernatedState.get();
     const entries: RowEntry[] = [];
-    for (const project of [...projects.values()].sort((a, b) =>
-      compareDisplayNames(a.name, b.name)
-    )) {
-      for (const workspace of [...project.workspaces.values()].sort((a, b) =>
-        compareDisplayNames(a.name, b.name)
-      )) {
+    for (const [project, workspaces] of sortedProjects()) {
+      for (const workspace of workspaces) {
         if (hideHibernated && workspace.hibernated) continue;
-        entries.push({ row: buildRow(project, workspace), project, workspace });
+        entries.push({ row: buildRow(workspace), project, workspace });
       }
     }
     return entries;
@@ -933,24 +725,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     // a blank base under the reconciled system dialog. `starting` is the single
     // marker the renderer reads to keep MainView unmounted (showMain stays
     // false until main.kind flips to a running kind at app:started).
-    if (startupPhase !== "done") return { kind: "starting" };
+    if (!startup.isDone()) return { kind: "starting" };
 
-    // Normal main logic (startupPhase === "done").
     // The creation panel is the ground state: shown whenever nothing is
-    // active (including a stale activeKey whose workspace is gone).
-    if (activeKey === null) return { kind: "creation" };
-    const active = findByKey(activeKey);
-    if (!active) return { kind: "creation" };
+    // active (including a stale active ref whose workspace is gone).
+    const active = model.active();
+    if (active === undefined) return { kind: "creation" };
     if (active.workspace.hibernated) {
-      return {
-        kind: "hibernated",
-        screenshot: resolveScreenshot(activeKey, active.project, active.workspace),
-      };
+      return { kind: "hibernated", screenshot: resolveScreenshot(active) };
     }
     // A still-creating active workspace has no mounted frame yet (its key is
     // absent from `frames`), so the workspace area is blank behind the
     // reconciled mid-session loading dialog until workspace:created arrives.
-    return { kind: "workspace", frameKey: activeKey };
+    return { kind: "workspace", frameKey: active.workspace.ref };
   }
 
   /**
@@ -974,14 +761,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return "workspace";
   }
 
-  /** Whether main is showing the creation panel — buildMain's `creation` condition. */
-  function isCreationMain(): boolean {
-    return startupPhase === "done" && (activeKey === null || findByKey(activeKey) === undefined);
-  }
-
-  /** The mode the next snapshot would carry. */
+  /** The mode the next snapshot would carry (buildMain's `creation` condition inlined). */
   function currentMode(): UIMode {
-    return buildMode(isCreationMain());
+    return buildMode(startup.isDone() && model.active() === undefined);
   }
 
   // ---------------------------------------------------------------------------
@@ -1026,462 +808,52 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // End of the startup screen
-  //
-  // app:ready opens every saved project in parallel, and each opens its
-  // workspaces one after another — for many workspaces that takes a while. The
-  // blocking "Loading workspace..." screen only waits for each project to
-  // announce its workspaces (project:opened, emitted before they open) or fail:
-  // then the sidebar shows every row, the awake ones loading, and each turns
-  // ready as its workspace:created arrives. app:started still ends it at the
-  // latest (a project:open that settles without either event).
-  // ---------------------------------------------------------------------------
-
-  /** Paths of the startup project:opens that have not announced their workspaces yet. */
-  const startupOpens = new Set<string>();
-  /** Whether app:ready has dispatched any project:open (none saved: app:started ends it). */
-  let startupOpensSeen = false;
-
-  const trackStartupOpens: IntentInterceptor = {
-    id: "track-startup-opens",
-    before: async (intent: Intent): Promise<Intent | null> => {
-      if (intent.type !== INTENT_OPEN_PROJECT || startupPhase !== "running") return intent;
-      const { path } = (intent as OpenProjectIntent).payload;
-      if (path !== undefined) {
-        startupOpens.add(path);
-        startupOpensSeen = true;
-      }
-      return intent;
-    },
-  };
-
-  /** A startup project:open announced its workspaces or failed; the last one ends the screen. */
-  function settleStartupOpen(event: ProjectOpenedEvent | ProjectOpenFailedEvent): void {
-    const { path } = event.payload;
-    if (path === undefined || !startupOpens.delete(path)) return;
-    if (startupOpensSeen && startupOpens.size === 0) void endStartup();
-  }
-
-  /**
-   * Land on the topmost awake row, then hand the main view to the normal
-   * logic. Projects announce themselves in whatever order their discovery
-   * finishes, and each lands on its first workspace when nothing is active —
-   * so the one active now is whichever project was quickest. Every row is
-   * known here, which makes the choice the same on every start.
-   */
-  async function endStartup(): Promise<void> {
-    if (startupPhase !== "running") return;
-    const top = currentRows().find((entry) => !entry.workspace.hibernated);
-    if (top !== undefined && top.workspace.phase !== "creating" && !top.row.active) {
-      try {
-        await deps.dispatcher.dispatch<SwitchWorkspaceIntent>({
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspaceRef: top.workspace.ref },
-        });
-      } catch (error: unknown) {
-        logger.debug("Startup landing switch failed", { error: getErrorMessage(error) });
-      }
-    }
-    // app:started or app:shutdown may have come first.
-    if (startupPhase !== "running") return;
-    startupPhase = "done";
-    scheduleUpdate();
-  }
-
-  // ---------------------------------------------------------------------------
-  // System dialog (startup surfaces + mid-session loading)
-  //
-  // One dialog handle projects the whole pre-`app:started` flow and the
-  // still-creating-workspace overlay. It is reconciled from state in push():
-  // computeSystemDialog() maps the current phase (or mid-session loading) to a
-  // { config, kind } (modal for startup, panel for mid-session loading), or null
-  // when nothing should show. reconcileSystemDialog() opens/updates/closes the
-  // handle to match, guarded by a JSON+kind compare so an unchanged state never
-  // re-pushes; a kind change forces close + reopen (kind is immutable).
-  // ---------------------------------------------------------------------------
-
-  /** How long a background hook runs before it gets a notification. */
-  const HOOK_NOTIFICATION_DELAY_MS = 1500;
-
-  /** Action-id prefix of a running hook's Cancel button on the loading surface. */
-  const CANCEL_HOOK_ACTION = "cancel-hook:";
-
-  /** The running `open` hooks, by registration id. */
-  function openHooks(): Array<[number, RunningHook]> {
-    return [...runningHooks].filter(([, hook]) => hook.phase === "open");
-  }
-
-  /** Is this hook for the workspace behind `key`? A creating placeholder has its ref already. */
-  function hookBelongsTo(hook: RunningHook, key: string | null): boolean {
-    if (key === null) return false;
-    const found = findByKey(key);
-    return found !== undefined && found.workspace.ref === hook.workspaceRef;
-  }
-
-  /**
-   * The loading surface: the spinner, plus a row and a Cancel for each running
-   * hook it covers. `named` adds the workspace to each row, for the startup
-   * screen, which stands for every workspace at once.
-   */
-  function loadingConfig(hooks: Array<[number, RunningHook]>, named: boolean): DialogConfig {
-    const base = spinnerConfig("Loading workspace...");
-    if (hooks.length === 0) return base;
-    const label = (hook: RunningHook): string =>
-      named ? `${hook.entry} (${hook.workspaceName})` : hook.entry;
-    return {
-      sections: [
-        {
-          type: "progress",
-          style: "spinner",
-          items: [
-            { id: "status", label: "Loading workspace...", status: "running" },
-            ...hooks.map(([id, hook]) => ({
-              id: `hook-${id}`,
-              label: `Running ${label(hook)}`,
-              status: "running" as const,
-            })),
-          ],
-        },
-        {
-          type: "group",
-          items: hooks.map(([id, hook]) => ({
-            type: "button" as const,
-            id: `${CANCEL_HOOK_ACTION}${id}`,
-            label: hooks.length === 1 ? "Cancel" : `Cancel ${label(hook)}`,
-            variant: "secondary" as const,
-            title: "Stop the plugin hook. The workspace opens without what it would have set up.",
-          })),
-        },
-      ],
-    };
-  }
-
-  /**
-   * Give each running open hook that no loading surface shows a notification
-   * with its own Cancel — a background creation, a wake or project open of a
-   * workspace that is not the active one. Without it the hook could only be
-   * stopped by killing its process. Reconciled in push(), like the system dialog.
-   */
-  function reconcileHookNotifications(): void {
-    const covered = (hook: RunningHook): boolean =>
-      shuttingDown || startupPhase !== "done" || hookBelongsTo(hook, activeKey);
-    for (const [id, cardId] of hookNotifications) {
-      const hook = runningHooks.get(id);
-      if (hook === undefined || covered(hook)) {
-        // No-op when the user already dismissed the card.
-        notifications.close(cardId);
-        hookNotifications.delete(id);
-      }
-    }
-    for (const [id, hook] of openHooks()) {
-      if (hookNotifications.has(id) || !notifiableHooks.has(id) || covered(hook)) continue;
-      const projectRef = projectRefOf(hook.workspaceRef);
-      const projectName = findProjectByRef(projectRef)?.name ?? projectNameOf(projectRef);
-      const config: NotificationConfig = {
-        type: "spinner",
-        title: `Running ${hook.entry}`,
-        message: `${hook.workspaceName} in ${projectName}`,
-        actions: [{ id: "cancel", label: "Cancel", variant: "secondary" }],
-      };
-      // Open, then wait on that same card: the wait takes the card's only hold,
-      // so `close` above ends it, and a click answers it.
-      const cardId = notifications.show({ config });
-      void notifications.showAndWait({ config, id: cardId }, {}).then((choice) => {
-        if (choice === "cancel") hook.cancel();
-      });
-      hookNotifications.set(id, cardId);
-    }
-  }
-
-  function trackRunningHook(hook: RunningHook): () => void {
-    const id = nextRunningHookId++;
-    runningHooks.set(id, hook);
-    if (hook.phase === "open") {
-      hookNotificationTimers.set(
-        id,
-        setTimeout(() => {
-          hookNotificationTimers.delete(id);
-          notifiableHooks.add(id);
-          scheduleUpdate();
-        }, HOOK_NOTIFICATION_DELAY_MS)
-      );
-    }
-    scheduleUpdate();
-    return () => {
-      if (!runningHooks.delete(id)) return;
-      clearTimeout(hookNotificationTimers.get(id));
-      hookNotificationTimers.delete(id);
-      notifiableHooks.delete(id);
-      scheduleUpdate();
-    };
-  }
-
-  function cancelRunningHooks(workspaceRef: WorkspaceRef): void {
-    for (const hook of runningHooks.values()) {
-      if (hook.workspaceRef === workspaceRef) hook.cancel();
-    }
-  }
-
-  /** A centered spinner + label (boot splash / loading), via a spinner row. */
-  function spinnerConfig(label: string): DialogConfig {
-    return {
-      sections: [
-        { type: "progress", style: "spinner", items: [{ id: "status", label, status: "running" }] },
-      ],
-    };
-  }
-
-  /** Action ids of the failed-open panel's buttons. */
-  const RETRY_OPEN_ACTION = "retry-open";
-  const DELETE_FAILED_ACTION = "delete-failed-open";
-
-  /** The panel over an active workspace whose open failed: why, Retry, Delete. */
-  function openFailedConfig(error: string | undefined): DialogConfig {
-    return {
-      sections: [
-        { type: "text", content: "Could not open workspace", style: "heading" },
-        ...(error !== undefined
-          ? [{ type: "text" as const, content: error, style: "error" as const }]
-          : []),
-        {
-          type: "group",
-          items: [
-            { type: "button", id: RETRY_OPEN_ACTION, label: "Retry", variant: "primary" },
-            { type: "button", id: DELETE_FAILED_ACTION, label: "Delete", variant: "secondary" },
-          ],
-        },
-      ],
-    };
-  }
-
-  /** The first-run setup surface: progress rows, plus Retry/Quit on error. */
-  function setupConfig(): DialogConfig {
-    const items: ProgressItem[] = setupRowList().map((row) => ({
-      id: row.id,
-      label: row.label,
-      status: row.status,
-      ...(row.message !== undefined && { message: row.message }),
-      ...(row.progress !== undefined && { progress: row.progress }),
-    }));
-    const sections: DialogSection[] = [
-      { type: "text", content: "Setting up CodeHydra", style: "heading" },
-      { type: "text", content: "This is only required on first startup.", style: "subtitle" },
-      { type: "progress", style: "bar", items },
-    ];
-    if (setupError !== undefined) {
-      sections.push({ type: "text", content: setupError.message, style: "error" });
-      // Retry is primary (Enter activates it); Quit is a plain button; no
-      // cancel-role button, so Escape is a no-op (setup is mandatory).
-      sections.push({
-        type: "group",
-        items: [
-          // autofocus for the same reason as the agent radio: the persistent
-          // dialog doesn't remount when the error + buttons appear.
-          { type: "button", id: "retry", label: "Retry", variant: "primary", autofocus: true },
-          { type: "button", id: "quit", label: "Quit", variant: "secondary" },
-        ],
-      });
-    }
-    return { sections };
-  }
-
-  /**
-   * The agent picker: a radio group (defaulting to the first option, focused on
-   * mount by the form) + a primary Continue button. Arrow keys move the
-   * selection, Enter / Ctrl+Enter activate Continue; no cancel button, so
-   * Escape is a no-op (selection is mandatory on first run).
-   */
-  function agentConfig(): DialogConfig {
-    return {
-      sections: [
-        { type: "text", content: "Choose Agent", style: "heading" },
-        {
-          type: "radio",
-          id: "agent",
-          // autofocus: the system dialog is one persistent handle updated across
-          // phases, so the Form never remounts — the focus-follow moves focus
-          // onto the selected radio card when this config replaces the spinner.
-          autofocus: true,
-          options: agentOptions.map((a) => ({ id: a.agent, label: a.label, icon: a.icon })),
-        },
-        {
-          type: "group",
-          items: [{ type: "button", id: "continue", label: "Continue", variant: "primary" }],
-        },
-      ],
-    };
-  }
-
-  /**
-   * The desired system-dialog config + kind for the current state, or null for
-   * none. All startup-phase surfaces are blocking modals (MainView is unmounted
-   * then, so DialogHost must own the screen). The mid-session loading surface is
-   * a "panel" instead: MainView is mounted, so blurring/dimming the live sidebar
-   * would wrongly read as disabled — the workspace frame is simply not up yet,
-   * exactly like the deletion panel masking a torn-down frame. Both render via
-   * PanelView, below the sidebar, with no backdrop.
-   */
-  function computeSystemDialog(): { config: DialogConfig; kind: DialogKind } | null {
-    if (shuttingDown) return null;
-    switch (startupPhase) {
-      case "starting":
-        return { config: spinnerConfig("CodeHydra is starting…"), kind: "modal" };
-      case "setup":
-        return { config: setupConfig(), kind: "modal" };
-      case "agent-selection":
-        return { config: agentConfig(), kind: "modal" };
-      case "running":
-        // Until every project has announced its workspaces (see endStartup), a
-        // hook of any of them is what the user is waiting on.
-        return { config: loadingConfig(openHooks(), true), kind: "modal" };
-      case "done": {
-        // Mid-session: a still-creating or still-loading active workspace has
-        // no frame yet, and one whose open hook is running (a wake) is not
-        // usable yet either. One whose open failed says why instead.
-        if (activeKey === null) return null;
-        const key = activeKey;
-        const workspace = findByKey(key)?.workspace;
-        if (workspace?.phase === "open-failed") {
-          return { config: openFailedConfig(workspace.openError), kind: "panel" };
-        }
-        const hooks = openHooks().filter(([, hook]) => hookBelongsTo(hook, key));
-        return workspace?.phase === "creating" || workspace?.phase === "loading" || hooks.length > 0
-          ? { config: loadingConfig(hooks, false), kind: "panel" }
-          : null;
-      }
-    }
-  }
-
-  /** Route the system dialog's action events (agent pick, Retry, Quit). */
-  function handleSystemAction(event: DialogActionEvent): void {
-    if (event.actionId.startsWith(CANCEL_HOOK_ACTION)) {
-      runningHooks.get(Number(event.actionId.slice(CANCEL_HOOK_ACTION.length)))?.cancel();
-      return;
-    }
-    switch (event.actionId) {
-      case RETRY_OPEN_ACTION:
-        if (activeKey !== null) retryOpen(activeKey);
-        return;
-      case DELETE_FAILED_ACTION: {
-        const found = activeKey === null ? undefined : findByKey(activeKey);
-        if (found !== undefined && found.workspace.phase !== "creating") {
-          dispatchInteractiveDelete(found.workspace.ref);
-        }
-        return;
-      }
-      case "continue": {
-        const agent = event.data?.["agent"];
-        if (agentSelectionResolve && agent) {
-          logger.info("Agent selected", { agent });
-          agentSelectionResolve(agent as LifecycleAgentType);
-          agentSelectionResolve = null;
-          agentSelectionReject = null;
-        }
-        return;
-      }
-      case "retry":
-        if (retryResolve) {
-          retryResolve();
-          retryResolve = null;
-          retryReject = null;
-        }
-        return;
-      case "quit": {
-        const handle = deps.dispatcher.dispatch<AppShutdownIntent>({
-          type: INTENT_APP_SHUTDOWN,
-          payload: {},
-        });
-        void handle.catch((error: unknown) => {
-          logger.debug("app:shutdown dispatch rejected", { error: getErrorMessage(error) });
-        });
-        return;
-      }
-    }
-  }
-
-  /**
-   * Reconcile the system dialog with the current state. Called at the top of
-   * push() (inPush suppresses the dialog mutations' own scheduleUpdate — the
-   * in-flight push already reflects them). The JSON guard makes an unchanged
-   * config a no-op, so this never loops.
-   */
-  function reconcileSystemDialog(): void {
-    const desired = computeSystemDialog();
-    const json = desired === null ? null : JSON.stringify(desired.config);
-    const kind = desired?.kind ?? null;
-    if (json === systemDialogConfigJson && kind === systemDialogKind) return;
-    const kindChanged = kind !== systemDialogKind;
-    systemDialogConfigJson = json;
-    systemDialogKind = kind;
-    if (desired === null) {
-      systemDialog?.close();
-      systemDialog = null;
-      return;
-    }
-    // Kind is immutable per session: a kind change (config may be identical, as
-    // on the boot "running" → mid-session loading transition) needs close + reopen.
-    if (systemDialog && !kindChanged) {
-      systemDialog.update(desired.config);
-    } else {
-      systemDialog?.close();
-      systemDialog = dialogs.open(desired.config, { kind: desired.kind });
-      systemDialog.onEvent(handleSystemAction);
-    }
-  }
-
   function buildSnapshot(): UiState {
     const hideHibernated = hideHibernatedState.get();
-    const projectRows: UiProjectRow[] = [...projects.values()]
-      .sort((a, b) => compareDisplayNames(a.name, b.name))
-      .map((project) => {
-        const rows = [...project.workspaces.values()]
-          .sort((a, b) => compareDisplayNames(a.name, b.name))
-          .map((workspace): UiWorkspaceRow => buildRow(project, workspace));
-        // Omit hibernated rows when the visibility toggle is on, but report how
-        // many went missing so the sidebar can say so — an all-asleep project
-        // would otherwise look empty. An active hibernated workspace is hidden
-        // too (main still shows its hibernated screen); recover via the bottom
-        // toggle, Alt+X+T, or Alt+X+H.
-        const visible = hideHibernated ? rows.filter((row) => !row.hibernated) : rows;
-        return {
-          id: project.id,
-          name: project.name,
-          title: project.remoteUrl ?? project.path,
-          remote: project.remoteUrl !== undefined,
-          workspaces: visible,
-          hiddenHibernatedCount: rows.length - visible.length,
-        };
-      });
+    const projectRows: UiProjectRow[] = sortedProjects().map(([project, workspaces]) => {
+      const rows = workspaces.map(buildRow);
+      // Omit hibernated rows when the visibility toggle is on, but report how
+      // many went missing so the sidebar can say so — an all-asleep project
+      // would otherwise look empty. An active hibernated workspace is hidden
+      // too (main still shows its hibernated screen); recover via the bottom
+      // toggle, Alt+X+T, or Alt+X+H.
+      const visible = hideHibernated ? rows.filter((row) => !row.hibernated) : rows;
+      return {
+        id: project.id,
+        name: project.name,
+        title: project.remoteUrl ?? project.path,
+        remote: project.remoteUrl !== undefined,
+        workspaces: visible,
+        hiddenHibernatedCount: rows.length - visible.length,
+      };
+    });
 
     const frames: Record<string, string> = {};
-    for (const project of projects.values()) {
-      for (const workspace of project.workspaces.values()) {
-        // A mounted frame is a live IDE client: the workspace stays open in the
-        // IDE server, which keeps its pty host, extension host and file watchers
-        // holding the directory. Unmount during the teardown, rather than on
-        // workspace:deleted — that only fires AFTER the worktree removal has
-        // already had to fight those handles (and never at all when the removal
-        // fails).
-        //
-        // But NOT on deletion progress alone. The first progress event is
-        // emitted before the delete "shutdown" hook point runs, and unmounting
-        // there drops the iframe, which disconnects the IDE client and disposes
-        // the extension host — out from under the graceful agent exit that is
-        // still talking over it. The agent then survives as an orphan with the
-        // workspace as its CWD, and Windows refuses to remove the directory.
-        // So the release is gated on `framesReleased`, which the shutdown
-        // handler below fills once the agent has actually been stopped.
-        //
-        // Nothing is hidden by this. The pipeline switches away from the
-        // workspace at the start, and if the user navigates back the deletion
-        // module puts its progress panel over the workspace area — the panel is
-        // documented as rendering "over the already-torn-down frame". Dismissing
-        // that panel dispatches a force delete, so an entry here can never
-        // outlive the workspace.
-        if (workspace.url !== undefined && isFrameMounted(workspace)) {
-          frames[workspaceKey(project.id, workspace.name)] = workspace.url;
-        }
+    for (const { workspace } of model.workspaces.values()) {
+      // A mounted frame is a live IDE client: the workspace stays open in the
+      // IDE server, which keeps its pty host, extension host and file watchers
+      // holding the directory. Unmount during the teardown, rather than on
+      // workspace:deleted — that only fires AFTER the worktree removal has
+      // already had to fight those handles (and never at all when the removal
+      // fails).
+      //
+      // But NOT on deletion progress alone. The first progress event is
+      // emitted before the delete "shutdown" hook point runs, and unmounting
+      // there drops the iframe, which disconnects the IDE client and disposes
+      // the extension host — out from under the graceful agent exit that is
+      // still talking over it. The agent then survives as an orphan with the
+      // workspace as its CWD, and Windows refuses to remove the directory.
+      // So the release is gated on `framesReleased`, which the shutdown
+      // handler below fills once the agent has actually been stopped.
+      //
+      // Nothing is hidden by this. The pipeline switches away from the
+      // workspace at the start, and if the user navigates back the deletion
+      // module puts its progress panel over the workspace area — the panel is
+      // documented as rendering "over the already-torn-down frame". Dismissing
+      // that panel dispatches a force delete, so an entry here can never
+      // outlive the workspace.
+      if (workspace.url !== undefined && isFrameMounted(workspace)) {
+        frames[workspace.ref] = workspace.url;
       }
     }
 
@@ -1515,42 +887,31 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function toUiNotification(card: NotificationSnapshot): UiNotification {
     const base: UiNotification = { id: card.id, config: card.config, count: card.count };
-    if (card.workspaceRef === undefined) return base;
-    for (const project of projects.values()) {
-      for (const workspace of project.workspaces.values()) {
-        if (workspace.ref === card.workspaceRef) {
-          return {
-            ...base,
-            workspace: {
-              key: workspaceKey(project.id, workspace.name),
-              name: workspace.title ?? workspace.name,
-            },
-          };
-        }
-      }
-    }
-    return base;
+    const workspace = model.find(card.workspaceRef ?? null)?.workspace;
+    if (workspace === undefined) return base;
+    return { ...base, workspace: { key: workspace.ref, name: workspace.title ?? workspace.name } };
   }
 
   function scheduleUpdate(): void {
-    // inPush: reconcileSystemDialog (running inside push) mutates the dialog
-    // registry, which calls this — the in-flight push already carries the
-    // change, so don't schedule a redundant follow-up.
-    if (!connected || pushScheduled || inPush) return;
+    if (!connected || pushScheduled) return;
     pushScheduled = true;
-    queueMicrotask(() => {
-      pushScheduled = false;
-      push();
-    });
+    queueMicrotask(push);
   }
 
   function push(): void {
-    // Project the startup/loading system dialog from state before snapshotting,
-    // so this push carries the reconciled dialog (and mode reads isModalOpen()).
-    inPush = true;
-    reconcileSystemDialog();
-    reconcileHookNotifications();
-    inPush = false;
+    // Project the startup/loading system dialog and the hook cards from state
+    // before snapshotting, so this push carries them (and mode reads
+    // isModalOpen()). Their mutations schedule an update, which this push
+    // already carries: hold pushScheduled so they don't queue a redundant one.
+    pushScheduled = true;
+    startup.reconcile();
+    runningHooks.reconcileNotifications(
+      (hook) =>
+        startup.isShuttingDown() ||
+        !startup.isDone() ||
+        model.active()?.workspace.ref === hook.workspaceRef
+    );
+    pushScheduled = false;
     const snapshot = buildSnapshot();
     deps.viewManager.sendToUI(ApiIpcChannels.UI_STATE, snapshot);
     // Two fidelities, same message: `state` is the bounded projection every
@@ -1587,16 +948,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * existing worktree); the row loads until its workspace:created, or fails
    * again with the new reason.
    */
-  function retryOpen(key: string): void {
-    const found = findByKey(key);
-    if (!found || found.workspace.phase === "creating" || found.workspace.phase !== "open-failed")
-      return;
-    found.workspace.phase = "loading";
-    delete found.workspace.openError;
+  function retryOpen(workspaceRef: WorkspaceRef): void {
+    const workspace = model.find(workspaceRef)?.workspace;
+    if (workspace?.phase !== "open-failed") return;
+    workspace.phase = "loading";
+    delete workspace.openError;
     scheduleUpdate();
     dispatchDetached({
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspaceRef: found.workspace.ref, source: "ui-ipc" },
+      payload: { workspaceRef: workspace.ref, source: "ui-ipc" },
     });
   }
 
@@ -1614,6 +974,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     });
   }
 
+  /**
+   * Resolve the workspace an echoed row key names, for a request that needs an
+   * existing workspace. A stale key (the workspace vanished since the snapshot)
+   * is dropped with a warning, like stale metadata; so is a still-creating
+   * placeholder, which has nothing to act on yet.
+   */
+  function existingWorkspace(kind: string, key: string): WorkspaceModel | undefined {
+    const workspace = model.find(key)?.workspace;
+    if (workspace === undefined || workspace.phase === "creating") {
+      logger.warn(`Dropped ${kind} for unknown key`, { key });
+      return undefined;
+    }
+    return workspace;
+  }
+
   const listener = (...args: unknown[]): void => {
     const result = uiEventSchema.safeParse(args[0]);
     if (!result.success) {
@@ -1623,171 +998,153 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       return;
     }
     const event = result.data;
-    if (event.kind === "ui-connected") {
-      // Startup handshake: the renderer has mounted (App, during the
-      // initializing phase) and subscribed to ui:state. Open the snapshot
-      // stream and flush the current snapshot immediately — startup state may
-      // already be set (the genesis "starting" splash, or setup mid-flight),
-      // and there is no replay. app:ready is NOT dispatched here: the
-      // app:start `start` hook owns that now (after setup completes).
-      // Buffering of pre-connect notifications is handled by this same gate:
-      // their state lives in the snapshot, which only ships once connected.
-      connected = true;
-      push();
-      return;
-    }
-    if (event.kind === "log") {
-      try {
-        const target = deps.loggingService.createLogger(toLoggerName(event.logger));
-        target[event.level](event.message, event.context as LogContext | undefined);
-      } catch {
-        // Swallow errors - logging should never crash the app
-      }
-      return;
-    }
-    if (event.kind === "remove-workspace") {
-      // Resolve the echoed snapshot key against the model; a stale key (the
-      // workspace vanished since the snapshot) is dropped, like stale
-      // metadata. Placeholders (path null) have nothing to delete yet.
-      const found = findByKey(event.key);
-      if (!found || found.workspace.phase === "creating") {
-        logger.warn("Dropped remove-workspace for unknown key", { key: event.key });
+    switch (event.kind) {
+      case "ui-connected":
+        // Startup handshake: the renderer has mounted (App, during the
+        // initializing phase) and subscribed to ui:state. Open the snapshot
+        // stream and flush the current snapshot immediately — startup state may
+        // already be set (the genesis "starting" splash, or setup mid-flight),
+        // and there is no replay. app:ready is NOT dispatched here: the
+        // app:start `start` hook owns that now (after setup completes).
+        // Buffering of pre-connect notifications is handled by this same gate:
+        // their state lives in the snapshot, which only ships once connected.
+        connected = true;
+        push();
+        return;
+      case "log":
+        try {
+          const target = deps.loggingService.createLogger(toLoggerName(event.logger));
+          target[event.level](event.message, event.context as LogContext | undefined);
+        } catch {
+          // Swallow errors - logging should never crash the app
+        }
+        return;
+      case "remove-workspace": {
+        const workspace = existingWorkspace(event.kind, event.key);
+        if (workspace) dispatchInteractiveDelete(workspace.ref);
         return;
       }
-      dispatchInteractiveDelete(found.workspace.ref);
-      return;
-    }
-    if (event.kind === "switch-workspace") {
-      // key null = deselect (the creation panel becomes the main view).
-      if (event.key === null) {
-        dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: null } });
+      case "switch-workspace": {
+        // key null = deselect (the creation panel becomes the main view).
+        if (event.key === null) {
+          dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspaceRef: null } });
+          return;
+        }
+        // Resolve the echoed key; a stale key has nothing to switch to. focus
+        // is omitted: a click focuses the workspace (the keyboard nav path
+        // passes focus:false).
+        const workspace = model.find(event.key)?.workspace;
+        if (!workspace) {
+          logger.warn("Dropped switch-workspace for unknown key", { key: event.key });
+          return;
+        }
+        // A still-creating placeholder has no path to switch to yet: only the
+        // view moves to its loading panel, and workspace:created makes it active.
+        // Deliberately, moving the view away from a placeholder never evicts it:
+        // its lifetime is owned solely by workspace:created (swap) and
+        // workspace:create-failed (remove).
+        if (workspace.phase === "creating") {
+          model.activeRef = workspace.ref;
+          scheduleUpdate();
+          return;
+        }
+        dispatchDetached({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { workspaceRef: workspace.ref },
+        });
         return;
       }
-      // Resolve the echoed key; a stale key has nothing to switch to. focus
-      // is omitted: a click focuses the workspace (the keyboard nav path
-      // passes focus:false).
-      const found = findByKey(event.key);
-      if (!found) {
-        logger.warn("Dropped switch-workspace for unknown key", { key: event.key });
+      case "wake-workspace": {
+        const workspace = existingWorkspace(event.kind, event.key);
+        if (!workspace) return;
+        // A failed open's Retry: waking runs the same open again.
+        if (workspace.phase === "open-failed") {
+          retryOpen(workspace.ref);
+          return;
+        }
+        dispatchDetached({
+          type: INTENT_WAKE_WORKSPACE,
+          payload: { workspaceRef: workspace.ref, source: "ui-ipc" },
+        });
         return;
       }
-      // A still-creating placeholder has no path to switch to yet: only the
-      // view moves to its loading panel, and workspace:created makes it active.
-      if (found.workspace.phase === "creating") {
-        applyActiveKey(event.key);
+      case "hibernate-workspace": {
+        const workspace = existingWorkspace(event.kind, event.key);
+        if (!workspace) return;
+        dispatchDetached({
+          type: INTENT_HIBERNATE_WORKSPACE,
+          payload: { workspaceRef: workspace.ref },
+        });
+        return;
+      }
+      case "hover":
+        hoverRegion = event.region === "sidebar" ? "sidebar" : null;
+        scheduleUpdate();
+        return;
+      case "open-settings":
+        deps.onOpenSettings?.();
+        return;
+      case "open-help":
+        deps.onOpenHelp?.();
+        return;
+      case "toggle-hide-hibernated":
+        toggleHideHibernated();
+        return;
+      case "set-sidebar-mode":
+        setSidebarMode(event.mode);
+        return;
+      case "resize-sidebar": {
+        // Persist the drag result. Clamp to the shared minimum (the renderer
+        // already enforces both bounds, but main owns what lands in config); the
+        // window-relative maximum stays renderer-side. Echo the canonical value
+        // back in the next snapshot so any renderer converges.
+        const width = clampSidebarWidthMin(event.width);
+        void deps.sidebarWidthConfig.set(width).catch((error: unknown) => {
+          logger.warn("Failed to persist sidebar width", { error: getErrorMessage(error) });
+        });
         scheduleUpdate();
         return;
       }
-      dispatchDetached({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspaceRef: found.workspace.ref },
-      });
-      return;
-    }
-    if (event.kind === "wake-workspace") {
-      const found = findByKey(event.key);
-      if (!found || found.workspace.phase === "creating") {
-        logger.warn("Dropped wake-workspace for unknown key", { key: event.key });
+      // Dialog/notification user interactions: route to the owning session. The
+      // session owner's listeners (onChange/nextEvent/onEvent) drive any follow-up
+      // (update/close, which schedule a snapshot push of their own).
+      case "dialog-action":
+        dialogs.routeEvent({
+          kind: "action",
+          dialogId: event.dialogId,
+          actionId: event.actionId,
+          ...(event.data !== undefined && { data: event.data }),
+        });
+        return;
+      case "dialog-change":
+        dialogs.routeEvent({
+          kind: "change",
+          dialogId: event.dialogId,
+          fieldId: event.fieldId,
+          data: event.data,
+        });
+        return;
+      case "dialog-dismiss":
+        dialogs.routeEvent({ kind: "dismiss", dialogId: event.dialogId });
+        return;
+      case "notification-event":
+        notifications.routeEvent({
+          notificationId: event.notificationId,
+          actionId: event.actionId,
+        });
+        return;
+      case "close-project": {
+        const project = model.projectById(event.projectId);
+        if (!project) {
+          logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
+          return;
+        }
+        dispatchDetached({
+          type: INTENT_CLOSE_PROJECT,
+          payload: { projectRef: project.ref, interactive: true },
+        });
         return;
       }
-      // A failed open's Retry: waking runs the same open again.
-      if (found.workspace.phase === "open-failed") {
-        retryOpen(event.key);
-        return;
-      }
-      dispatchDetached({
-        type: INTENT_WAKE_WORKSPACE,
-        payload: { workspaceRef: found.workspace.ref, source: "ui-ipc" },
-      });
-      return;
-    }
-    if (event.kind === "hibernate-workspace") {
-      const found = findByKey(event.key);
-      if (!found || found.workspace.phase === "creating") {
-        logger.warn("Dropped hibernate-workspace for unknown key", { key: event.key });
-        return;
-      }
-      dispatchDetached({
-        type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspaceRef: found.workspace.ref },
-      });
-      return;
-    }
-    if (event.kind === "hover") {
-      hoverRegion = event.region === "sidebar" ? "sidebar" : null;
-      scheduleUpdate();
-      return;
-    }
-    if (event.kind === "open-settings") {
-      deps.onOpenSettings?.();
-      return;
-    }
-    if (event.kind === "open-help") {
-      deps.onOpenHelp?.();
-      return;
-    }
-    if (event.kind === "toggle-hide-hibernated") {
-      handleToggleHideHibernated();
-      return;
-    }
-    if (event.kind === "set-sidebar-mode") {
-      setSidebarMode(event.mode);
-      return;
-    }
-    if (event.kind === "resize-sidebar") {
-      // Persist the drag result. Clamp to the shared minimum (the renderer
-      // already enforces both bounds, but main owns what lands in config); the
-      // window-relative maximum stays renderer-side. Echo the canonical value
-      // back in the next snapshot so any renderer converges.
-      const width = clampSidebarWidthMin(event.width);
-      void deps.sidebarWidthConfig.set(width).catch((error: unknown) => {
-        logger.warn("Failed to persist sidebar width", { error: getErrorMessage(error) });
-      });
-      scheduleUpdate();
-      return;
-    }
-    // Dialog/notification user interactions: route to the owning session. The
-    // session owner's listeners (onChange/nextEvent/onEvent) drive any follow-up
-    // (update/close, which schedule a snapshot push of their own).
-    if (event.kind === "dialog-action") {
-      dialogs.routeEvent({
-        kind: "action",
-        dialogId: event.dialogId,
-        actionId: event.actionId,
-        ...(event.data !== undefined && { data: event.data }),
-      });
-      return;
-    }
-    if (event.kind === "dialog-change") {
-      dialogs.routeEvent({
-        kind: "change",
-        dialogId: event.dialogId,
-        fieldId: event.fieldId,
-        data: event.data,
-      });
-      return;
-    }
-    if (event.kind === "dialog-dismiss") {
-      dialogs.routeEvent({ kind: "dismiss", dialogId: event.dialogId });
-      return;
-    }
-    if (event.kind === "notification-event") {
-      notifications.routeEvent({
-        notificationId: event.notificationId,
-        actionId: event.actionId,
-      });
-      return;
-    }
-    if (event.kind === "close-project") {
-      const project = projects.get(event.projectId);
-      if (!project) {
-        logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
-        return;
-      }
-      dispatchDetached({
-        type: INTENT_CLOSE_PROJECT,
-        payload: { projectRef: project.ref, interactive: true },
-      });
     }
   };
 
@@ -1797,176 +1154,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deps.dispatcher.withOrigin({ origin: "ui" }, () => listener(...args))
   );
 
-  // ---------------------------------------------------------------------------
-  // Shortcut navigation (ported from the renderer's shortcuts store)
-  //
-  // The shortcut-module forwards every key press while shortcut mode is active
-  // as a shortcut:key intent → shortcut:key-pressed event. The presenter runs
-  // navigation over the SAME ordered rows it renders (currentRows()), and
-  // dispatches the existing intents directly with focus:false (so shortcut mode
-  // stays active across keyboard navigation).
-  // ---------------------------------------------------------------------------
-
-  /** Wrap an index into [0, length). */
-  function wrapIndex(index: number, length: number): number {
-    return ((index % length) + length) % length;
-  }
-
-  /** Switch to a workspace (placeholders are skipped upstream). */
-  function navigateSwitch(workspaceRef: WorkspaceRef): void {
-    dispatchDetached({
-      type: INTENT_SWITCH_WORKSPACE,
-      payload: { workspaceRef, focus: false },
-    });
-  }
-
-  /**
-   * Up/down navigation. Wraps at boundaries; when nothing is active (creation
-   * panel) Up → last and Down → first. Targets the workspace's real path; a
-   * still-creating placeholder (null path) is not a valid target, so it is
-   * stepped over rather than stopped on — placeholders stay in the list for the
-   * whole creation now, so one can sit anywhere between two navigable rows.
-   */
-  function handleNavigation(direction: -1 | 1): void {
-    const entries = currentRows();
-    if (entries.length === 0) return;
-    const currentIndex = entries.findIndex((e) => e.row.active);
-    const startIndex =
-      currentIndex === -1
-        ? direction === 1
-          ? 0
-          : entries.length - 1
-        : wrapIndex(currentIndex + direction, entries.length);
-    for (let i = 0; i < entries.length; i++) {
-      const index = wrapIndex(startIndex + i * direction, entries.length);
-      // Wrapped back to where we started: nothing else is navigable.
-      if (index === currentIndex) return;
-      const target = entries[index];
-      if (target && target.workspace.phase !== "creating") {
-        navigateSwitch(target.workspace.ref);
-        return;
-      }
-    }
-  }
-
-  /**
-   * Find the next workspace index matching a status type in the given
-   * direction. Hibernated workspaces are always skipped — idle nav targets
-   * workspaces the user can immediately work in. Returns -1 if none.
-   */
-  function findNextByStatusType(
-    entries: readonly RowEntry[],
-    currentIndex: number,
-    direction: -1 | 1,
-    statusType: AgentStatus["type"]
-  ): number {
-    const count = entries.length;
-    const startIndex =
-      currentIndex === -1
-        ? direction === 1
-          ? 0
-          : count - 1
-        : wrapIndex(currentIndex + direction, count);
-    const iterations = currentIndex === -1 ? count : count - 1;
-    for (let i = 0; i < iterations; i++) {
-      const index = wrapIndex(startIndex + i * direction, count);
-      const entry = entries[index];
-      if (!entry) continue;
-      if (entry.row.hibernated) continue;
-      if (entry.row.agent.type === statusType) return index;
-    }
-    return -1;
-  }
-
-  /**
-   * Left/right navigation by status: prefer idle workspaces, fall back to busy
-   * only when the current workspace isn't already idle (or there is none).
-   */
-  function handleStatusNavigation(direction: -1 | 1): void {
-    const entries = currentRows();
-    if (entries.length === 0) return;
-    const currentIndex = entries.findIndex((e) => e.row.active);
-
-    let targetIndex = findNextByStatusType(entries, currentIndex, direction, "idle");
-    if (targetIndex === -1) {
-      const currentStatus = currentIndex === -1 ? undefined : entries[currentIndex]?.row.agent;
-      if (currentStatus?.type !== "idle") {
-        targetIndex = findNextByStatusType(entries, currentIndex, direction, "busy");
-      }
-    }
-    if (targetIndex === -1) return;
-    const target = entries[targetIndex];
-    if (!target || target.workspace.phase === "creating") return;
-    navigateSwitch(target.workspace.ref);
-  }
-
-  /**
-   * Jump to the Nth awake workspace (hibernated workspaces are unnumbered).
-   *
-   * A still-creating placeholder keeps its number and the jump is a no-op:
-   * skipping it would renumber every row below it the instant the creation
-   * completes, and numbering that shifts under the user's fingers is worse than
-   * one temporarily dead key.
-   */
-  function handleJump(key: JumpKey): void {
-    const index = jumpKeyToIndex(key);
-    const target = currentRows().filter((e) => !e.row.hibernated)[index];
-    if (!target || target.workspace.phase === "creating") return;
-    navigateSwitch(target.workspace.ref);
-  }
-
-  /** Toggle hibernation on the active workspace (h key). */
-  function handleHibernateToggle(): void {
-    if (activeKey === null) return;
-    const active = findByKey(activeKey);
-    if (!active || active.workspace.phase === "creating") return;
-    // Hibernating needs a running workspace; one still opening has nothing to stop.
-    if (active.workspace.phase !== "ready") return;
-    if (active.workspace.hibernated) {
-      dispatchDetached({
-        type: INTENT_WAKE_WORKSPACE,
-        payload: { workspaceRef: active.workspace.ref, source: "ui-ipc" },
-      });
-    } else {
-      dispatchDetached({
-        type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspaceRef: active.workspace.ref },
-      });
-    }
-  }
-
-  /**
-   * Enter / Delete dialog keys.
-   * - enter: deselect (switch to null) so the creation panel becomes the main
-   *   view — unless it is already showing. Mode auto-computes to hover.
-   * - delete: trigger the interactive remove flow for the active workspace
-   *   (the same path the remove-workspace ui:event uses), unless it is still
-   *   creating or loading, or already deleting.
-   */
-  function handleDialogKey(key: "enter" | "delete"): void {
-    if (key === "enter") {
-      if (activeKey === null) return; // creation panel already showing
-      dispatchDetached({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspaceRef: null },
-      });
-      return;
-    }
-    if (activeKey === null) return;
-    const active = findByKey(activeKey);
-    if (!active || active.workspace.phase === "creating") return;
-    const status = rowStatus(active.workspace);
-    if (status === "creating" || status === "loading" || status === "deleting") return;
-    dispatchInteractiveDelete(active.workspace.ref);
-  }
-
   /**
    * Toggle the `sidebar.hide-hibernated` state and re-push. Driven by both the
    * bottom sidebar toggle (ui:event) and the Alt+X+T shortcut. Persist failures
    * are logged but not surfaced — the in-memory flip already took effect via the
    * snapshot; the value simply won't survive a restart.
    */
-  function handleToggleHideHibernated(): void {
+  function toggleHideHibernated(): void {
     const next = !hideHibernatedState.get();
     void hideHibernatedState.set(next).catch((error: unknown) => {
       logger.warn("Failed to persist hide-hibernated toggle", { error: getErrorMessage(error) });
@@ -1987,111 +1181,68 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     scheduleUpdate();
   }
 
-  /** Run the navigation action for a normalized shortcut key. */
-  function runShortcutKey(key: string): void {
-    switch (key) {
-      case "up":
-        handleNavigation(-1);
-        break;
-      case "down":
-        handleNavigation(1);
-        break;
-      case "left":
-        handleStatusNavigation(-1);
-        break;
-      case "right":
-        handleStatusNavigation(1);
-        break;
-      case "enter":
-        handleDialogKey("enter");
-        break;
-      case "delete":
-        handleDialogKey("delete");
-        break;
-      case "h":
-        handleHibernateToggle();
-        break;
-      case "t":
-        handleToggleHideHibernated();
-        break;
-      case "p":
-        setSidebarMode(sidebarModeConfig.get() === "docked" ? "overlay" : "docked");
-        break;
-      default:
-        if (/^[0-9]$/.test(key)) handleJump(key as JumpKey);
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Domain event subscriptions (main → view-model)
   // ---------------------------------------------------------------------------
 
-  const events: EventDeclarations = {
+  const events = defineEvents({
+    ...startup.events,
     [EVENT_PROJECT_OPENED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        if (findProjectByRef(project.ref)) return;
-        projects.set(project.id, {
-          ref: project.ref,
-          id: project.id,
-          name: project.name,
-          path: project.path,
-          remoteUrl: project.remoteUrl,
-          workspaces: new Map(
-            project.workspaces.map((workspace) => [
-              workspace.name as string,
-              {
-                ref: workspace.ref,
-                name: workspace.name,
-                ...fromMetadata(workspace.metadata),
-                url: workspace.url,
-                // project:open opens every awake workspace after announcing
-                // the project; hibernated ones stay as they are.
-                phase: workspace.metadata["hibernated"] === "true" ? "ready" : "loading",
-              },
-            ])
-          ),
-        });
-        settleStartupOpen(event as ProjectOpenedEvent);
+      handler: async (event): Promise<void> => {
+        const { project } = event.payload;
+        if (model.projects.has(project.ref)) return;
+        model.addProject(
+          {
+            ref: project.ref,
+            id: project.id,
+            name: project.name,
+            path: project.path,
+            remoteUrl: project.remoteUrl,
+          },
+          project.workspaces.map((workspace) => ({
+            ref: workspace.ref,
+            name: workspace.name,
+            ...fromMetadata(workspace.metadata),
+            url: workspace.url,
+            // project:open opens every awake workspace after announcing
+            // the project; hibernated ones stay as they are.
+            phase: workspace.metadata["hibernated"] === "true" ? "ready" : "loading",
+          }))
+        );
+        startup.settleStartupOpen(event);
         scheduleUpdate();
       },
     },
-    [EVENT_PROJECT_OPEN_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        settleStartupOpen(event as ProjectOpenFailedEvent);
-      },
-    },
     [EVENT_PROJECT_CLOSED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { projectId } = (event as ProjectClosedEvent).payload;
-        const project = projects.get(projectId);
+      handler: async (event): Promise<void> => {
+        const { projectRef } = event.payload;
+        const project = model.projects.get(projectRef);
         if (!project) return;
-        const containedActive =
-          activeKey !== null &&
-          [...project.workspaces.values()].some(
-            (workspace) => workspaceKey(project.id, workspace.name) === activeKey
-          );
-        projects.delete(projectId);
+        const containedActive = model.active()?.project === project;
+        model.removeProject(projectRef);
         if (containedActive) {
           // Mirror the renderer's fallback: first workspace of the first
           // remaining project (insertion order), else none.
-          const firstProject = projects.values().next().value;
-          const firstWorkspace = firstProject?.workspaces.values().next().value;
-          activeKey =
-            firstProject && firstWorkspace
-              ? workspaceKey(firstProject.id, firstWorkspace.name)
-              : null;
+          const firstProject = model.projects.values().next().value;
+          let first: WorkspaceRef | null = null;
+          for (const entry of model.workspaces.values()) {
+            if (entry.project === firstProject) {
+              first = entry.workspace.ref;
+              break;
+            }
+          }
+          model.activeRef = first;
         }
         scheduleUpdate();
       },
     },
     [EVENT_WORKSPACE_CREATED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as WorkspaceCreatedEvent).payload;
-        const project = projects.get(p.projectId);
+      handler: async (event): Promise<void> => {
+        const p = event.payload;
+        const project = model.projects.get(p.projectRef);
         if (project) {
-          // Setting by name replaces a creating placeholder in place.
-          project.workspaces.set(p.workspaceName as string, {
+          // Setting by ref replaces a creating placeholder in place.
+          model.putWorkspace(project, {
             ref: p.workspaceRef,
             name: p.workspaceName,
             ...fromMetadata(p.metadata),
@@ -2099,18 +1250,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             phase: "ready",
           });
           // A wake delivers a fresh URL; any cached screenshot is stale.
-          screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+          screenshots.delete(p.workspaceRef);
         }
         // Adopt the finished workspace only when nothing is active. Staying on
-        // the creation already leaves activeKey on this very key (the
+        // the creation already leaves the active ref on this very row (the
         // placeholder), so that case is a no-op; having navigated away
         // mid-creation, the user must NOT be yanked back when it completes —
         // the operation declines its switch for the same reason, and the row
         // (plus its "new" tag) is the signal that it finished.
-        const key = workspaceKey(p.projectId, p.workspaceName);
-        if (p.stealFocus !== false && activeKey === null) {
-          applyActiveKey(key);
-        } else if (activeKey === key && !p.reopened) {
+        if (p.stealFocus !== false && model.activeRef === null) {
+          model.activeRef = p.workspaceRef;
+        } else if (model.activeRef === p.workspaceRef && p.fresh) {
           // The view is on this placeholder — the user may have clicked it,
           // which only moves the view (a placeholder has no workspace to switch
           // to yet): make it the active workspace main-side too, which the
@@ -2125,18 +1275,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
     },
     [EVENT_WORKSPACE_LOADING]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as WorkspaceLoadingEvent).payload;
-        const project = findProjectByRef(p.projectRef);
+      handler: async (event): Promise<void> => {
+        const p = event.payload;
+        const project = model.projects.get(p.projectRef);
         if (!project) return;
         // Name-guarded: loading also fires for wakes/reopens of existing
         // workspaces, which must not create a duplicate entry.
         const nameLower = p.workspaceName.toLowerCase();
-        for (const workspace of project.workspaces.values()) {
-          if (workspace.name.toLowerCase() === nameLower) return;
+        for (const entry of model.workspaces.values()) {
+          if (entry.project === project && entry.workspace.name.toLowerCase() === nameLower) {
+            return;
+          }
         }
-        project.workspaces.set(p.workspaceName, {
-          ref: makeWorkspaceRef(project.ref, p.workspaceName),
+        const ref = makeWorkspaceRef(project.ref, p.workspaceName);
+        model.putWorkspace(project, {
+          ref,
           name: p.workspaceName,
           title: undefined,
           hibernated: false,
@@ -2149,18 +1302,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // panel, which only shows while nothing is active). A background
         // creation shows the row from the same moment but must not take the
         // view — visibility and focus are separate concerns.
-        if (p.stealFocus !== false) {
-          activeKey = workspaceKey(project.id, p.workspaceName);
-        }
+        if (p.stealFocus !== false) model.activeRef = ref;
         scheduleUpdate();
       },
     },
     [EVENT_WORKSPACE_CREATE_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as WorkspaceCreateFailedEvent).payload;
-        const project = findProjectByRef(p.projectRef);
-        const workspace = project?.workspaces.get(p.workspaceName);
-        if (!project || !workspace) return;
+      handler: async (event): Promise<void> => {
+        const p = event.payload;
+        const project = model.projects.get(p.projectRef);
+        if (!project) return;
+        const workspace = model.findByName(project, p.workspaceName);
+        if (!workspace) return;
         if (workspace.phase === "loading") {
           // An existing worktree that would not open keeps its row, with the
           // reason and a Retry.
@@ -2170,44 +1322,39 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           return;
         }
         if (workspace.phase !== "creating") return;
-        project.workspaces.delete(p.workspaceName);
-        if (activeKey === workspaceKey(project.id, p.workspaceName)) {
-          activeKey = null;
-        }
+        model.removeWorkspace(workspace.ref);
+        if (model.activeRef === workspace.ref) model.activeRef = null;
         scheduleUpdate();
       },
     },
     [EVENT_WORKSPACE_WAKE_FAILED]: {
       // A Retry's wake can fail before it reaches workspace:open (which would
       // report workspace:create-failed): the row must not stay loading.
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as WorkspaceWakeFailedEvent).payload;
-        for (const project of projects.values()) {
-          for (const workspace of project.workspaces.values()) {
-            if (workspace.ref !== p.workspaceRef || workspace.phase !== "loading") continue;
-            workspace.phase = "open-failed";
-            workspace.openError = p.error;
-            scheduleUpdate();
-          }
-        }
+      handler: async (event): Promise<void> => {
+        const p = event.payload;
+        const workspace = model.find(p.workspaceRef)?.workspace;
+        if (workspace?.phase !== "loading") return;
+        workspace.phase = "open-failed";
+        workspace.openError = p.error;
+        scheduleUpdate();
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as WorkspaceDeletedEvent).payload;
-        projects.get(p.projectId)?.workspaces.delete(p.workspaceName as string);
-        deletions.delete(p.workspaceRef);
-        framesReleased.delete(p.workspaceRef);
-        agentStatuses.delete(p.workspaceRef);
-        screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+      handler: async (event): Promise<void> => {
+        await agents.events[EVENT_WORKSPACE_DELETED].handler(event);
+        const { workspaceRef } = event.payload;
+        model.removeWorkspace(workspaceRef);
+        deletions.delete(workspaceRef);
+        framesReleased.delete(workspaceRef);
+        screenshots.delete(workspaceRef);
         // A card about a workspace that is gone has nothing left to point at.
-        notifications.closeWorkspace(p.workspaceRef);
+        notifications.closeWorkspace(workspaceRef);
         scheduleUpdate();
       },
     },
     [EVENT_WORKSPACE_DELETION_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const progress = (event as WorkspaceDeletionProgressEvent).payload as DeletionProgress;
+      handler: async (event): Promise<void> => {
+        const progress = event.payload as DeletionProgress;
         if (progress.completed && !progress.hasErrors) {
           // Auto-clear on successful completion (workspace:deleted removes the row).
           deletions.delete(progress.workspaceRef);
@@ -2218,9 +1365,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        const key = payload ? workspaceKey(payload.projectId, payload.workspaceName) : null;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
+        const ref = payload?.workspaceRef ?? null;
         // Handlers run in module order and an earlier one may await (auto-tagging
         // clears the "new" tag, a git write that takes a second on Windows), so a
         // later switch — deselecting to open the creation panel — can land here
@@ -2228,53 +1375,31 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // workspace that is no longer active. The lifecycle module tracks switches
         // in dispatch order, so ask it.
         try {
-          const active = await deps.dispatcher.dispatch<GetActiveWorkspaceIntent>({
-            type: INTENT_GET_ACTIVE_WORKSPACE,
-            payload: {},
-          });
-          const activeNow = active ? workspaceKey(active.projectId, active.workspaceName) : null;
-          if (activeNow !== key) {
-            logger.debug("Dropped stale workspace:switched", { key, active: activeNow });
+          const activeNow = await activeWorkspaceRef((intent) => deps.dispatcher.dispatch(intent));
+          if (activeNow !== ref) {
+            logger.debug("Dropped stale workspace:switched", { key: ref, active: activeNow });
             return;
           }
         } catch (error: unknown) {
           // Nothing to check against: trust the event.
           logger.debug("Active workspace lookup failed", { error: getErrorMessage(error) });
         }
-        applyActiveKey(key);
+        model.activeRef = ref;
         scheduleUpdate();
       },
     },
-    [EVENT_AGENT_STATUS_UPDATED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-        agentStatuses.set(
-          workspace.ref,
-          status.status === "none"
-            ? AGENT_NONE
-            : {
-                type: status.status,
-                counts: {
-                  idle: status.counts.idle,
-                  busy: status.counts.busy,
-                  total: status.counts.idle + status.counts.busy,
-                },
-              }
-        );
-        scheduleUpdate();
-      },
-    },
+    [EVENT_AGENT_STATUS_UPDATED]: agents.events[EVENT_AGENT_STATUS_UPDATED],
     [EVENT_METADATA_CHANGED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const p = (event as MetadataChangedEvent).payload;
-        const workspace = projects.get(p.projectId)?.workspaces.get(p.workspaceName as string);
+      handler: async (event): Promise<void> => {
+        const p = event.payload;
+        const workspace = model.find(p.workspaceRef)?.workspace;
         if (!workspace) return;
         // Metadata is interpreted, never stored: only the keys the UI cares
         // about mutate the model (and push); everything else is ignored.
         if (p.key === "hibernated") {
           workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
-          screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+          screenshots.delete(p.workspaceRef);
         } else if (p.key === "title") {
           // Empty/cleared title reverts the row to the branch name.
           workspace.title = readTitle(p.value);
@@ -2291,52 +1416,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         scheduleUpdate();
       },
     },
-    [EVENT_SETUP_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const row = (event as SetupProgressEvent).payload;
-        // Map SetupRowStatus ("failed") → SetupRow status ("error").
-        const status: SetupRow["status"] = row.status === "failed" ? "error" : row.status;
-        setupRows.set(row.id, {
-          id: row.id,
-          label: SETUP_ROW_LABELS[row.id] ?? row.id,
-          status,
-          ...(row.message !== undefined && { message: row.message }),
-          ...(row.progress !== undefined && { progress: row.progress }),
-        });
-        scheduleUpdate();
-      },
-    },
-    [EVENT_SETUP_ERROR]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { message } = (event as SetupErrorEvent).payload;
-        setupError = { message };
-        scheduleUpdate();
-      },
-    },
-    [EVENT_APP_STARTED]: {
-      handler: async (): Promise<void> => {
-        // Startup is over: hand the main view back to the normal logic. Theme
-        // is already seeded + tracked from the app:start `init` hook (so the
-        // startup screens carry the right theme), nothing to do here for it.
-        startupPhase = "done";
-        scheduleUpdate();
-      },
-    },
     [EVENT_SHORTCUT_ACTIVE_CHANGED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        shortcutActive = (event as ShortcutActiveChangedEvent).payload.active;
+      handler: async (event): Promise<void> => {
+        shortcutActive = event.payload.active;
         scheduleUpdate();
       },
     },
     [EVENT_SHORTCUT_KEY_PRESSED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { key } = (event as ShortcutKeyPressedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const { key } = event.payload;
         // Only navigation runs in shortcut mode; the shortcut-module already
         // handles Escape/Alt-release. Validate the key like the old IPC bridge.
         if (isShortcutKey(key)) runShortcutKey(key);
       },
     },
-  };
+  });
 
   /**
    * The "prepare-capture" hook on workspace:hibernate: collapse the sidebar out
@@ -2345,8 +1439,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * pushed immediately (not coalesced) and we wait for the renderer to paint the
    * collapsed sidebar before the "capture" hook runs.
    */
-  async function prepareCapture(ctx: HookContext): Promise<HookOutput<PrepareCaptureHookResult>> {
-    const { active } = ctx as HibernatePipelineHookInput;
+  async function prepareCapture(
+    ctx: HookInput<typeof HIBERNATE_WORKSPACE_OPERATION_ID, "prepare-capture">
+  ): Promise<HookOutput<PrepareCaptureHookResult>> {
+    const { active } = ctx;
     if (!active) return {};
     capturing = true;
     // Flush synchronously so the capturing snapshot reaches the renderer before
@@ -2362,8 +1458,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * even if the "capture" hook threw — the sidebar can never stay stuck
    * collapsed.
    */
-  async function cleanupCapture(ctx: HookContext): Promise<HookOutput<CleanupCaptureHookResult>> {
-    const { active } = ctx as HibernatePipelineHookInput;
+  async function cleanupCapture(
+    ctx: HookInput<typeof HIBERNATE_WORKSPACE_OPERATION_ID, "cleanup-capture">
+  ): Promise<HookOutput<CleanupCaptureHookResult>> {
+    const { active } = ctx;
     if (!active) return {};
     capturing = false;
     scheduleUpdate();
@@ -2377,8 +1475,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * forces remove-all on; withdrawing that deletion withdraws the implied
    * remove-all with it).
    */
-  async function confirmClose(ctx: HookContext): Promise<HookOutput<CloseConfirmHookResult>> {
-    const input = ctx as CloseConfirmHookInput;
+  async function confirmClose(
+    input: HookInput<typeof CLOSE_PROJECT_OPERATION_ID, "confirm">
+  ): Promise<HookOutput<CloseConfirmHookResult>> {
     const isRemote = input.remoteUrl !== undefined;
     const state: CloseConfirmState = { removeAll: false, keepRepo: false, removeRepo: false };
     const projectPath = input.projectPath.toString();
@@ -2425,89 +1524,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Startup hooks: each just sets the phase + schedules a push; the system
-  // dialog is reconciled from that phase in push() (reconcileSystemDialog).
-  // ---------------------------------------------------------------------------
-
-  /**
-   * app:start `show-ui`: set the boot-splash phase and hand app:start the
-   * waitForRetry hook it needs for the setup retry loop. The promise resolves
-   * when the user clicks Retry (a system-dialog action); app:shutdown rejects
-   * it so a quit-during-retry unwinds app:start instead of hanging.
-   */
-  async function appStartShowUi(): Promise<HookOutput<ShowUIHookResult>> {
-    startupPhase = "starting";
-    scheduleUpdate();
-    // Advertise that this (UI) module can host a setup retry loop. The actual wait
-    // happens in the `await-retry` hook below — data in, data out, no closure.
-    return { result: { retrySupported: true } };
-  }
-
-  /**
-   * app:start `agent-selection`: show the picker (a radio system dialog) and park
-   * until the user clicks Continue, which arrives as a system-dialog action and
-   * resolves the parked promise with the chosen agent (returned as the hook result
-   * to app:start). app:shutdown REJECTS the promise so a quit-during-selection throws
-   * here — app:start unwinds without reaching save-agent, so no agent is persisted and
-   * the next launch re-prompts.
-   *
-   * On resolve we drop straight back to the boot splash. Leaving the phase on
-   * "agent-selection" would keep the (now answered) picker on screen for the whole of
-   * check-deps and app:setup — the binary download would run behind a frozen dialog.
-   */
-  async function appStartAgentSelection(ctx: HookContext): Promise<HookOutput<LifecycleAgentType>> {
-    const { availableAgents } = ctx as AgentSelectionHookContext;
-    agentOptions = availableAgents;
-    startupPhase = "agent-selection";
-    scheduleUpdate();
-
-    const agent = await new Promise<LifecycleAgentType>((resolve, reject) => {
-      agentSelectionResolve = resolve;
-      agentSelectionReject = reject;
-    });
-
-    startupPhase = "starting";
-    scheduleUpdate();
-    return { result: agent };
-  }
-
-  /**
-   * app:start `await-retry`: block until the user clicks Retry (a system-dialog
-   * action resolves `retryResolve`), then return. app:shutdown rejects the parked
-   * promise so a quit-during-retry unwinds app:start instead of hanging. The promise
-   * is module-internal state; nothing crosses the hook contract but the returned void.
-   */
-  async function awaitRetry(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      retryResolve = resolve;
-      retryReject = reject;
-    });
-  }
-
-  /**
-   * app:start `start`: advance to the "running" phase (unified loading screen until
-   * app:started). The app:ready dispatch that loads projects is owned by the app:start
-   * operation now (fired after all start handlers), so this handler is pure UI state.
-   */
-  async function appStartStart(): Promise<void> {
-    startupPhase = "running";
-    scheduleUpdate();
-  }
-
-  /** app:setup `show-ui`: enter the setup phase with fresh pending rows. */
-  async function setupShowUi(): Promise<void> {
-    startupPhase = "setup";
-    resetSetupRows();
-    scheduleUpdate();
-  }
-
-  /** app:setup `hide-ui`: return to the boot-splash phase. */
-  async function setupHideUi(): Promise<void> {
-    startupPhase = "starting";
-    scheduleUpdate();
-  }
-
   return {
     name: "presentation",
     dialog: (config: DialogConfig, options?: DialogOpenOptions): DialogHandle =>
@@ -2516,11 +1532,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     deletionProgress: (workspaceRef: WorkspaceRef): DeletionProgress | undefined =>
       deletions.get(workspaceRef),
     reloadFrame,
-    trackRunningHook,
-    cancelRunningHooks,
+    trackRunningHook: (hook) => runningHooks.track(hook),
+    cancelRunningHooks: (workspaceRef) => runningHooks.cancelFor(workspaceRef),
     events,
-    interceptors: [suppressBackgroundFocus, trackStartupOpens],
-    hooks: {
+    interceptors: [suppressBackgroundFocus, startup.interceptor],
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
           // Seed + track the OS theme as soon as the UI is ready (the same gate
@@ -2537,23 +1553,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             scheduleUpdate();
           },
         },
-        "show-ui": { handler: appStartShowUi },
-        "agent-selection": { handler: appStartAgentSelection },
-        "await-retry": { handler: awaitRetry },
-        start: {
-          // Gate on the IDE server: the operation dispatches app:ready (→ project:open,
-          // whose workspace URLs must be servable when the renderer mounts iframes)
-          // only after this hook point completes, so advancing the phase here waits
-          // for the IDE server too.
-          requires: { ideServerPort: ANY_VALUE },
-          handler: appStartStart,
-        },
+        ...startup.appStartHooks,
       },
       ...createNotificationHooks(notifications),
-      [SETUP_OPERATION_ID]: {
-        "show-ui": { handler: setupShowUi },
-        "hide-ui": { handler: setupHideUi },
-      },
+      [SETUP_OPERATION_ID]: startup.setupHooks,
       [CLOSE_PROJECT_OPERATION_ID]: {
         confirm: { handler: confirmClose },
       },
@@ -2570,8 +1573,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         // workspace as its CWD, so the worktree removal cannot delete it.
         shutdown: {
           requires: { [CAPABILITY_AGENT_STOPPED]: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspaceRef } = ctx as DeletePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<ShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
             framesReleased.add(workspaceRef);
             scheduleUpdate();
             return { result: {} };
@@ -2587,29 +1590,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {
-            // Keep the system dialog closed for the rest of the process life,
-            // and reject any parked startup promises so app:start / app:setup
-            // unwind rather than hang. Rejecting the agent-selection promise
-            // (rather than resolving a default) is deliberate: a quit-mid-pick
-            // must NOT persist an agent the user never chose.
-            shuttingDown = true;
             // Close the snapshot stream first so the dialog close below (and any
             // late domain event) can't push another snapshot during teardown.
             connected = false;
-            if (agentSelectionReject) {
-              agentSelectionReject(new Error("app shutting down during agent selection"));
-              agentSelectionResolve = null;
-              agentSelectionReject = null;
-            }
-            if (retryReject) {
-              retryReject(new Error("app shutting down during setup retry"));
-              retryResolve = null;
-              retryReject = null;
-            }
-            systemDialog?.close();
-            systemDialog = null;
-            systemDialogConfigJson = null;
-            systemDialogKind = null;
+            // Keep the system dialog closed for the rest of the process life,
+            // and reject any parked startup promises so app:start / app:setup
+            // unwind rather than hang.
+            startup.shutdown();
             unsubscribeFromUI();
             if (themeUnsubscribe) {
               themeUnsubscribe();
@@ -2618,6 +1605,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           },
         },
       },
-    },
+    }),
   };
 }

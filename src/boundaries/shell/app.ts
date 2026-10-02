@@ -7,13 +7,9 @@
  * - Platform-specific behavior handling (dock on macOS, badges on Linux)
  */
 
+import type { Unsubscribe } from "../../shared/types";
 import type { Logger } from "../platform/logging";
 import { pathToFileURL } from "node:url";
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
 
 // ============================================================================
 // Types

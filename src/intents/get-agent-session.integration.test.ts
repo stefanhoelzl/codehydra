@@ -25,8 +25,7 @@ import type { IntentModule } from "./lib/module";
 import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "./contract";
 
 // =============================================================================
@@ -35,7 +34,7 @@ import type { WorkspaceRef } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-x");
 
 // =============================================================================
 // Behavioral Mocks
@@ -148,12 +147,8 @@ describe("GetAgentSession Operation", () => {
       const setup = createTestSetup({ session: null });
 
       await expect(
-        setup.dispatcher.dispatch(
-          sessionIntent(makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"))
-        )
-      ).rejects.toThrow(
-        `Workspace not found: ${makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent")}`
-      );
+        setup.dispatcher.dispatch(sessionIntent(workspaceRefIn(PROJECT_ROOT, "nonexistent")))
+      ).rejects.toThrow(`Workspace not found: ${workspaceRefIn(PROJECT_ROOT, "nonexistent")}`);
     });
   });
 

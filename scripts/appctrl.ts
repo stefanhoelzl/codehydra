@@ -42,6 +42,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { formatLogScope } from "../src/boundaries/platform/log-scope";
+import { errorCode, getErrorMessage } from "../src/shared/error-utils";
 import type { LogScope } from "../src/boundaries/platform/logging-types";
 
 /** Repo root — this file lives in <root>/scripts/. */
@@ -223,7 +224,7 @@ function pidAlive(pid: number): boolean {
     return true;
   } catch (err) {
     // EPERM: it exists, it is just not ours to signal.
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    return errorCode(err) === "EPERM";
   }
 }
 
@@ -423,6 +424,59 @@ export async function readLogs(options: ReadLogsOptions = {}): Promise<string> {
   const formatted = result.map(formatLogEntry).join("\n");
   const header = `${result.length} of ${filtered.length} entries (file: ${latest.name})`;
   return `${header}\n\n${formatted}`;
+}
+
+// =============================================================================
+// UI helpers (shared with e2e/fixtures.ts)
+// =============================================================================
+
+/**
+ * Expand the sidebar and return once it is clickable. It is 20px wide with its
+ * overflow clipped, and expands on hover — which a headless run, having no
+ * cursor, never does on its own.
+ */
+export async function expandSidebarOn(ui: Page): Promise<void> {
+  const nav = ui.locator("nav.sidebar");
+  const settings = ui.getByRole("button", { name: "Settings" });
+  // Re-sent until it takes: an enter that lands just after a collapse fired,
+  // but before the collapsed state reached the renderer, is not eligible to
+  // expand, and a synthetic enter brings no mousemove to arm it again.
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    try {
+      await nav.dispatchEvent("mouseenter", undefined, { timeout: 1_000 });
+      await settings.waitFor({ state: "visible", timeout: 1_000 });
+      break;
+    } catch (error) {
+      if (Date.now() >= deadline) throw new Error("the sidebar never expanded", { cause: error });
+    }
+  }
+
+  // Visible is not clickable yet: the sidebar widens over a CSS transition, and
+  // Chromium routes a trusted click by the last composited frame, not the DOM.
+  // A click mid-transition can land on the workspace iframe the old frame still
+  // showed there, while Playwright, which checks the DOM, reports it clicked.
+  // So wait for the full width, then for two frames to be painted at it.
+  try {
+    await ui.waitForFunction(
+      () => {
+        const sidebar = document.querySelector<HTMLElement>("nav.sidebar");
+        if (!sidebar) return false;
+        const target = parseFloat(sidebar.style.getPropertyValue("--ch-sidebar-width"));
+        return Math.abs(sidebar.getBoundingClientRect().width - target) < 0.5;
+      },
+      undefined,
+      { polling: 100, timeout: 15_000 }
+    );
+  } catch (error) {
+    throw new Error("the sidebar never reached its expanded width", { cause: error });
+  }
+  await ui.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+  );
 }
 
 // =============================================================================
@@ -751,17 +805,9 @@ export function createDriver() {
       });
   }
 
-  /**
-   * Expand the sidebar. It is 20px and overflow-clipped until hovered, and a
-   * headless run has no cursor to hover with.
-   */
+  /** Expand the sidebar and wait until it is clickable (see expandSidebarOn). */
   async function expandSidebar(): Promise<void> {
-    const found = await uiPage().evaluate(() => {
-      const nav = document.querySelector("nav.sidebar");
-      nav?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
-      return nav !== null;
-    });
-    if (!found) throw new Error("nav.sidebar not found");
+    await expandSidebarOn(uiPage());
   }
 
   /** Mock Electron's folder picker so it auto-returns `paths`. */
@@ -925,10 +971,6 @@ type DaemonHandlers = {
   [K in DaemonCommand]: (params: DaemonRequests[K]) => Promise<unknown>;
 };
 
-function asMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -939,7 +981,7 @@ function isAlive(pid: number): boolean {
     return true;
   } catch (err) {
     // EPERM: alive, just not ours to signal.
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    return errorCode(err) === "EPERM";
   }
 }
 
@@ -1132,7 +1174,7 @@ function runDaemon(): void {
       // A daemon without an app has nothing left to serve.
       reply(200, { result: result ?? null }, driver.isRunning() ? undefined : () => exit(0));
     } catch (err) {
-      reply(500, { error: asMessage(err) }, driver.isRunning() ? undefined : () => exit(1));
+      reply(500, { error: getErrorMessage(err) }, driver.isRunning() ? undefined : () => exit(1));
     }
   }
 
@@ -1359,8 +1401,8 @@ const COMMANDS: Record<string, CliCommand> = {
   "expand-sidebar": {
     usage: "expand-sidebar",
     summary:
-      "Expand the sidebar. It is 20px and clipped until hovered, and headless has no\n" +
-      "cursor — do this before clicking anything in it.",
+      "Expand the sidebar and wait until it is clickable. It is 20px and clipped until\n" +
+      "hovered, and headless has no cursor — do this before clicking anything in it.",
     run: async () => {
       await send("expand-sidebar", {});
       return undefined;
@@ -1599,7 +1641,7 @@ async function runCli(argv: string[]): Promise<number> {
     const usageFailure =
       err instanceof UsageError ||
       (err instanceof Error && (err as NodeJS.ErrnoException).code?.startsWith("ERR_PARSE_ARGS"));
-    process.stderr.write(`appctrl ${name}: ${asMessage(err)}\n`);
+    process.stderr.write(`appctrl ${name}: ${getErrorMessage(err)}\n`);
     if (usageFailure) process.stderr.write(`\n${commandHelp(command)}\n`);
     return usageFailure ? 2 : 1;
   }

@@ -25,6 +25,7 @@
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { IGitClient } from "../../boundaries/platform/git-client";
 import type { Logger } from "../../boundaries/platform/logging";
+import type { SupportedPlatform } from "../../boundaries/platform/platform-info";
 import type { ProgressItem } from "../../shared/dialog-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
@@ -49,6 +50,8 @@ export interface MigrationDeps {
   readonly projectsDir: string;
   /** Directory of hibernation screenshots, one subdirectory per project id. */
   readonly screenshotsDir: Path;
+  /** Host platform, which project ids depend on. */
+  readonly platform: SupportedPlatform;
   /**
    * Record the new root as the one in use, and the workspaces directories with
    * worktrees left under the old one. The commit point.
@@ -238,8 +241,14 @@ async function moveScreenshots(
   managed: readonly ManagedProject[]
 ): Promise<void> {
   for (const project of managed) {
-    const from = new Path(deps.screenshotsDir, generateProjectId(project.from.toString()));
-    const to = new Path(deps.screenshotsDir, generateProjectId(project.to.toString()));
+    const from = new Path(
+      deps.screenshotsDir,
+      generateProjectId(project.from.toString(), deps.platform)
+    );
+    const to = new Path(
+      deps.screenshotsDir,
+      generateProjectId(project.to.toString(), deps.platform)
+    );
     try {
       await deps.fs.rename(from, to);
     } catch {

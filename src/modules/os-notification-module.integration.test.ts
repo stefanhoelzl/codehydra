@@ -43,13 +43,11 @@ import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import type { Config } from "../boundaries/platform/config";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "../intents/contract";
 
 /** The ref of test workspace `name` (at `/ws/<name>`). */
-const ref = (name: string): WorkspaceRef =>
-  makeWorkspaceRef(projectRefFor(projPath("/projects/test")), name);
+const ref = (name: string): WorkspaceRef => workspaceRefIn(projPath("/projects/test"), name);
 
 /** Every workspace the tests report on, by the path the resolve mock knows it at. */
 const WORKSPACES = Object.fromEntries(

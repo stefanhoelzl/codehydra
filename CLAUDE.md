@@ -52,7 +52,7 @@ All external access MUST use abstraction interfaces:
 | Electron Window       | `WindowBoundary`                      | `BaseWindow`            |
 | Electron View         | `ViewBoundary`                        | `WebContentsView`       |
 | Electron Session      | `SessionBoundary`                     | `session`               |
-| Electron IPC          | `IpcBoundary`                         | `ipcMain`               |
+| Electron IPC          | `ViewBoundary.send` / `onIpc`         | `ipcMain`               |
 | Electron Dialog       | `DialogBoundary`                      | `dialog`                |
 | Electron Image        | `ImageBoundary`                       | `nativeImage`           |
 | Electron App          | `AppBoundary`                         | `app`                   |
@@ -61,7 +61,7 @@ All external access MUST use abstraction interfaces:
 | Electron Notification | `OsNotificationBoundary`              | `Notification`          |
 | PostHog telemetry     | `PostHogBoundary`                     | `posthog-node`          |
 
-**Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
+**Acceptable exceptions**: Third-party libraries that encapsulate their own I/O internally do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
 
 ### Path Handling
 
@@ -98,11 +98,12 @@ path1.equals(path2); // equals() for comparison
 
 Some components use external libraries directly without abstraction layers. These are approved exceptions where abstraction provides no benefit.
 
-| Component            | Direct Dependency  | Reason                                                                                                                                       |
-| -------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AutoUpdater`        | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit                                            |
-| `Config.load()`      | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemBoundary is async-only                                                   |
-| `relocateDataRoot()` | `node:fs`          | Moves the Windows data root (`%APPDATA%` → `%LOCALAPPDATA%`) before the logger and `Config.load()` open it; FileSystemBoundary is async-only |
+| Component            | Direct Dependency  | Reason                                                                                                                                                                       |
+| -------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AutoUpdater`        | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit                                                                            |
+| `Config.load()`      | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemBoundary is async-only                                                                                   |
+| `relocateDataRoot()` | `node:fs`          | Moves the Windows data root (`%APPDATA%` → `%LOCALAPPDATA%`) before the logger and `Config.load()` open it; FileSystemBoundary is async-only                                 |
+| `ElectronBuildInfo`  | `execSync`         | Unpackaged only: reads the git branch synchronously at startup, before config registration derives the dev ports from it; ProcessRunner is async-only and does not exist yet |
 
 ---
 
@@ -180,9 +181,9 @@ Views: `--target workspace` (default, the visible VSCodium iframe), `ui` (the wh
 
 All operations use an intent-based dispatcher with operations, hook modules, and domain events. The composition root is `src/main.ts`, which constructs all services, registers operations and modules with the dispatcher, then dispatches `app:start`. Cross-cutting concerns (e.g., idempotency) are implemented via `createIdempotencyModule()` from `src/intents/lib/idempotency-module.ts`. This factory accepts an array of rules and produces a single `IntentModule` with one interceptor and reset event handlers, supporting singleton, singleton-with-reset, and per-key modes (a per-key rule with `wait` holds a duplicate until the key is released instead of blocking it — `project:open` uses it, since a blocked dispatch resolves to `undefined`).
 
-Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`, which emits `project:opened` right after discovery — before any workspace is open, so the sidebar lists them loading — then opens the awake ones one at a time, the active one first). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (`project:close`'s default; it switches to full deletion when the close confirmed `removeAll`, which `removeLocalRepo` implies). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
+Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`, which emits `project:opened` right after discovery — before any workspace is open, so the sidebar lists them loading — then opens the awake ones one at a time, the active one first). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (`project:close`'s default; it switches to full deletion when the close confirmed `removeAll`, which `removeLocalRepo` implies). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the presenter (folded into the `UiState` snapshot), the badge module and the OS-notification module. New hook modules registered on `workspace:open` must handle both the new-worktree and existing-workspace paths: the operation decides which once and puts it on every hook context as `fresh` (true = new worktree, false = reopen), beside the resolved `workspaceName` — branch on those, never on `payload.existingWorkspace` (`workspace:created` carries `fresh` too). A module declares its handlers through `defineHooks` / `defineEvents` (`src/intents/declarations.ts`): each hook handler's context (the operation's intent included) and result are typed from the operation's schemas, each event handler's event from its type — no `ctx as XHookInput` / `event as XEvent` casts. A new operation needs an entry in that file's `Operations` table (docs/INTENTS.md, Writing a module).
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `Config.load()` (sync) before `app:start` is dispatched. `app:start` runs these hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `migrations` (bring on-disk data in line before anything reads it — a requested workspaces-root move; may block on the starting screen or quit), `register-agents`/`agent-selection`/`save-agent` (first run only — the picker; must precede `check-deps`, which is agent-specific), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` runs `stop` (best-effort disposal, each module wraps its own try/catch), `handoff` (what outlives the process: the update installer) and `quit`. All modules are constructed and registered in `src/main.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/intents/lib/operation.ts`). See `docs/INTENTS.md` for the complete reference.
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `Config.load()` (sync) before `app:start` is dispatched. `app:start` runs these hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `migrations` (bring on-disk data in line before anything reads it — a requested workspaces-root move; may block on the starting screen or quit), `register-agents`/`agent-selection`/`save-agent` (first run only — the picker; must precede `check-deps`, which is agent-specific), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` runs `stop` (best-effort disposal: the dispatcher's `collect()` runs every handler even when one throws and logs the failure as a `hook error` warning, so a handler needs no try/catch of its own — only around steps that must not stop the rest of its own disposal), `handoff` (what outlives the process: the update installer) and `quit`. All modules are constructed and registered in `src/main.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/intents/lib/operation.ts`). See `docs/INTENTS.md` for the complete reference.
 
 ---
 
@@ -228,12 +229,14 @@ src/
 ```
 src/renderer/lib/
 ├── api/          # Re-exports window.api for mockability
-├── components/   # Svelte 5 components
-├── stores/       # Svelte 5 runes-based stores (.svelte.ts)
+├── components/   # Svelte 5 components (form/ holds the dialog form sections)
+├── logging/      # Renderer logger (forwards to main as a `log` ui:event)
+├── services/     # Renderer-local behavior (agent chime)
+├── utils/        # Pure helpers and setup* functions (focus, keyboard, sidebar)
 └── styles/       # Global CSS
 ```
 
-**Patterns**: Import from `$lib/api` (not `window.api`). Use Svelte 5 runes (`$state`, `$derived`, `$effect`).
+**Patterns**: Import from `$lib/api` (not `window.api`). No stores: `App.svelte` holds the `UiState` snapshot from `api.onState` and passes it down as props; only ephemeral state (hover, focus, in-flight edits) is component-local. Use Svelte 5 runes (`$state`, `$derived`, `$effect`).
 
 ---
 
@@ -303,15 +306,15 @@ cd /path/to/main && git merge --ff-only <branch>  # Fast-forward only
 
 ### Testing
 
-| Code Change           | Required Tests                                                                                                                                                                                                    |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| New feature/module    | Integration tests (behavioral mocks)                                                                                                                                                                              |
-| Pure utility function | Focused tests (input/output)                                                                                                                                                                                      |
-| External interface    | Boundary tests                                                                                                                                                                                                    |
-| Bug fix               | Test covering the fix                                                                                                                                                                                             |
-| Packaging / startup   | e2e spec (`e2e/*.e2e.ts`)                                                                                                                                                                                         |
-| Agent launch / MCP    | `e2e/agent-turn.e2e.ts` — a real agent, a mock model (`useAgentMock()`, `@copilotkit/aimock`). No login, no key, no network                                                                                       |
-| Claude hook contract  | `claude/server-manager.boundary.test.ts` — a real `claude` against a mock model, asserting the `AgentStatus` the shipped hook chain derives. Needs `claude` on PATH + `pnpm build:wrappers` (throws, never skips) |
+| Code Change           | Required Tests                                                                                                                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New feature/module    | Integration tests (behavioral mocks)                                                                                                                                                                                |
+| Pure utility function | Focused tests (input/output)                                                                                                                                                                                        |
+| External interface    | Boundary tests                                                                                                                                                                                                      |
+| Bug fix               | Test covering the fix                                                                                                                                                                                               |
+| Packaging / startup   | e2e spec (`e2e/*.e2e.ts`)                                                                                                                                                                                           |
+| Agent launch / MCP    | `e2e/agent-turn.e2e.ts` — a real agent, a mock model (`useAgentMock()`, `@copilotkit/aimock`). No login, no key, no network                                                                                         |
+| Claude hook contract  | `claude/server-manager.boundary.test.ts` — a real `claude` against a mock model, asserting the `AgentActivity` the shipped hook chain derives. Needs `claude` on PATH + `pnpm build:wrappers` (throws, never skips) |
 
 **Note**: Unit tests deprecated. Use integration tests with behavioral mocks.
 

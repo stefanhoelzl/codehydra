@@ -23,7 +23,8 @@ import {
   getErrorMessage,
 } from "../../shared/errors/service-errors";
 import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "./paths";
-import { isValidMetadataKey } from "../../shared/api/types";
+import { toError } from "../../shared/error-utils";
+import { encodeTag, isValidMetadataKey, tagKey } from "../../shared/api/types";
 import type { FileSystemBoundary } from "./filesystem";
 import type { Logger } from "./logging";
 import { WorkspaceMetadataStore, type Metadata } from "./workspace-metadata-store";
@@ -135,7 +136,7 @@ export function parseBranchConfigs(
 export const EXTERNAL_TAG_NAME = "external";
 
 /** Metadata key holding the external tag (`tags.` prefix + the tag name). */
-export const EXTERNAL_TAG_METADATA_KEY = `tags.${EXTERNAL_TAG_NAME}`;
+export const EXTERNAL_TAG_METADATA_KEY = tagKey(EXTERNAL_TAG_NAME);
 
 /**
  * Tag value: a neutral grey, quieter than CodeHydra's blue `new` tag — this marks a
@@ -145,7 +146,7 @@ export const EXTERNAL_TAG_METADATA_KEY = `tags.${EXTERNAL_TAG_NAME}`;
  * Written once, at adoption. Worktrees adopted before a change here keep whatever
  * value they were adopted with; nothing backfills them.
  */
-export const EXTERNAL_TAG_VALUE = JSON.stringify({
+export const EXTERNAL_TAG_VALUE = encodeTag({
   color: "#8b949e",
   description: "Adopted worktree — created outside CodeHydra",
 });
@@ -837,27 +838,7 @@ export class GitWorktreeProvider {
 
       // If tracking is set, reconfigure upstream
       if (tracking !== undefined) {
-        const slashIndex = tracking.indexOf("/");
-        if (slashIndex !== -1) {
-          const remote = tracking.substring(0, slashIndex);
-          const remoteBranch = tracking.substring(slashIndex + 1);
-          try {
-            await this.gitClient.setBranchConfig(projectRoot, name, "remote", remote);
-            await this.gitClient.setBranchConfig(
-              projectRoot,
-              name,
-              "merge",
-              `refs/heads/${remoteBranch}`
-            );
-          } catch (error: unknown) {
-            const message = getErrorMessage(error, "Unknown error");
-            this.logger.warn("Failed to configure upstream tracking", {
-              branch: name,
-              tracking,
-              error: message,
-            });
-          }
-        }
+        await this.configureUpstream(projectRoot, name, tracking);
       }
     } else {
       // Branch doesn't exist - create it
@@ -917,6 +898,89 @@ export class GitWorktreeProvider {
     };
   }
 
+  /**
+   * Point an existing branch's upstream at `tracking` (`<remote>/<branch>`).
+   * Best-effort: a failure is logged, never thrown. A ref with no remote part
+   * leaves the branch as it is.
+   */
+  private async configureUpstream(
+    projectRoot: Path,
+    branch: string,
+    tracking: string
+  ): Promise<void> {
+    const slashIndex = tracking.indexOf("/");
+    if (slashIndex === -1) return;
+    const remote = tracking.substring(0, slashIndex);
+    const remoteBranch = tracking.substring(slashIndex + 1);
+    try {
+      await this.gitClient.setBranchConfig(projectRoot, branch, "remote", remote);
+      await this.gitClient.setBranchConfig(
+        projectRoot,
+        branch,
+        "merge",
+        `refs/heads/${remoteBranch}`
+      );
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Unknown error");
+      this.logger.warn("Failed to configure upstream tracking", {
+        branch,
+        tracking,
+        error: message,
+      });
+    }
+  }
+
+  /**
+   * Remove a worktree (its metadata file goes with it): `git worktree remove`,
+   * falling back to a recursive rm + prune when git refuses. Returns null once
+   * either way removed it, else git's error — the caller throws it after it has
+   * attempted the branch deletion.
+   */
+  private async removeWithFallback(projectRoot: Path, workspacePath: Path): Promise<Error | null> {
+    try {
+      await this.gitClient.removeWorktree(projectRoot, workspacePath);
+      return null;
+    } catch (error) {
+      const logger = this.logger.scoped({ path: workspacePath.toString() });
+      // git worktree remove can fail for various reasons (stale .git,
+      // Windows long paths, locked files, etc.) — fall back to rm + prune
+      logger.warn("Worktree removal failed; trying recursive rm", {
+        error: getErrorMessage(error),
+      });
+      // Time the fallback. `fs.rm`'s internal retries are invisible from
+      // here — a removal rescued on the third attempt looks exactly like one
+      // that succeeded immediately — so the only signal that a holder let go
+      // late (rather than never having been there) is how long this took.
+      // Without it, "should the retry budget go up or down?" is unanswerable
+      // from a bug report, which is precisely where that question lands.
+      const rmStart = Date.now();
+      try {
+        await this.fileSystemLayer.rm(workspacePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 200,
+          timeout: GitWorktreeProvider.RM_FALLBACK_TIMEOUT_MS,
+        });
+        await this.gitClient.pruneWorktrees(projectRoot);
+        logger.info("Removed workspace via fallback", { elapsedMs: Date.now() - rmStart });
+        return null;
+      } catch (fallbackError) {
+        // Log BOTH failures. Reports of this only ever carried the git error,
+        // which names the directory but never says what was holding it; the
+        // post-mortem scan runs later, by which point the transient holder is
+        // usually gone. The rm error carries the errno (EPERM/EBUSY/ENOTEMPTY
+        // /ETIMEDOUT), which at least distinguishes "still locked" from "took
+        // too long".
+        logger.warn("Recursive rm fallback failed too", {
+          error: getErrorMessage(fallbackError),
+          elapsedMs: Date.now() - rmStart,
+        });
+        return toError(error);
+      }
+    }
+  }
+
   async removeWorkspace(
     projectRoot: Path,
     workspacePath: Path,
@@ -951,52 +1015,9 @@ export class GitWorktreeProvider {
 
     // Step 1: Try to remove worktree (its metadata file goes with it), save error if it fails
     // We save the error to throw later, after attempting branch deletion
-    let worktreeError: Error | null = null;
-    if (worktree) {
-      try {
-        await this.gitClient.removeWorktree(projectRoot, workspacePath);
-      } catch (error) {
-        // git worktree remove can fail for various reasons (stale .git,
-        // Windows long paths, locked files, etc.) — fall back to rm + prune
-        this.logger
-          .scoped({ path: workspacePath.toString() })
-          .warn("Worktree removal failed; trying recursive rm", { error: getErrorMessage(error) });
-        // Time the fallback. `fs.rm`'s internal retries are invisible from
-        // here — a removal rescued on the third attempt looks exactly like one
-        // that succeeded immediately — so the only signal that a holder let go
-        // late (rather than never having been there) is how long this took.
-        // Without it, "should the retry budget go up or down?" is unanswerable
-        // from a bug report, which is precisely where that question lands.
-        const rmStart = Date.now();
-        try {
-          await this.fileSystemLayer.rm(workspacePath, {
-            recursive: true,
-            force: true,
-            maxRetries: 3,
-            retryDelay: 200,
-            timeout: GitWorktreeProvider.RM_FALLBACK_TIMEOUT_MS,
-          });
-          await this.gitClient.pruneWorktrees(projectRoot);
-          this.logger
-            .scoped({ path: workspacePath.toString() })
-            .info("Removed workspace via fallback", { elapsedMs: Date.now() - rmStart });
-        } catch (fallbackError) {
-          // Log BOTH failures. Reports of this only ever carried the git error,
-          // which names the directory but never says what was holding it; the
-          // post-mortem scan runs later, by which point the transient holder is
-          // usually gone. The rm error carries the errno (EPERM/EBUSY/ENOTEMPTY
-          // /ETIMEDOUT), which at least distinguishes "still locked" from "took
-          // too long".
-          this.logger
-            .scoped({ path: workspacePath.toString() })
-            .warn("Recursive rm fallback failed too", {
-              error: getErrorMessage(fallbackError),
-              elapsedMs: Date.now() - rmStart,
-            });
-          worktreeError = error as Error;
-        }
-      }
-    }
+    const worktreeError = worktree
+      ? await this.removeWithFallback(projectRoot, workspacePath)
+      : null;
 
     // Step 2: Delete the branch (always attempt if requested)
     // This ensures branch is deleted even if worktree removal failed

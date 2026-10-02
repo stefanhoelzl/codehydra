@@ -6,13 +6,7 @@
  * `notification:show`.
  */
 
-import type { IntentModule, EventDeclarations } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type {
-  CloneProgressEvent,
-  ProjectOpenedEvent,
-  ProjectOpenFailedEvent,
-} from "../intents/open-project";
+import type { IntentModule } from "../intents/lib/module";
 import {
   EVENT_CLONE_PROGRESS,
   EVENT_PROJECT_OPENED,
@@ -21,6 +15,7 @@ import {
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { NotificationCard } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
+import { defineEvents } from "../intents/declarations";
 
 /**
  * Format a git stage name for display.
@@ -69,10 +64,10 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
     return config;
   }
 
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_CLONE_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as CloneProgressEvent).payload;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
         const { url, stage, progress } = payload;
 
         let card = cards.get(url);
@@ -84,8 +79,8 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
       },
     },
     [EVENT_PROJECT_OPENED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as ProjectOpenedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
         // Close notification for completed clones (git field matches the clone URL)
         if (payload.git) {
           cards.get(payload.git)?.close();
@@ -94,8 +89,8 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
       },
     },
     [EVENT_PROJECT_OPEN_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as ProjectOpenFailedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const payload = event.payload;
         if (payload.git) {
           // The card turns into the error in place; the user's dismiss closes it.
           cards.get(payload.git)?.show({
@@ -108,7 +103,7 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
         }
       },
     },
-  };
+  });
 
   return {
     name: "clone-notification",

@@ -39,13 +39,13 @@ import {
 } from "../boundaries/shell/window-manager.test-utils";
 import type { ImageHandle } from "../boundaries/shell/image-types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import type { AggregatedAgentStatus } from "../shared/ipc";
+import type { SupportedPlatform } from "../boundaries/platform/platform-info";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "../intents/contract";
 
 /** The ref of test workspace `name` (at `/workspace/<name>`). */
-const ref = (name: string): WorkspaceRef =>
-  makeWorkspaceRef(projectRefFor(projPath("/projects/test")), name);
+const ref = (name: string): WorkspaceRef => workspaceRefIn(projPath("/projects/test"), name);
 
 // =============================================================================
 // BadgeManager Direct Tests
@@ -62,18 +62,21 @@ describe("BadgeManager", () => {
     windowManager = createMockWindowManager();
   });
 
+  /** A BadgeManager on `platform`, over this suite's app, image and window layers. */
+  function createManager(platform: SupportedPlatform): BadgeManager {
+    return new BadgeManager(
+      createMockPlatformInfo({ platform }),
+      appLayer,
+      imageLayer,
+      windowManager as unknown as WindowManager,
+      SILENT_LOGGER
+    );
+  }
+
   describe("updateBadge (darwin)", () => {
     it("shows filled circle for all-working state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       appLayer = createAppBoundaryMock({ platform: "darwin" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("darwin");
 
       manager.updateBadge("all-working");
 
@@ -81,16 +84,8 @@ describe("BadgeManager", () => {
     });
 
     it("shows half circle for mixed state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       appLayer = createAppBoundaryMock({ platform: "darwin" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("darwin");
 
       manager.updateBadge("mixed");
 
@@ -98,16 +93,8 @@ describe("BadgeManager", () => {
     });
 
     it("clears badge for none state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       appLayer = createAppBoundaryMock({ platform: "darwin" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("darwin");
 
       manager.updateBadge("none");
 
@@ -117,15 +104,7 @@ describe("BadgeManager", () => {
 
   describe("updateBadge (win32)", () => {
     it("generates image for all-working state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
 
@@ -135,15 +114,7 @@ describe("BadgeManager", () => {
     });
 
     it("generates image for mixed state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("mixed");
 
@@ -153,15 +124,7 @@ describe("BadgeManager", () => {
     });
 
     it("clears overlay for none state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("none");
 
@@ -201,16 +164,8 @@ describe("BadgeManager", () => {
     // modern Linux desktop provides. The Linux badge was removed, so every state
     // must be a no-op: no dock badge, no overlay icon, no generated images.
     it.each(["all-working", "mixed", "none"] as const)("is a no-op for %s state", (state) => {
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
       appLayer = createAppBoundaryMock({ platform: "linux" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("linux");
 
       manager.updateBadge(state);
 
@@ -222,15 +177,7 @@ describe("BadgeManager", () => {
 
   describe("generateBadgeImage", () => {
     it("creates a 16x16 bitmap image for all-working", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
 
@@ -238,15 +185,7 @@ describe("BadgeManager", () => {
     });
 
     it("creates different images for different states", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
       manager.updateBadge("mixed");
@@ -255,15 +194,7 @@ describe("BadgeManager", () => {
     });
 
     it("creates non-empty image for mixed state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("mixed");
 
@@ -271,15 +202,7 @@ describe("BadgeManager", () => {
     });
 
     it("creates non-empty image for all-working state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
 
@@ -289,15 +212,7 @@ describe("BadgeManager", () => {
 
   describe("image caching", () => {
     it("reuses cached images for same state", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
       manager.updateBadge("all-working");
@@ -308,15 +223,7 @@ describe("BadgeManager", () => {
     });
 
     it("creates new images for different states", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
       manager.updateBadge("mixed");
@@ -327,15 +234,7 @@ describe("BadgeManager", () => {
 
   describe("dispose", () => {
     it("releases all cached images", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
       manager.updateBadge("mixed");
@@ -348,15 +247,7 @@ describe("BadgeManager", () => {
     });
 
     it("clears overlay on dispose (win32)", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
       const callsAfterUpdate = windowManager.getOverlayIconCalls().length;
@@ -369,16 +260,8 @@ describe("BadgeManager", () => {
     });
 
     it("clears badge on dispose (darwin)", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
       appLayer = createAppBoundaryMock({ platform: "darwin" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("darwin");
 
       manager.updateBadge("all-working");
       expect(appLayer).toHaveDockBadge("●");
@@ -389,15 +272,7 @@ describe("BadgeManager", () => {
     });
 
     it("is idempotent - can be called multiple times safely", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-
-      const manager = new BadgeManager(
-        platformInfo,
-        appLayer,
-        imageLayer,
-        windowManager as unknown as WindowManager,
-        SILENT_LOGGER
-      );
+      const manager = createManager("win32");
 
       manager.updateBadge("all-working");
 
@@ -469,6 +344,17 @@ function createModuleTestSetup(): ModuleTestSetup {
   return { dispatcher, appLayer };
 }
 
+const busy = (n = 1): AggregatedAgentStatus => ({ status: "busy", counts: { idle: 0, busy: n } });
+const idle = (n = 1): AggregatedAgentStatus => ({ status: "idle", counts: { idle: n, busy: 0 } });
+
+/** Fully delete test workspace `name` (fires workspace:deleted). */
+function deleteIntent(name: string): DeleteWorkspaceIntent {
+  return {
+    type: INTENT_DELETE_WORKSPACE,
+    payload: { workspaceRef: ref(name), keepBranch: false, force: false, removeWorktree: true },
+  };
+}
+
 // =============================================================================
 // Module Tests
 // =============================================================================
@@ -478,12 +364,7 @@ describe("BadgeModule Integration", () => {
     it("shows all-working badge when single workspace becomes busy", async () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 2 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy(2)));
 
       expect(appLayer).toHaveDockBadge("\u25CF"); // ●
     });
@@ -492,21 +373,11 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // First make busy
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Then become idle
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "idle",
-          counts: { idle: 1, busy: 0 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), idle()));
       expect(appLayer).toHaveDockBadge("");
     });
   });
@@ -515,18 +386,8 @@ describe("BadgeModule Integration", () => {
     it("shows mixed badge when some workspaces idle, some busy", async () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "idle",
-          counts: { idle: 2, busy: 0 },
-        })
-      );
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("2"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), idle(2)));
+      await dispatcher.dispatch(updateStatusIntent(ref("2"), busy()));
 
       expect(appLayer).toHaveDockBadge("\u25D0"); // ◐
     });
@@ -535,27 +396,12 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Mixed state
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "idle",
-          counts: { idle: 1, busy: 0 },
-        })
-      );
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("2"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), idle()));
+      await dispatcher.dispatch(updateStatusIntent(ref("2"), busy()));
       expect(appLayer).toHaveDockBadge("\u25D0");
 
       // Workspace 1 becomes busy
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
       expect(appLayer).toHaveDockBadge("\u25CF");
     });
 
@@ -563,27 +409,12 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // All working
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("2"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
+      await dispatcher.dispatch(updateStatusIntent(ref("2"), busy()));
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Workspace 1 becomes idle
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "idle",
-          counts: { idle: 1, busy: 0 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), idle()));
       expect(appLayer).toHaveDockBadge("\u25D0");
     });
   });
@@ -593,25 +424,11 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // One busy workspace
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Dispatch a delete intent through the public API to trigger workspace:deleted event
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspaceRef: ref("1"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatcher.dispatch(deleteIntent);
+      await dispatcher.dispatch(deleteIntent("1"));
 
       expect(appLayer).toHaveDockBadge("");
     });
@@ -620,31 +437,12 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Mixed state: one idle, one busy
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "idle",
-          counts: { idle: 1, busy: 0 },
-        })
-      );
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("2"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), idle()));
+      await dispatcher.dispatch(updateStatusIntent(ref("2"), busy()));
       expect(appLayer).toHaveDockBadge("\u25D0");
 
       // Dispatch a delete intent through the public API to trigger workspace:deleted event
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspaceRef: ref("2"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatcher.dispatch(deleteIntent);
+      await dispatcher.dispatch(deleteIntent("2"));
 
       // Only idle workspace remains - should clear badge
       expect(appLayer).toHaveDockBadge("");
@@ -656,12 +454,7 @@ describe("BadgeModule Integration", () => {
       const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Set a busy badge first
-      await dispatcher.dispatch(
-        updateStatusIntent(ref("1"), {
-          status: "busy",
-          counts: { idle: 0, busy: 1 },
-        })
-      );
+      await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Register shutdown operation and dispatch

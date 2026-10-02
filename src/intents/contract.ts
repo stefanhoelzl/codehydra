@@ -68,6 +68,38 @@ export const workspaceTargetShape = {
   workspacePath: workspacePathSchema,
 };
 
+/**
+ * The part of a workspace's identity its ref names by itself: the ref, its
+ * project's ref and its name (`utils/ref.ts` splits them out of the ref).
+ *
+ * Only the workspace failure events (`workspace:hibernate-failed`,
+ * `workspace:wake-failed`, `workspace:delete-failed`) carry this alone: they
+ * also report a ref that never resolved, for which no project id exists.
+ * Every other workspace event carries {@link workspaceIdentityPayloadSchema}.
+ */
+export const workspaceRefIdentitySchema = z.object({
+  workspaceRef: workspaceRefSchema,
+  projectRef: projectRefSchema,
+  workspaceName: workspaceNameSchema,
+});
+export type WorkspaceRefIdentity = z.infer<typeof workspaceRefIdentitySchema>;
+
+/**
+ * The identity every workspace event payload carries, spread in as
+ * `...workspaceIdentityPayloadSchema.shape`: the workspace's ref (its
+ * identity — keys and comparisons use it), its project's ref, its name and its
+ * project's id (what the renderer addresses the project by).
+ *
+ * The exceptions name what they lack in their own schema: the failure events
+ * carry {@link workspaceRefIdentitySchema}, and `workspace:loading` /
+ * `workspace:create-failed` concern a workspace that does not exist yet, so
+ * they have no ref at all.
+ */
+export const workspaceIdentityPayloadSchema = workspaceRefIdentitySchema.extend({
+  projectId: projectIdSchema,
+});
+export type WorkspaceIdentityPayload = z.infer<typeof workspaceIdentityPayloadSchema>;
+
 // =============================================================================
 // Agent spec / session
 // =============================================================================
@@ -380,9 +412,7 @@ export type DeletionOperation = z.infer<typeof deletionOperationSchema>;
 /** Progress state for workspace deletion (full state, emitted with each update). */
 export const deletionProgressSchema = z
   .object({
-    workspaceRef: workspaceRefSchema,
-    workspaceName: workspaceNameSchema,
-    projectId: projectIdSchema,
+    ...workspaceIdentityPayloadSchema.shape,
     keepBranch: z.boolean(),
     operations: z.array(deletionOperationSchema).readonly(),
     completed: z.boolean(),

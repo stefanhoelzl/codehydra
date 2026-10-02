@@ -9,15 +9,12 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import { SWITCH_WORKSPACE_OPERATION_ID, selectNextWorkspace } from "../intents/switch-workspace";
-import type {
-  SelectNextHookInput,
-  SelectNextHookResult,
-  AgentStatusScorer,
-} from "../intents/switch-workspace";
+import type { SelectNextHookResult, AgentStatusScorer } from "../intents/switch-workspace";
 import type { WorkspaceRef } from "../intents/contract";
 import { createWorkspaceStatusCache } from "./workspace-status-cache";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 export function createWorkspaceSelectionModule(): IntentModule {
   // Reads the cache lazily on each selection, so no onChange callback is needed.
@@ -32,17 +29,17 @@ export function createWorkspaceSelectionModule(): IntentModule {
 
   return {
     name: "workspace-selection",
-    hooks: {
+    hooks: defineHooks({
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {
-          handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
-            const { currentRef, candidates } = ctx as unknown as SelectNextHookInput;
+          handler: async (ctx): Promise<HookOutput<SelectNextHookResult>> => {
+            const { currentRef, candidates } = ctx;
             const result = selectNextWorkspace(currentRef, candidates, scorer);
             return result ? { result: { selected: result } } : { result: {} };
           },
         },
       },
-    },
-    events: cache.events,
+    }),
+    events: defineEvents(cache.events),
   };
 }

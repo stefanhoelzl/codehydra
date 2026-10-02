@@ -36,7 +36,7 @@ const logContextSchema = z.record(
 export const uiEventSchema = z.discriminatedUnion("kind", [
   // Startup handshake: emitted once after the renderer subscribes to ui:state.
   z.object({ kind: z.literal("ui-connected") }),
-  // key is the snapshot row's presenter-assigned workspace key, echoed back.
+  // key is the snapshot row's key (its workspace ref), echoed back.
   // Switch to a workspace (sidebar/status-cell click); key null = deselect
   // (the creation panel becomes the main view).
   z.object({ kind: z.literal("switch-workspace"), key: z.string().nullable() }),

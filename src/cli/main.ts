@@ -6,6 +6,7 @@
  * this file only reads the process, picks a mode, and writes the outcome.
  */
 
+import { getErrorMessage } from "../shared/error-utils";
 import { readFileSync, realpathSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 
@@ -182,7 +183,7 @@ main()
     // or discovery for it.
     const json = useJson("auto", process.stdout.isTTY === true);
     const code = error instanceof DiscoveryError ? EXIT.UNREACHABLE : EXIT.FAILED;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     process.stderr.write(`${renderError(message, code, json)}\n`);
     process.exitCode = code;
   });

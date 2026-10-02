@@ -3,10 +3,12 @@
  * duplicate dispatches for one or more intent types.
  *
  * Supports three modes per rule:
- * - **Singleton**: boolean flag, blocks once set (e.g. app:shutdown)
- * - **Singleton with reset**: boolean flag cleared by a domain event (e.g. setup)
- * - **Per-key**: Set<string> keyed by payload field, with optional reset and force bypass
- *   (e.g. workspace:delete keyed by workspacePath)
+ * - **Singleton**: blocks once dispatched (e.g. app:shutdown)
+ * - **Singleton with reset**: as singleton, cleared by a domain event (e.g. setup)
+ * - **Per-key**: keyed by payload field, with optional reset and force bypass
+ *   (e.g. workspace:delete keyed by workspace)
+ *
+ * All three share one mechanism: a singleton is a per-key rule with a constant key.
  *
  * A per-key rule with `wait` holds a duplicate until the key is released by its
  * reset event, then lets it through, instead of blocking it (e.g. project:open).
@@ -25,7 +27,7 @@ import type { IntentModule, EventDeclarations, EventHandler } from "./module";
 export interface IdempotencyRule {
   /** Intent type this rule applies to. */
   readonly intentType: string;
-  /** Extract a tracking key from the intent payload. Omit for singleton (boolean flag). Return undefined to skip the rule for this payload. */
+  /** Extract a tracking key from the intent payload. Omit for singleton (one constant key). Return undefined to skip the rule for this payload. */
   readonly getKey?: (payload: unknown) => string | undefined;
   /** Domain event type(s) that reset tracking state. Uses getKey on event payload for per-key reset. */
   readonly resetOn?: string | readonly string[];
@@ -45,6 +47,14 @@ export interface IdempotencyRule {
 // Factory
 // =============================================================================
 
+/** The one key a singleton rule (no `getKey`) tracks. */
+const SINGLETON_KEY = "";
+
+/** The tracking key for `payload` under `rule`: its `getKey`, or the singleton key. */
+function keyOf(rule: IdempotencyRule, payload: unknown): string | undefined {
+  return rule.getKey ? rule.getKey(payload) : SINGLETON_KEY;
+}
+
 /**
  * Create an IntentModule that enforces idempotency for the given rules.
  *
@@ -59,32 +69,26 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
     rulesByIntent.set(rule.intentType, rule);
   }
 
-  // State: intent type → boolean (singleton) or Set<string> (per-key)
-  const singletonFlags = new Map<string, boolean>();
-  const perKeyFlags = new Map<string, Set<string>>();
+  // State: intent type → keys in flight. A singleton rule is a per-key rule
+  // whose key is always SINGLETON_KEY.
+  const inFlight = new Map<string, Set<string>>();
   // Duplicates of a `wait` rule parked until their key is released, in arrival order.
   const waiters = new Map<string, Map<string, (() => void)[]>>();
+  for (const rule of rules) {
+    inFlight.set(rule.intentType, new Set<string>());
+    if (rule.wait) waiters.set(rule.intentType, new Map());
+  }
 
   /** Release a key, or hand it over still held to the first waiter. */
   function release(intentType: string, key: string): void {
     const queue = waiters.get(intentType)?.get(key);
     const next = queue?.shift();
     if (next === undefined) {
-      perKeyFlags.get(intentType)?.delete(key);
+      inFlight.get(intentType)?.delete(key);
       return;
     }
     if (queue!.length === 0) waiters.get(intentType)!.delete(key);
     next();
-  }
-
-  // Initialize state for each rule
-  for (const rule of rules) {
-    if (rule.getKey) {
-      perKeyFlags.set(rule.intentType, new Set<string>());
-      if (rule.wait) waiters.set(rule.intentType, new Map());
-    } else {
-      singletonFlags.set(rule.intentType, false);
-    }
   }
 
   // Build event handlers for resetOn rules
@@ -109,13 +113,9 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
     (events as Record<string, EventHandler>)[eventType] = {
       handler: async (event: DomainEvent): Promise<void> => {
         for (const rule of resetRules) {
-          if (rule.getKey) {
-            const key = rule.getKey(event.payload);
-            if (key !== undefined && perKeyFlags.get(rule.intentType)?.has(key)) {
-              release(rule.intentType, key);
-            }
-          } else {
-            singletonFlags.set(rule.intentType, false);
+          const key = keyOf(rule, event.payload);
+          if (key !== undefined && inFlight.get(rule.intentType)?.has(key)) {
+            release(rule.intentType, key);
           }
         }
       },
@@ -133,42 +133,31 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
             return intent; // No rule for this intent type, pass through
           }
 
-          if (rule.getKey) {
-            // Per-key mode
-            const key = rule.getKey(intent.payload);
-            if (key === undefined) {
-              return intent; // getKey opted out for this payload
-            }
-            const keys = perKeyFlags.get(rule.intentType)!;
+          const key = keyOf(rule, intent.payload);
+          if (key === undefined) {
+            return intent; // getKey opted out for this payload
+          }
+          const keys = inFlight.get(rule.intentType)!;
 
-            if (rule.isForced?.(intent)) {
-              keys.add(key);
-              return intent; // Force bypasses block
-            }
-
-            if (keys.has(key)) {
-              if (!rule.wait) return null; // Block duplicate
-              // Wait for the key. release() hands it over still held, so no
-              // other dispatch can take it in between.
-              const queue = waiters.get(rule.intentType)!;
-              await new Promise<void>((resolve) => {
-                const parked = queue.get(key);
-                if (parked) parked.push(resolve);
-                else queue.set(key, [resolve]);
-              });
-              return intent;
-            }
-
+          if (rule.isForced?.(intent)) {
             keys.add(key);
+            return intent; // Force bypasses block
+          }
+
+          if (keys.has(key)) {
+            if (!rule.wait) return null; // Block duplicate
+            // Wait for the key. release() hands it over still held, so no
+            // other dispatch can take it in between.
+            const queue = waiters.get(rule.intentType)!;
+            await new Promise<void>((resolve) => {
+              const parked = queue.get(key);
+              if (parked) parked.push(resolve);
+              else queue.set(key, [resolve]);
+            });
             return intent;
           }
 
-          // Singleton mode
-          if (singletonFlags.get(rule.intentType)) {
-            return null; // Block duplicate
-          }
-
-          singletonFlags.set(rule.intentType, true);
+          keys.add(key);
           return intent;
         },
       },

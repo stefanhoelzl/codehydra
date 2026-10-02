@@ -14,8 +14,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createClaudeModuleProvider } from "./module-provider";
 import type { ClaudeCodeServerManager } from "./server-manager";
-import type { AgentProvider, AgentStatus } from "../types";
-import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
+import type { AgentProvider, AgentActivity } from "../types";
+import type { AggregatedAgentStatus } from "../../../shared/ipc";
+import { Path } from "../../../utils/path/path";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import {
   createFakeBinaryResolver,
@@ -28,14 +29,14 @@ import {
   type MockProcessRunner,
 } from "../../../boundaries/platform/process.state-mock";
 import { testPath } from "../../../shared/test-fixtures";
-import { workspaceRefSchema } from "../../../intents/contract";
+import { workspaceRefSchema, type WorkspaceRef } from "../../../intents/contract";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
 // =============================================================================
 
 /** Captured status callback from the latest mock provider's onStatusChange. */
-let capturedStatusCallback: ((status: AgentStatus) => void) | null = null;
+let capturedStatusCallback: ((status: AgentActivity) => void) | null = null;
 
 /** Reference to the latest mock provider instance for assertions. */
 let latestMockProvider: AgentProvider;
@@ -46,7 +47,7 @@ vi.mock("./provider", () => ({
     disconnect = vi.fn();
     reconnect = vi.fn().mockResolvedValue(undefined);
     dispose = vi.fn();
-    onStatusChange = vi.fn((cb: (status: AgentStatus) => void) => {
+    onStatusChange = vi.fn((cb: (status: AgentActivity) => void) => {
       capturedStatusCallback = cb;
       return vi.fn();
     });
@@ -71,9 +72,9 @@ function createMockServerManager(): ClaudeCodeServerManager {
   }) as unknown as ClaudeCodeServerManager;
 }
 
-const WS_PATH = testPath("/workspace/feature-a").toNative() as WorkspacePath;
+const WS_PATH = testPath("/workspace/feature-a").toNative();
 const WS_REF = workspaceRefSchema.parse("ch::local::/test::ws");
-const WS_PATH_B = testPath("/workspace/feature-b").toNative() as WorkspacePath;
+const WS_REF_B = workspaceRefSchema.parse("ch::local::/test::ws-b");
 
 // =============================================================================
 // Tests
@@ -112,6 +113,42 @@ describe("createClaudeModuleProvider", () => {
       platform: "linux",
       logger: SILENT_LOGGER,
       processRunner,
+    });
+  }
+
+  /** A provider initialized with an MCP config, as at app start. */
+  function createInitializedProvider() {
+    const provider = createProvider();
+    provider.initialize({
+      nodePath: testPath("/ide/node").toNative(),
+      cliPath: testPath("/data/bin/ch.cjs").toNative(),
+      port: 9999,
+      token: "test-token",
+    });
+    return provider;
+  }
+
+  /** The callback the provider registered with the server manager's onServerStarted. */
+  function serverStartedCallback(): (workspaceRef: WorkspaceRef, port: number) => void {
+    return (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock.calls[0]![0] as (
+      workspaceRef: WorkspaceRef,
+      port: number
+    ) => void;
+  }
+
+  /** The callback the provider registered with the server manager's onServerStopped. */
+  function serverStoppedCallback(): (workspaceRef: WorkspaceRef, isRestart: boolean) => void {
+    return (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock.calls[0]![0] as (
+      workspaceRef: WorkspaceRef,
+      isRestart: boolean
+    ) => void;
+  }
+
+  /** Make startServer report WS_REF's server started on 8080, as the real manager does. */
+  function startServerFiresStarted(): void {
+    (mockServerManager.startServer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      await serverStartedCallback()(WS_REF, 8080);
+      return 8080;
     });
   }
 
@@ -231,14 +268,7 @@ describe("createClaudeModuleProvider", () => {
 
   describe("initialize", () => {
     it("wires server callbacks and sets MCP config", () => {
-      const provider = createProvider();
-
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      createInitializedProvider();
 
       expect(mockServerManager.onServerStarted).toHaveBeenCalled();
       expect(mockServerManager.onServerStopped).toHaveBeenCalled();
@@ -267,23 +297,16 @@ describe("createClaudeModuleProvider", () => {
 
   describe("server started callback", () => {
     it("creates provider on server started, connects it, and emits initial status", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
       // Get the captured onServerStarted callback
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
+      const onStartedCb = serverStartedCallback();
 
       // Simulate server started
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
 
       // Provider should have been created and connected
       expect(latestMockProvider.connect).toHaveBeenCalledWith(8080);
@@ -294,23 +317,16 @@ describe("createClaudeModuleProvider", () => {
     });
 
     it("reconnects existing provider on restart (server started again)", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      createInitializedProvider();
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
+      const onStartedCb = serverStartedCallback();
 
       // First start: creates provider
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
       const firstProvider = latestMockProvider;
 
       // Second start (restart): should reconnect existing provider, not create new
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
 
       expect(firstProvider.reconnect).toHaveBeenCalled();
     });
@@ -322,25 +338,17 @@ describe("createClaudeModuleProvider", () => {
 
   describe("server stopped callback", () => {
     it("disconnects provider on restart (isRestart=true)", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      createInitializedProvider();
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
+      const onStartedCb = serverStartedCallback();
+      const onStoppedCb = serverStoppedCallback();
 
       // Create a provider
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
       const createdProvider = latestMockProvider;
 
       // Stop with restart flag
-      onStoppedCb(WS_PATH, true);
+      onStoppedCb(WS_REF, true);
 
       expect(createdProvider.disconnect).toHaveBeenCalled();
       // Provider should still exist (not disposed) for reconnection
@@ -348,29 +356,21 @@ describe("createClaudeModuleProvider", () => {
     });
 
     it("removes provider on full stop (isRestart=false)", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      const statusChanges: Array<{ path: WorkspacePath; status: AggregatedAgentStatus }> = [];
+      const statusChanges: Array<{ path: WorkspaceRef; status: AggregatedAgentStatus }> = [];
       provider.onStatusChange((wp, status) => statusChanges.push({ path: wp, status }));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
+      const onStartedCb = serverStartedCallback();
+      const onStoppedCb = serverStoppedCallback();
 
       // Create a provider
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
       const createdProvider = latestMockProvider;
       statusChanges.length = 0; // Reset after initial status
 
       // Full stop
-      onStoppedCb(WS_PATH, false);
+      onStoppedCb(WS_REF, false);
 
       expect(createdProvider.dispose).toHaveBeenCalled();
 
@@ -386,20 +386,13 @@ describe("createClaudeModuleProvider", () => {
 
   describe("status tracking", () => {
     it("forwards status changes from provider to registered callbacks", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      const statusChanges: Array<{ path: WorkspacePath; status: AggregatedAgentStatus }> = [];
+      const statusChanges: Array<{ path: WorkspaceRef; status: AggregatedAgentStatus }> = [];
       provider.onStatusChange((wp, status) => statusChanges.push({ path: wp, status }));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       statusChanges.length = 0; // Reset after initial "none"
 
       // Simulate provider status change to "busy"
@@ -408,26 +401,19 @@ describe("createClaudeModuleProvider", () => {
 
       expect(statusChanges).toHaveLength(1);
       expect(statusChanges[0]).toEqual({
-        path: WS_PATH,
+        path: WS_REF,
         status: { status: "busy", counts: { idle: 0, busy: 1 } },
       });
     });
 
     it("deduplicates status changes - same status not emitted twice", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       statusChanges.length = 0; // Reset after initial "none"
 
       // Emit "idle" twice
@@ -440,20 +426,13 @@ describe("createClaudeModuleProvider", () => {
     });
 
     it("emits when status changes from idle to busy", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       statusChanges.length = 0;
 
       capturedStatusCallback!("idle");
@@ -465,20 +444,13 @@ describe("createClaudeModuleProvider", () => {
     });
 
     it("unsubscribe removes the callback", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       const statusChanges: AggregatedAgentStatus[] = [];
       const unsubscribe = provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       statusChanges.length = 0;
 
       unsubscribe();
@@ -498,18 +470,11 @@ describe("createClaudeModuleProvider", () => {
     const NONE = { status: "none", counts: { idle: 0, busy: 0 } };
 
     async function startedProvider() {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       statusChanges.length = 0;
       return { provider, statusChanges };
     }
@@ -518,25 +483,25 @@ describe("createClaudeModuleProvider", () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
 
-      provider.setModalOpen(WS_PATH, true);
-      expect(provider.getStatus(WS_PATH)).toEqual(IDLE);
+      provider.setModalOpen(WS_REF, true);
+      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
 
-      provider.setModalOpen(WS_PATH, false);
-      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
+      provider.setModalOpen(WS_REF, false);
+      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
       expect(statusChanges).toEqual([BUSY, IDLE, BUSY]);
     });
 
     it("records agent changes while parked without reporting them", async () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_PATH, true);
+      provider.setModalOpen(WS_REF, true);
       statusChanges.length = 0;
 
       capturedStatusCallback!("idle");
       capturedStatusCallback!("busy");
       expect(statusChanges).toEqual([]);
 
-      provider.setModalOpen(WS_PATH, false);
+      provider.setModalOpen(WS_REF, false);
       expect(statusChanges).toEqual([BUSY]);
     });
 
@@ -545,11 +510,11 @@ describe("createClaudeModuleProvider", () => {
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
-      provider.setModalOpen(WS_PATH, true);
-      expect(provider.getStatus(WS_PATH)).toEqual(IDLE);
+      provider.setModalOpen(WS_REF, true);
+      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
 
-      provider.setModalOpen(WS_PATH, false);
-      expect(provider.getStatus(WS_PATH)).toEqual(NONE);
+      provider.setModalOpen(WS_REF, false);
+      expect(provider.getStatus(WS_REF)).toEqual(NONE);
       expect(statusChanges).toEqual([IDLE, NONE]);
     });
 
@@ -558,8 +523,8 @@ describe("createClaudeModuleProvider", () => {
       capturedStatusCallback!("idle");
       statusChanges.length = 0;
 
-      provider.setModalOpen(WS_PATH, true);
-      provider.setModalOpen(WS_PATH, false);
+      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, false);
 
       // An agent.status.set nudge bypasses the core, so the last report here is
       // not necessarily what the UI shows — each edge corrects it.
@@ -569,12 +534,11 @@ describe("createClaudeModuleProvider", () => {
     it("stays parked when the provider is removed mid-modal", async () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_PATH, true);
+      provider.setModalOpen(WS_REF, true);
       statusChanges.length = 0;
 
-      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
-      onStoppedCb(WS_PATH, false);
+      const onStoppedCb = serverStoppedCallback();
+      onStoppedCb(WS_REF, false);
 
       expect(statusChanges).toEqual([IDLE]);
     });
@@ -582,21 +546,21 @@ describe("createClaudeModuleProvider", () => {
     it("clearWorkspaceTracking drops the park", async () => {
       const { provider } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_PATH, true);
+      provider.setModalOpen(WS_REF, true);
 
-      provider.clearWorkspaceTracking(WS_PATH);
+      provider.clearWorkspaceTracking(WS_REF);
 
-      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
+      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
     });
 
     it("parks only the workspace showing the modal", async () => {
       const { provider } = await startedProvider();
       capturedStatusCallback!("busy");
 
-      provider.setModalOpen(WS_PATH_B, true);
+      provider.setModalOpen(WS_REF_B, true);
 
-      expect(provider.getStatus(WS_PATH)).toEqual(BUSY);
-      expect(provider.getStatus(WS_PATH_B)).toEqual(IDLE);
+      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
+      expect(provider.getStatus(WS_REF_B)).toEqual(IDLE);
     });
   });
 
@@ -607,27 +571,20 @@ describe("createClaudeModuleProvider", () => {
   describe("getStatus", () => {
     it("returns none for unknown workspace", () => {
       const provider = createProvider();
-      const status = provider.getStatus(WS_PATH);
+      const status = provider.getStatus(WS_REF);
 
       expect(status).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
     });
 
     it("returns cached status after provider emits", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
 
       capturedStatusCallback!("busy");
 
-      expect(provider.getStatus(WS_PATH)).toEqual({
+      expect(provider.getStatus(WS_REF)).toEqual({
         status: "busy",
         counts: { idle: 0, busy: 1 },
       });
@@ -637,25 +594,18 @@ describe("createClaudeModuleProvider", () => {
   describe("getSession", () => {
     it("returns null for unknown workspace", () => {
       const provider = createProvider();
-      const session = provider.getSession(WS_PATH);
+      const session = provider.getSession(WS_REF);
 
       expect(session).toBeNull();
     });
 
     it("delegates to provider.getSession() when provider exists", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
 
-      const session = provider.getSession(WS_PATH);
+      const session = provider.getSession(WS_REF);
 
       expect(session).toEqual({ port: 8080, sessionId: "s1" });
     });
@@ -667,7 +617,7 @@ describe("createClaudeModuleProvider", () => {
     it("fails for a workspace with no provider", async () => {
       const provider = createProvider();
 
-      await expect(provider.sendMessage(WS_PATH, message, { waitMs: 0 })).rejects.toThrow(
+      await expect(provider.sendMessage(WS_REF, message, { waitMs: 0 })).rejects.toThrow(
         "No Claude Code agent is running in this workspace."
       );
     });
@@ -675,12 +625,11 @@ describe("createClaudeModuleProvider", () => {
     it("delegates to the workspace's provider", async () => {
       const provider = createProvider();
       provider.initialize(null);
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      onStartedCb(WS_REF, 8080);
 
       // Sent while the provider is still being registered: it waits for it.
-      await provider.sendMessage(WS_PATH, message, { waitMs: 500 });
+      await provider.sendMessage(WS_REF, message, { waitMs: 500 });
 
       expect(latestMockProvider.sendMessage).toHaveBeenCalledWith(message, { waitMs: 500 });
     });
@@ -692,25 +641,14 @@ describe("createClaudeModuleProvider", () => {
 
   describe("startWorkspace", () => {
     it("starts server and returns environment variables", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       // Make startServer trigger the onServerStarted callback
-      (mockServerManager.startServer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-          .calls[0]![0] as (workspacePath: string, port: number) => void;
-        await onStartedCb(WS_PATH, 8080);
-        return 8080;
-      });
+      startServerFiresStarted();
 
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
-      expect(mockServerManager.startServer).toHaveBeenCalledWith(WS_PATH, { workspaceRef: WS_REF });
+      expect(mockServerManager.startServer).toHaveBeenCalledWith(WS_REF);
       expect(result.envVars).toEqual({
         CLAUDE_PORT: "8080",
         _CH_CLAUDE_BIN: "/usr/local/bin/claude",
@@ -721,7 +659,7 @@ describe("createClaudeModuleProvider", () => {
       binary = createFakeBinaryResolver({ binary: DOWNLOADED_CLAUDE });
       const provider = createProvider();
 
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).toMatchObject({
         _CH_CLAUDE_BIN: "/bundles/claude/2.1.274/claude",
@@ -732,96 +670,56 @@ describe("createClaudeModuleProvider", () => {
     it("leaves a system install's self-update alone", async () => {
       const provider = createProvider();
 
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).not.toHaveProperty("DISABLE_AUTOUPDATER");
     });
 
     it("calls setInitialPrompt when initialPrompt option is provided", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      (mockServerManager.startServer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-          .calls[0]![0] as (workspacePath: string, port: number) => void;
-        await onStartedCb(WS_PATH, 8080);
-        return 8080;
-      });
+      startServerFiresStarted();
 
       const initialPrompt = { prompt: "Hello" };
       const onInitialPromptDelivered = vi.fn();
-      await provider.startWorkspace(WS_PATH, {
-        workspaceRef: WS_REF,
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
         initialPrompt,
         onInitialPromptDelivered,
       });
 
       expect(mockServerManager.setInitialPrompt).toHaveBeenCalledWith(
-        WS_PATH,
+        WS_REF,
         initialPrompt,
         onInitialPromptDelivered
       );
     });
 
     it("calls setNoSessionMarker when isNewWorkspace option is true", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      (mockServerManager.startServer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-          .calls[0]![0] as (workspacePath: string, port: number) => void;
-        await onStartedCb(WS_PATH, 8080);
-        return 8080;
-      });
+      startServerFiresStarted();
 
-      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF, isNewWorkspace: true });
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), { isNewWorkspace: true });
 
-      expect(mockServerManager.setNoSessionMarker).toHaveBeenCalledWith(WS_PATH);
+      expect(mockServerManager.setNoSessionMarker).toHaveBeenCalledWith(WS_REF);
     });
 
     it("does not call setInitialPrompt or setNoSessionMarker without options", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      (mockServerManager.startServer as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-          .calls[0]![0] as (workspacePath: string, port: number) => void;
-        await onStartedCb(WS_PATH, 8080);
-        return 8080;
-      });
+      startServerFiresStarted();
 
-      await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(mockServerManager.setInitialPrompt).not.toHaveBeenCalled();
       expect(mockServerManager.setNoSessionMarker).not.toHaveBeenCalled();
     });
 
     it("returns only the binary path when provider does not exist", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       // startServer does not trigger onServerStarted callback
-      const result = await provider.startWorkspace(WS_PATH, { workspaceRef: WS_REF });
+      const result = await provider.startWorkspace(WS_REF, new Path(WS_PATH));
 
       expect(result.envVars).toEqual({ _CH_CLAUDE_BIN: "/usr/local/bin/claude" });
     });
@@ -830,9 +728,9 @@ describe("createClaudeModuleProvider", () => {
   describe("stopWorkspace", () => {
     it("delegates to server manager", async () => {
       const provider = createProvider();
-      const result = await provider.stopWorkspace(WS_PATH);
+      const result = await provider.stopWorkspace(WS_REF);
 
-      expect(mockServerManager.stopServer).toHaveBeenCalledWith(WS_PATH);
+      expect(mockServerManager.stopServer).toHaveBeenCalledWith(WS_REF);
       expect(result).toEqual({ success: true });
     });
   });
@@ -840,9 +738,9 @@ describe("createClaudeModuleProvider", () => {
   describe("restartWorkspace", () => {
     it("delegates to server manager", async () => {
       const provider = createProvider();
-      const result = await provider.restartWorkspace(WS_PATH);
+      const result = await provider.restartWorkspace(WS_REF);
 
-      expect(mockServerManager.restartServer).toHaveBeenCalledWith(WS_PATH);
+      expect(mockServerManager.restartServer).toHaveBeenCalledWith(WS_REF);
       expect(result).toEqual({ success: true, port: 8080 });
     });
   });
@@ -853,13 +751,7 @@ describe("createClaudeModuleProvider", () => {
 
   describe("dispose", () => {
     it("cleans up server callbacks, disposes server manager, and all providers", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       // Capture cleanup functions returned by onServerStarted/onServerStopped
       const startedCleanup = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
@@ -868,9 +760,8 @@ describe("createClaudeModuleProvider", () => {
         .results[0]!.value as ReturnType<typeof vi.fn>;
 
       // Create a provider
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
+      const onStartedCb = serverStartedCallback();
+      await onStartedCb(WS_REF, 8080);
       const createdProvider = latestMockProvider;
 
       await provider.dispose();
@@ -887,13 +778,7 @@ describe("createClaudeModuleProvider", () => {
     });
 
     it("can be called multiple times safely", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
       await provider.dispose();
       await provider.dispose();
@@ -909,26 +794,19 @@ describe("createClaudeModuleProvider", () => {
 
   describe("multiple workspaces", () => {
     it("tracks status independently per workspace", async () => {
-      const provider = createProvider();
-      provider.initialize({
-        nodePath: testPath("/ide/node").toNative(),
-        cliPath: testPath("/data/bin/ch.cjs").toNative(),
-        port: 9999,
-        token: "test-token",
-      });
+      const provider = createInitializedProvider();
 
-      const statusChanges: Array<{ path: WorkspacePath; status: AggregatedAgentStatus }> = [];
+      const statusChanges: Array<{ path: WorkspaceRef; status: AggregatedAgentStatus }> = [];
       provider.onStatusChange((wp, status) => statusChanges.push({ path: wp, status }));
 
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
+      const onStartedCb = serverStartedCallback();
 
       // Start workspace A
-      await onStartedCb(WS_PATH, 8080);
+      await onStartedCb(WS_REF, 8080);
       const callbackA = capturedStatusCallback!;
 
       // Start workspace B
-      await onStartedCb(WS_PATH_B, 8081);
+      await onStartedCb(WS_REF_B, 8081);
       const callbackB = capturedStatusCallback!;
 
       statusChanges.length = 0;
@@ -938,19 +816,19 @@ describe("createClaudeModuleProvider", () => {
       // Change B to idle
       callbackB("idle");
 
-      expect(provider.getStatus(WS_PATH)).toEqual({
+      expect(provider.getStatus(WS_REF)).toEqual({
         status: "busy",
         counts: { idle: 0, busy: 1 },
       });
-      expect(provider.getStatus(WS_PATH_B)).toEqual({
+      expect(provider.getStatus(WS_REF_B)).toEqual({
         status: "idle",
         counts: { idle: 1, busy: 0 },
       });
 
       // Verify both emitted separately
       expect(statusChanges).toHaveLength(2);
-      expect(statusChanges[0]!.path).toBe(WS_PATH);
-      expect(statusChanges[1]!.path).toBe(WS_PATH_B);
+      expect(statusChanges[0]!.path).toBe(WS_REF);
+      expect(statusChanges[1]!.path).toBe(WS_REF_B);
     });
   });
 });

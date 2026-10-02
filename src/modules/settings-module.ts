@@ -22,8 +22,8 @@
  * over to the contributing module.
  */
 
+import { getErrorMessage } from "../shared/error-utils";
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { Logger } from "../boundaries/platform/logging";
@@ -35,7 +35,8 @@ import type {
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { DialogConfig, DialogSection, SettingRowField } from "../shared/dialog-types";
-import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
+import { defineEvents } from "../intents/declarations";
 
 // =============================================================================
 // Constants
@@ -468,7 +469,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       } catch (error) {
         logger.warn("Failed to persist setting", {
           key: entry.key,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
         return false;
       }
@@ -581,14 +582,14 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
 
   const module: IntentModule = {
     name: "settings",
-    events: {
+    events: defineEvents({
       [EVENT_SHORTCUT_KEY_PRESSED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { key } = (event as ShortcutKeyPressedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { key } = event.payload;
           if (key === "s") openSettings();
         },
       },
-    },
+    }),
   };
 
   return { module, openSettings };

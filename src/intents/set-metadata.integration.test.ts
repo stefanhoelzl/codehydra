@@ -13,158 +13,28 @@
  * #15: Interceptor cancels metadata intent (no state change, no event)
  */
 
-import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
-
+import { EVENT_METADATA_CHANGED } from "./set-metadata";
+import type { MetadataChangedEvent } from "./set-metadata";
 import {
-  SetMetadataOperation,
-  SET_METADATA_OPERATION_ID,
-  INTENT_SET_METADATA,
-  EVENT_METADATA_CHANGED,
-} from "./set-metadata";
-import type { SetMetadataIntent, MetadataChangedEvent, SetHookInput } from "./set-metadata";
-import { GetMetadataOperation, GET_METADATA_OPERATION_ID } from "./get-metadata";
-import type { GetMetadataHookResult, GetHookInput } from "./get-metadata";
-import { registerTestInfrastructure } from "./operations.test-utils";
-import { Path } from "../utils/path/path";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { isValidMetadataKey } from "../shared/api/types";
-import type { IntentModule } from "./lib/module";
+  createMetadataTestSetup,
+  metadataWorkspaceRef,
+  setMetadataIntent,
+  type MetadataTestSetup,
+} from "./operations.test-utils";
 import type { DomainEvent, Intent } from "./lib/types";
-import type { HookContext, HookOutput } from "./lib/operation";
-import type { WorkspacePath } from "./contract";
-import { projPath, wsPath, testPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
-import type { WorkspaceRef } from "./contract";
-
-// =============================================================================
-// Test Constants
-// =============================================================================
-
-const PROJECT_ROOT = testPath("/project");
-const WORKSPACES_DIR = testPath("/workspaces");
-
-// =============================================================================
-// Test Setup Helper
-// =============================================================================
-
-interface TestSetup {
-  dispatcher: Dispatcher;
-  metadataStore: Map<string, Record<string, string>>;
-  projectId: ProjectId;
-  workspaceName: WorkspaceName;
-  workspacePath: WorkspacePath;
-}
-
-function createTestSetup(): TestSetup {
-  const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
-  const projectId = "project-ea0135bc" as ProjectId;
-  const workspaceName = "feature-x" as WorkspaceName;
-
-  // Simple Map-based metadata store: workspacePath → Record<string, string>
-  const metadataStore = new Map<string, Record<string, string>>();
-
-  // Build dispatcher with hook registry
-  const dispatcher = createMockDispatcher();
-
-  // Register operations
-  dispatcher.registerOperation(new SetMetadataOperation());
-  dispatcher.registerOperation(new GetMetadataOperation());
-
-  // Register infrastructure operations (resolve-workspace, resolve-project, etc.)
-  registerTestInfrastructure(dispatcher, {
-    workspaces: {
-      [workspacePath.toString()]: {
-        projectPath: projPath(PROJECT_ROOT.toString()),
-        workspaceName,
-      },
-    },
-    projects: {
-      [PROJECT_ROOT.toString()]: { projectId },
-    },
-  });
-
-  // set/get module: performs metadata operations using the Map store
-  const metadataModule: IntentModule = {
-    name: "test-metadata",
-    hooks: {
-      [SET_METADATA_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext) => {
-            const { workspacePath: wp } = ctx as SetHookInput;
-            const intent = ctx.intent as SetMetadataIntent;
-            if (!isValidMetadataKey(intent.payload.key)) {
-              throw new Error(
-                `Invalid metadata key '${intent.payload.key}': must start with a letter, contain only letters, digits, and hyphens, and not end with a hyphen`
-              );
-            }
-            const record = metadataStore.get(wp) ?? {};
-            if (intent.payload.value === null) {
-              delete record[intent.payload.key];
-            } else {
-              record[intent.payload.key] = intent.payload.value;
-            }
-            metadataStore.set(wp, record);
-          },
-        },
-      },
-      [GET_METADATA_OPERATION_ID]: {
-        get: {
-          handler: async (ctx: HookContext): Promise<HookOutput<GetMetadataHookResult>> => {
-            const { workspacePath: wp } = ctx as GetHookInput;
-            const metadata = metadataStore.get(wp) ?? {};
-            return { result: { metadata } };
-          },
-        },
-      },
-    },
-  };
-
-  dispatcher.registerModule(metadataModule);
-
-  return {
-    dispatcher,
-    metadataStore,
-    projectId,
-    workspaceName,
-    workspacePath: wsPath(workspacePath.toString()),
-  };
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/** The ref of a workspace of the test project, by its path. */
-function refOf(workspacePath: WorkspacePath): WorkspaceRef {
-  return makeWorkspaceRef(
-    projectRefFor(projPath(PROJECT_ROOT.toString())),
-    new Path(workspacePath).basename
-  );
-}
-
-function setMetadataIntent(
-  workspacePath: WorkspacePath,
-  key: string,
-  value: string | null
-): SetMetadataIntent {
-  return {
-    type: INTENT_SET_METADATA,
-    payload: { workspaceRef: refOf(workspacePath), key, value },
-  };
-}
+import { wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Tests
 // =============================================================================
 
 describe("SetMetadata Operation", () => {
-  let setup: TestSetup;
+  let setup: MetadataTestSetup;
 
   beforeEach(() => {
-    setup = createTestSetup();
+    setup = createMetadataTestSetup();
   });
 
   it("writes to metadata store (#9)", async () => {
@@ -249,7 +119,9 @@ describe("SetMetadata Operation", () => {
 
       await expect(
         dispatcher.dispatch(setMetadataIntent(wsPath("/nonexistent/path"), "key", "value"))
-      ).rejects.toThrow(`Workspace not found: ${refOf(wsPath("/nonexistent/path"))}`);
+      ).rejects.toThrow(
+        `Workspace not found: ${metadataWorkspaceRef(wsPath("/nonexistent/path"))}`
+      );
     });
 
     // The code has to survive the nested workspace:resolve dispatch this

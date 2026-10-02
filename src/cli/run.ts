@@ -15,6 +15,7 @@ import type { ApiErrorCategory } from "../api/errors";
 import { renderCommandHelp, renderHelp } from "./help";
 import { EXIT, render, renderError, useJson, type ExitCode } from "./output";
 import { renderEvent } from "./progress";
+import { getErrorMessage } from "../shared/error-utils";
 
 export interface RunResult {
   readonly stdout: string;
@@ -60,10 +61,6 @@ export function exitCodeFor(error: unknown): ExitCode {
   }
   if (error instanceof CallError) return EXIT_FOR_CATEGORY[error.category];
   return EXIT.FAILED;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export async function run(options: RunOptions): Promise<RunResult> {
@@ -150,7 +147,7 @@ export async function run(options: RunOptions): Promise<RunResult> {
     }
   } catch (error: unknown) {
     const code = exitCodeFor(error);
-    return { stdout: "", stderr: renderError(message(error), code, json), exitCode: code };
+    return { stdout: "", stderr: renderError(getErrorMessage(error), code, json), exitCode: code };
   } finally {
     client?.close();
   }

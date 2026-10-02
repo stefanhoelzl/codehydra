@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ClaudeCodeServerManager } from "./server-manager";
+import { ClaudeCodeServerManager, configDirName } from "./server-manager";
 import {
   createLocalSocketClientMock,
   type MockLocalSocketClient,
@@ -29,16 +29,13 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem.state-mock";
-import type { AgentStatus } from "../types";
-import { testPath } from "../../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../../utils/ref";
-import { Path } from "../../../utils/path/path";
+import type { AgentActivity } from "../types";
+import type { WorkspaceRef } from "../../../intents/contract";
+import { testPath, testWorkspaceRef as refOf, workspaceRefIn } from "../../../shared/test-fixtures";
 
-/** The ref a test workspace goes by: a checkout at its parent directory, named after its own. */
-function refOf(workspacePath: string): string {
-  const path = new Path(workspacePath);
-  return makeWorkspaceRef(projectRefFor(path.dirname.toString()), path.basename);
-}
+/** The workspaces most tests run against. */
+const FEATURE_A = refOf(testPath("/workspace/feature-a").toNative());
+const FEATURE_B = refOf(testPath("/workspace/feature-b").toNative());
 
 /**
  * Send a hook to the bridge server.
@@ -59,7 +56,7 @@ async function sendHook(
 }
 
 /** Current status as observed through the public onStatusChange seam. */
-function lastStatus(statusChanges: readonly AgentStatus[]): AgentStatus {
+function lastStatus(statusChanges: readonly AgentActivity[]): AgentActivity {
   return statusChanges.at(-1) ?? "none";
 }
 
@@ -102,14 +99,27 @@ describe("ClaudeCodeServerManager integration", () => {
     await serverManager.dispose();
   });
 
+  /** Record every status `workspace` reports through the public onStatusChange seam. */
+  function captureStatus(workspace: WorkspaceRef): AgentActivity[] {
+    const statusChanges: AgentActivity[] = [];
+    serverManager.onStatusChange(workspace, (status) => {
+      statusChanges.push(status);
+    });
+    return statusChanges;
+  }
+
+  /** Start `workspace`'s server, then record every status it reports. */
+  async function startCapturing(
+    workspace: WorkspaceRef
+  ): Promise<{ port: number; statusChanges: AgentActivity[] }> {
+    const port = await serverManager.startServer(workspace);
+    return { port, statusChanges: captureStatus(workspace) };
+  }
+
   describe("workspace lifecycle", () => {
     it("starts server on first workspace, returns same port for subsequent", async () => {
-      const port1 = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const port2 = await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      const port1 = await serverManager.startServer(FEATURE_A);
+      const port2 = await serverManager.startServer(FEATURE_B);
 
       // Both should get the same port (single server for all workspaces)
       expect(port1).toBeGreaterThan(0);
@@ -117,48 +127,34 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("returns existing port when starting same workspace twice", async () => {
-      const port1 = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const port2 = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port1 = await serverManager.startServer(FEATURE_A);
+      const port2 = await serverManager.startServer(FEATURE_A);
 
       expect(port1).toBeGreaterThan(0);
       expect(port2).toBe(port1);
     });
 
     it("server stops only when last workspace is removed", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
 
       // Stop first workspace - server still running, new workspaces reuse its port
-      await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.stopServer(FEATURE_A);
       expect(
-        await serverManager.startServer(testPath("/workspace/feature-c").toNative(), {
-          workspaceRef: refOf(testPath("/workspace/feature-c").toNative()),
-        })
+        await serverManager.startServer(refOf(testPath("/workspace/feature-c").toNative()))
       ).toBe(port);
 
       // Stop remaining workspaces - the server is gone and the port stops answering
-      await serverManager.stopServer(testPath("/workspace/feature-b").toNative());
-      await serverManager.stopServer(testPath("/workspace/feature-c").toNative());
-      await expect(
-        sendHook(port, "SessionStart", {
-          workspacePath: testPath("/workspace/feature-a").toNative(),
-        })
-      ).rejects.toThrow();
+      await serverManager.stopServer(FEATURE_B);
+      await serverManager.stopServer(refOf(testPath("/workspace/feature-c").toNative()));
+      await expect(sendHook(port, "SessionStart", { workspaceRef: FEATURE_A })).rejects.toThrow();
 
       // A later start brings up a fresh, working server
-      const newPort = await serverManager.startServer(testPath("/workspace/feature-d").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-d").toNative()),
-      });
+      const newPort = await serverManager.startServer(
+        refOf(testPath("/workspace/feature-d").toNative())
+      );
       const response = await sendHook(newPort, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-d").toNative(),
+        workspaceRef: refOf(testPath("/workspace/feature-d").toNative()),
       });
       expect(response.status).toBe(200);
     });
@@ -167,15 +163,11 @@ describe("ClaudeCodeServerManager integration", () => {
       // Regression: dispose() used to resolve while the listening socket was
       // still being torn down, so the next bind raced it. Now that the manager
       // binds the socket it keeps, a fresh manager can come straight back up.
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
       await serverManager.dispose();
 
       for (let i = 0; i < 20; i++) {
-        const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-          workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-        });
+        const port = await serverManager.startServer(FEATURE_A);
         expect(port).toBeGreaterThan(0);
         await serverManager.dispose();
       }
@@ -200,11 +192,7 @@ describe("ClaudeCodeServerManager integration", () => {
         config: { hookHandlerPath: testPath("/mock/hook-handler.js").toNative() },
       });
 
-      await expect(
-        failing.startServer(testPath("/workspace/feature-a").toNative(), {
-          workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-        })
-      ).rejects.toThrow("EADDRINUSE");
+      await expect(failing.startServer(FEATURE_A)).rejects.toThrow("EADDRINUSE");
       await expect(failing.dispose()).resolves.toBeUndefined();
     });
   });
@@ -216,17 +204,17 @@ describe("ClaudeCodeServerManager integration", () => {
     /** Announce a session inbox the way the hook handler forwards it. */
     async function startSession(port: number, socket: string, token?: string): Promise<void> {
       await sendHook(port, "SessionStart", {
-        workspacePath: workspace,
+        workspaceRef: refOf(workspace),
         session_id: "session-1",
         _ch_messaging: { socket, ...(token !== undefined && { token }) },
       });
     }
 
     it("writes the message to the inbox SessionStart announced", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       await startSession(port, "/run/inbox-1.sock", "secret");
 
-      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      await serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 });
 
       expect(mockSockets.$.sent).toHaveLength(1);
       const sent = mockSockets.$.sent[0]!;
@@ -245,20 +233,20 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("fails without waiting when no session has announced an inbox", async () => {
-      await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      await serverManager.startServer(refOf(workspace));
 
       await expect(
-        serverManager.sendMessage(workspace, message, { waitMs: 0 })
+        serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 })
       ).rejects.toBeInstanceOf(AgentUnreachableError);
       expect(mockSockets.$.sent).toHaveLength(0);
     });
 
     it("waits for a claude that is starting in an open terminal, even unasked", async () => {
       // The sidebar reads idle from WrapperStart, before claude's SessionStart.
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      const port = await serverManager.startServer(refOf(workspace));
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
 
-      const sending = serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      const sending = serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 });
       await startSession(port, "/run/inbox-1.sock");
       await sending;
 
@@ -266,22 +254,22 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("stops waiting for a starting claude once its terminal closes", async () => {
-      await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      await serverManager.startServer(refOf(workspace));
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
 
-      const sending = serverManager.sendMessage(workspace, message, { waitMs: 0 });
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+      const sending = serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 });
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperEnd");
 
       await expect(sending).rejects.toBeInstanceOf(AgentUnreachableError);
     });
 
     it("keeps waiting when asked to, although the terminal has not opened yet", async () => {
       // After --wake reopens the terminal: closed now, open in a moment.
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+      const port = await serverManager.startServer(refOf(workspace));
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperEnd");
 
-      const sending = serverManager.sendMessage(workspace, message, { waitMs: 5000 });
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      const sending = serverManager.sendMessage(refOf(workspace), message, { waitMs: 5000 });
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
       await startSession(port, "/run/inbox-1.sock");
       await sending;
 
@@ -289,15 +277,15 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("fails for a workspace it does not track", async () => {
-      await expect(serverManager.sendMessage(workspace, message, { waitMs: 50 })).rejects.toThrow(
-        /No Claude session is running/
-      );
+      await expect(
+        serverManager.sendMessage(refOf(workspace), message, { waitMs: 50 })
+      ).rejects.toThrow(/No Claude session is running/);
     });
 
     it("waits for the session to announce its inbox", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
 
-      const sending = serverManager.sendMessage(workspace, message, { waitMs: 5000 });
+      const sending = serverManager.sendMessage(refOf(workspace), message, { waitMs: 5000 });
       await startSession(port, "/run/inbox-1.sock");
       await sending;
 
@@ -305,50 +293,50 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("forgets the inbox when the session ends or its terminal closes", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       await startSession(port, "/run/inbox-1.sock");
-      await sendHook(port, "SessionEnd", { workspacePath: workspace });
+      await sendHook(port, "SessionEnd", { workspaceRef: refOf(workspace) });
 
-      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
-        /No Claude session is running/
-      );
+      await expect(
+        serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 })
+      ).rejects.toThrow(/No Claude session is running/);
 
       await startSession(port, "/run/inbox-2.sock");
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperEnd");
 
-      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
-        /No Claude session is running/
-      );
+      await expect(
+        serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 })
+      ).rejects.toThrow(/No Claude session is running/);
     });
 
     it("follows the session to a new inbox on the next SessionStart", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       await startSession(port, "/run/inbox-1.sock");
       await startSession(port, "/run/inbox-2.sock");
 
-      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      await serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 });
 
       expect(mockSockets.$.sent.map((entry) => entry.socketPath)).toEqual(["/run/inbox-2.sock"]);
     });
 
     it("keeps the inbox across a restart, which leaves claude running", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       await startSession(port, "/run/inbox-1.sock");
 
-      await serverManager.restartServer(workspace);
-      await serverManager.sendMessage(workspace, message, { waitMs: 0 });
+      await serverManager.restartServer(refOf(workspace));
+      await serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 });
 
       expect(mockSockets.$.sent).toHaveLength(1);
     });
 
     it("surfaces a failed socket write", async () => {
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       await startSession(port, "/run/inbox-1.sock");
       mockSockets.$.failWith(new Error("connect ECONNREFUSED"));
 
-      await expect(serverManager.sendMessage(workspace, message, { waitMs: 0 })).rejects.toThrow(
-        "ECONNREFUSED"
-      );
+      await expect(
+        serverManager.sendMessage(refOf(workspace), message, { waitMs: 0 })
+      ).rejects.toThrow("ECONNREFUSED");
     });
   });
 
@@ -357,61 +345,37 @@ describe("ClaudeCodeServerManager integration", () => {
       const startedCallback = vi.fn();
       serverManager.onServerStarted(startedCallback);
 
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
 
       expect(startedCallback).toHaveBeenCalledTimes(2);
-      expect(startedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-a").toString(),
-        port
-      );
-      expect(startedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-b").toString(),
-        port
-      );
+      expect(startedCallback).toHaveBeenCalledWith(FEATURE_A, port);
+      expect(startedCallback).toHaveBeenCalledWith(FEATURE_B, port);
     });
 
     it("onServerStopped fires for each workspace", async () => {
       const stoppedCallback = vi.fn();
       serverManager.onServerStopped(stoppedCallback);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
-      await serverManager.stopServer(testPath("/workspace/feature-a").toNative());
-      await serverManager.stopServer(testPath("/workspace/feature-b").toNative());
+      await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
+      await serverManager.stopServer(FEATURE_A);
+      await serverManager.stopServer(FEATURE_B);
 
       expect(stoppedCallback).toHaveBeenCalledTimes(2);
-      expect(stoppedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-a").toString(),
-        false
-      );
-      expect(stoppedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-b").toString(),
-        false
-      );
+      expect(stoppedCallback).toHaveBeenCalledWith(FEATURE_A, false);
+      expect(stoppedCallback).toHaveBeenCalledWith(FEATURE_B, false);
     });
 
     it("unsubscribe works", async () => {
       const startedCallback = vi.fn();
       const unsubscribe = serverManager.onServerStarted(startedCallback);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
       expect(startedCallback).toHaveBeenCalledTimes(1);
 
       unsubscribe();
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      await serverManager.startServer(FEATURE_B);
       expect(startedCallback).toHaveBeenCalledTimes(1);
     });
 
@@ -419,57 +383,37 @@ describe("ClaudeCodeServerManager integration", () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
       // WrapperStart sets status to idle, should trigger markActiveHandler
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
-      expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
+      expect(markActiveHandler).toHaveBeenCalledWith(FEATURE_A);
 
       // Make busy then idle again
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
 
       expect(markActiveHandler).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("hook handling", () => {
-    it("routes hooks to correct workspace based on workspacePath", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+    it("routes hooks to correct workspace based on workspaceRef", async () => {
+      const port = await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
 
-      const statusChangesA: AgentStatus[] = [];
-      const statusChangesB: AgentStatus[] = [];
-
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChangesA.push(status);
-      });
-      serverManager.onStatusChange(testPath("/workspace/feature-b").toNative(), (status) => {
-        statusChangesB.push(status);
-      });
+      const statusChangesA = captureStatus(FEATURE_A);
+      const statusChangesB = captureStatus(FEATURE_B);
 
       // Send SessionStart to workspace A
       await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         session_id: "session-a",
       });
 
       // Send UserPromptSubmit to workspace B
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-b").toNative(),
-      });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_B });
 
       expect(statusChangesA).toEqual(["idle"]);
       expect(statusChangesB).toEqual(["busy"]);
@@ -478,20 +422,17 @@ describe("ClaudeCodeServerManager integration", () => {
     it("routes hooks by the workspace ref the hook handler sends", async () => {
       const a = testPath("/workspace/feature-a").toNative();
       const b = testPath("/workspace/feature-b").toNative();
-      const port = await serverManager.startServer(a, { workspaceRef: refOf(a) });
-      await serverManager.startServer(b, { workspaceRef: refOf(b) });
+      const port = await serverManager.startServer(refOf(a));
+      await serverManager.startServer(refOf(b));
 
-      const statusChangesA: AgentStatus[] = [];
-      const statusChangesB: AgentStatus[] = [];
-      serverManager.onStatusChange(a, (status) => statusChangesA.push(status));
-      serverManager.onStatusChange(b, (status) => statusChangesB.push(status));
+      const statusChangesA = captureStatus(refOf(a));
+      const statusChangesB = captureStatus(refOf(b));
 
       await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(b) });
       await sendHook(port, "UserPromptSubmit", { workspaceRef: "ch::local::/elsewhere::other" });
 
       expect(statusChangesA).toEqual([]);
       expect(statusChangesB).toEqual(["busy"]);
-      expect(serverManager.getWorkspaceRef(b)).toBe(refOf(b));
     });
 
     it.each([
@@ -561,57 +502,34 @@ describe("ClaudeCodeServerManager integration", () => {
     ])(
       "$hookName -> $finalStatus",
       async ({ hookName, setupHooks, extraPayload, expectedChanges }) => {
-        const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-          workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-        });
-        const statusChanges: AgentStatus[] = [];
-        serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-          statusChanges.push(status);
-        });
+        const { port, statusChanges } = await startCapturing(FEATURE_A);
 
         for (const hook of setupHooks) {
-          await sendHook(port, hook, {
-            workspacePath: testPath("/workspace/feature-a").toNative(),
-          });
+          await sendHook(port, hook, { workspaceRef: FEATURE_A });
         }
         if (hookName === "WrapperStart" || hookName === "WrapperEnd") {
           // Wrapper lifecycle hooks are no longer accepted over HTTP — they are
           // driven internally (via the sidekick's agent:lifecycle event).
-          serverManager.triggerWrapperLifecycle(
-            testPath("/workspace/feature-a").toNative(),
-            hookName
-          );
+          serverManager.triggerWrapperLifecycle(FEATURE_A, hookName);
         } else {
           await sendHook(port, hookName, {
-            workspacePath: testPath("/workspace/feature-a").toNative(),
+            workspaceRef: FEATURE_A,
             ...extraPayload,
           });
         }
 
         expect(statusChanges).toEqual(expectedChanges);
         if (hookName === "SessionStart") {
-          expect(serverManager.getSessionId(testPath("/workspace/feature-a").toNative())).toBe(
-            "test-session"
-          );
+          expect(serverManager.getSessionId(FEATURE_A)).toBe("test-session");
         }
       }
     );
 
     it("rejects WrapperStart/WrapperEnd over HTTP (driven internally only)", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      const startRes = await sendHook(port, "WrapperStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      const endRes = await sendHook(port, "WrapperEnd", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      const startRes = await sendHook(port, "WrapperStart", { workspaceRef: FEATURE_A });
+      const endRes = await sendHook(port, "WrapperEnd", { workspaceRef: FEATURE_A });
 
       expect(startRes.status).toBe(404);
       expect(endRes.status).toBe(404);
@@ -620,237 +538,118 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("WrapperEnd is idempotent — a second call produces no extra transition", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { statusChanges } = await startCapturing(FEATURE_A);
 
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperEnd"
-      );
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperEnd"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperEnd");
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperEnd");
 
       expect(statusChanges).toEqual(["idle", "none"]);
     });
 
     it("SessionStart during automatic compaction stays busy", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Agent is working (busy)
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       // Automatic compaction mid-turn: PreCompact while busy sets flag
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
       // SessionStart after compaction should stay busy (flag consumed)
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       // No false idle transition — status stays busy throughout
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
     it("Stop between PreCompact and SessionStart stays busy", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       // Automatic compaction mid-turn: PreCompact while busy sets flag
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
       // Inner session ends (Stop) while compaction is in progress — must not go idle
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
       // Compaction continues with a fresh SessionStart, still busy
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
     it("StopFailure between PreCompact and SessionStart stays busy", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
       // Auto-compaction wrapper observes a non-zero exit during the swap
-      await sendHook(port, "StopFailure", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "StopFailure", { workspaceRef: FEATURE_A });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
     it("manual compact: SessionStart goes idle normally", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Agent is idle (waiting for user), user runs /compact
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
       // PreCompact while idle does NOT set flag
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
       // SessionStart after compaction should go idle normally
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("compacting flag cleared after use", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Automatic compaction mid-turn
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       // Agent finishes, stops
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
 
       // Next SessionStart should go idle normally (flag was consumed)
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("WrapperEnd clears ignoreNextSessionStart flag", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Automatic compaction sets flag
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
 
       // Claude exits before SessionStart (abnormal exit clears flag)
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperEnd"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperEnd");
 
       // New session should go idle (flag was defensively cleared)
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle"]);
     });
 
     it("Notification(idle_prompt) recovers from failed compaction", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Automatic compaction: busy → PreCompact (stays busy, sets flag)
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
 
       // Compaction fails — no SessionStart follows, only a Notification
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "idle_prompt",
       });
 
@@ -858,60 +657,34 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("Notification(idle_prompt) clears ignoreNextSessionStart flag", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Automatic compaction sets flag
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "PreCompact", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "PreCompact", { workspaceRef: FEATURE_A });
 
       // idle_prompt clears the flag
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "idle_prompt",
       });
 
       // Next SessionStart should go idle normally (flag was cleared)
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
     });
 
     it("Notification(permission_prompt) transitions to idle", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "permission_prompt",
       });
 
@@ -919,23 +692,13 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("Notification(elicitation_dialog) transitions to idle", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "elicitation_dialog",
       });
 
@@ -943,31 +706,21 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("AskUserQuestion parks the workspace on idle until answered", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // AskUserQuestion surfaces as a tool: PreToolUse parks on the user (idle),
       // PostToolUse (the answer) returns to busy.
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
 
@@ -975,23 +728,13 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("Notification(auth_success) does not change status", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "auth_success",
       });
 
@@ -999,22 +742,14 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("Notification(idle_prompt) is no-op when already idle", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Get to idle state
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
 
       // idle_prompt when already idle should not fire callback
       await sendHook(port, "Notification", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         notification_type: "idle_prompt",
       });
 
@@ -1022,25 +757,15 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("PreToolUse while busy does not change status", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Make busy
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // PreToolUse mid-turn (already busy) should not change status
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
@@ -1053,23 +778,15 @@ describe("ClaudeCodeServerManager integration", () => {
       // without emitting UserPromptSubmit, so the ensuing agent turn never flips
       // to busy. The first tool call the agent makes is our signal that it's
       // working — it must transition the idle workspace to busy.
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Session is idle, waiting for the user; no UserPromptSubmit is sent.
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // Agent runs a tool as part of a bash-mode-triggered turn.
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
@@ -1077,31 +794,19 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("PreToolUse transitions to busy after PermissionRequest", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Start session and make busy
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       // Permission request puts us in idle
-      await sendHook(port, "PermissionRequest", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PermissionRequest", { workspaceRef: FEATURE_A });
 
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // PreToolUse after PermissionRequest should transition to busy
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
@@ -1114,37 +819,25 @@ describe("ClaudeCodeServerManager integration", () => {
       //   PreToolUse (busy, pre-dialog) → no change
       //   PermissionRequest             → idle  (dialog shown)
       //   PreToolUse (idle, on approve) → busy  (tool runs)
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // Tool wants to run — PreToolUse fires first, while still busy (no change).
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // Dialog appears → idle while it waits for the user.
-      await sendHook(port, "PermissionRequest", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PermissionRequest", { workspaceRef: FEATURE_A });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // User approves → the tool runs, PreToolUse fires again → busy.
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
@@ -1152,34 +845,22 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("PreToolUse flag is cleared after use", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Start session and make busy
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       // Permission request
-      await sendHook(port, "PermissionRequest", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "PermissionRequest", { workspaceRef: FEATURE_A });
       // First PreToolUse clears the flag
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
       // Second PreToolUse should NOT change status (flag already cleared)
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "bash",
       });
 
@@ -1188,34 +869,26 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("ignores hooks for unknown workspaces", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
       // Send hook for unknown workspace - should not throw
       const response = await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/unknown/workspace").toNative(),
+        workspaceRef: refOf(testPath("/unknown/workspace").toNative()),
       });
 
       expect(response.ok).toBe(true);
     });
 
     it("returns 400 for invalid hook name", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
-      const response = await sendHook(port, "InvalidHook", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      const response = await sendHook(port, "InvalidHook", { workspaceRef: FEATURE_A });
 
       expect(response.status).toBe(400);
     });
 
     it("returns 400 for invalid JSON body", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
       const response = await fetch(`http://127.0.0.1:${port}/hook/SessionStart`, {
         method: "POST",
@@ -1227,9 +900,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("returns 405 for non-POST requests", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
       const response = await fetch(`http://127.0.0.1:${port}/hook/SessionStart`, {
         method: "GET",
@@ -1242,11 +913,9 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("restartServer", () => {
     it("restarts workspace and preserves port", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      const port = await serverManager.startServer(FEATURE_A);
 
-      const result = await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
+      const result = await serverManager.restartServer(FEATURE_A);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -1268,12 +937,10 @@ describe("ClaudeCodeServerManager integration", () => {
         stoppedCallback();
       });
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
       callOrder.length = 0; // Reset for restart test
 
-      await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.restartServer(FEATURE_A);
 
       expect(stoppedCallback).toHaveBeenCalled();
       expect(startedCallback).toHaveBeenCalledTimes(2); // Initial + restart
@@ -1284,19 +951,16 @@ describe("ClaudeCodeServerManager integration", () => {
       const stoppedCallback = vi.fn();
       serverManager.onServerStopped(stoppedCallback);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.startServer(FEATURE_A);
+      await serverManager.restartServer(FEATURE_A);
 
-      expect(stoppedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-a").toString(),
-        true
-      );
+      expect(stoppedCallback).toHaveBeenCalledWith(FEATURE_A, true);
     });
 
     it("fails for unregistered workspace", async () => {
-      const result = await serverManager.restartServer(testPath("/unknown/workspace").toNative());
+      const result = await serverManager.restartServer(
+        refOf(testPath("/unknown/workspace").toNative())
+      );
 
       expect(result.success).toBe(false);
       if (!result.success) {
@@ -1305,30 +969,18 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("preserves status callbacks across restart", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Make busy
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // Restart
-      await serverManager.restartServer(testPath("/workspace/feature-a").toNative());
+      await serverManager.restartServer(FEATURE_A);
 
       // Callback should still work after restart
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
       expect(statusChanges).toContain("idle");
     });
   });
@@ -1363,9 +1015,7 @@ describe("ClaudeCodeServerManager integration", () => {
     }
 
     it("registers every hook Claude is meant to send, and no wrapper hook", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       const settings = readGeneratedConfig("codehydra-hooks.json") as {
         hooks: Record<string, unknown>;
@@ -1389,9 +1039,7 @@ describe("ClaudeCodeServerManager integration", () => {
         logger: SILENT_LOGGER,
         config: { hookHandlerPath: testPath("/mock dir/hook handler.js").toNative() },
       });
-      await spaced.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await spaced.startServer(FEATURE_A);
 
       const settings = [...mockFileSystem.$.entries.entries()].find(([path]) =>
         path.includes("codehydra-hooks.json")
@@ -1418,9 +1066,7 @@ describe("ClaudeCodeServerManager integration", () => {
         port: 9999,
         token: "test-token",
       });
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       // The MCP entry always passed the interpreter explicitly; the hook command
       // used a bare `node`, which the bin directory does not ship.
@@ -1428,9 +1074,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("falls back to PATH node before MCP config arrives, and says so", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       expect(hookCommand("SessionStart")).toBe("node");
     });
@@ -1442,9 +1086,7 @@ describe("ClaudeCodeServerManager integration", () => {
         port: 9999,
         token: "test-token",
       });
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       const mcp = readGeneratedConfig("codehydra-mcp.json") as {
         mcpServers: {
@@ -1461,7 +1103,7 @@ describe("ClaudeCodeServerManager integration", () => {
       const { command, args, env } = mcp.mcpServers.codehydra;
       expect(command).toBe(testPath("/ide/node").toNative());
       expect(args).toEqual([testPath("/data/bin/ch.cjs").toNative(), "mcp"]);
-      expect(env._CH_WORKSPACE).toBe(refOf(testPath("/workspace/feature-a").toNative()));
+      expect(env._CH_WORKSPACE).toBe(FEATURE_A);
       expect(env._CH_WORKSPACE_PATH).toBeUndefined();
       expect(env._CH_API_PORT).toBe("9999");
       expect(env._CH_API_TOKEN).toBe("test-token");
@@ -1469,9 +1111,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("omits the MCP server entirely when there is no config to give it", async () => {
       // Never called setMcpConfig: the API server has not bound yet.
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       const mcp = readGeneratedConfig("codehydra-mcp.json") as {
         mcpServers: Record<string, unknown>;
@@ -1493,9 +1133,7 @@ describe("ClaudeCodeServerManager integration", () => {
         port: 9999,
         token: 'tok"en\nwith\tcontrol',
       });
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       const mcp = readGeneratedConfig("codehydra-mcp.json") as {
         mcpServers: { codehydra: { command: string; args: string[]; env: Record<string, string> } };
@@ -1509,41 +1147,43 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("config path getters", () => {
     it("returns consistent paths for hooks config", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      const path1 = serverManager.getHooksConfigPath(testPath("/workspace/feature-a").toNative());
-      const path2 = serverManager.getHooksConfigPath(testPath("/workspace/feature-a").toNative());
+      const path1 = serverManager.getHooksConfigPath(FEATURE_A);
+      const path2 = serverManager.getHooksConfigPath(FEATURE_A);
 
       expect(path1.toString()).toBe(path2.toString());
       expect(path1.toString()).toContain("codehydra-hooks.json");
     });
 
     it("returns consistent paths for MCP config", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      const path1 = serverManager.getMcpConfigPath(testPath("/workspace/feature-a").toNative());
-      const path2 = serverManager.getMcpConfigPath(testPath("/workspace/feature-a").toNative());
+      const path1 = serverManager.getMcpConfigPath(FEATURE_A);
+      const path2 = serverManager.getMcpConfigPath(FEATURE_A);
 
       expect(path1.toString()).toBe(path2.toString());
       expect(path1.toString()).toContain("codehydra-mcp.json");
     });
 
     it("returns different paths for different workspaces", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
 
-      const pathA = serverManager.getHooksConfigPath(testPath("/workspace/feature-a").toNative());
-      const pathB = serverManager.getHooksConfigPath(testPath("/workspace/feature-b").toNative());
+      const pathA = serverManager.getHooksConfigPath(FEATURE_A);
+      const pathB = serverManager.getHooksConfigPath(FEATURE_B);
 
       expect(pathA.toString()).not.toBe(pathB.toString());
+    });
+
+    it("names the config directory after the workspace, safely and uniquely per ref", () => {
+      // A branch-named workspace may contain characters a directory name cannot.
+      const nested = workspaceRefIn("/repo", "feature/x");
+      expect(configDirName(nested)).toMatch(/^feature_x-[0-9a-f]+$/);
+      // Same name, different project: still two directories.
+      const other = workspaceRefIn("/other", "feature/x");
+      expect(configDirName(other)).not.toBe(configDirName(nested));
+      expect(configDirName(nested)).toBe(configDirName(nested));
     });
 
     it("generates configs under the temp root, not app data", async () => {
@@ -1551,12 +1191,10 @@ describe("ClaudeCodeServerManager integration", () => {
       // API token, so one that outlives the launch is wrong, not merely
       // stale. temp-dir-module clears the temp root on every app:start; app
       // data is never cleared, which is how these accumulated forever.
-      await serverManager.startServer("/workspace/feature-a", {
-        workspaceRef: refOf("/workspace/feature-a"),
-      });
+      await serverManager.startServer(refOf("/workspace/feature-a"));
 
-      const hooksPath = serverManager.getHooksConfigPath("/workspace/feature-a");
-      const mcpPath = serverManager.getMcpConfigPath("/workspace/feature-a");
+      const hooksPath = serverManager.getHooksConfigPath(refOf("/workspace/feature-a"));
+      const mcpPath = serverManager.getMcpConfigPath(refOf("/workspace/feature-a"));
 
       expect(hooksPath.toString()).toContain("/test/temp/claude/configs/");
       expect(mcpPath.toString()).toContain("/test/temp/claude/configs/");
@@ -1579,29 +1217,17 @@ describe("ClaudeCodeServerManager integration", () => {
       const stoppedCallback = vi.fn();
       serverManager.onServerStopped(stoppedCallback);
 
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      await serverManager.startServer(testPath("/workspace/feature-b").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-b").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
+      await serverManager.startServer(FEATURE_B);
 
       await serverManager.dispose();
 
-      expect(stoppedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-a").toString(),
-        false
-      );
-      expect(stoppedCallback).toHaveBeenCalledWith(
-        testPath("/workspace/feature-b").toString(),
-        false
-      );
+      expect(stoppedCallback).toHaveBeenCalledWith(FEATURE_A, false);
+      expect(stoppedCallback).toHaveBeenCalledWith(FEATURE_B, false);
     });
 
     it("is safe to call multiple times", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       await serverManager.dispose();
       await serverManager.dispose(); // Should not throw
@@ -1610,32 +1236,28 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("initial prompt", () => {
     it("setInitialPrompt stores path retrievable via getInitialPromptPath", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Hello, Claude!",
       });
 
-      const path = serverManager.getInitialPromptPath(testPath("/workspace/feature-a").toNative());
+      const path = serverManager.getInitialPromptPath(FEATURE_A);
       expect(path).toBeDefined();
       expect(path?.toString()).toContain("initial-prompt.json");
     });
 
     it("initial prompt file contains correct JSON structure", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Test prompt",
         agentName: "coder",
         permissionMode: "plan",
         model: { providerID: "anthropic", modelID: "claude-sonnet" },
       });
 
-      const path = serverManager.getInitialPromptPath(testPath("/workspace/feature-a").toNative());
+      const path = serverManager.getInitialPromptPath(FEATURE_A);
       expect(path).toBeDefined();
 
       // Read file from mock filesystem
@@ -1649,79 +1271,57 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("getInitialPromptPath returns undefined when no prompt set", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      const path = serverManager.getInitialPromptPath(testPath("/workspace/feature-a").toNative());
+      const path = serverManager.getInitialPromptPath(FEATURE_A);
       expect(path).toBeUndefined();
     });
 
     it("getInitialPromptPath returns undefined for unknown workspace", async () => {
-      const path = serverManager.getInitialPromptPath(testPath("/workspace/unknown").toNative());
+      const path = serverManager.getInitialPromptPath(
+        refOf(testPath("/workspace/unknown").toNative())
+      );
       expect(path).toBeUndefined();
     });
 
     it("setInitialPrompt logs warning for unknown workspace", async () => {
       // Should not throw, just log warning and return
       await expect(
-        serverManager.setInitialPrompt(testPath("/workspace/unknown").toNative(), {
+        serverManager.setInitialPrompt(refOf(testPath("/workspace/unknown").toNative()), {
           prompt: "Test",
         })
       ).resolves.not.toThrow();
     });
 
     it("WrapperStart with non-plan initial prompt sets status to busy", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { statusChanges } = await startCapturing(FEATURE_A);
 
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
       // Set initial prompt without plan agent (agent undefined → non-plan)
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Build a feature",
       });
 
       // WrapperStart should set status to busy instead of idle
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
       expect(statusChanges).toEqual(["busy"]);
-      expect(markActiveHandler).toHaveBeenCalledWith(testPath("/workspace/feature-a").toString());
+      expect(markActiveHandler).toHaveBeenCalledWith(FEATURE_A);
     });
 
     it("SessionStart stays busy with non-plan initial prompt", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Build a feature",
       });
 
       // Full startup sequence: WrapperStart → SessionStart → UserPromptSubmit
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // Should stay busy throughout — no idle blip
       expect(statusChanges).toEqual(["busy"]);
@@ -1730,13 +1330,11 @@ describe("ClaudeCodeServerManager integration", () => {
     describe("session not starting (folder trust dialog)", () => {
       const workspace = testPath("/workspace/feature-a").toNative();
       let port: number;
-      let statusChanges: AgentStatus[];
+      let statusChanges: AgentActivity[];
 
       beforeEach(async () => {
-        port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
-        statusChanges = [];
-        serverManager.onStatusChange(workspace, (status) => statusChanges.push(status));
-        await serverManager.setInitialPrompt(workspace, { prompt: "Build a feature" });
+        ({ port, statusChanges } = await startCapturing(refOf(workspace)));
+        await serverManager.setInitialPrompt(refOf(workspace), { prompt: "Build a feature" });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       });
 
@@ -1748,7 +1346,7 @@ describe("ClaudeCodeServerManager integration", () => {
         const markActiveHandler = vi.fn();
         serverManager.setMarkActiveHandler(markActiveHandler);
 
-        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+        serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
         vi.advanceTimersByTime(59_999);
         expect(statusChanges).toEqual(["busy"]);
 
@@ -1757,30 +1355,30 @@ describe("ClaudeCodeServerManager integration", () => {
         expect(markActiveHandler).toHaveBeenCalledTimes(2);
 
         // The user accepts the dialog: the session starts and runs the prompt.
-        await sendHook(port, "SessionStart", { workspacePath: workspace });
-        await sendHook(port, "UserPromptSubmit", { workspacePath: workspace });
+        await sendHook(port, "SessionStart", { workspaceRef: refOf(workspace) });
+        await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(workspace) });
         expect(statusChanges).toEqual(["busy", "idle", "busy"]);
       });
 
       it("stays busy when the session starts in time", async () => {
-        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
-        await sendHook(port, "SessionStart", { workspacePath: workspace });
+        serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
+        await sendHook(port, "SessionStart", { workspaceRef: refOf(workspace) });
         vi.advanceTimersByTime(60_000);
 
         expect(statusChanges).toEqual(["busy"]);
       });
 
       it("does not go idle after the terminal closed", () => {
-        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
-        serverManager.triggerWrapperLifecycle(workspace, "WrapperEnd");
+        serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
+        serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperEnd");
         vi.advanceTimersByTime(60_000);
 
         expect(statusChanges).toEqual(["busy", "none"]);
       });
 
       it("does not fire for a workspace that was stopped", async () => {
-        serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
-        await serverManager.stopServer(workspace);
+        serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
+        await serverManager.stopServer(refOf(workspace));
         vi.advanceTimersByTime(60_000);
 
         expect(statusChanges).toEqual(["busy"]);
@@ -1788,146 +1386,102 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("WrapperStart with a plan-mode prompt still sets status to busy (mode is irrelevant)", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { statusChanges } = await startCapturing(FEATURE_A);
 
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
       // A prompt is given — the agent works on it regardless of permission mode.
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Plan a feature",
         permissionMode: "plan",
       });
 
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
       expect(statusChanges).toEqual(["busy"]);
     });
 
     it("WrapperStart with an agent/mode-only prompt (empty text) sets status to idle", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { statusChanges } = await startCapturing(FEATURE_A);
 
       // Only an agent name was chosen — no prompt text to process.
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "",
         agentName: "reviewer",
       });
 
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
     });
 
     it("WrapperStart without initial prompt sets status to idle", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { statusChanges } = await startCapturing(FEATURE_A);
 
       // No setInitialPrompt called
 
       // WrapperStart should set status to idle (normal behavior)
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
     });
 
     it("flag consumed on SessionStart, subsequent session goes idle", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+      await serverManager.setInitialPrompt(FEATURE_A, {
         prompt: "Build a feature",
       });
 
       // First session: flag consumed on SessionStart
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperEnd"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperEnd");
 
       // Second session: normal idle behavior
-      serverManager.triggerWrapperLifecycle(
-        testPath("/workspace/feature-a").toNative(),
-        "WrapperStart"
-      );
+      serverManager.triggerWrapperLifecycle(FEATURE_A, "WrapperStart");
 
       expect(statusChanges).toEqual(["busy", "idle", "none", "idle"]);
     });
 
     it("reports the prompt delivered on the first SessionStart only", async () => {
       const workspace = testPath("/workspace/feature-a").toNative();
-      const port = await serverManager.startServer(workspace, { workspaceRef: refOf(workspace) });
+      const port = await serverManager.startServer(refOf(workspace));
       const onDelivered = vi.fn();
 
-      await serverManager.setInitialPrompt(workspace, { prompt: "Build a feature" }, onDelivered);
+      await serverManager.setInitialPrompt(
+        refOf(workspace),
+        { prompt: "Build a feature" },
+        onDelivered
+      );
 
       // The terminal opening is not enough: the app could still quit before claude runs.
-      serverManager.triggerWrapperLifecycle(workspace, "WrapperStart");
+      serverManager.triggerWrapperLifecycle(refOf(workspace), "WrapperStart");
       expect(onDelivered).not.toHaveBeenCalled();
 
-      await sendHook(port, "SessionStart", { workspacePath: workspace });
-      await sendHook(port, "SessionStart", { workspacePath: workspace });
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(workspace) });
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(workspace) });
       expect(onDelivered).toHaveBeenCalledTimes(1);
     });
 
     it("setInitialPrompt handles mkdtemp failure gracefully", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
       // Make mkdtemp throw an error
       mockFileSystem.$.mkdtempShouldFail = true;
 
       // Should not throw - logs error and continues
       await expect(
-        serverManager.setInitialPrompt(testPath("/workspace/feature-a").toNative(), {
+        serverManager.setInitialPrompt(FEATURE_A, {
           prompt: "Test",
         })
       ).resolves.not.toThrow();
 
       // Path should not be set since mkdtemp failed
-      const path = serverManager.getInitialPromptPath(testPath("/workspace/feature-a").toNative());
+      const path = serverManager.getInitialPromptPath(FEATURE_A);
       expect(path).toBeUndefined();
 
       // Reset for other tests
@@ -1937,51 +1491,41 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("no-session marker", () => {
     it("setNoSessionMarker stores path retrievable via getNoSessionMarkerPath", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      await serverManager.setNoSessionMarker(testPath("/workspace/feature-a").toNative());
+      await serverManager.setNoSessionMarker(FEATURE_A);
 
-      const path = serverManager.getNoSessionMarkerPath(
-        testPath("/workspace/feature-a").toNative()
-      );
+      const path = serverManager.getNoSessionMarkerPath(FEATURE_A);
       expect(path).toBeDefined();
       expect(path?.toString()).toContain("claude/no-session/");
     });
 
     it("getNoSessionMarkerPath returns undefined when no marker set", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      const path = serverManager.getNoSessionMarkerPath(
-        testPath("/workspace/feature-a").toNative()
-      );
+      const path = serverManager.getNoSessionMarkerPath(FEATURE_A);
       expect(path).toBeUndefined();
     });
 
     it("getNoSessionMarkerPath returns undefined for unknown workspace", () => {
-      const path = serverManager.getNoSessionMarkerPath(testPath("/workspace/unknown").toNative());
+      const path = serverManager.getNoSessionMarkerPath(
+        refOf(testPath("/workspace/unknown").toNative())
+      );
       expect(path).toBeUndefined();
     });
 
     it("setNoSessionMarker logs warning for unknown workspace", async () => {
       await expect(
-        serverManager.setNoSessionMarker(testPath("/workspace/unknown").toNative())
+        serverManager.setNoSessionMarker(refOf(testPath("/workspace/unknown").toNative()))
       ).resolves.not.toThrow();
     });
 
     it("marker file is created as empty file", async () => {
-      await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
+      await serverManager.startServer(FEATURE_A);
 
-      await serverManager.setNoSessionMarker(testPath("/workspace/feature-a").toNative());
+      await serverManager.setNoSessionMarker(FEATURE_A);
 
-      const path = serverManager.getNoSessionMarkerPath(
-        testPath("/workspace/feature-a").toNative()
-      );
+      const path = serverManager.getNoSessionMarkerPath(FEATURE_A);
       expect(path).toBeDefined();
 
       const content = await mockFileSystem.readFile(path!);
@@ -2004,14 +1548,12 @@ describe("ClaudeCodeServerManager integration", () => {
     }
     /** Stop payload carrying the given still-running background tasks. */
     function stopWith(tasks: Record<string, unknown>[]): Record<string, unknown> {
-      return { workspacePath: WS, background_tasks: tasks };
+      return { workspaceRef: refOf(WS), background_tasks: tasks };
     }
-    async function start(): Promise<{ port: number; statusChanges: AgentStatus[] }> {
-      const port = await serverManager.startServer(WS, { workspaceRef: refOf(WS) });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(WS, (status) => statusChanges.push(status));
-      await sendHook(port, "SessionStart", { workspacePath: WS });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+    async function start(): Promise<{ port: number; statusChanges: AgentActivity[] }> {
+      const { port, statusChanges } = await startCapturing(refOf(WS));
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(WS) });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       return { port, statusChanges };
     }
 
@@ -2034,28 +1576,16 @@ describe("ClaudeCodeServerManager integration", () => {
       // and needs the user, so surface idle regardless of background work.
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()]));
-      await sendHook(port, "StopFailure", { workspacePath: WS });
+      await sendHook(port, "StopFailure", { workspaceRef: refOf(WS) });
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("StopFailure without sub-agents transitions to idle", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "StopFailure", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "StopFailure", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
@@ -2064,8 +1594,8 @@ describe("ClaudeCodeServerManager integration", () => {
       const { port, statusChanges } = await start();
       // The sub-agent lifecycle hooks no longer move status; busy-ness is derived
       // from the Stop payload instead.
-      await sendHook(port, "SubagentStart", { workspacePath: WS, agent_id: "sub-1" });
-      await sendHook(port, "SubagentStop", { workspacePath: WS, agent_id: "sub-1" });
+      await sendHook(port, "SubagentStart", { workspaceRef: refOf(WS), agent_id: "sub-1" });
+      await sendHook(port, "SubagentStop", { workspaceRef: refOf(WS), agent_id: "sub-1" });
       expect(statusChanges).toEqual(["idle", "busy"]);
 
       // A subsequent empty Stop goes idle normally.
@@ -2074,24 +1604,14 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("SubagentStop without prior SubagentStart is a safe no-op", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // SubagentStop for unknown agent — should not crash or change status
       await sendHook(port, "SubagentStop", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         agent_id: "unknown-agent",
       });
 
@@ -2099,28 +1619,16 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("SubagentStart without agent_id is ignored", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
 
       // SubagentStart without agent_id — no tracking
-      await sendHook(port, "SubagentStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SubagentStart", { workspaceRef: FEATURE_A });
 
       // Stop should go idle normally (no sub-agents tracked)
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
@@ -2131,7 +1639,7 @@ describe("ClaudeCodeServerManager integration", () => {
       // and the next Stop carries no tasks → the one true idle.
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()]));
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       await sendHook(port, "Stop", stopWith([]));
 
       // Only one idle transition — no false idle blip while the sub-agent ran.
@@ -2143,13 +1651,13 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "Stop", stopWith([subagentTask()])); // suppressed → busy
 
       // WrapperEnd — clears background-task state
-      serverManager.triggerWrapperLifecycle(WS, "WrapperEnd");
+      serverManager.triggerWrapperLifecycle(refOf(WS), "WrapperEnd");
       expect(statusChanges).toEqual(["idle", "busy", "none"]);
 
       // New session: an empty Stop goes idle normally (stash was cleared).
-      serverManager.triggerWrapperLifecycle(WS, "WrapperStart");
-      await sendHook(port, "SessionStart", { workspacePath: WS });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      serverManager.triggerWrapperLifecycle(refOf(WS), "WrapperStart");
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(WS) });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       await sendHook(port, "Stop", stopWith([]));
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle", "busy", "idle"]);
@@ -2158,7 +1666,7 @@ describe("ClaudeCodeServerManager integration", () => {
     it("SessionEnd clears the background-task stash", async () => {
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()])); // suppressed → busy
-      await sendHook(port, "SessionEnd", { workspacePath: WS });
+      await sendHook(port, "SessionEnd", { workspaceRef: refOf(WS) });
 
       expect(statusChanges).toEqual(["idle", "busy", "none"]);
     });
@@ -2170,7 +1678,7 @@ describe("ClaudeCodeServerManager integration", () => {
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()])); // busy
       // No SubagentStop ever arrives; the agent resumes and stops with no tasks.
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       await sendHook(port, "Stop", stopWith([]));
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
@@ -2203,59 +1711,52 @@ describe("ClaudeCodeServerManager integration", () => {
       // Stop and must not blip to idle.
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()]));
-      await sendHook(port, "Notification", { workspacePath: WS, notification_type: "idle_prompt" });
+      await sendHook(port, "Notification", {
+        workspaceRef: refOf(WS),
+        notification_type: "idle_prompt",
+      });
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // Sub-agent finishes, main agent resumes and finishes → single idle transition.
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       await sendHook(port, "Stop", stopWith([]));
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("AskUserQuestion idle survives concurrent sub-agent tool activity", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // Real trace: the main agent dispatches background sub-agents, then asks the
       // user a question. While the question is open, the sub-agents' own tool
       // calls emit PostToolUse (→busy) on this same workspace bridge — which used
       // to stomp the ask-user idle. They must now be suppressed so the workspace
       // stays idle until the user actually answers.
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       await sendHook(port, "SubagentStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         agent_id: "sub-1",
       });
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // Concurrent sub-agent tool traffic — none of this may flip us to busy.
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "Agent",
       });
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "WebSearch",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // The user answers → PostToolUse(AskUserQuestion) returns to busy.
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
 
@@ -2263,44 +1764,34 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("AskUserQuestion idle is not resolved by a concurrent sub-agent PreToolUse", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
       // AskUserQuestion also fires its own PermissionRequest. The generic
       // permission flow would let the *next* PreToolUse (here a sub-agent's)
       // resolve it back to busy — that must not happen while parked.
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       await sendHook(port, "SubagentStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         agent_id: "sub-1",
       });
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       await sendHook(port, "PermissionRequest", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       // A sub-agent starts a tool while the question is open.
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "Bash",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
 
@@ -2308,36 +1799,26 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("AskUserQuestion unparks (→busy) on PostToolUseFailure so the flag can't stick", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
       await sendHook(port, "PreToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // The question is cancelled/errors → PostToolUseFailure must clear the park.
       await sendHook(port, "PostToolUseFailure", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // Subsequent normal work is no longer suppressed to idle.
       await sendHook(port, "PostToolUse", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
+        workspaceRef: FEATURE_A,
         tool_name: "Bash",
       });
 
@@ -2354,16 +1835,16 @@ describe("ClaudeCodeServerManager integration", () => {
       const { port, statusChanges } = await start();
       await sendHook(port, "Stop", stopWith([subagentTask()]));
       await sendHook(port, "PreToolUse", {
-        workspacePath: WS,
+        workspaceRef: refOf(WS),
         agent_id: FORK,
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // Nor is anything swallowed afterwards: the sub-agent's work still counts.
-      await sendHook(port, "PostToolUse", { workspacePath: WS, tool_name: "WebFetch" });
+      await sendHook(port, "PostToolUse", { workspaceRef: refOf(WS), tool_name: "WebFetch" });
       await sendHook(port, "Notification", {
-        workspacePath: WS,
+        workspaceRef: refOf(WS),
         notification_type: "idle_prompt",
       });
       expect(statusChanges).toEqual(["idle", "busy"]);
@@ -2371,37 +1852,44 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("a fork's AskUserQuestion after an idle Stop leaves the workspace idle", async () => {
       const { port, statusChanges } = await start();
-      await sendHook(port, "Stop", { workspacePath: WS });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) });
       await sendHook(port, "PreToolUse", {
-        workspacePath: WS,
+        workspaceRef: refOf(WS),
         agent_id: FORK,
         tool_name: "AskUserQuestion",
       });
       // The next real prompt still starts a turn: no park is left behind.
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
     it("a fork's tool call after an idle Stop does not flip the workspace busy", async () => {
       const { port, statusChanges } = await start();
-      await sendHook(port, "Stop", { workspacePath: WS });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) });
       // "PreToolUse while idle → busy" is for the main agent's untracked turns;
       // no Stop would ever follow the fork's call to end that busy.
-      await sendHook(port, "PreToolUse", { workspacePath: WS, agent_id: FORK, tool_name: "Read" });
+      await sendHook(port, "PreToolUse", {
+        workspaceRef: refOf(WS),
+        agent_id: FORK,
+        tool_name: "Read",
+      });
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("a sub-agent's PostToolUse(AskUserQuestion) does not lift the main agent's park", async () => {
       const { port, statusChanges } = await start();
-      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "PreToolUse", { workspaceRef: refOf(WS), tool_name: "AskUserQuestion" });
       await sendHook(port, "PostToolUse", {
-        workspacePath: WS,
+        workspaceRef: refOf(WS),
         agent_id: "sub-1",
         tool_name: "AskUserQuestion",
       });
       expect(lastStatus(statusChanges)).toBe("idle");
 
-      await sendHook(port, "PostToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "PostToolUse", {
+        workspaceRef: refOf(WS),
+        tool_name: "AskUserQuestion",
+      });
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
@@ -2412,46 +1900,39 @@ describe("ClaudeCodeServerManager integration", () => {
       // sub-agents keep the workspace busy instead of their activity being
       // suppressed to idle.
       const { port, statusChanges } = await start();
-      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "PreToolUse", { workspaceRef: refOf(WS), tool_name: "AskUserQuestion" });
       expect(lastStatus(statusChanges)).toBe("idle");
 
       await sendHook(port, "Stop", stopWith([subagentTask()]));
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // The idle_prompt echo stays suppressed; the sub-agents' end still goes idle.
-      await sendHook(port, "Notification", { workspacePath: WS, notification_type: "idle_prompt" });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "Notification", {
+        workspaceRef: refOf(WS),
+        notification_type: "idle_prompt",
+      });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) });
       await sendHook(port, "Stop", stopWith([]));
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
     });
 
     it("the main agent's Stop lifts a dropped park with nothing running (stays idle)", async () => {
       const { port, statusChanges } = await start();
-      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "PreToolUse", { workspaceRef: refOf(WS), tool_name: "AskUserQuestion" });
       await sendHook(port, "Stop", stopWith([]));
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // No park is left behind: a later sub-agent-free tool call is not suppressed.
-      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "Bash" });
+      await sendHook(port, "PreToolUse", { workspaceRef: refOf(WS), tool_name: "Bash" });
       expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("Stop without sub-agents still transitions to idle normally", async () => {
-      const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
-        workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
-      });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(testPath("/workspace/feature-a").toNative(), (status) => {
-        statusChanges.push(status);
-      });
+      const { port, statusChanges } = await startCapturing(FEATURE_A);
 
-      await sendHook(port, "SessionStart", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "UserPromptSubmit", {
-        workspacePath: testPath("/workspace/feature-a").toNative(),
-      });
-      await sendHook(port, "Stop", { workspacePath: testPath("/workspace/feature-a").toNative() });
+      await sendHook(port, "SessionStart", { workspaceRef: FEATURE_A });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: FEATURE_A });
+      await sendHook(port, "Stop", { workspaceRef: FEATURE_A });
 
       // Normal flow — no sub-agents, Stop goes idle
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
@@ -2460,39 +1941,37 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("busy→idle edge for untracked (bash-mode) turns", () => {
     const WS = testPath("/workspace/feature-a").toNative();
-    async function startIdle(): Promise<{ port: number; statusChanges: AgentStatus[] }> {
-      const port = await serverManager.startServer(WS, { workspaceRef: refOf(WS) });
-      const statusChanges: AgentStatus[] = [];
-      serverManager.onStatusChange(WS, (status) => statusChanges.push(status));
-      await sendHook(port, "SessionStart", { workspacePath: WS }); // → idle
+    async function startIdle(): Promise<{ port: number; statusChanges: AgentActivity[] }> {
+      const { port, statusChanges } = await startCapturing(refOf(WS));
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(WS) }); // → idle
       return { port, statusChanges };
     }
 
     it("main-agent Stop while idle emits a synthetic busy→idle edge", async () => {
       const { port, statusChanges } = await startIdle();
       // Bash-mode turn: only a Stop fires, and the workspace is already idle.
-      await sendHook(port, "Stop", { workspacePath: WS });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) });
       // Synchronous edge — the busy→idle transition (which fires the done signal).
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("two bash-mode turns emit two edges", async () => {
       const { port, statusChanges } = await startIdle();
-      await sendHook(port, "Stop", { workspacePath: WS });
-      await sendHook(port, "Stop", { workspacePath: WS });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) });
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
     });
 
     it("a sub-agent Stop (carries agent_id) while idle is ignored (no edge)", async () => {
       const { port, statusChanges } = await startIdle();
-      await sendHook(port, "Stop", { workspacePath: WS, agent_id: "sub-1" });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS), agent_id: "sub-1" });
       expect(statusChanges).toEqual(["idle"]);
     });
 
     it("a normal turn (UserPromptSubmit → Stop) emits a single edge, not a synthetic one", async () => {
       const { port, statusChanges } = await startIdle();
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WS }); // busy
-      await sendHook(port, "Stop", { workspacePath: WS }); // busy → idle (real)
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WS) }); // busy
+      await sendHook(port, "Stop", { workspaceRef: refOf(WS) }); // busy → idle (real)
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
   });
@@ -2507,7 +1986,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     /** Stop payload with the given still-running background tasks. */
     function stopWithTasks(tasks: Record<string, unknown>[]): Record<string, unknown> {
-      return { workspacePath: WORKSPACE, background_tasks: tasks };
+      return { workspaceRef: refOf(WORKSPACE), background_tasks: tasks };
     }
 
     function createManager(): ClaudeCodeServerManager {
@@ -2523,15 +2002,15 @@ describe("ClaudeCodeServerManager integration", () => {
 
     async function startBusyWorkspace(manager: ClaudeCodeServerManager): Promise<{
       port: number;
-      statusChanges: AgentStatus[];
+      statusChanges: AgentActivity[];
     }> {
-      const port = await manager.startServer(WORKSPACE, { workspaceRef: refOf(WORKSPACE) });
-      const statusChanges: AgentStatus[] = [];
-      manager.onStatusChange(WORKSPACE, (status) => {
+      const port = await manager.startServer(refOf(WORKSPACE));
+      const statusChanges: AgentActivity[] = [];
+      manager.onStatusChange(refOf(WORKSPACE), (status) => {
         statusChanges.push(status);
       });
-      await sendHook(port, "SessionStart", { workspacePath: WORKSPACE });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(WORKSPACE) });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WORKSPACE) });
       return { port, statusChanges };
     }
 
@@ -2557,7 +2036,7 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager = createManager();
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
-      await sendHook(port, "Stop", { workspacePath: WORKSPACE });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WORKSPACE) });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
@@ -2569,7 +2048,7 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
       // ~60s after Stop, Claude Code sends an idle_prompt notification
       await sendHook(port, "Notification", {
-        workspacePath: WORKSPACE,
+        workspaceRef: refOf(WORKSPACE),
         notification_type: "idle_prompt",
       });
 
@@ -2582,7 +2061,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
       // Shell exits → harness re-invokes the agent with the task notification
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WORKSPACE) });
       await sendHook(port, "Stop", stopWithTasks([]));
 
       // Exactly one idle transition — no false idle while waiting
@@ -2645,9 +2124,9 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(lastStatus(statusChanges)).toBe("busy");
 
       // User re-engages; agent goes busy, then the turn ends at its idle prompt
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WORKSPACE) });
       await sendHook(port, "Notification", {
-        workspacePath: WORKSPACE,
+        workspaceRef: refOf(WORKSPACE),
         notification_type: "idle_prompt",
       });
 
@@ -2671,13 +2150,13 @@ describe("ClaudeCodeServerManager integration", () => {
       const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));
-      serverManager.triggerWrapperLifecycle(WORKSPACE, "WrapperEnd");
+      serverManager.triggerWrapperLifecycle(refOf(WORKSPACE), "WrapperEnd");
 
       // New session: idle_prompt is not suppressed by the stale stash
-      serverManager.triggerWrapperLifecycle(WORKSPACE, "WrapperStart");
-      await sendHook(port, "SessionStart", { workspacePath: WORKSPACE });
-      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
-      await sendHook(port, "Stop", { workspacePath: WORKSPACE });
+      serverManager.triggerWrapperLifecycle(refOf(WORKSPACE), "WrapperStart");
+      await sendHook(port, "SessionStart", { workspaceRef: refOf(WORKSPACE) });
+      await sendHook(port, "UserPromptSubmit", { workspaceRef: refOf(WORKSPACE) });
+      await sendHook(port, "Stop", { workspaceRef: refOf(WORKSPACE) });
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle", "busy", "idle"]);
     });

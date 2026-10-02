@@ -29,7 +29,9 @@ import {
   projectIdSchema,
   projectPathSchema,
   projectRefSchema,
+  workspaceIdentityPayloadSchema,
   workspaceNameSchema,
+  workspaceRefIdentitySchema,
   workspaceRefSchema,
   workspaceSchema,
   workspaceTargetShape,
@@ -78,16 +80,13 @@ export const wakeWorkspacePayloadSchema = z
 
 export const workspaceWokenPayloadSchema = z
   .object({
-    projectId: projectIdSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
-    projectRef: projectRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
   })
   .readonly();
 
 export const workspaceWakeFailedPayloadSchema = z
   .object({
-    workspaceRef: workspaceRefSchema,
+    ...workspaceRefIdentitySchema.shape,
     error: z.string(),
   })
   .readonly();

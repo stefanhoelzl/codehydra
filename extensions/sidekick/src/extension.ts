@@ -1,56 +1,32 @@
+/**
+ * CodeHydra Sidekick: the extension running in every workspace's editor.
+ *
+ * Connects to CodeHydra's API server (connection.ts), opens and stops the
+ * agent terminal (agent-terminal.ts), serves the server's `ui:*` requests
+ * (ui-handlers.ts) and its command/shutdown requests (here), contributes the
+ * workspace commands (workspace-commands.ts), and exports the CodeHydra API
+ * to other extensions (codehydra-api.ts).
+ */
 import * as vscode from "vscode";
 import * as path from "path";
-import { io } from "socket.io-client";
-import cssColorNames from "color-name";
-import type { CodehydraApi } from "../api";
-import type {
-  TypedSocket,
-  WorkspaceStatus,
-  ApiResult,
-  ApiConfig,
-  CommandRequest,
-  LogContext,
-  WorkspaceCreateRequest,
-  AgentSpec,
-  AgentSession,
-  AgentType,
-  ShowNotificationRequest,
-  ShowNotificationResponse,
-  AppendOutputRequest,
-  StatusBarUpdateRequest,
-  StatusBarDisposeRequest,
-  ShowQuickPickRequest,
-  ShowQuickPickResponse,
-  ShowInputBoxRequest,
-  ShowInputBoxResponse,
-} from "./types";
 import {
   reconstructVscodeObjects,
   type VscodeFactories,
 } from "../../../src/shared/vscode-serialization";
-import { extractTags, isValidMetadataKey } from "../../../src/shared/api/types";
-import type { WorkspaceTag } from "../../../src/shared/api/types";
-
-const SYSTEM_METADATA_KEYS = new Set(["base"]);
-
-function validateMetadataKeyInput(v: string): string | null {
-  if (!v) return "Key is required";
-  if (!isValidMetadataKey(v)) {
-    return "Must start with a letter, use only letters/digits/hyphens/dots (no trailing hyphens)";
-  }
-  return null;
-}
-
-let socket: TypedSocket | null = null;
-let isConnected = false;
-let hasReceivedInitialConfig = false;
-let pendingReady: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
-
-/** Timeout for API calls in milliseconds (matches COMMAND_TIMEOUT_MS) */
-const API_TIMEOUT_MS = 10000;
-
-/** Timeout for terminal kill operations in milliseconds */
-const TERMINAL_KILL_TIMEOUT_MS = 5000;
+import { getErrorMessage, toError } from "../../../src/shared/error-utils";
+import {
+  closeAgentTerminal,
+  configureAgent,
+  initAgentTerminal,
+  killAllTerminalsAndWait,
+  openConfiguredAgent,
+  resetAgentTerminal,
+} from "./agent-terminal";
+import { codehydraApi } from "./codehydra-api";
+import { connectToApiServer, connectionInfo, disconnectFromApiServer } from "./connection";
+import { disposeUiHandlers, registerUiHandlers } from "./ui-handlers";
+import { registerWorkspaceCommands } from "./workspace-commands";
+import type { ApiConfig, CommandRequest, TypedSocket } from "./types";
 
 /**
  * Factory functions for reconstructing VS Code objects from JSON wrappers.
@@ -67,77 +43,19 @@ const vscodeFactories: VscodeFactories = {
     new vscode.Location(uri as vscode.Uri, range as vscode.Range),
 };
 
-// ============================================================================
-// Development Mode State Variables
-// ============================================================================
-
-let isDevelopment = false;
-let debugOutputChannel: vscode.OutputChannel | null = null;
-let currentWorkspacePath = "";
-let currentApiPort: number | null = null;
-let extensionContext: vscode.ExtensionContext | null = null;
-let currentAgentType: AgentType | null = null;
-let currentAgentEnv: Record<string, string> | null = null;
-
-// ============================================================================
-// Agent Terminal Management
-// ============================================================================
-
-/** Singleton terminal for agent CLI */
-let agentTerminal: vscode.Terminal | null = null;
-
-/** Disposable for terminal close listener */
-let terminalCloseListener: vscode.Disposable | null = null;
-
-/**
- * The agent terminal once its shell has started running the launch line, as
- * reported by shell integration. Until then there is no agent to stop — see
- * closeAgentTerminal.
- */
-let launchedTerminal: vscode.Terminal | null = null;
-
-/** Disposable for the shell-integration execution listener */
-let terminalStartListener: vscode.Disposable | null = null;
-
-/**
- * Report an agent terminal lifecycle transition to the main process.
- * Fire-and-forget; no-op when not connected. Drives agent status:
- * "open" → WrapperStart, "close" → WrapperEnd / TUI detach. Replaces the
- * wrapper-synthesized WrapperStart/WrapperEnd hooks.
- */
-function emitAgentLifecycle(event: "open" | "close"): void {
-  if (!socket?.connected) return;
-  socket.emit("api:workspace:agentLifecycle", { event });
-  codehydraApi.log.debug("Agent lifecycle reported", { event });
+interface ExtensionState {
+  context: vscode.ExtensionContext | null;
+  /** From the server's config: whether CodeHydra runs in development mode. */
+  isDevelopment: boolean;
+  /** Development-only output for the debug commands. */
+  debugOutputChannel: vscode.OutputChannel | null;
 }
 
-/**
- * The line typed into the agent terminal: the launcher, plus whatever makes the
- * shell go away with it.
- *
- * The terminal must close when the agent exits. Its close is the "close" agent
- * lifecycle event, which is what workspace teardown waits for after asking the
- * agent to stop — a bare `ch claude` leaves the shell at its prompt, the terminal
- * open, and every deletion waiting out api-server's full timeout.
- *
- * The shell is the terminal's default profile, so the syntax follows
- * `vscode.env.shell`. PowerShell gets `finally` rather than `; exit` because
- * Ctrl+C — how teardown stops the agent — abandons the rest of a statement list
- * but still runs `finally`. An unknown shell on Windows is assumed to be
- * PowerShell, VS Code's default there.
- */
-function launchLine(command: string): string {
-  const shell = path.win32.basename(vscode.env.shell).toLowerCase();
-  if (shell === "cmd.exe" || shell === "cmd") return `${command} & exit`;
-  if (
-    shell.startsWith("powershell") ||
-    shell.startsWith("pwsh") ||
-    (shell === "" && process.platform === "win32")
-  ) {
-    return `try { ${command} } finally { exit }`;
-  }
-  return `exec ${command}`;
-}
+const state: ExtensionState = {
+  context: null,
+  isDevelopment: false,
+  debugOutputChannel: null,
+};
 
 /**
  * Give every terminal opened in this workspace the workspace environment.
@@ -148,7 +66,7 @@ function launchLine(command: string): string {
  * Replaced wholesale, so a key the hook stopped returning does not linger.
  */
 function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefined): void {
-  const collection = extensionContext?.environmentVariableCollection;
+  const collection = state.context?.environmentVariableCollection;
   if (!collection) return;
   collection.persistent = false;
   collection.clear();
@@ -157,481 +75,22 @@ function applyWorkspaceEnv(workspaceEnv: Record<string, string> | null | undefin
   }
 }
 
-/**
- * Find an agent terminal that outlived the extension host that created it.
- *
- * Terminals belong to the window, not the extension host: when the extension
- * host restarts (a crash, or "Restart Extension Host") the agent terminal and
- * the agent in it keep running, but this module's state starts empty. A new
- * extension host still sees the terminal, with `creationOptions` rebuilt from
- * its launch config — including the env we passed. Only the agent terminal is
- * created with that env (config.env, see the agent providers'
- * getEnvironmentVariables), so `_CH_WORKSPACE` in it identifies the agent
- * terminal. The workspace env (applyWorkspaceEnv) does not interfere: VS Code
- * applies the environment variable collection when the process launches, and
- * it never appears in `creationOptions.env`. Should there be several, the first
- * one wins.
- */
-function findRunningAgentTerminal(): vscode.Terminal | undefined {
-  return vscode.window.terminals.find((t) => {
-    const opts = t.creationOptions as vscode.TerminalOptions | undefined;
-    return opts?.env?._CH_WORKSPACE !== undefined;
-  });
-}
-
-/**
- * Open agent terminal in the editor area.
- * Adopts a still-running agent terminal if there is one (see
- * findRunningAgentTerminal), creates a new terminal if none exists, and
- * otherwise focuses the existing one.
- * On reopened workspaces (show=false), disposes any stale restored terminals
- * (which have lost their name/env after code-server restart) and creates a
- * fresh terminal with correct name, env vars, and command.
- *
- * @param agentType - The type of agent ("opencode" or "claude")
- * @param env - Environment variables to set for the terminal
- * @param show - Whether to show/focus the terminal (default: true)
- */
-function openAgentTerminal(
-  agentType: AgentType,
-  env: Record<string, string>,
-  show: boolean = true
-): void {
-  if (!agentTerminal) {
-    const running = findRunningAgentTerminal();
-    if (running) {
-      // The agent is already running and reporting its own status: no launch
-      // line, and no "open" lifecycle event (it would reset a busy agent to
-      // idle). Its shell ran the launch line long ago, so a close sends Ctrl+C.
-      agentTerminal = running;
-      launchedTerminal = running;
-      codehydraApi.log.debug("Adopted running agent terminal", { agentType });
-    }
-  }
-
-  if (agentTerminal) {
-    if (show) agentTerminal.show();
-    return;
-  }
-
-  const terminalName = agentType === "claude" ? "Claude" : "OpenCode";
-  // The `ch` CLI carries both launchers. The `ch-claude` script still exists,
-  // but only because the Claude Code extension's process-wrapper setting takes a
-  // bare path; nothing needs it here.
-  const command = launchLine(agentType === "claude" ? "ch claude" : "ch opencode");
-
-  if (!show) {
-    // Reopened workspace: dispose stale restored terminals (empty creationOptions
-    // indicate a terminal restored after pty host reconnection failure)
-    for (const t of vscode.window.terminals) {
-      const opts = t.creationOptions as vscode.TerminalOptions | undefined;
-      if (opts?.name === undefined) {
-        t.dispose();
-      }
-    }
-
-    // Respect user preference: if they closed the terminal before restart, don't recreate
-    const wasOpen =
-      extensionContext?.workspaceState.get<boolean>("agentTerminalOpen", true) ?? true;
-    if (!wasOpen) {
-      return;
-    }
-  }
-
-  agentTerminal = vscode.window.createTerminal({
-    name: terminalName,
-    location: { viewColumn: vscode.ViewColumn.Active },
-    env: env,
-    isTransient: true,
-  });
-
-  agentTerminal.show();
-  agentTerminal.sendText(command);
-  void extensionContext?.workspaceState.update("agentTerminalOpen", true);
-
-  // Agent terminal created → agent is starting (replaces wrapper's WrapperStart).
-  emitAgentLifecycle("open");
-
-  codehydraApi.log.debug("Agent terminal opened", { agentType, command });
-}
-
-/**
- * Set up terminal close listener to reset the singleton reference.
- */
-function setupTerminalCloseListener(): void {
-  if (terminalCloseListener) {
-    return;
-  }
-
-  terminalCloseListener = vscode.window.onDidCloseTerminal((terminal) => {
-    if (terminal === agentTerminal) {
-      agentTerminal = null;
-      void extensionContext?.workspaceState.update("agentTerminalOpen", false);
-      // Agent terminal closed → agent gone (replaces wrapper's WrapperEnd).
-      emitAgentLifecycle("close");
-      codehydraApi.log.debug("Agent terminal closed");
-    }
-    if (terminal === launchedTerminal) launchedTerminal = null;
-  });
-
-  // The launch line is the first thing the agent terminal's shell runs.
-  terminalStartListener = vscode.window.onDidStartTerminalShellExecution((event) => {
-    if (event.terminal === agentTerminal) launchedTerminal = event.terminal;
-  });
-}
-
-/** Interval between Ctrl+C signals in milliseconds */
-const AGENT_CLOSE_SIGNAL_INTERVAL_MS = 500;
-
-/**
- * How long to keep signalling before giving up (ms).
- *
- * This bounds the Ctrl+C loop only — it does NOT dispose the terminal. An agent
- * that has ignored ~12 signals is not going to take the next one, and the main
- * process has its own, longer bound after which it falls back to process
- * cleanup.
- */
-const AGENT_CLOSE_SIGNAL_DEADLINE_MS = 6000;
-
-/**
- * Ask the agent to exit by sending Ctrl+C until its terminal closes.
- *
- * Claude Code needs two Ctrl+C in succession (the first interrupts, the second
- * exits), which is why this repeats rather than signalling once.
- *
- * There is deliberately NO force-dispose on a timeout. Disposing the terminal
- * does not stop the agent: with VS Code's persistent terminal sessions the pty
- * — and the whole tree below it, shell, agent CLI, and the MCP servers the
- * agent spawned — keeps running, now detached, with the workspace as its CWD.
- * All a dispose achieves is firing onDidCloseTerminal, which the main process
- * reads as "the agent exited" and proceeds to remove a worktree the agent is
- * still sitting in. Reporting a close we cannot back up is worse than not
- * reporting one: the caller has its own bound (api-server-module's
- * AGENT_CLOSE_TIMEOUT_MS) and can fall back to process cleanup, which it cannot
- * do if we tell it everything is fine.
- *
- * Returns whether there was a terminal to close. Closing itself is
- * asynchronous — completion is reported to the main process by the
- * onDidCloseTerminal listener, as the "close" agent lifecycle event.
- */
-function closeAgentTerminal(): boolean {
-  if (!agentTerminal) {
-    return false;
-  }
-
-  const terminal = agentTerminal;
-
-  // No agent yet: its shell has not run the launch line. Ctrl+C now would not
-  // stop an agent — it would reach the shell while it is still starting, where
-  // the tty driver flushes pending input on the interrupt, so the typed launch
-  // line is discarded and the shell sits at its prompt with the terminal open
-  // for good. Dispose instead: there is nothing inside to outlive it.
-  //
-  // A shell without shell integration never reports the start, so it lands
-  // here too even with an agent running. The close is then reported early;
-  // the CWD scan before worktree removal is the backstop for that case.
-  if (terminal !== launchedTerminal) {
-    codehydraApi.log.debug("Agent not started; disposing its terminal");
-    terminal.dispose();
-    return true;
-  }
-
-  // Send Ctrl+C repeatedly until the terminal closes on its own.
-  terminal.sendText("\x03", false);
-  const signalInterval = setInterval(() => {
-    terminal.sendText("\x03", false);
-  }, AGENT_CLOSE_SIGNAL_INTERVAL_MS);
-
-  const stopSignalling = (): void => {
-    clearInterval(signalInterval);
-    clearTimeout(deadline);
-    disposable.dispose();
-  };
-
-  // Give up signalling — but leave the terminal alone. See the note above on
-  // why a force-dispose here would be actively harmful.
-  const deadline = setTimeout(() => {
-    stopSignalling();
-    codehydraApi.log.debug("Agent did not exit; stopped signalling (terminal left running)");
-  }, AGENT_CLOSE_SIGNAL_DEADLINE_MS);
-
-  const disposable = vscode.window.onDidCloseTerminal((closed) => {
-    if (closed === terminal) {
-      stopSignalling();
-    }
-  });
-
-  return true;
-}
-
-// ============================================================================
-// MCP Status Bar Management
-// ============================================================================
-
-/** Status bar items created via MCP ui:statusBarUpdate, keyed by id */
-const mcpStatusBarItems = new Map<string, vscode.StatusBarItem>();
-
-/**
- * Dispose all MCP-created status bar items.
- */
-function disposeAllMcpStatusBarItems(): void {
-  for (const item of mcpStatusBarItems.values()) {
-    item.dispose();
-  }
-  mcpStatusBarItems.clear();
-}
-
-// ============================================================================
-// API Utilities
-// ============================================================================
-
-/**
- * Emit an API call with timeout handling.
- */
-function emitApiCall<T>(event: string, request?: unknown): Promise<T> {
-  return new Promise((resolve, reject) => {
-    if (!socket) {
-      reject(new Error("Not connected to CodeHydra"));
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      codehydraApi.log.warn("API call timeout", { event });
-      reject(new Error(`API call timed out: ${event}`));
-    }, API_TIMEOUT_MS);
-
-    const handleResult = (result: ApiResult<T>): void => {
-      clearTimeout(timeout);
-      if (result.success) {
-        resolve(result.data);
-      } else {
-        reject(new Error(result.error));
-      }
-    };
-
-    // Emit with or without request based on event type
-    // Socket.IO's TypedSocket requires exact event name literals for type inference.
-    // This generic wrapper uses a dynamic event string, which TypeScript cannot verify
-    // against the ClientToServerEvents interface at compile time.
-    if (request !== undefined) {
-      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate dynamic event names
-      socket.emit(event, request, handleResult);
-    } else {
-      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate dynamic event names
-      socket.emit(event, handleResult);
-    }
-  });
-}
-
-// ============================================================================
-// CodeHydra API
-// ============================================================================
-
-/**
- * CodeHydra API for VS Code extensions.
- * Provides access to workspace status and metadata.
- */
-const codehydraApi = {
-  /**
-   * Wait for the extension to be connected to CodeHydra.
-   * Resolves immediately if already connected.
-   */
-  whenReady(): Promise<void> {
-    if (isConnected && socket?.connected) {
-      return Promise.resolve();
-    }
-    return new Promise((resolve, reject) => {
-      pendingReady.push({ resolve, reject });
-    });
-  },
-
-  /**
-   * Log API namespace.
-   * Provides structured logging to CodeHydra's logging system.
-   * Methods are fire-and-forget and gracefully handle disconnected state.
-   */
-  log: {
-    silly(message: string, context?: LogContext): void {
-      if (!socket?.connected) return;
-      socket.emit("api:log", { level: "silly", message, context });
-    },
-
-    debug(message: string, context?: LogContext): void {
-      if (!socket?.connected) return;
-      socket.emit("api:log", { level: "debug", message, context });
-    },
-
-    info(message: string, context?: LogContext): void {
-      if (!socket?.connected) return;
-      socket.emit("api:log", { level: "info", message, context });
-    },
-
-    warn(message: string, context?: LogContext): void {
-      if (!socket?.connected) return;
-      socket.emit("api:log", { level: "warn", message, context });
-    },
-
-    error(message: string, context?: LogContext): void {
-      if (!socket?.connected) return;
-      socket.emit("api:log", { level: "error", message, context });
-    },
-  },
-
-  /**
-   * Workspace API namespace.
-   * All methods require the connection to be established (use whenReady() first).
-   */
-  workspace: {
-    getStatus(options?: { refresh?: boolean }) {
-      return emitApiCall<WorkspaceStatus>(
-        "api:workspace:getStatus",
-        options !== undefined ? options : undefined
-      );
-    },
-
-    getAgentSession() {
-      return emitApiCall<AgentSession | null>("api:workspace:getAgentSession");
-    },
-
-    restartAgentServer() {
-      return emitApiCall<number>("api:workspace:restartAgentServer");
-    },
-
-    getMetadata() {
-      return emitApiCall<Record<string, string>>("api:workspace:getMetadata");
-    },
-
-    setMetadata(key: string, value: string | null) {
-      return emitApiCall<void>("api:workspace:setMetadata", { key, value });
-    },
-
-    async getTags(): Promise<readonly WorkspaceTag[]> {
-      const metadata = await emitApiCall<Record<string, string>>("api:workspace:getMetadata");
-      return extractTags(metadata);
-    },
-
-    async setTag(
-      name: string,
-      options?: { color?: string; label?: string; description?: string }
-    ): Promise<void> {
-      // Full replace, matching workspace.tag.set: the stored object is exactly the
-      // options this call passed, so an omitted field clears whatever was there.
-      const tag: { color?: string; label?: string; description?: string } = {};
-      if (options?.color !== undefined) tag.color = options.color;
-      if (options?.label !== undefined) tag.label = options.label.trim();
-      if (options?.description !== undefined) tag.description = options.description.trim();
-      const value = JSON.stringify(tag);
-      await emitApiCall<void>("api:workspace:setMetadata", { key: `tags.${name}`, value });
-    },
-
-    async deleteTag(name: string): Promise<void> {
-      await emitApiCall<void>("api:workspace:setMetadata", { key: `tags.${name}`, value: null });
-    },
-
-    executeCommand(command: string, args?: readonly unknown[]) {
-      // Client-side validation
-      if (typeof command !== "string" || command.trim().length === 0) {
-        return Promise.reject(new Error("Command must be a non-empty string"));
-      }
-      if (args !== undefined && !Array.isArray(args)) {
-        return Promise.reject(new Error("Args must be an array"));
-      }
-      return emitApiCall<unknown>("api:workspace:executeCommand", { command, args });
-    },
-
-    create(name: string, base: string, options?: { agent?: AgentSpec; stealFocus?: boolean }) {
-      // Client-side validation
-      if (typeof name !== "string" || name.trim().length === 0) {
-        return Promise.reject(new Error("Name must be a non-empty string"));
-      }
-      if (typeof base !== "string" || base.trim().length === 0) {
-        return Promise.reject(new Error("Base must be a non-empty string"));
-      }
-      // Validate the agent spec if provided
-      if (options?.agent !== undefined) {
-        const agent = options.agent;
-        if (typeof agent !== "object" || agent === null) {
-          return Promise.reject(new Error("agent must be an object"));
-        }
-        if (agent.type !== "default" && agent.type !== "claude" && agent.type !== "opencode") {
-          return Promise.reject(new Error('agent.type must be "default", "claude" or "opencode"'));
-        }
-        if (
-          agent.prompt !== undefined &&
-          (typeof agent.prompt !== "string" || agent.prompt.length === 0)
-        ) {
-          return Promise.reject(new Error("agent.prompt must be a non-empty string"));
-        }
-      }
-      // Build request
-      const request: WorkspaceCreateRequest = {
-        name,
-        base,
-        agent: options?.agent,
-        stealFocus: options?.stealFocus,
-      };
-      return emitApiCall("api:workspace:create", request);
-    },
-  },
-  // `satisfies` ensures the implementation matches the public CodehydraApi contract
-  // while preserving the literal types for internal use (better inference than `as`)
-} satisfies CodehydraApi;
-
 // ============================================================================
 // Debug Commands (Development Only)
 // ============================================================================
 
-/**
- * Output channels CodeHydra writes into, by name. Created on first use and kept
- * for the session: a channel disposed and recreated loses its scrollback, and
- * these hold a record the user may come back to.
- */
-const namedOutputChannels = new Map<string, vscode.OutputChannel>();
-
-function getNamedOutputChannel(name: string): vscode.OutputChannel {
-  let channel = namedOutputChannels.get(name);
-  if (!channel) {
-    channel = vscode.window.createOutputChannel(name);
-    namedOutputChannels.set(name, channel);
-  }
-  return channel;
-}
-
-/** Log channels (`LogOutputChannel`) by name; kept for the session like the plain ones. */
-const namedLogChannels = new Map<string, vscode.LogOutputChannel>();
-
-function getNamedLogChannel(name: string): vscode.LogOutputChannel {
-  let channel = namedLogChannels.get(name);
-  if (!channel) {
-    channel = vscode.window.createOutputChannel(name, { log: true });
-    namedLogChannels.set(name, channel);
-  }
-  return channel;
-}
-
-function disposeNamedOutputChannels(): void {
-  for (const channel of namedOutputChannels.values()) {
-    channel.dispose();
-  }
-  namedOutputChannels.clear();
-  for (const channel of namedLogChannels.values()) {
-    channel.dispose();
-  }
-  namedLogChannels.clear();
-}
-
 function getDebugOutputChannel(): vscode.OutputChannel {
-  if (!debugOutputChannel) {
-    debugOutputChannel = vscode.window.createOutputChannel("CodeHydra Debug");
+  if (!state.debugOutputChannel) {
+    state.debugOutputChannel = vscode.window.createOutputChannel("CodeHydra Debug");
   }
-  return debugOutputChannel;
+  return state.debugOutputChannel;
 }
 
 function formatResult(result: unknown): string {
   try {
     return JSON.stringify(result, null, 2);
   } catch (e) {
-    return `[Serialization error: ${e instanceof Error ? e.message : String(e)}]`;
+    return `[Serialization error: ${getErrorMessage(e)}]`;
   }
 }
 
@@ -658,7 +117,7 @@ async function runDebugCommand(name: string, fn: () => Promise<unknown>): Promis
     const result = await fn();
     logDebugResult(name, result);
   } catch (err) {
-    logDebugError(name, err instanceof Error ? err : new Error(String(err)));
+    logDebugError(name, toError(err));
   }
 }
 
@@ -680,14 +139,10 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
   // Debug: Show Connection Info
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.debug.connectionInfo", async () => {
-      const info = {
-        connected: isConnected,
-        workspacePath: currentWorkspacePath,
-        apiPort: currentApiPort,
-        socketId: socket?.id ?? null,
-        isDevelopment: isDevelopment,
-      };
-      logDebugResult("connectionInfo", info);
+      logDebugResult("connectionInfo", {
+        ...connectionInfo(),
+        isDevelopment: state.isDevelopment,
+      });
     })
   );
 
@@ -695,161 +150,72 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
 }
 
 // ============================================================================
-// Terminal Cleanup
+// ApiServer requests
 // ============================================================================
 
-async function killAllTerminalsAndWait(): Promise<void> {
-  const terminals = [...vscode.window.terminals];
+/**
+ * The server's config: on the first one, lay out a new workspace, apply the
+ * workspace env, open the agent terminal and (in development) register the
+ * debug commands. A reconnect only refreshes the development flag.
+ */
+async function handleConfig(config: ApiConfig, isReconnect: boolean): Promise<void> {
+  state.isDevelopment = config.isDevelopment;
+  codehydraApi.log.debug("Config received", {
+    isDevelopment: state.isDevelopment,
+    hasEnv: config.env !== null,
+    agentType: config.agentType,
+    isReconnect,
+  });
 
-  if (terminals.length === 0) {
-    codehydraApi.log.debug("No terminals to kill");
+  await vscode.commands.executeCommand(
+    "setContext",
+    "codehydra.isDevelopment",
+    state.isDevelopment
+  );
+
+  // Skip setup on reconnect — the sidekick is already configured
+  if (isReconnect) {
     return;
   }
 
-  codehydraApi.log.debug("Killing terminals", { count: terminals.length });
-  const pendingTerminals = new Set(terminals);
-
-  await new Promise<void>((resolve) => {
-    let resolved = false;
-
-    const done = (): void => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      disposable.dispose();
-      resolve();
-    };
-
-    const timeout = setTimeout(() => {
-      codehydraApi.log.warn("Terminal kill timeout", { remaining: pendingTerminals.size });
-      done();
-    }, TERMINAL_KILL_TIMEOUT_MS);
-
-    const disposable = vscode.window.onDidCloseTerminal((closedTerminal) => {
-      pendingTerminals.delete(closedTerminal);
-      codehydraApi.log.debug("Terminal closed", { remaining: pendingTerminals.size });
-      if (pendingTerminals.size === 0) {
-        codehydraApi.log.debug("All terminals closed");
-        done();
+  // Execute pre-terminal layout commands (only for new workspaces)
+  if (config.resetWorkspace) {
+    const preLayoutCommands = [
+      "workbench.action.closeSidebar",
+      "workbench.action.closeAuxiliaryBar",
+      "workbench.action.editorLayoutSingle",
+      "workbench.action.closeAllEditors",
+    ];
+    for (const command of preLayoutCommands) {
+      try {
+        await vscode.commands.executeCommand(command);
+      } catch (err: unknown) {
+        codehydraApi.log.warn("Layout command failed", { command, error: getErrorMessage(err) });
       }
-    });
-
-    for (const terminal of terminals) {
-      terminal.dispose();
     }
+  }
 
-    if (pendingTerminals.size === 0) {
-      codehydraApi.log.debug("All terminals closed (sync)");
-      done();
+  applyWorkspaceEnv(config.workspaceEnv);
+
+  // Open agent terminal if env vars and agent type are available
+  if (config.env !== null && config.agentType !== null) {
+    configureAgent(config.agentType, config.env, config.resetWorkspace);
+
+    // Focus the terminal only for new workspaces
+    if (config.resetWorkspace) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await vscode.commands.executeCommand("workbench.action.terminal.focus");
     }
-  });
+  }
+
+  // Register debug commands in development mode
+  if (state.isDevelopment && state.context) {
+    registerDebugCommands(state.context);
+  }
 }
 
-// ============================================================================
-// ApiServer Connection
-// ============================================================================
-
-function connectToApiServer(port: number, workspacePath: string): void {
-  currentWorkspacePath = workspacePath;
-  currentApiPort = port;
-
-  const url = `http://127.0.0.1:${port}`;
-  socket = io(url, {
-    transports: ["websocket"],
-    auth: {
-      workspacePath: workspacePath,
-    },
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 10000,
-    reconnectionAttempts: Infinity,
-    autoConnect: false,
-  }) as TypedSocket;
-
-  socket.on("config", async (config: ApiConfig) => {
-    if (typeof config !== "object" || config === null) {
-      return;
-    }
-    if (typeof config.isDevelopment !== "boolean") {
-      return;
-    }
-
-    // Mark as connected and resolve pending ready promises
-    isConnected = true;
-    const pending = pendingReady;
-    pendingReady = [];
-    for (const { resolve } of pending) {
-      resolve();
-    }
-
-    isDevelopment = config.isDevelopment;
-    codehydraApi.log.debug("Config received", {
-      isDevelopment,
-      hasEnv: config.env !== null,
-      agentType: config.agentType,
-      isReconnect: hasReceivedInitialConfig,
-    });
-
-    await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
-
-    // Skip setup on reconnect — the sidekick is already configured
-    if (hasReceivedInitialConfig) {
-      return;
-    }
-    hasReceivedInitialConfig = true;
-
-    // Execute pre-terminal layout commands (only for new workspaces)
-    if (config.resetWorkspace) {
-      const preLayoutCommands = [
-        "workbench.action.closeSidebar",
-        "workbench.action.closeAuxiliaryBar",
-        "workbench.action.editorLayoutSingle",
-        "workbench.action.closeAllEditors",
-      ];
-      for (const command of preLayoutCommands) {
-        try {
-          await vscode.commands.executeCommand(command);
-        } catch (err: unknown) {
-          const error = err instanceof Error ? err.message : String(err);
-          codehydraApi.log.warn("Layout command failed", { command, error });
-        }
-      }
-    }
-
-    applyWorkspaceEnv(config.workspaceEnv);
-
-    // Open agent terminal if env vars and agent type are available
-    if (config.env !== null && config.agentType !== null) {
-      currentAgentType = config.agentType;
-      currentAgentEnv = config.env;
-      openAgentTerminal(config.agentType, config.env, config.resetWorkspace);
-
-      // Focus the terminal only for new workspaces
-      if (config.resetWorkspace) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await vscode.commands.executeCommand("workbench.action.terminal.focus");
-      }
-    }
-
-    // Register debug commands in development mode
-    if (isDevelopment && extensionContext) {
-      registerDebugCommands(extensionContext);
-    }
-  });
-
-  socket.on("connect", () => {
-    codehydraApi.log.info("Connected to ApiServer");
-  });
-
-  socket.on("disconnect", (reason) => {
-    codehydraApi.log.info("Disconnected from ApiServer", { reason });
-    isConnected = false;
-  });
-
-  socket.on("connect_error", (err) => {
-    codehydraApi.log.error("Connection error", { error: err.message });
-  });
-
+/** The server's `command` (run a VS Code command) and `shutdown` requests. */
+function registerWorkspaceHandlers(socket: TypedSocket): void {
   socket.on("command", async (request: CommandRequest, ack) => {
     codehydraApi.log.debug("Command received", { command: request.command });
 
@@ -861,7 +227,7 @@ function connectToApiServer(port: number, workspacePath: string): void {
       codehydraApi.log.debug("Command executed", { command: request.command });
       ack({ success: true, data: result });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = getErrorMessage(err);
       codehydraApi.log.error("Command failed", { command: request.command, error: errorMessage });
       ack({ success: false, error: errorMessage });
     }
@@ -879,8 +245,7 @@ function connectToApiServer(port: number, workspacePath: string): void {
         codehydraApi.log.debug("Removed workspace folders", { count: folders.length });
       }
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      codehydraApi.log.error("Graceful shutdown failed", { error });
+      codehydraApi.log.error("Graceful shutdown failed", { error: getErrorMessage(err) });
     }
 
     ack({ success: true, data: undefined });
@@ -888,174 +253,31 @@ function connectToApiServer(port: number, workspacePath: string): void {
     codehydraApi.log.info("Exiting extension host");
     setImmediate(() => process.exit(0));
   });
-
-  // ---- UI event handlers ----
-
-  socket.on(
-    "ui:showNotification",
-    (
-      request: ShowNotificationRequest,
-      ack: (result: ApiResult<ShowNotificationResponse>) => void
-    ) => {
-      const showFn =
-        request.severity === "error"
-          ? vscode.window.showErrorMessage
-          : request.severity === "warning"
-            ? vscode.window.showWarningMessage
-            : vscode.window.showInformationMessage;
-
-      // Ack only once the modal is dismissed, with or without actions: CodeHydra
-      // shows the workspace as waiting on the user until then.
-      const actions = [...(request.actions ?? [])];
-      void showFn(request.message, { modal: true }, ...actions).then((selected) => {
-        ack({ success: true, data: { action: selected ?? null } });
-      });
-    }
-  );
-
-  socket.on("ui:appendOutput", (request: AppendOutputRequest) => {
-    // No ack: this is output on its way to a human, and dropping a line must
-    // never be able to fail anything upstream. Nothing here may log: CodeHydra's
-    // own log lines arrive through this event, and a line about them would
-    // come straight back.
-    try {
-      if (request.log) {
-        // A log channel stamps time and level itself, and drops what is below
-        // the level the user set on it.
-        const channel = getNamedLogChannel(request.channel);
-        for (const line of request.lines) {
-          channel[line.level ?? "info"](line.text);
-        }
-        return;
-      }
-      const channel = getNamedOutputChannel(request.channel);
-      for (const line of request.lines) {
-        channel.appendLine(`[${line.source}] ${line.text}`);
-      }
-    } catch {
-      // A channel we cannot write to is not worth reporting anywhere the user
-      // would see it — the same text is already in CodeHydra's log file.
-    }
-  });
-
-  socket.on(
-    "ui:statusBarUpdate",
-    (request: StatusBarUpdateRequest, ack: (result: ApiResult<void>) => void) => {
-      try {
-        let item = mcpStatusBarItems.get(request.id);
-        if (!item) {
-          item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
-          mcpStatusBarItems.set(request.id, item);
-        }
-        item.text = request.text;
-        if (request.tooltip !== undefined) item.tooltip = request.tooltip;
-        if (request.command !== undefined) item.command = request.command;
-        if (request.color !== undefined) {
-          item.color = request.color;
-        }
-        item.show();
-        ack({ success: true, data: undefined });
-      } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
-        ack({ success: false, error });
-      }
-    }
-  );
-
-  socket.on(
-    "ui:statusBarDispose",
-    (request: StatusBarDisposeRequest, ack: (result: ApiResult<void>) => void) => {
-      const item = mcpStatusBarItems.get(request.id);
-      if (item) {
-        item.dispose();
-        mcpStatusBarItems.delete(request.id);
-      }
-      ack({ success: true, data: undefined });
-    }
-  );
-
-  socket.on(
-    "ui:showQuickPick",
-    (request: ShowQuickPickRequest, ack: (result: ApiResult<ShowQuickPickResponse>) => void) => {
-      const items: vscode.QuickPickItem[] = request.items.map((i) => ({
-        label: i.label,
-        ...(i.description !== undefined && { description: i.description }),
-        ...(i.detail !== undefined && { detail: i.detail }),
-      }));
-
-      void vscode.window
-        .showQuickPick(items, {
-          ...(request.title !== undefined && { title: request.title }),
-          ...(request.placeholder !== undefined && { placeHolder: request.placeholder }),
-        })
-        .then((selected) => {
-          ack({ success: true, data: { selected: selected?.label ?? null } });
-        });
-    }
-  );
-
-  socket.on(
-    "ui:showInputBox",
-    (request: ShowInputBoxRequest, ack: (result: ApiResult<ShowInputBoxResponse>) => void) => {
-      void vscode.window
-        .showInputBox({
-          ...(request.title !== undefined && { title: request.title }),
-          ...(request.prompt !== undefined && { prompt: request.prompt }),
-          ...(request.placeholder !== undefined && { placeHolder: request.placeholder }),
-          ...(request.value !== undefined && { value: request.value }),
-          ...(request.password !== undefined && { password: request.password }),
-        })
-        .then((value) => {
-          ack({ success: true, data: { value: value ?? null } });
-        });
-    }
-  );
-
-  socket.connect();
 }
-
-// ============================================================================
-// Color Picker Items
-// ============================================================================
-
-const COLOR_ITEMS: vscode.QuickPickItem[] = [
-  { label: "No color", description: "Tag without color" },
-  ...Object.entries(cssColorNames).map(([name, [r, g, b]]) => ({
-    label: name,
-    description: `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`,
-  })),
-  { label: "Custom hex...", description: "Enter a hex color manually" },
-];
 
 // ============================================================================
 // Extension Lifecycle
 // ============================================================================
 
-export function activate(context: vscode.ExtensionContext): { codehydra: typeof codehydraApi } {
-  extensionContext = context;
-
-  // Set up terminal close listener for singleton management
-  setupTerminalCloseListener();
-
+function registerAgentCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.restartAgentServer", async () => {
       try {
         const port = await codehydraApi.workspace.restartAgentServer();
         await vscode.window.showInformationMessage(`Agent server restarted on port ${port}`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await vscode.window.showErrorMessage(`Failed to restart agent server: ${message}`);
+        await vscode.window.showErrorMessage(
+          `Failed to restart agent server: ${getErrorMessage(err)}`
+        );
       }
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.openAgent", () => {
-      if (currentAgentType === null || currentAgentEnv === null) {
+      if (!openConfiguredAgent()) {
         void vscode.window.showWarningMessage("Agent not yet configured");
-        return;
       }
-      openAgentTerminal(currentAgentType, currentAgentEnv);
     })
   );
 
@@ -1069,255 +291,21 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
       return { closed: closeAgentTerminal() };
     })
   );
+}
 
-  // File explorer commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.revealInFileExplorer", async (uri?: vscode.Uri) => {
-      const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
-      if (!targetUri || targetUri.scheme !== "file") return;
-
-      try {
-        await emitApiCall<void>("api:workspace:openSystemPath", {
-          app: "explorer",
-          path: targetUri.fsPath,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.error("Reveal in file explorer failed", { error: message });
-        await vscode.window.showErrorMessage(`Failed to reveal in file explorer: ${message}`);
-      }
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.openWithDefaultApp", async (uri?: vscode.Uri) => {
-      const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
-      if (!targetUri || targetUri.scheme !== "file") return;
-
-      try {
-        await emitApiCall<void>("api:workspace:openSystemPath", {
-          app: "default",
-          path: targetUri.fsPath,
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.error("Open with default app failed", { error: message });
-        await vscode.window.showErrorMessage(`Failed to open with default application: ${message}`);
-      }
-    })
-  );
-
-  // Tag commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "codehydra.getTags",
-      async (): Promise<readonly { name: string; color?: string }[]> => {
-        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-        const tags = extractTags(metadata);
-        if (tags.length === 0) {
-          await vscode.window.showInformationMessage("No tags on this workspace");
-        } else {
-          const items = tags.map((t) => ({
-            label: t.name,
-            description: t.color ?? "",
-          }));
-          await vscode.window.showQuickPick(items, {
-            title: "Workspace Tags",
-            placeHolder: "Tags (read-only)",
-          });
-        }
-        return tags;
-      }
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "codehydra.setTag",
-      async (arg?: {
-        name: string;
-        color?: string;
-        label?: string;
-        description?: string;
-      }): Promise<void> => {
-        let name: string;
-        let color: string | undefined;
-        // Only the programmatic form carries these; the interactive flow prompts
-        // for name and color alone rather than growing two more steps.
-        let label: string | undefined;
-        let description: string | undefined;
-
-        if (arg && typeof arg.name === "string") {
-          name = arg.name;
-          color = typeof arg.color === "string" ? arg.color : undefined;
-          label = typeof arg.label === "string" ? arg.label.trim() : undefined;
-          description = typeof arg.description === "string" ? arg.description.trim() : undefined;
-        } else {
-          const nameInput = await vscode.window.showInputBox({
-            title: "Tag Name",
-            prompt: "Enter tag name (letters, digits, hyphens, dots)",
-            validateInput: validateMetadataKeyInput,
-          });
-          if (!nameInput) return;
-          name = nameInput;
-
-          const colorPick = await vscode.window.showQuickPick(COLOR_ITEMS, {
-            title: "Tag Color",
-            placeHolder: "Select a color or search by name",
-          });
-          if (!colorPick) return;
-
-          if (colorPick.label === "Custom hex...") {
-            const hex = await vscode.window.showInputBox({
-              title: "Tag Color",
-              prompt: "Enter hex color (e.g. #ff0000)",
-            });
-            color = hex || undefined;
-          } else if (colorPick.label === "No color") {
-            color = undefined;
-          } else {
-            color = colorPick.description;
-          }
-        }
-
-        const tag: { color?: string; label?: string; description?: string } = {};
-        if (color !== undefined) tag.color = color;
-        if (label !== undefined) tag.label = label;
-        if (description !== undefined) tag.description = description;
-        await codehydraApi.workspace.setMetadata(`tags.${name}`, JSON.stringify(tag));
-      }
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.deleteTag", async (arg?: string): Promise<void> => {
-      let name: string;
-
-      if (typeof arg === "string") {
-        name = arg;
-      } else {
-        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-        const tags = extractTags(metadata);
-        if (tags.length === 0) {
-          await vscode.window.showInformationMessage("No tags to delete");
-          return;
-        }
-        const picked = await vscode.window.showQuickPick(
-          tags.map((t) => ({
-            label: t.name,
-            description: t.color ?? "",
-          })),
-          { title: "Delete Tag", placeHolder: "Select a tag to delete" }
-        );
-        if (!picked) return;
-        name = picked.label;
-      }
-
-      await codehydraApi.workspace.setMetadata(`tags.${name}`, null);
-    })
-  );
-
-  // Metadata commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "codehydra.getMetadata",
-      async (): Promise<Record<string, string>> => {
-        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-        const entries = Object.entries(metadata);
-        if (entries.length === 0) {
-          await vscode.window.showInformationMessage("No metadata on this workspace");
-        } else {
-          await vscode.window.showQuickPick(
-            entries.map(([key, value]) => ({ label: key, description: value })),
-            { title: "Workspace Metadata", placeHolder: "Metadata (read-only)" }
-          );
-        }
-        return metadata;
-      }
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "codehydra.setMetadata",
-      async (arg?: { key: string; value: string }): Promise<void> => {
-        let key: string;
-        let value: string | null;
-
-        if (arg && typeof arg.key === "string" && typeof arg.value === "string") {
-          if (SYSTEM_METADATA_KEYS.has(arg.key)) {
-            throw new Error(`Cannot set system metadata key: ${arg.key}`);
-          }
-          key = arg.key;
-          value = arg.value;
-        } else {
-          const keyInput = await vscode.window.showInputBox({
-            title: "Metadata Key",
-            prompt:
-              "Enter metadata key — e.g. 'title' sets the sidebar display title (letters, digits, hyphens, dots)",
-            validateInput: (v) => {
-              const error = validateMetadataKeyInput(v);
-              if (error) return error;
-              if (SYSTEM_METADATA_KEYS.has(v)) return `"${v}" is a system key and cannot be set`;
-              return null;
-            },
-          });
-          if (keyInput === undefined) return;
-          key = keyInput;
-
-          const valueInput = await vscode.window.showInputBox({
-            title: "Metadata Value",
-            prompt: `Enter value for "${key}" — leave empty to delete the key`,
-          });
-          if (valueInput === undefined) return;
-          // An empty value deletes the key (you can't type null in an input box).
-          value = valueInput === "" ? null : valueInput;
-        }
-
-        await codehydraApi.workspace.setMetadata(key, value);
-      }
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      "codehydra.deleteMetadata",
-      async (arg?: string): Promise<void> => {
-        let key: string;
-
-        if (typeof arg === "string") {
-          if (SYSTEM_METADATA_KEYS.has(arg)) {
-            throw new Error(`Cannot delete system metadata key: ${arg}`);
-          }
-          key = arg;
-        } else {
-          const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
-          const deletable = Object.keys(metadata).filter((k) => !SYSTEM_METADATA_KEYS.has(k));
-          if (deletable.length === 0) {
-            await vscode.window.showInformationMessage("No deletable metadata keys");
-            return;
-          }
-          const picked = await vscode.window.showQuickPick(
-            deletable.map((k) => ({ label: k, description: metadata[k] })),
-            { title: "Delete Metadata", placeHolder: "Select a key to delete" }
-          );
-          if (!picked) return;
-          key = picked.label;
-        }
-
-        await codehydraApi.workspace.setMetadata(key, null);
-      }
-    )
-  );
-
+/**
+ * Where to reach the API server: its port (`_CH_API_PORT`) and this
+ * workspace's path, or null when this editor is not a CodeHydra workspace.
+ */
+function resolveApiServer(): { port: number; workspacePath: string } | null {
   const apiPortStr = process.env._CH_API_PORT;
   if (!apiPortStr) {
-    return { codehydra: codehydraApi };
+    return null;
   }
 
-  const apiPort = parseInt(apiPortStr, 10);
-  if (isNaN(apiPort) || apiPort <= 0 || apiPort > 65535) {
-    return { codehydra: codehydraApi };
+  const port = parseInt(apiPortStr, 10);
+  if (isNaN(port) || port <= 0 || port > 65535) {
+    return null;
   }
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -1326,66 +314,54 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
     // This handles a race condition where VS Code sometimes fails to open
     // the folder from a .code-workspace file
     void vscode.commands.executeCommand("workbench.action.reloadWindow");
-    return { codehydra: codehydraApi };
+    return null;
   }
 
   // Handle noUncheckedIndexedAccess
   const firstFolder = workspaceFolders[0];
   if (!firstFolder) {
-    return { codehydra: codehydraApi };
+    return null;
   }
-  const workspacePath = path.normalize(firstFolder.uri.fsPath);
+  return { port, workspacePath: path.normalize(firstFolder.uri.fsPath) };
+}
 
-  connectToApiServer(apiPort, workspacePath);
+export function activate(context: vscode.ExtensionContext): { codehydra: typeof codehydraApi } {
+  state.context = context;
+
+  // Set up terminal close listener for singleton management
+  initAgentTerminal(context.workspaceState);
+
+  registerAgentCommands(context);
+  registerWorkspaceCommands(context);
+
+  const server = resolveApiServer();
+  if (server) {
+    connectToApiServer(server.port, server.workspacePath, {
+      onConfig: handleConfig,
+      register: (socket) => {
+        registerWorkspaceHandlers(socket);
+        registerUiHandlers(socket);
+      },
+    });
+  }
 
   return { codehydra: codehydraApi };
 }
 
 export function deactivate(): void {
-  disposeAllMcpStatusBarItems();
+  disposeUiHandlers();
+  disconnectFromApiServer();
 
-  if (socket) {
-    codehydraApi.log.info("Deactivating");
-    socket.disconnect();
-    socket = null;
-  }
-  isConnected = false;
-  hasReceivedInitialConfig = false;
+  // Reset terminal tracking (don't dispose the terminal - let VS Code handle it)
+  resetAgentTerminal();
 
-  // Clean up terminal close listener
-  if (terminalCloseListener) {
-    terminalCloseListener.dispose();
-    terminalCloseListener = null;
-  }
-  if (terminalStartListener) {
-    terminalStartListener.dispose();
-    terminalStartListener = null;
-  }
-  launchedTerminal = null;
-
-  // Reset terminal reference (don't dispose - let VS Code handle it)
-  agentTerminal = null;
-
-  // Reset agent config
-  currentAgentType = null;
-  currentAgentEnv = null;
-
-  disposeNamedOutputChannels();
-  if (debugOutputChannel) {
-    debugOutputChannel.dispose();
-    debugOutputChannel = null;
+  if (state.debugOutputChannel) {
+    state.debugOutputChannel.dispose();
+    state.debugOutputChannel = null;
   }
 
   void vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", false);
 
-  extensionContext = null;
-  isDevelopment = false;
-  currentWorkspacePath = "";
-  currentApiPort = null;
-
-  const pending = pendingReady;
-  pendingReady = [];
-  for (const { reject } of pending) {
-    reject(new Error("Extension deactivating"));
-  }
+  state.context = null;
+  state.isDevelopment = false;
 }

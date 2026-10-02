@@ -13,7 +13,7 @@ import type {
   AgentMessageOptions,
   AgentProvider,
   AgentSessionInfo,
-  AgentStatus,
+  AgentActivity,
 } from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
 import { OpenCodeClient, type UserRequestEvent } from "./client";
@@ -24,6 +24,9 @@ import { countsToStatus } from "../status-utils";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { AgentUnreachableError } from "../types";
 import { ConditionWaiters } from "../wait-until";
+import type { WorkspaceRef } from "../../../intents/contract";
+import type { Path } from "../../../utils/path/path";
+import { getErrorMessage } from "../../../shared/error-utils";
 
 /**
  * Per-workspace provider that manages a single OpenCode client connection.
@@ -35,7 +38,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   private client: OpenCodeClient | null = null;
   private clientStatus: ClientStatus = "idle";
   private readonly logger: Logger;
-  private readonly workspacePath: string;
 
   /**
    * Port of the OpenCode server for this workspace.
@@ -70,19 +72,22 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   /**
    * Callbacks to notify when status changes.
    */
-  private readonly statusChangeListeners = new Set<(status: AgentStatus) => void>();
+  private readonly statusChangeListeners = new Set<(status: AgentActivity) => void>();
 
   /** Senders waiting for the agent to become reachable (see {@link sendMessage}). */
   private readonly readyWaiters = new ConditionWaiters();
 
+  /**
+   * @param workspaceRef - The workspace, as the agent and every `ch` it runs name it
+   * @param workspacePath - Its directory, which the server's sessions are matched against
+   */
   constructor(
-    workspacePath: string,
-    logger: Logger,
-    private readonly workspaceRef?: string
+    private readonly workspaceRef: WorkspaceRef,
+    private readonly workspacePath: Path,
+    logger: Logger
   ) {
-    this.workspacePath = workspacePath;
     // Everything this provider (and its SDK client) logs is about its one workspace.
-    this.logger = logger.scoped({ path: workspacePath });
+    this.logger = logger.scoped({ workspace: workspaceRef });
   }
 
   /**
@@ -111,7 +116,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       // The workspace's ref, for every `ch` the agent runs. Also how the sidekick
       // recognises a running agent terminal after an extension host restart
       // (findRunningAgentTerminal) — keep it set.
-      ...(this.workspaceRef !== undefined && { _CH_WORKSPACE: this.workspaceRef }),
+      _CH_WORKSPACE: this.workspaceRef,
     };
     return envVars;
   }
@@ -235,7 +240,10 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       // List existing sessions to find a matching one
       const sessionsResult = await client.listSessions();
       if (sessionsResult.ok) {
-        const matchingSession = findMatchingSession(sessionsResult.value, this.workspacePath);
+        const matchingSession = findMatchingSession(
+          sessionsResult.value,
+          this.workspacePath.toString()
+        );
         if (matchingSession) {
           this._primarySessionId = matchingSession.id;
           client.addRootSession(matchingSession.id);
@@ -259,7 +267,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       // This can happen if the server is not ready yet or network issues
       // The client can retry later or will receive updates when connection is established
       this.logger.warn("Failed to initialize client", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
     // The primary session may be what a waiting sender still lacked.
@@ -300,7 +308,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    * Callback receives computed status ("none" | "idle" | "busy").
    * Returns an unsubscribe function.
    */
-  onStatusChange(callback: (status: AgentStatus) => void): Unsubscribe {
+  onStatusChange(callback: (status: AgentActivity) => void): Unsubscribe {
     this.statusChangeListeners.add(callback);
     return () => this.statusChangeListeners.delete(callback);
   }
@@ -380,7 +388,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       await client.connect();
     } catch (error) {
       this.logger.warn("Failed to reconnect", {
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

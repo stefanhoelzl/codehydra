@@ -28,6 +28,7 @@ import type { UiDialog } from "../../shared/ui-state";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { WorkspaceRef } from "../../intents/contract";
 import { ApiError } from "../../api/errors";
+import { withTimeout } from "../../utils/timeout";
 
 // =============================================================================
 // Shared registry core
@@ -92,7 +93,11 @@ abstract class SessionRegistry<S, H extends RegistrySession<S>> {
  */
 export interface DialogHandle {
   readonly id: string;
-  /** Replace dialog config (full state replacement). */
+  /**
+   * Replace dialog config (full state replacement). A config equal to the
+   * current one is a no-op — nothing is pushed — so callers can rebuild and
+   * update on every change without diffing themselves.
+   */
   update(config: DialogConfig): void;
   /** Close dialog from backend. */
   close(): void;
@@ -223,6 +228,8 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
 
   /** Current render config — read by toSnapshot(). */
   config: DialogConfig;
+  /** `config` serialized, for update()'s unchanged check. */
+  private configJson: string;
 
   private readonly notifyChange: () => void;
   private readonly onRemove: () => void;
@@ -244,6 +251,7 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
     this.kind = kind;
     this.workspaceRef = workspaceRef;
     this.config = config;
+    this.configJson = JSON.stringify(config);
     this.notifyChange = notifyChange;
     this.onRemove = onRemove;
     this.closed = new Promise<void>((resolve) => {
@@ -257,7 +265,10 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
 
   update(config: DialogConfig): void {
     if (this.isClosed) return;
+    const json = JSON.stringify(config);
+    if (json === this.configJson) return;
     this.config = config;
+    this.configJson = json;
     this.notifyChange();
   }
 
@@ -304,15 +315,11 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
       const unsubDismiss = this.onDismiss(settle);
     });
     if (timeoutMs === undefined) return eventPromise;
-    return Promise.race([
+    return withTimeout(
       eventPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Dialog ${this.id}: no response within ${timeoutMs}ms`)),
-          timeoutMs
-        )
-      ),
-    ]);
+      timeoutMs,
+      () => new Error(`Dialog ${this.id}: no response within ${timeoutMs}ms`)
+    );
   }
 
   /**

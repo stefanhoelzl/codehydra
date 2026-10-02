@@ -12,6 +12,8 @@ import {
 } from "@opencode-ai/sdk";
 import type { Event as SdkV2Event } from "@opencode-ai/sdk/v2";
 import { OpenCodeError, getErrorMessage } from "../../../shared/errors/service-errors";
+import { errorCode } from "../../../shared/error-utils";
+import { withTimeout } from "../../../utils/timeout";
 import type { Logger } from "../../../boundaries/platform/logging";
 import {
   ok,
@@ -93,37 +95,6 @@ export type UserRequestEvent =
  * Callback for user request events.
  */
 export type UserRequestEventCallback = (event: UserRequestEvent) => void;
-
-/**
- * Type guard for SessionStatusValue.
- * Validates individual session status from the response.
- * @internal Exported for testing only
- */
-export function isValidSessionStatus(value: unknown): value is SdkSessionStatus {
-  if (typeof value !== "object" || value === null) return false;
-
-  const obj = value as Record<string, unknown>;
-  return obj.type === "idle" || obj.type === "busy" || obj.type === "retry";
-}
-
-/**
- * Type guard for SessionStatusResponse (SDK format: Record<string, SessionStatus>).
- * @internal Exported for testing only
- */
-export function isSessionStatusResponse(value: unknown): value is Record<string, SdkSessionStatus> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-
-  const obj = value as Record<string, unknown>;
-  return Object.values(obj).every(
-    (item) =>
-      typeof item === "object" &&
-      item !== null &&
-      "type" in item &&
-      ((item as Record<string, unknown>).type === "idle" ||
-        (item as Record<string, unknown>).type === "busy" ||
-        (item as Record<string, unknown>).type === "retry")
-  );
-}
 
 /**
  * Result from SDK event.subscribe()
@@ -349,11 +320,11 @@ export class OpenCodeClient implements IDisposable {
 
     this.logger.info("Connecting", { port: this.port });
 
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Connect timeout")), timeoutMs)
+    const events = await withTimeout(
+      this.sdk.event.subscribe(),
+      timeoutMs,
+      () => new Error("Connect timeout")
     );
-
-    const events = await Promise.race([this.sdk.event.subscribe(), timeoutPromise]);
 
     this.eventSubscription = events;
 
@@ -633,13 +604,7 @@ export class OpenCodeClient implements IDisposable {
       if (error.name === "TimeoutError") {
         return new OpenCodeError(error.message, "TIMEOUT");
       }
-      const cause: unknown = error.cause;
-      if (
-        typeof cause === "object" &&
-        cause !== null &&
-        "code" in cause &&
-        cause.code === "ECONNREFUSED"
-      ) {
+      if (errorCode(error.cause) === "ECONNREFUSED") {
         return new OpenCodeError(error.message, "CONNECTION_REFUSED");
       }
       return new OpenCodeError(error.message, "REQUEST_FAILED");

@@ -14,15 +14,13 @@ import type { AnyOperationEntry } from "../types";
 import type { EntryDeps } from "./deps";
 import { createTargetResolver, targetFields } from "./target";
 import type { WorkspaceRef } from "../../intents/contract";
-import { extractTags, isValidMetadataKey } from "../../shared/api/types";
+import { encodeTag, extractTags, isValidMetadataKey, tagKey } from "../../shared/api/types";
 import { metadataTier, visibleMetadata } from "../../utils/metadata-tier";
 
 import { INTENT_GET_METADATA } from "../../intents/get-metadata";
 import type { GetMetadataIntent } from "../../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../../intents/set-metadata";
 import type { SetMetadataIntent } from "../../intents/set-metadata";
-
-const TAG_PREFIX = "tags.";
 
 export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const { dispatcher } = deps;
@@ -158,7 +156,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       if (input.color !== undefined) tag.color = input.color;
       if (input.label !== undefined) tag.label = input.label.trim();
       if (input.description !== undefined) tag.description = input.description.trim();
-      return write(await targetOf(ctx, input), `${TAG_PREFIX}${input.name}`, JSON.stringify(tag));
+      return write(await targetOf(ctx, input), tagKey(input.name), encodeTag(tag));
     },
   });
 
@@ -171,8 +169,7 @@ export function metadataEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       name: z.string().min(1).describe("Tag name"),
     }),
     requiresWorkspace: true,
-    handler: async (ctx, input) =>
-      write(await targetOf(ctx, input), `${TAG_PREFIX}${input.name}`, null),
+    handler: async (ctx, input) => write(await targetOf(ctx, input), tagKey(input.name), null),
   });
 
   return [get, set, title, tagList, tagSet, tagRemove];

@@ -59,6 +59,26 @@ textarea {
   border: 0;
 }
 
+/* Borderless icon-only button (sidebar header actions, a setting's reset,
+   a masked field's reveal toggle): muted until hovered. */
+.ch-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  color: var(--ch-foreground);
+  background: transparent;
+  border: none;
+  border-radius: var(--ch-radius-sm, 6px);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.ch-icon-button:hover {
+  opacity: 1;
+  background: var(--ch-list-hover-bg);
+}
+
 /* ============================================================================
  * Sidebar two-column row cells
  * Every sidebar row is [flexible label cell | fixed icon cell at the right

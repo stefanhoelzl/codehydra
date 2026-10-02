@@ -40,7 +40,7 @@ import {
 import type { HookContext } from "../../intents/lib/operation";
 import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
 import type { ProjectId, WorkspaceName } from "../../intents/contract";
-import { testPath } from "../../shared/test-fixtures";
+import { testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type { Entry } from "../../boundaries/platform/filesystem.state-mock";
 import { Path } from "../../utils/path/path";
 import { generateProjectId } from "../local-project-module";
@@ -53,7 +53,7 @@ import {
   ROOT_STATE_KEY,
 } from "./module";
 import { workspacesDirUnder } from "./workspaces-root";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projectRefFor } from "../../utils/ref";
 
 const DATA = testPath("/data");
 const NEW_ROOT = testPath("/devdrive/ch");
@@ -115,7 +115,7 @@ function setup(options: SetupOptions = {}) {
       [new Path(
         DATA,
         "screenshots",
-        generateProjectId(OLD_CLONE.toString()),
+        generateProjectId(OLD_CLONE.toString(), "linux"),
         "fix.png"
       ).toString()]: file("png"),
       ...(options.entries ?? {}),
@@ -176,6 +176,7 @@ function setup(options: SetupOptions = {}) {
     dialog: picker,
     app,
     dispatcher: notifications.dispatcher,
+    platform: "linux",
     logger: SILENT_LOGGER,
   });
 
@@ -281,12 +282,11 @@ function agentStatus(name: string, status: "busy" | "idle"): AgentStatusUpdatedE
   return {
     type: EVENT_AGENT_STATUS_UPDATED,
     payload: {
-      workspace: {
-        projectId: "app-1234" as ProjectId,
-        name: name as WorkspaceName,
-        ref: makeWorkspaceRef(projectRefFor(LOCAL_WT.dirname.toString()), name),
-        active: false,
-      },
+      projectId: "app-1234" as ProjectId,
+      projectRef: projectRefFor(LOCAL_WT.dirname.toString()),
+      workspaceName: name as WorkspaceName,
+      workspaceRef: workspaceRefIn(LOCAL_WT.dirname.toString(), name),
+      active: false,
       status: {
         status,
         counts: { idle: status === "idle" ? 1 : 0, busy: status === "busy" ? 1 : 0 },
@@ -337,7 +337,7 @@ describe("WorkspacesRootModule", () => {
       expect(
         exists(
           s.fs,
-          new Path(DATA, "screenshots", generateProjectId(NEW_CLONE.toString()), "fix.png")
+          new Path(DATA, "screenshots", generateProjectId(NEW_CLONE.toString(), "linux"), "fix.png")
         )
       ).toBe(true);
       // Their directories are recorded, so every worktree there — the detached

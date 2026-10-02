@@ -6,7 +6,7 @@
  */
 
 import type { KeyboardInput } from "./view";
-import type { Unsubscribe } from "./view-manager.interface";
+import type { Unsubscribe } from "../../shared/types";
 
 /**
  * Narrow capability handle for opening/closing devtools on a view, without

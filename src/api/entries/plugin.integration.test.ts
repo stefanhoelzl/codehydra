@@ -12,8 +12,8 @@ import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
-import { projPath, wsPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
@@ -22,7 +22,7 @@ import { createRegistry } from "./index";
 
 const APP = projPath("/projects/app");
 const FEAT_PATH = wsPath("/projects/app/workspaces/feat");
-const FEAT = makeWorkspaceRef(projectRefFor(APP), "feat");
+const FEAT = workspaceRefIn(APP, "feat");
 /** The scope a caller in (or naming) `feat` lists in. */
 const FEAT_SCOPE: PluginScope = {
   workspace: { workspacePath: FEAT_PATH, projectRef: projectRefFor(APP), projectPath: APP },

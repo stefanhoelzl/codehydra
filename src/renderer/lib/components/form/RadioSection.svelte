@@ -10,6 +10,7 @@
   left-aligns in the "form" layout (layout prop).
 -->
 <script lang="ts">
+  import FieldShell, { fieldErrorId } from "./FieldShell.svelte";
   import Icon from "../Icon.svelte";
   import type { FormLayout, RadioSectionConfig } from "./types";
   import { isPlainEnter } from "$lib/utils/keyboard";
@@ -26,17 +27,14 @@
   const { section, value, layout, onSelect, onSubmit }: Props = $props();
 </script>
 
-<div class="form-field">
-  {#if section.label}
-    <vscode-label>{section.label}</vscode-label>
-  {/if}
+<FieldShell fieldId={section.id} label={section.label} error={section.error}>
   <div
     class="radio-cards"
     class:layout-form={layout === "form"}
     class:errored={!!section.error}
     role="radiogroup"
     aria-label={section.label ?? "Selection"}
-    aria-describedby={section.error ? `${section.id}-error` : undefined}
+    aria-describedby={section.error ? fieldErrorId(section.id) : undefined}
   >
     {#each section.options as option, optionIndex (option.id)}
       <button
@@ -103,33 +101,12 @@
       </button>
     {/each}
   </div>
-  {#if section.error}
-    <vscode-form-helper id="{section.id}-error">
-      <span class="field-error">{section.error}</span>
-    </vscode-form-helper>
-  {/if}
-</div>
+</FieldShell>
 
 <style>
-  /* Field wrapper: groups the field's label, control, and error tightly so
-     the error sits directly under its control (the form's section gap only
-     applies between sections). */
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-  }
-
-  /* Per-field validation error (slotted into <vscode-form-helper>). */
-  .field-error {
-    color: var(--ch-danger, #f14c4c);
-    font-size: 0.75rem;
-  }
-
   .radio-cards {
     display: flex;
-    /* The form-field wrapper is full-width; center the shrink-wrapped card
+    /* The FieldShell wrapper is full-width; center the shrink-wrapped card
        row in the default (centered) layout. */
     justify-content: center;
     gap: 1rem;

@@ -21,7 +21,7 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_AGENT_LIFECYCLE = "agent:lifecycle" as const;
@@ -95,10 +95,7 @@ export class AgentLifecycleOperation implements Operation<typeof schemas> {
       intent: ctx.intent,
       workspaceRef: payload.workspaceRef,
       workspacePath: (
-        await ctx.dispatch<ResolveWorkspaceIntent>({
-          type: INTENT_RESOLVE_WORKSPACE,
-          payload: { workspaceRef: payload.workspaceRef },
-        })
+        await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef, { withProject: false })
       ).workspacePath,
       event: payload.event,
     };

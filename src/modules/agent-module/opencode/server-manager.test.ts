@@ -23,9 +23,11 @@ import { SILENT_LOGGER, createMockLogger } from "../../../boundaries/platform/lo
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { ResolvedAgentBinary } from "../binary-resolver";
+import { Path } from "../../../utils/path/path";
+import { testWorkspaceRef as refOf } from "../../../shared/test-fixtures";
 
-/** The ref every workspace in these tests is started with. */
-const TEST_WORKSPACE_REF = "ch::local::/workspace::feature-a";
+/** The ref the feature-a workspace is started with. */
+const TEST_WORKSPACE_REF = refOf("/workspace/feature-a");
 
 /** The `opencode` every server in these tests runs. */
 const TEST_BINARY: ResolvedAgentBinary = {
@@ -49,14 +51,6 @@ function createTestHttpClient(options?: {
   };
 }
 
-/**
- * Create a mock PathProvider for testing.
- * Uses the standard createMockPathProvider which returns Path objects.
- */
-function createTestPathProvider(): PathProvider {
-  return createMockPathProvider();
-}
-
 describe("OpenCodeServerManager", () => {
   // Common dependencies
   let mockProcessRunner: MockProcessRunner;
@@ -78,14 +72,15 @@ describe("OpenCodeServerManager", () => {
 
     mockPortManager = createPortManagerMock([14001]);
     mockHttpClient = createTestHttpClient();
-    mockPathProvider = createTestPathProvider();
+    mockPathProvider = createMockPathProvider();
 
     manager = new OpenCodeServerManager(
       mockProcessRunner,
       mockPortManager,
       mockHttpClient,
       mockPathProvider,
-      SILENT_LOGGER
+      SILENT_LOGGER,
+      "linux"
     );
   });
 
@@ -95,10 +90,11 @@ describe("OpenCodeServerManager", () => {
 
   describe("startServer", () => {
     it("allocates port and spawns process", async () => {
-      const port = await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
-        binary: TEST_BINARY,
-      });
+      const port = await manager.startServer(
+        refOf("/workspace/feature-a"),
+        new Path("/workspace/feature-a"),
+        { binary: TEST_BINARY }
+      );
 
       expect(port).toBe(14001);
       expect(mockProcessRunner).toHaveSpawned([
@@ -110,16 +106,15 @@ describe("OpenCodeServerManager", () => {
       ]);
     });
 
-    it("fires onServerStarted callback with path, port, and undefined pending prompt", async () => {
+    it("fires onServerStarted callback with ref, port, and undefined pending prompt", async () => {
       const callback = vi.fn();
       manager.onServerStarted(callback);
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
-      expect(callback).toHaveBeenCalledWith("/workspace/feature-a", 14001, undefined);
+      expect(callback).toHaveBeenCalledWith(refOf("/workspace/feature-a"), 14001, undefined);
     });
 
     it("throws when port allocation fails", async () => {
@@ -130,12 +125,12 @@ describe("OpenCodeServerManager", () => {
         failingPortManager,
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
       await expect(
-        manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         })
       ).rejects.toThrow("No ports available");
@@ -153,12 +148,12 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
       await expect(
-        manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         })
       ).rejects.toThrow();
@@ -176,12 +171,12 @@ describe("OpenCodeServerManager", () => {
         createPortManagerMock([14001, 14002]),
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
       try {
-        await manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         });
       } catch {
@@ -191,8 +186,7 @@ describe("OpenCodeServerManager", () => {
       // Entry was cleaned up — a retry attempts a fresh spawn instead of
       // returning the stale failed entry
       await expect(
-        manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         })
       ).rejects.toThrow();
@@ -208,12 +202,12 @@ describe("OpenCodeServerManager", () => {
         mockHttpClient,
         mockPathProvider,
         SILENT_LOGGER,
+        "linux",
         { healthCheckTimeoutMs: 100 } // Short timeout for testing
       );
 
       await expect(
-        manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         })
       ).rejects.toThrow();
@@ -223,14 +217,14 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("does not start duplicate server for same workspace", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
-      const port2 = await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
-        binary: TEST_BINARY,
-      });
+      const port2 = await manager.startServer(
+        refOf("/workspace/feature-a"),
+        new Path("/workspace/feature-a"),
+        { binary: TEST_BINARY }
+      );
 
       // Should return same port, not spawn another
       expect(port2).toBe(14001);
@@ -242,26 +236,24 @@ describe("OpenCodeServerManager", () => {
 
   describe("stopServer", () => {
     it("kills process gracefully (SIGTERM then SIGKILL)", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
 
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
     });
 
     it("removes server entry on stop", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
 
       // Entry is gone — restart reports "not running"
-      const result = await manager.restartServer("/workspace/feature-a");
+      const result = await manager.restartServer(refOf("/workspace/feature-a"));
       expect(result).toEqual({ success: false, error: "Server not running" });
     });
 
@@ -269,13 +261,12 @@ describe("OpenCodeServerManager", () => {
       const callback = vi.fn();
       manager.onServerStopped(callback);
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
 
-      expect(callback).toHaveBeenCalledWith("/workspace/feature-a", false);
+      expect(callback).toHaveBeenCalledWith(refOf("/workspace/feature-a"), false);
     });
 
     it("awaits pending startServer before killing", async () => {
@@ -288,13 +279,14 @@ describe("OpenCodeServerManager", () => {
       mockHttpClient.fetch.mockImplementation(async () => slowHealthCheck);
 
       // Start in background
-      const startPromise = manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
-        binary: TEST_BINARY,
-      });
+      const startPromise = manager.startServer(
+        refOf("/workspace/feature-a"),
+        new Path("/workspace/feature-a"),
+        { binary: TEST_BINARY }
+      );
 
       // Immediately try to stop
-      const stopPromise = manager.stopServer("/workspace/feature-a");
+      const stopPromise = manager.stopServer(refOf("/workspace/feature-a"));
 
       // Resolve health check
       resolveHealthCheck!();
@@ -308,30 +300,28 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("handles already-dead processes gracefully", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
       // Should not throw
-      await expect(manager.stopServer("/workspace/feature-a")).resolves.not.toThrow();
+      await expect(manager.stopServer(refOf("/workspace/feature-a"))).resolves.not.toThrow();
     });
 
     it("handles stopping non-existent server gracefully", async () => {
       // Should not throw and return success (nothing to stop)
-      const result = (await manager.stopServer("/workspace/nonexistent")) as unknown as {
+      const result = (await manager.stopServer(refOf("/workspace/nonexistent"))) as unknown as {
         success: boolean;
       };
       expect(result).toEqual({ success: true });
     });
 
     it("returns success when kill succeeds", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
-      const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
+      const result = (await manager.stopServer(refOf("/workspace/feature-a"))) as unknown as {
         success: boolean;
       };
 
@@ -351,15 +341,15 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
-      const result = (await manager.stopServer("/workspace/feature-a")) as unknown as {
+      const result = (await manager.stopServer(refOf("/workspace/feature-a"))) as unknown as {
         success: boolean;
         error?: string;
       };
@@ -383,14 +373,14 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        loggerWithSpy
+        loggerWithSpy,
+        "linux"
       );
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
 
       expect(loggerWithSpy.warn).toHaveBeenCalledWith(
         expect.stringContaining("Failed to kill"),
@@ -399,11 +389,10 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("uses 1000ms timeouts", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
 
       // Verify kill was called with 1000ms timeouts
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilledWith(1000, 1000);
@@ -428,16 +417,15 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
       const [port1, port2] = await Promise.all([
-        manager.startServer("/workspace/feature-a", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
           binary: TEST_BINARY,
         }),
-        manager.startServer("/workspace/feature-b", {
-          workspaceRef: TEST_WORKSPACE_REF,
+        manager.startServer(refOf("/workspace/feature-b"), new Path("/workspace/feature-b"), {
           binary: TEST_BINARY,
         }),
       ]);
@@ -463,15 +451,14 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        SILENT_LOGGER
+        SILENT_LOGGER,
+        "linux"
       );
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
-      await manager.startServer("/workspace/feature-b", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-b"), new Path("/workspace/feature-b"), {
         binary: TEST_BINARY,
       });
 
@@ -490,8 +477,7 @@ describe("OpenCodeServerManager", () => {
         events.push("callback");
       });
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
       events.push("returned");
@@ -502,8 +488,7 @@ describe("OpenCodeServerManager", () => {
     it("fires callback after process terminated", async () => {
       const events: string[] = [];
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
@@ -511,7 +496,7 @@ describe("OpenCodeServerManager", () => {
         events.push("callback");
       });
 
-      await manager.stopServer("/workspace/feature-a");
+      await manager.stopServer(refOf("/workspace/feature-a"));
       events.push("stopped");
 
       // Callback should have been called before stopServer returns
@@ -529,8 +514,7 @@ describe("OpenCodeServerManager", () => {
         token: "test-token",
       });
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
@@ -563,8 +547,7 @@ describe("OpenCodeServerManager", () => {
     });
 
     it("omits the mcp block when MCP config not set", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
@@ -577,10 +560,51 @@ describe("OpenCodeServerManager", () => {
     });
   });
 
+  describe("PATH", () => {
+    const binDir = () => mockPathProvider.dataPath("bin").toNative();
+    const pathKeys = (env: NodeJS.ProcessEnv | undefined) =>
+      Object.keys(env ?? {}).filter((key) => key.toUpperCase() === "PATH");
+
+    it("puts CodeHydra's bin directory first, with the target platform's delimiter", async () => {
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
+        binary: TEST_BINARY,
+        env: { PATH: "/usr/bin" },
+      });
+
+      const env = mockProcessRunner.$.spawned(0).$.env;
+      expect(env?.PATH).toBe(`${binDir()}:/usr/bin`);
+    });
+
+    it("keeps Windows' single `Path` key and joins with ';'", async () => {
+      const windows = new OpenCodeServerManager(
+        mockProcessRunner,
+        createPortManagerMock([14002]),
+        mockHttpClient,
+        mockPathProvider,
+        SILENT_LOGGER,
+        "win32"
+      );
+      try {
+        // The host's PATH is in the env too; whichever spelling comes first
+        // wins, and only one may remain or the un-prefixed copy would win.
+        await windows.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
+          binary: TEST_BINARY,
+          env: { Path: "C:\\Windows" },
+        });
+
+        const env = mockProcessRunner.$.spawned(0).$.env;
+        const keys = pathKeys(env);
+        expect(keys).toHaveLength(1);
+        expect(env?.[keys[0]!]?.startsWith(`${binDir()};`)).toBe(true);
+      } finally {
+        await windows.dispose();
+      }
+    });
+  });
+
   describe("system prompt", () => {
     it("loads the CodeHydra system prompt via instructions", async () => {
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 
@@ -603,8 +627,7 @@ describe("OpenCodeServerManager", () => {
         token: "test-token",
       });
 
-      await manager.startServer("/workspace/feature-a", {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf("/workspace/feature-a"), new Path("/workspace/feature-a"), {
         binary: TEST_BINARY,
       });
 

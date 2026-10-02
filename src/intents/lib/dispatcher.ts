@@ -42,6 +42,7 @@ import type {
 import { ANY_VALUE } from "./operation";
 import type { IntentModule } from "./module";
 import type { Logger, LogScope, LogScopeStore } from "../../boundaries/platform/logging-types";
+import { getErrorMessage, toError } from "../../shared/error-utils";
 
 // =============================================================================
 // Internal types (not exposed to operations)
@@ -469,6 +470,17 @@ export class Dispatcher implements IDispatcher {
       ...initialCaps,
       ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
     };
+    // Every yielded frame is validated against the hook point's `frames` schema (when it
+    // declares one) before the operation sees it. A frame that fails throws inside the
+    // drain, so it lands in errors[] for its handler like a malformed result.
+    const framesSchema = hookSchemas?.frames;
+    const frameSink =
+      framesSchema === undefined
+        ? onYield
+        : async (yielded: unknown): Promise<void> => {
+            const parsed: unknown = framesSchema.parse(yielded);
+            if (onYield) await onYield(parsed);
+          };
     let pending = [...hookHandlers];
     const results: unknown[] = [];
     const errors: Error[] = [];
@@ -504,7 +516,7 @@ export class Dispatcher implements IDispatcher {
     const invoke = (entry: HookHandler, ctx: HookContext): Promise<HookOutput | void> => {
       const run = (): Promise<HookOutput | void> => {
         const invoked = entry.handler(ctx);
-        return isAsyncGenerator(invoked) ? drainGenerator(invoked, onYield) : invoked;
+        return isAsyncGenerator(invoked) ? drainGenerator(invoked, frameSink) : invoked;
       };
       const name = entry.name;
       return name === undefined
@@ -535,7 +547,6 @@ export class Dispatcher implements IDispatcher {
       }
     };
 
-    const toError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
     const ready = (entry: HookHandler): boolean =>
       requirementsSatisfied(entry.requires ?? {}, capabilities);
 
@@ -784,7 +795,7 @@ export class Dispatcher implements IDispatcher {
     } catch (e) {
       this.logger.error("failed", {
         intent: intent.type,
-        error: e instanceof Error ? e.message : String(e),
+        error: getErrorMessage(e),
       });
       // Ensure accepted is signaled even if interceptor itself throws.
       // Calling signalAccepted twice is safe — Promise resolves only once.

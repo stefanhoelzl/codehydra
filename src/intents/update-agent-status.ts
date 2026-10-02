@@ -1,9 +1,7 @@
 /**
  * UpdateAgentStatusOperation - Resolves workspace context and emits agent:status-updated.
  *
- * Dispatches shared resolution intents:
- * 1. workspace:resolve — projectPath + workspaceName from workspacePath
- * 2. project:resolve — projectId from projectPath
+ * Resolves the workspace and its project through `resolveWorkspaceIdentity`.
  *
  * If resolution is incomplete (unknown workspace), silently returns without emitting.
  *
@@ -16,17 +14,18 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { projectIdSchema, workspaceNameSchema, workspaceRefSchema } from "./contract";
-import type { ProjectRef } from "./contract";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { workspaceIdentityPayloadSchema, workspaceRefSchema } from "./contract";
+import {
+  resolveWorkspaceIdentity,
+  workspaceIdentityPayload,
+  type ResolvedWorkspaceIdentity,
+} from "./lib/workspace-identity";
 
 export const INTENT_UPDATE_AGENT_STATUS = "agent:update-status" as const;
 
 export const EVENT_AGENT_STATUS_UPDATED = "agent:status-updated" as const;
 
-const UPDATE_AGENT_STATUS_OPERATION_ID = "update-agent-status";
+export const UPDATE_AGENT_STATUS_OPERATION_ID = "update-agent-status";
 
 // =============================================================================
 // Contract schemas (single source of truth)
@@ -62,18 +61,11 @@ export const updateAgentStatusPayloadSchema = z
   })
   .readonly();
 
-const agentStatusUpdatedWorkspaceRefSchema = z
-  .object({
-    ref: workspaceRefSchema,
-    projectId: projectIdSchema,
-    name: workspaceNameSchema,
-    active: z.boolean(),
-  })
-  .readonly();
-
 export const agentStatusUpdatedPayloadSchema = z
   .object({
-    workspace: agentStatusUpdatedWorkspaceRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
+    /** Whether the workspace is the active one, as resolved when the status arrived. */
+    active: z.boolean(),
     status: aggregatedAgentStatusSchema,
   })
   .readonly();
@@ -96,7 +88,6 @@ export const schemas = {
 
 export type UpdateAgentStatusPayload = z.infer<typeof updateAgentStatusPayloadSchema>;
 export type UpdateAgentStatusIntent = IntentOf<typeof schemas>;
-export type AgentStatusUpdatedWorkspaceRef = z.infer<typeof agentStatusUpdatedWorkspaceRefSchema>;
 export type AgentStatusUpdatedPayload = z.infer<typeof agentStatusUpdatedPayloadSchema>;
 
 export interface AgentStatusUpdatedEvent extends DomainEvent {
@@ -116,33 +107,18 @@ export class UpdateAgentStatusOperation implements Operation<typeof schemas> {
     const { payload } = ctx.intent;
 
     // Resolve workspace + project, silently bail if unknown
-    let projectRef: ProjectRef;
-    let workspaceName: WorkspaceName;
-    let projectId: ProjectId;
-    let active: boolean;
+    let identity: ResolvedWorkspaceIdentity;
     try {
-      ({ projectRef, workspaceName, active } = await ctx.dispatch<ResolveWorkspaceIntent>({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspaceRef: payload.workspaceRef },
-      }));
-      ({ projectId } = await ctx.dispatch<ResolveProjectIntent>({
-        type: INTENT_RESOLVE_PROJECT,
-        payload: { projectRef },
-      }));
+      identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
     } catch {
       return; // silently bail — unknown workspace/project
     }
-
     // Emit domain event with fully resolved context
     const event: AgentStatusUpdatedEvent = {
       type: EVENT_AGENT_STATUS_UPDATED,
       payload: {
-        workspace: {
-          ref: payload.workspaceRef,
-          projectId,
-          name: workspaceName,
-          active,
-        },
+        ...workspaceIdentityPayload(identity),
+        active: identity.active,
         status: payload.status,
       },
     };

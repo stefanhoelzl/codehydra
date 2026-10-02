@@ -45,16 +45,16 @@ import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createAutoTaggingModule } from "./auto-tagging-module";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projectRefFor } from "../utils/ref";
 
 const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const OTHER_WORKSPACE_PATH = wsPath("/workspaces/feature-y");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
-const OTHER_WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-y");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-x");
+const OTHER_WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-y");
 
 /** The ref of the test workspace at `path`. */
 function refOf(path: string): WorkspaceRef {

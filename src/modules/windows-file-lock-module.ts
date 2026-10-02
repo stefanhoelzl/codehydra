@@ -37,7 +37,8 @@
  *   waits for the process to actually be gone and reports the ones that aren't.
  *
  * Hooks:
- * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort)
+ * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort;
+ *   flow and error policy shared with posix-process-cleanup-module, see cwd-release-kill)
  * - delete-workspace → detect: full handle detection, after a failed removal
  * - delete-workspace → flush: kill PIDs collected by detect
  * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
@@ -47,25 +48,20 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../boundaries/platform/process";
 import type { BlockingProcess } from "../shared/api/types";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
-  type DeletePipelineHookInput,
-  type ReleaseHookResult,
   type DetectHookResult,
   type FlushHookResult,
-  type FlushHookInput,
 } from "../intents/delete-workspace";
-import {
-  HIBERNATE_WORKSPACE_OPERATION_ID,
-  type HibernatePipelineHookInput,
-  type HibernateReleaseHookResult,
-} from "../intents/hibernate-workspace";
+import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
+import { createCwdReleaseHandlers } from "./cwd-release-kill";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // JSON Output Types
@@ -182,7 +178,7 @@ export function parseDetectOutput(stdout: string, logger: Logger): BlockingProce
   } catch (error) {
     logger.warn("Failed to parse blocking process output", {
       stdout,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
     return [];
   }
@@ -278,7 +274,7 @@ export async function runDetectAction(
  */
 export async function killBlockingProcesses(
   processRunner: ProcessRunner,
-  pids: number[],
+  pids: readonly number[],
   logger: Logger
 ): Promise<number[]> {
   if (pids.length === 0) {
@@ -326,28 +322,31 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
    */
   let detectHasTimedOut = false;
 
+  const { deleteRelease, hibernateRelease } = createCwdReleaseHandlers(
+    {
+      detect: (workspacePath) =>
+        runDetectAction(
+          deps.processRunner,
+          deps.scriptPath,
+          new Path(workspacePath),
+          "DetectCwd",
+          deps.logger,
+          DETECT_CWD_TIMEOUT_MS
+        ),
+      kill: (pids) => killBlockingProcesses(deps.processRunner, pids, deps.logger),
+    },
+    deps.logger
+  );
+
   return {
     name: "windows-file-lock",
     requires: { platform: "win32" },
-    hooks: {
+    hooks: defineHooks({
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        release: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
-            // Runs in force mode too. Force skips the gates that can refuse
-            // (pre-delete) and ignores errors — it must not skip the cleanup.
-            // The one force deletion that removes the worktree is Dismiss, and
-            // it follows an attempt that stopped before this hook: a refused
-            // pre-delete leaves behind whatever the shutdown could not stop (an
-            // agent terminal that ignored its close), and without this scan it
-            // keeps the directory locked and the force removal fails silently.
-            const { workspacePath } = ctx as DeletePipelineHookInput;
-            const error = await runCwdReleaseKill(deps, workspacePath, "deletion");
-            return { result: error === undefined ? {} : { error } };
-          },
-        },
+        release: deleteRelease,
         detect: {
-          handler: async (ctx: HookContext): Promise<HookOutput<DetectHookResult>> => {
-            const { workspacePath } = ctx as DeletePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<DetectHookResult>> => {
+            const { workspacePath } = ctx;
 
             try {
               const scan = await runDetectAction(
@@ -381,8 +380,8 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
           },
         },
         flush: {
-          handler: async (ctx: HookContext): Promise<HookOutput<FlushHookResult>> => {
-            const { blockingPids } = ctx as FlushHookInput;
+          handler: async (ctx): Promise<HookOutput<FlushHookResult>> => {
+            const { blockingPids } = ctx;
             if (blockingPids.length > 0) {
               try {
                 const survivors = await killBlockingProcesses(
@@ -403,73 +402,7 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
           },
         },
       },
-      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
-        release: {
-          handler: async (ctx: HookContext): Promise<HookOutput<HibernateReleaseHookResult>> => {
-            const { workspacePath } = ctx as HibernatePipelineHookInput;
-            // Hibernation has no error channel on its release result and no
-            // removal to explain, so the outcome is logged (inside
-            // runCwdReleaseKill) rather than reported.
-            await runCwdReleaseKill(deps, workspacePath, "hibernation");
-            return { result: {} };
-          },
-        },
-      },
-    },
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: { release: hibernateRelease },
+    }),
   };
-}
-
-/**
- * Scan for processes with a CWD under the workspace and kill them.
- *
- * Returns a message when something went wrong, rather than swallowing it. The
- * failure is still non-fatal — the caller reports it and carries on — but a
- * process we could not kill is the single most actionable thing we can put in
- * front of a user whose deletion then fails on a locked directory, and it used
- * to be discarded by a bare `catch {}`.
- */
-async function runCwdReleaseKill(
-  deps: WindowsFileLockModuleDeps,
-  workspacePath: string,
-  phase: "deletion" | "hibernation"
-): Promise<string | undefined> {
-  try {
-    const scan = await runDetectAction(
-      deps.processRunner,
-      deps.scriptPath,
-      new Path(workspacePath),
-      "DetectCwd",
-      deps.logger,
-      DETECT_CWD_TIMEOUT_MS
-    );
-    if (scan.timedOut) {
-      return "Could not determine which processes hold the workspace (scan timed out)";
-    }
-    if (scan.processes.length === 0) {
-      return undefined;
-    }
-
-    deps.logger
-      .scoped({ path: workspacePath })
-      .info(`Killing CWD-blocking processes before ${phase}`, {
-        pids: scan.processes.map((p) => p.pid).join(","),
-      });
-    const survivors = await killBlockingProcesses(
-      deps.processRunner,
-      scan.processes.map((p) => p.pid),
-      deps.logger
-    );
-    if (survivors.length > 0) {
-      const named = survivors
-        .map((pid) => {
-          const proc = scan.processes.find((p) => p.pid === pid);
-          return proc ? `${proc.name} (pid ${pid})` : `pid ${pid}`;
-        })
-        .join(", ");
-      return `Could not terminate: ${named}`;
-    }
-    return undefined;
-  } catch (error) {
-    return getErrorMessage(error);
-  }
 }

@@ -47,7 +47,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 │                                                                  │
 │  AgentServerManager ──► spawns/tracks agent server(s)            │
 │         │                      port stored in memory             │
-│         │ onServerStarted(path, port, ...)                       │
+│         │ onServerStarted(ref, port, ...)                        │
 │         ▼                                                        │
 │  module-provider core ◄── AgentProvider (status events)          │
 │  (registry + status cache)                                       │
@@ -60,12 +60,13 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 │         ▼                                                        │
 │  agent:status-updated domain event                               │
 │         │                                                        │
-│         ├──► UI IPC subscriber                                   │
-│         │      converts AggregatedAgentStatus → WorkspaceStatus  │
-│         │      emits workspace:status-changed                    │
+│         ├──► Presenter (createWorkspaceStatusCache)              │
+│         │      folds status into the UiState row, pushes         │
+│         │      api:ui:state                                      │
 │         │                                                        │
-│         └──► Badge module subscriber                             │
-│                updates internal map, re-aggregates badge state   │
+│         └──► Badge / OS-notification modules                     │
+│                (createWorkspaceStatusCache(onChange(ref,         │
+│                previous, next))): badge, idle notifications      │
 │                                                                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -74,11 +75,10 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 ┌──────────────────────────┼──────────────────────────────────────┐
 │                    RENDERER PROCESS                              │
 │                          │                                       │
-│  api.on('workspace:status-changed') ──► stores                   │
+│  api.onState(UiState) ──► App.svelte (snapshot, props down)      │
 │                                            │                     │
-│                                            │ reactive binding    │
 │                                            ▼                     │
-│  Sidebar.svelte ◄── StatusIndicator (visual indicator)           │
+│  Sidebar.svelte ◄── AgentStatusIndicator (visual indicator)      │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -104,6 +104,8 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 
 Provider initialization is lazy: it happens on the first `open-workspace` for the configured agent, using the MCP port captured during `app:start`.
 
+The whole agent runtime — module, module-provider core, server managers, providers — names a workspace by its `WorkspaceRef`, which is also every map key. The path is handed over once, to `startWorkspace`, for what has to run in the workspace's directory (OpenCode's server, its session matching); Claude needs none (its generated files are named after the ref).
+
 ### File Structure
 
 ```
@@ -125,6 +127,7 @@ src/modules/agent-module/
     server-manager.ts       # ClaudeCodeServerManager (shared HTTP hook server)
     provider.ts             # ClaudeCodeProvider (env vars + hook subscription)
     module-provider.ts      # createClaudeModuleProvider (spec definition)
+    hook-status.ts          # deriveStatus: the hook → status rules, as a pure reducer
     hook-handler.ts         # Hook POST script run by the Claude CLI
     wrapper.ts              # CLI wrapper (session resume, initial prompt)
 ```
@@ -152,11 +155,11 @@ Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concre
 | Spec member              | Claude                                                              | OpenCode                                       |
 | ------------------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
 | `binary` / `binaryEnv`   | resolver; `_CH_CLAUDE_BIN` (+ `DISABLE_AUTOUPDATER` for a download) | resolver; `_CH_OPENCODE_BIN`                   |
-| `createProvider`         | `new ClaudeCodeProvider({serverManager,...})`                       | `new OpenCodeProvider(path, logger)`           |
+| `createProvider`         | `new ClaudeCodeProvider({serverManager, workspaceRef, logger})`     | `new OpenCodeProvider(ref, path, logger)`      |
 | `connectProvider`        | `connect(port)`                                                     | `connect(port)` + `fetchStatus()`              |
 | `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`            |
 | `onProviderRegistered`   | —                                                                   | sends the pending initial prompt               |
-| `startServer`            | `startServer(path)`                                                 | `startServer(path, {initialPrompt, binary})`   |
+| `startServer`            | `startServer(ref)`                                                  | `startServer(ref, path, {initialPrompt, ...})` |
 | `afterProviderReady`     | writes prompt file + no-session marker                              | reports the prompt delivered (already sent)    |
 | `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach             |
 | `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking) |
@@ -170,16 +173,16 @@ Manages server lifecycle (`types.ts`). One manager handles all workspaces.
 
 ```typescript
 interface AgentServerManager {
-  startServer(workspacePath: string, options: { workspaceRef: string }): Promise<number>;
-  stopServer(workspacePath: string): Promise<StopServerResult>;
-  restartServer(workspacePath: string): Promise<RestartServerResult>;
+  startServer(workspaceRef: WorkspaceRef, workspacePath: Path): Promise<number>;
+  stopServer(workspaceRef: WorkspaceRef): Promise<StopServerResult>;
+  restartServer(workspaceRef: WorkspaceRef): Promise<RestartServerResult>;
   onServerStarted(
-    cb: (workspacePath: string, port: number, ...args: unknown[]) => void
+    cb: (workspaceRef: WorkspaceRef, port: number, ...args: unknown[]) => void
   ): () => void;
-  onServerStopped(cb: (workspacePath: string, ...args: unknown[]) => void): () => void;
-  setMarkActiveHandler(handler: (workspacePath: string) => void): void;
-  setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>; // Claude only
-  setNoSessionMarker?(workspacePath: string): Promise<void>; // Claude only
+  onServerStopped(cb: (workspaceRef: WorkspaceRef, ...args: unknown[]) => void): () => void;
+  setMarkActiveHandler(handler: (workspaceRef: WorkspaceRef) => void): void;
+  setInitialPrompt?(workspaceRef: WorkspaceRef, config: AgentPromptConfig): Promise<void>; // Claude only
+  setNoSessionMarker?(workspaceRef: WorkspaceRef): Promise<void>; // Claude only
   setMcpConfig(config: McpConfig): void;
   dispose(): Promise<void>;
 }
@@ -208,7 +211,7 @@ interface AgentProvider {
   connect(port: number): Promise<void>;
   disconnect(): void; // for restart, preserves session info
   reconnect(): Promise<void>;
-  onStatusChange(callback: (status: AgentStatus) => void): () => void;
+  onStatusChange(callback: (status: AgentActivity) => void): () => void;
   getSession(): AgentSessionInfo | null;
   getEnvironmentVariables(): Record<string, string>;
   markActive(): void;
@@ -246,8 +249,8 @@ none → idle → busy → idle → ...
 ### Status Types
 
 ```typescript
-/** Agent status for a single workspace */
-type AgentStatus = "none" | "idle" | "busy";
+/** What a single workspace's agent is doing (aggregated into `AgentStatus` for the app) */
+type AgentActivity = "none" | "idle" | "busy";
 
 /** Session info for TUI attachment */
 interface AgentSessionInfo {
@@ -360,7 +363,7 @@ OpenCode servers receive the MCP config inline via the `OPENCODE_CONFIG_CONTENT`
 
 ### Claude Code MCP Configuration
 
-The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) from JSON templates with `${VARIABLE}` substitution, stored under `<data>/claude/configs/<workspace-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
+The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) from JSON templates with `${VARIABLE}` substitution, stored under `<temp>/claude/configs/<workspace-name>-<ref-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
 
 ### CodeHydra System Prompt
 
@@ -398,11 +401,11 @@ OpenCode uses SSE (Server-Sent Events) for real-time status updates.
 ### Server Startup Flow
 
 ```
-1. startServer(workspacePath, { workspaceRef }) called
+1. startServer(workspaceRef, workspacePath, options) called
 2. Allocate port via PortManager
 3. Spawn `opencode serve --port N` (cwd = workspace)
 4. HTTP probe to `/path` confirms server is ready
-5. Fire onServerStarted(path, port, pendingPrompt)
+5. Fire onServerStarted(ref, port, pendingPrompt)
 6. Provider.connect(port) finds/creates a session and connects SSE
 ```
 
@@ -456,7 +459,7 @@ Claude Code uses a shared HTTP server with a hook-based integration model.
 
 ### Architecture
 
-Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspaceRef` field in the hook payload (the hook handler adds it from `_CH_WORKSPACE`), which the server manager maps to the workspace it started with that ref.
+Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspaceRef` field in the hook payload (the hook handler adds it from `_CH_WORKSPACE`), which is the key the server manager tracks the workspace by.
 
 ```
 POST /hook/<HookName>
@@ -467,7 +470,7 @@ Content-Type: application/json
 
 ### Status Derivation
 
-Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, background tasks (sub-agents and shells via the `Stop` payload's `background_tasks`), AskUserQuestion parking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`). With a non-empty initial prompt, `WrapperStart` reads busy; if no `SessionStart` follows within `STARTUP_BUSY_TIMEOUT_MS` (60s) the workspace goes idle, since Claude fires no hook while a dialog blocks its start (folder trust), and the pending `SessionStart` turns it busy again.
+Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine: `deriveStatus()` in `claude/hook-status.ts` is a pure reducer from (flags, current status, hook, payload) to (next status, next flags, effects), and the server manager only applies its result — status callbacks, the startup timer, logging (see `claude/types.ts` for the base hook → status mapping). It also handles compaction, background tasks (sub-agents and shells via the `Stop` payload's `background_tasks`), AskUserQuestion parking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`). With a non-empty initial prompt, `WrapperStart` reads busy; if no `SessionStart` follows within `STARTUP_BUSY_TIMEOUT_MS` (60s) the workspace goes idle, since Claude fires no hook while a dialog blocks its start (folder trust), and the pending `SessionStart` turns it busy again.
 
 ### Session Resumption
 
@@ -512,11 +515,11 @@ export function createMyAgentModuleProvider(deps: MyAgentModuleProviderDeps): Ag
       serverManager: deps.serverManager,
       binary: deps.binary, // createAgentBinaryResolver({ descriptor, ... }) in main.ts
       binaryEnv: (resolved) => ({ _CH_MY_AGENT_BIN: resolved.path }),
-      createProvider: (path) => new MyAgentProvider(path, deps.logger),
+      createProvider: (ref) => new MyAgentProvider(ref, deps.logger),
       connectProvider: (provider, port) => provider.connect(port),
       initialStatus: () => "none",
-      startServer: (path) => deps.serverManager.startServer(path).then(() => undefined),
-      applyTerminalLifecycle: (path, event, ctx) => { ... },
+      startServer: (ref, path) => deps.serverManager.startServer(ref, path).then(() => undefined),
+      applyTerminalLifecycle: (ref, event, ctx) => { ... },
     },
     { logger: deps.logger, binaryName: "my-agent" }
   );

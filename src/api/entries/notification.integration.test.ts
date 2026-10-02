@@ -13,8 +13,7 @@ import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { registerTestInfrastructure } from "../../intents/operations.test-utils";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { WorkspaceRef } from "../../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { createMockNotificationManager } from "../../modules/presentation/notification-manager.state-mock";
 import { ApiError } from "../errors";
@@ -42,7 +41,7 @@ class ListNoProjectsOp implements Operation<typeof listProjectsSchemas> {
 
 const PROJECT = projPath("/projects/app");
 const FEAT_PATH = wsPath("/projects/app/workspaces/feat");
-const FEAT = makeWorkspaceRef(projectRefFor(PROJECT), "feat");
+const FEAT = workspaceRefIn(PROJECT, "feat");
 
 function setup() {
   const dispatcher = createMockDispatcher();

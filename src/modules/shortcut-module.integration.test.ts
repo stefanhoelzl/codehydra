@@ -38,7 +38,8 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../boundaries/shell/types";
-import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
+import type { KeyboardInput } from "../boundaries/shell/view";
+import type { Unsubscribe } from "../shared/types";
 import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
 import type { DomainEvent } from "../intents/lib/types";
 

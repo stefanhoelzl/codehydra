@@ -10,14 +10,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
 import { IntentHandle } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
-import { delay, projPath, testPath, wsPath } from "../shared/test-fixtures";
+import { delay, projPath, testPath, testWorkspaceRef, wsPath } from "../shared/test-fixtures";
+import { directory, file } from "../boundaries/platform/filesystem.state-mock";
 import {
   createTestClient,
   createApiServerEnv,
   waitForConnect,
   waitForDisconnect,
   createMockCommandHandler,
-  testWorkspaceRef,
   type TestClientSocket,
 } from "./api-server.test-utils";
 import type { WorkspaceStatus } from "../shared/api/types";
@@ -101,6 +101,22 @@ const TEST_TIMEOUT = 15000;
 
 // Tolerance for timing assertions (timers can fire slightly early due to system scheduling)
 const TIMING_TOLERANCE_MS = 10;
+
+/** An accepted (unless told otherwise) dispatch handle that resolves with `value`. */
+function resolvedHandle(value: unknown, options?: { accepted?: boolean }): IntentHandle<unknown> {
+  const handle = new IntentHandle();
+  handle.signalAccepted(options?.accepted ?? true);
+  handle.resolve(value);
+  return handle;
+}
+
+/** An accepted dispatch handle that rejects with `error`. */
+function rejectedHandle(error: Error): IntentHandle<unknown> {
+  const handle = new IntentHandle();
+  handle.signalAccepted(true);
+  handle.reject(error);
+  return handle;
+}
 
 describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   let env: Awaited<ReturnType<typeof createApiServerEnv>>;
@@ -421,12 +437,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         unmergedCommits: 0,
         agent: { type: "busy" as const, counts: { idle: 0, busy: 1, total: 1 } },
       };
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(status);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(status));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -454,12 +465,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("getMetadata round-trip via real Socket.IO", async () => {
       const metadata = { base: "develop", note: "testing" };
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(metadata);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(metadata));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -478,12 +484,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
     it("getAgentSession Socket.IO event should return session from handler", async () => {
       const session = { port: 12345, sessionId: "session-abc123" };
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(session);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(session));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -507,12 +508,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("getAgentSession Socket.IO event should return null when no server", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(null);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(null));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -530,12 +526,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("getAgentSession Socket.IO event should handle dispatch errors gracefully", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.reject(new Error("Workspace not found"));
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => rejectedHandle(new Error("Workspace not found")));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -553,12 +544,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("setMetadata round-trip via real Socket.IO", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -583,12 +569,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("agentLifecycle open dispatches agent:lifecycle intent (fire-and-forget)", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -610,12 +591,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("agentLifecycle close dispatches agent:lifecycle intent", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -667,12 +643,9 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("passes workspace path from socket.data to callback", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } });
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() =>
+        resolvedHandle({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } })
+      );
 
       // Connect with specific workspace path
       const client = createClient(wsPath("/my/special/workspace"));
@@ -693,12 +666,9 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("handles concurrent API calls from different workspaces", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } });
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() =>
+        resolvedHandle({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } })
+      );
 
       const client1 = createClient(wsPath("/workspace/one"));
       const client2 = createClient(wsPath("/workspace/two"));
@@ -761,12 +731,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("handles dispatch exception gracefully", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.reject(new Error("Database error"));
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => rejectedHandle(new Error("Database error")));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -782,12 +747,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("executeCommand round-trip via real Socket.IO", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve("command result");
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle("command result"));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -818,12 +778,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("executeCommand returns undefined for commands that return nothing", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -844,6 +799,29 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(result.data).toBeUndefined();
     });
 
+    it("openSystemPath in explorer opens a folder itself and a file's folder", async () => {
+      const folder = testPath("/test/workspace/docs");
+      const document = testPath("/test/workspace/docs/notes.md");
+      env.fileSystem.$.setEntry(folder, directory());
+      env.fileSystem.$.setEntry(document, file("# notes"));
+
+      const client = createClient(wsPath("/test/workspace"));
+      await waitForConnect(client);
+
+      for (const path of [folder, document]) {
+        const result = await new Promise<ApiResult<void>>((resolve) => {
+          client.emit(
+            "api:workspace:openSystemPath",
+            { app: "explorer", path: path.toNative() },
+            (res: ApiResult<void>) => resolve(res)
+          );
+        });
+        expect(result.success).toBe(true);
+      }
+
+      expect(env.openedPaths).toEqual([folder.toNative(), folder.toNative()]);
+    });
+
     it("executeCommand validates request before calling handler", async () => {
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -860,12 +838,9 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("executeCommand handles dispatch errors gracefully", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.reject(new Error("Command not found: invalid.command"));
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() =>
+        rejectedHandle(new Error("Command not found: invalid.command"))
+      );
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -885,12 +860,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("delete returns started:true when accepted", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -921,12 +891,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("delete returns started:false when rejected by interceptor", async () => {
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(false);
-        handle.resolve(undefined);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(undefined, { accepted: false }));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);
@@ -953,12 +918,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         metadata: {},
         path: testPath("/workspaces/my-ws").toNative(),
       };
-      env.mockDispatch.mockImplementation(() => {
-        const handle = new IntentHandle();
-        handle.signalAccepted(true);
-        handle.resolve(workspace);
-        return handle;
-      });
+      env.mockDispatch.mockImplementation(() => resolvedHandle(workspace));
 
       const client = createClient(wsPath("/test/workspace"));
       await waitForConnect(client);

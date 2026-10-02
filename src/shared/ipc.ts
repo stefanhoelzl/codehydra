@@ -89,8 +89,5 @@ export type { AgentType as LifecycleAgentType, AgentInfo } from "../intents/cont
 
 // ============ Log API Types ============
 
-/**
- * Context data for log entries.
- * Constrained to primitive types for serialization safety.
- */
-export type LogContext = Record<string, string | number | boolean | null>;
+/** Context data for log entries; one declaration, shared with the extension protocol. */
+export type { LogContext } from "./api-protocol";

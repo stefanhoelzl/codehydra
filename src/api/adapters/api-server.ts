@@ -25,23 +25,13 @@ import { MCP_MAP } from "./mcp-map";
 import { CLI_MAP } from "./cli-map";
 import { DESCRIBE_CHANNEL, describe, type DescribeTarget } from "./describe";
 import type { InputShaping } from "../registry";
-import { ApiError, categoryOf, type ApiErrorCategory } from "../errors";
+import { ApiError, categoryOf } from "../errors";
 import type { OperationContext } from "../types";
 import type { WorkspaceRef } from "../../intents/contract";
 import type { OperationName } from "../names";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { getErrorMessage } from "../../shared/error-utils";
-
-/**
- * Result wrapper the API protocol acknowledges every command with.
- *
- * `category` rides along on a failure so the CLI can pick an exit code from what
- * went wrong rather than from the wording of the message. Additive: a client that
- * does not know it reads `error` exactly as before.
- */
-export type ApiResult<T> =
-  | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string; readonly category?: ApiErrorCategory };
+import type { ApiResult } from "../../shared/api-protocol";
 
 /**
  * The slice of a Socket.IO socket this adapter needs.

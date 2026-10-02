@@ -16,6 +16,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import FieldShell from "./FieldShell.svelte";
   import type { FormLayout, GroupItem, GroupSectionConfig } from "./types";
 
   interface Props {
@@ -41,12 +42,7 @@
   const align = $derived(section.align ?? (layout === "form" ? "left" : "center"));
 </script>
 
-<div class="form-field">
-  {#if section.label}
-    <vscode-label for={firstField ? labelTargetOf(firstField) : undefined}
-      >{section.label}</vscode-label
-    >
-  {/if}
+<FieldShell label={section.label} labelFor={firstField ? labelTargetOf(firstField) : undefined}>
   <div class="group-row align-{align}" class:reverse={section.reverse}>
     {#each section.items as item, itemIndex (itemIndex)}
       {#if item.type === "button"}
@@ -56,18 +52,9 @@
       {/if}
     {/each}
   </div>
-</div>
+</FieldShell>
 
 <style>
-  /* Field wrapper: groups the row's label and content tightly (the form's
-     section gap only applies between sections). */
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-  }
-
   /* Horizontal row of field controls and buttons. Field controls stretch
      (via .group-field), buttons keep their natural size; `align` only shows
      when no stretching field fills the row (e.g. a button-only footer). */

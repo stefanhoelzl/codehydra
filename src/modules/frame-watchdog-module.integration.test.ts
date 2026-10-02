@@ -23,10 +23,10 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import { createMockLogger } from "../boundaries/platform/logging";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { WorkspaceRef } from "../intents/contract";
+import { workspaceRefIn } from "../shared/test-fixtures";
 
-const WS = makeWorkspaceRef(projectRefFor("/projects/app"), "ios");
+const WS = workspaceRefIn("/projects/app", "ios");
 
 function createSetup(options?: { mounted?: boolean }) {
   const connectListeners = new Set<(workspaceRef: WorkspaceRef) => void>();
@@ -183,7 +183,7 @@ describe("FrameWatchdogModule", () => {
   });
 
   it("tracks workspaces independently", () => {
-    const other = makeWorkspaceRef(projectRefFor("/projects/app"), "android");
+    const other = workspaceRefIn("/projects/app", "android");
     const { reloadFrame, disconnect, connect } = createSetup();
 
     disconnect("client namespace disconnect", false, WS);

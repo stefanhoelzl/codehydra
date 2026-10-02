@@ -25,16 +25,14 @@ import { formatContext, formatLogScope } from "../boundaries/platform/log-scope"
 import type { Logger, Logging, LogLine, LogScope } from "../boundaries/platform/logging-types";
 import type { OutputLine, OutputLineLevel } from "../shared/api-protocol";
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import { EVENT_WORKSPACE_DELETED, type WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import {
   EVENT_WORKSPACE_CREATE_FAILED,
   EVENT_WORKSPACE_CREATED,
   INTENT_OPEN_WORKSPACE,
-  type WorkspaceCreateFailedEvent,
-  type WorkspaceCreatedEvent,
 } from "../intents/open-workspace";
 import { createWorkspaceOutput, type OutputTransport } from "./workspace-output";
+import { defineEvents } from "../intents/declarations";
 
 /** The channel a workspace's log lines appear in. */
 export const WORKSPACE_LOG_CHANNEL = "CodeHydra Log";
@@ -132,13 +130,12 @@ export function createWorkspaceLogModule(deps: WorkspaceLogModuleDeps): {
 
   const module: IntentModule = {
     name: "workspace-log",
-    events: {
+    events: defineEvents({
       [EVENT_WORKSPACE_CREATED]: {
         // The workspace is open: its lines go to its editor from now on, the
         // ones written while it was being opened first.
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef, projectRef, workspaceName } = (event as WorkspaceCreatedEvent)
-            .payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, projectRef, workspaceName } = event.payload;
           const key = keyOfRef(projectRef, workspaceName);
           refs.set(key, workspaceRef);
           output.opening(workspaceRef);
@@ -150,24 +147,23 @@ export function createWorkspaceLogModule(deps: WorkspaceLogModuleDeps): {
         },
       },
       [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef, projectRef, workspaceName } = (event as WorkspaceDeletedEvent)
-            .payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, projectRef, workspaceName } = event.payload;
           output.closed(workspaceRef);
           forget(keyOfRef(projectRef, workspaceName));
         },
       },
       [EVENT_WORKSPACE_CREATE_FAILED]: {
         // A creation that failed: its editor is not coming, so its lines have nowhere to go.
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { projectRef, workspaceName } = (event as WorkspaceCreateFailedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { projectRef, workspaceName } = event.payload;
           const key = keyOfRef(projectRef, workspaceName);
           const ref = refs.get(key);
           if (ref !== undefined) output.closed(ref);
           forget(key);
         },
       },
-    },
+    }),
   };
 
   return { module, dispose: unsubscribe };
