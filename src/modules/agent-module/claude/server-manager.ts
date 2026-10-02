@@ -1124,12 +1124,22 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // auth, max-tokens — and the payload omits the field), so it always goes idle
     // to surface the stuck main agent regardless of background work; clear the
     // stash there.
+    //
+    // The main agent's Stop also ends any AskUserQuestion park: its turn is over,
+    // so no question of its own can still be open. Claude can drop a question
+    // without a PostToolUse (seen when a message arriving mid-tool started a
+    // second turn branch that asked it, and the first branch then ended the
+    // turn), and a park left behind would suppress every busy signal from the
+    // still-running background tasks. So a Stop that lifts a park while tasks
+    // keep the workspace busy goes busy rather than staying parked idle.
     if (hookName === "Stop") {
       const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
       const busyTasks = tasks.filter((task) => taskKeepsBusy(task));
+      const wasParked = state.awaitingUserInputResolution === true;
+      state.awaitingUserInputResolution = false;
       state.busyForBackgroundTasks = busyTasks.length > 0;
       if (busyTasks.length > 0) {
-        newStatus = null;
+        newStatus = wasParked ? "busy" : null;
         this.logger.scoped({ path: normalizedPath }).debug("Idle suppressed for background tasks", {
           tasks: busyTasks.map((task) => task.command ?? task.agent_type ?? task.type).join(", "),
         });

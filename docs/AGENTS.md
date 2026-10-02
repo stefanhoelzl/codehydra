@@ -314,8 +314,12 @@ main agent's, its `AskUserQuestion` parked the workspace idle while background s
 were still working (the park then swallowing their busy signals until the next prompt),
 and any tool it tried after an idle `Stop` would trip the `PreToolUse`-while-idle rule with
 no `Stop` to follow. Only the main agent's `PreToolUse(AskUserQuestion)` parks, and only its
-`PostToolUse`/`PostToolUseFailure(AskUserQuestion)` unparks; sub-agent tool activity still
-reaches the status through `PostToolUse`. Pinned against a real TUI by the `suggestionfork`
+`PostToolUse`/`PostToolUseFailure(AskUserQuestion)` or its turn-ending `Stop` unparks;
+sub-agent tool activity still reaches the status through `PostToolUse`. The `Stop` covers a
+question Claude drops without a `PostToolUse` (a message arriving mid-tool can start a second
+turn branch that asks it, and the first branch then ends the turn): no question can outlive
+the turn, and a `Stop` that lifts a park while background tasks keep the workspace busy goes
+busy instead of leaving it parked idle. Pinned against a real TUI by the `suggestionfork`
 scenario in `claude/server-manager.boundary.test.ts`.
 
 ### Busy→Idle Edge for Untracked Turns (Claude Code)
