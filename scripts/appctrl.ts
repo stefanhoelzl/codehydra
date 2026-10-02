@@ -236,8 +236,20 @@ function stillRunning(captured: readonly ProcessEntry[]): ProcessEntry[] {
 }
 
 /**
- * Kill whatever of the app's tree outlived it, wait until it is gone, and
- * return what that was.
+ * How long the app's tree may take to go after the main process has.
+ *
+ * Electron's own helpers (renderers, GPU, utility processes) are not waited
+ * for: Chromium asks them to terminate on its way out and exits, and they
+ * follow once they notice — up to a few hundred ms later on a loaded machine.
+ * An exited renderer can also linger as a zombie: its zygote dies with the
+ * main process without reaping it, and the reaper it is handed to takes its
+ * time. Neither is a leak; a process still there after this is.
+ */
+const LEFTOVER_GRACE_MS = 2_000;
+
+/**
+ * Kill whatever of the app's tree outlived it (past `LEFTOVER_GRACE_MS`), wait
+ * until it is gone, and return what that was.
  *
  * The app reaps its own children on a clean quit, so normally there is nothing
  * to do — and anything found here is a bug in the app's shutdown, which `stop`
@@ -247,7 +259,12 @@ function stillRunning(captured: readonly ProcessEntry[]): ProcessEntry[] {
  * termination is asynchronous there, and the handles go only once the process has.
  */
 async function killLeftovers(captured: readonly ProcessEntry[]): Promise<ProcessEntry[]> {
-  const leftovers = stillRunning(captured);
+  let leftovers = stillRunning(captured);
+  const graceEnd = Date.now() + LEFTOVER_GRACE_MS;
+  while (leftovers.length > 0 && Date.now() < graceEnd) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    leftovers = stillRunning(leftovers);
+  }
   if (leftovers.length === 0) return [];
 
   const names = leftovers.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
