@@ -493,7 +493,7 @@
               {@const hasTitle = workspace.title !== undefined}
               {@const primaryLabel = workspace.title ?? workspace.name}
               <!-- Second line: the branch (only when a title took line 1) plus
-                   any tags, scrolling as one unit. -->
+                   any tags, wrapping onto further lines when they don't fit. -->
               {@const showSecondLine = hasTitle || hasTags}
               {@const rowHovered = hoveredRowKey === workspace.key}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -537,66 +537,70 @@
                       </span>
                       {#if showSecondLine}
                         <span class="ws-line ws-secondary-line">
-                          <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
-                            {#if hasTitle}
+                          {#if hasTitle}
+                            <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
                               <span class="ws-branch">{workspace.name}</span>
-                            {/if}
-                            {#each workspace.tags as tag (tag.name)}
-                              {@const shown = tag.label ?? tag.name}
-                              {@const tip = tag.description ?? tag.name}
-                              <span
-                                class="ws-tag"
-                                class:colored={tag.color !== undefined}
-                                style:--tag-color={tag.color ?? null}
-                                title={tip === shown ? undefined : tip}>{shown}</span
-                              >
-                            {/each}
-                          </ScrollingLabel>
+                            </ScrollingLabel>
+                          {/if}
+                          {#each workspace.tags as tag (tag.name)}
+                            {@const shown = tag.label ?? tag.name}
+                            {@const tip = tag.description ?? tag.name}
+                            <span
+                              class="ws-tag"
+                              class:colored={tag.color !== undefined}
+                              style:--tag-color={tag.color ?? null}
+                              title={tip === shown ? undefined : tip}>{shown}</span
+                            >
+                          {/each}
                         </span>
                       {/if}
                     </button>
-                    {#if status === "ready" && !hibernated}
-                      <button
-                        type="button"
-                        class="action-btn hover-action hibernate-btn"
-                        aria-label="Hibernate workspace"
-                        title="Hibernate workspace"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          handleHibernateWorkspace(workspace.key);
-                        }}
-                      >
-                        <Icon name="debug-pause" size={14} />
-                      </button>
-                    {/if}
-                    {#if status === "open-failed"}
-                      <button
-                        type="button"
-                        class="action-btn hover-action retry-btn"
-                        aria-label="Retry opening workspace"
-                        title="Retry opening workspace"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          handleWakeWorkspace(workspace.key);
-                        }}
-                      >
-                        <Icon name="refresh" size={14} />
-                      </button>
-                    {/if}
+                    <!-- Hover actions float over the end of the first line, so at
+                         rest the labels and tags get the cell's full width. -->
                     {#if status === "ready" || status === "open-failed"}
-                      <button
-                        type="button"
-                        class="action-btn hover-action remove-btn"
-                        id={`remove-ws-${workspace.key}`}
-                        aria-label="Remove workspace"
-                        title="Remove workspace"
-                        onclick={(e) => {
-                          e.stopPropagation();
-                          onRemoveWorkspace(workspace.key);
-                        }}
-                      >
-                        <Icon name="trash" size={14} />
-                      </button>
+                      <div class="row-actions">
+                        {#if status === "ready" && !hibernated}
+                          <button
+                            type="button"
+                            class="action-btn hibernate-btn"
+                            aria-label="Hibernate workspace"
+                            title="Hibernate workspace"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              handleHibernateWorkspace(workspace.key);
+                            }}
+                          >
+                            <Icon name="debug-pause" size={14} />
+                          </button>
+                        {/if}
+                        {#if status === "open-failed"}
+                          <button
+                            type="button"
+                            class="action-btn retry-btn"
+                            aria-label="Retry opening workspace"
+                            title="Retry opening workspace"
+                            onclick={(e) => {
+                              e.stopPropagation();
+                              handleWakeWorkspace(workspace.key);
+                            }}
+                          >
+                            <Icon name="refresh" size={14} />
+                          </button>
+                        {/if}
+                        <button
+                          type="button"
+                          class="action-btn remove-btn"
+                          id={`remove-ws-${workspace.key}`}
+                          aria-label="Remove workspace"
+                          title="Remove workspace"
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            onRemoveWorkspace(workspace.key);
+                          }}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
                     {/if}
                   </div>
                   <!-- Status cell: a button in both modes (clicks bubble to the
@@ -1051,8 +1055,17 @@
     flex: 1 1 0;
   }
 
+  /* Branch and tags wrap instead of clipping; a branch too long for a line of
+     its own still scrolls. */
   .ws-secondary-line {
     font-size: 11px;
+    flex-wrap: wrap;
+    gap: 3px 6px;
+  }
+
+  .ws-secondary-line :global(.scroll) {
+    flex: 0 1 auto;
+    max-width: 100%;
   }
 
   .ws-branch {
@@ -1134,13 +1147,29 @@
     outline-offset: -1px;
   }
 
-  .workspace-item .hover-action {
-    opacity: 0;
+  .workspace-label-cell {
+    position: relative;
   }
 
-  .workspace-item:hover .hover-action,
-  .workspace-item:focus-within .hover-action {
-    opacity: 0.7;
+  /* Overlays the end of the first line and is hidden at rest, so it never
+     takes width from the labels; while shown, the first line makes room. */
+  .row-actions {
+    position: absolute;
+    top: 4px;
+    right: 0;
+    display: none;
+    align-items: center;
+    height: 18px;
+  }
+
+  .workspace-item:hover .row-actions,
+  .workspace-item:focus-within .row-actions {
+    display: flex;
+  }
+
+  .workspace-item:hover .workspace-label-cell:has(.row-actions) .ws-primary-line,
+  .workspace-item:focus-within .workspace-label-cell:has(.row-actions) .ws-primary-line {
+    padding-right: 48px;
   }
 
   .shortcut-badge {

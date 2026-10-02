@@ -120,8 +120,9 @@ The sidebar lists your projects and their workspaces, sorted by name.
 
 A workspace row shows its title (or its name if it has none); with a title, the
 second line shows the branch. Tags follow, each in its color and with its label,
-and its description on hover. Long labels scroll as `sidebar.label-scroll` says
-(`hover` by default). A folder icon marks a local project, a source-control icon
+and its description on hover; they wrap onto further lines when they do not fit.
+A long title or branch scrolls as `sidebar.label-scroll` says (`hover` by
+default). A folder icon marks a local project, a source-control icon
 a cloned one.
 
 The icon on each row:

@@ -1294,6 +1294,26 @@ describe("Sidebar component", () => {
       expect(pillTexts).toContain("wip");
     });
 
+    it("lays tags out in the wrapping line, outside the branch's scrolling label", () => {
+      const ws = makeUiWorkspaceRow("feat-branch", {
+        title: "My title",
+        tags: [{ name: "bugfix" }, { name: "wip", color: "#ff0" }],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [makeUiProjectRow([ws])] },
+      });
+
+      const line = container.querySelector(".ws-secondary-line");
+      const tags = Array.from(container.querySelectorAll(".ws-tag"));
+      expect(tags).toHaveLength(2);
+      for (const tag of tags) {
+        expect(tag.parentElement).toBe(line);
+        expect(tag.closest(".scroll")).toBeNull();
+      }
+      expect(line?.querySelector(".scroll .ws-branch")).toBeInTheDocument();
+    });
+
     it("does not render a second line when the row has no title and no tags", () => {
       const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
 
