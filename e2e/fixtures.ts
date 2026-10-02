@@ -432,7 +432,14 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
   });
 
   test.afterAll(async () => {
-    await driver?.stop();
+    // Processes the app left running fail the spec, but only after the logs
+    // are saved and checked: they are what explains the leftover.
+    let stopFailure: unknown;
+    try {
+      await driver?.stop();
+    } catch (error: unknown) {
+      stopFailure = error;
+    }
     preserveAppLogs();
 
     // After stop, so the shutdown path is covered too. Every spec gets this for
@@ -443,6 +450,7 @@ export function useApp(options: LaunchAppOptions & { cold?: boolean } = {}): App
     // and gating on the flag would quietly exempt exactly the run that downloads
     // and patches the bundle.
     if (launchedAt !== 0) expectNoErrorLogs();
+    if (stopFailure !== undefined) throw stopFailure;
   });
 
   return () => driver;

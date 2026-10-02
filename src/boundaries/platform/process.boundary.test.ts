@@ -934,6 +934,67 @@ describe("ExecaProcessRunner", () => {
       },
       TEST_TIMEOUT
     );
+
+    // Unix-only: a descendant that shuts down cleanly on SIGTERM can take far
+    // longer than its parent (an agent in the IDE server's terminal takes most
+    // of a second). kill() must not report the tree gone until it is. The
+    // child's stdio is detached, as an agent on a terminal's pty is: one still
+    // holding our stdout pipe would keep wait() pending on its own.
+    it.skipIf(isWindows)(
+      "kill() returns only once a slow-exiting child has exited too",
+      async () => {
+        const proc = runner.run("sh", [
+          "-c",
+          "sh -c 'trap \"sleep 0.4; exit 0\" TERM; while :; do sleep 0.05; done' " +
+            "</dev/null >/dev/null 2>&1 & echo $!; wait",
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await delay(200);
+
+        const killResult = await proc.kill(2000, 1000);
+        expect(killResult).toEqual({ success: true, reason: "SIGTERM" });
+
+        const result = await proc.wait(1000);
+        const childPid = parseInt(result.stdout.trim(), 10);
+        expect(isNaN(childPid)).toBe(false);
+        spawnedPids.push(childPid);
+
+        // No settling delay: the child must already be gone.
+        expect(isProcessRunning(childPid)).toBe(false);
+      },
+      TEST_TIMEOUT
+    );
+
+    // Unix-only: a descendant still running when the graceful wait ends is
+    // SIGKILLed, and the kill reports the escalation — even though the process
+    // itself went on the SIGTERM.
+    it.skipIf(isWindows)(
+      "kill() escalates when a child outlasts the graceful wait",
+      async () => {
+        const proc = runner.run("sh", [
+          "-c",
+          "sh -c 'trap \"\" TERM; while :; do sleep 0.05; done' " +
+            "</dev/null >/dev/null 2>&1 & echo $!; wait",
+        ]);
+        runningProcesses.push(proc);
+        trackProcess(proc);
+
+        await delay(200);
+
+        const killResult = await proc.kill(300, 1000);
+        expect(killResult).toEqual({ success: true, reason: "SIGKILL" });
+
+        const result = await proc.wait(1000);
+        const childPid = parseInt(result.stdout.trim(), 10);
+        expect(isNaN(childPid)).toBe(false);
+        spawnedPids.push(childPid);
+
+        expect(isProcessRunning(childPid)).toBe(false);
+      },
+      TEST_TIMEOUT
+    );
   });
 
   describe("large output", () => {
