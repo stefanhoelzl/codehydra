@@ -755,7 +755,8 @@ Printing nothing, or `{}`, allows the deletion. `{"reason": "…"}` without
 
 A **non-zero exit**, invalid output or a cancel means the script broke. That
 stops the deletion too — the gate fails closed — and the progress row names
-the plugin, the exit and its run log, rather than a refusal.
+the plugin and the exit and points to `ch plugin errors`, rather than a
+refusal.
 
 Either way the deletion stops before the worktree is removed and the reason
 appears on the progress row, with **Retry** and **Dismiss**. Neither keeps the
