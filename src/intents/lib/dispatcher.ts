@@ -284,15 +284,23 @@ export class Dispatcher implements IDispatcher {
   private readonly initialCapabilities: Readonly<Record<string, unknown>>;
   private readonly logger: Logger;
   private readonly logScope: LogScopeStore;
+  private readonly concurrentHooks: () => boolean;
 
   constructor(options: {
     logger: Logger;
     initialCapabilities?: Readonly<Record<string, unknown>>;
     /** The logging service's scope store; without it, lines carry no dispatch scope. */
     logScope?: LogScopeStore;
+    /**
+     * Whether a hook point's ready handlers run concurrently rather than one at
+     * a time. Read once per hook point, so a change applies from the next one.
+     * Defaults to sequential.
+     */
+    concurrentHooks?: () => boolean;
   }) {
     this.logger = options.logger;
     this.logScope = options.logScope ?? NO_LOG_SCOPE;
+    this.concurrentHooks = options.concurrentHooks ?? ((): boolean => false);
     this.initialCapabilities = Object.freeze({ ...options.initialCapabilities });
   }
 
@@ -437,6 +445,17 @@ export class Dispatcher implements IDispatcher {
   // Hook collection (capability-based topological sort)
   // ===========================================================================
 
+  /**
+   * Run a hook point's handlers. Each runs once its `requires` are satisfied;
+   * one whose requirements never are is skipped.
+   *
+   * Sequential (the default): handlers run one at a time, in registration
+   * order within each pass. Concurrent (`concurrentHooks`): every handler
+   * whose requirements are met starts at once, and each completion re-checks
+   * the ones still waiting. Either way every handler runs to completion,
+   * `results[]` carries no order a caller may rely on, and nothing guarantees
+   * one handler starts before another unless a capability says so.
+   */
   private async collectHookResults(
     hookHandlers: HookHandler[],
     inputCtx: HookContext,
@@ -455,73 +474,120 @@ export class Dispatcher implements IDispatcher {
     const errors: Error[] = [];
     const ran: string[] = [];
 
-    while (pending.length > 0) {
-      let progressMade = false;
-      const nextPending: HookHandler[] = [];
+    /**
+     * The context a handler starts with: the capabilities provided so far.
+     * Whole-context validation (item 2): the input schema re-affirms the intent,
+     * shape-checks the scalar capability bag, and validates the enrichment. A
+     * failure here means the operation built a bad context — a framework bug —
+     * so it throws out of collect (not caught per-handler), aborting the
+     * operation → reject.
+     */
+    const contextFor = (): HookContext => {
+      const frozenCtx: HookContext = Object.freeze({
+        ...inputCtx,
+        capabilities: Object.freeze({ ...capabilities }),
+      });
+      if (hookSchemas?.input) hookSchemas.input.parse(frozenCtx);
+      return frozenCtx;
+    };
 
-      for (const entry of pending) {
-        const reqs = entry.requires ?? {};
-        if (requirementsSatisfied(reqs, capabilities)) {
-          const frozenCtx: HookContext = Object.freeze({
-            ...inputCtx,
-            capabilities: Object.freeze({ ...capabilities }),
-          });
-          // Whole-context validation (item 2): the input schema re-affirms the intent,
-          // shape-checks the scalar capability bag, and validates the enrichment. A failure
-          // here means the operation built a bad context — a framework bug — so it throws
-          // out of collect (not caught per-handler), aborting the operation → reject.
-          if (hookSchemas?.input) hookSchemas.input.parse(frozenCtx);
-          try {
-            // A handler returns a HookOutput (result and/or provided capabilities);
-            // void is shorthand for an empty output. A streaming handler is an
-            // async generator: drain its yielded progress frames to onYield (host-side),
-            // and use its return value as the output. The non-generator path stays a
-            // plain await (no extra microtask hop) to preserve emit/dispatch timing.
-            // The handler runs in a scope naming its module and hook, so every
-            // line it causes says which handler that was.
-            const run = (): Promise<HookOutput | void> => {
-              const invoked = entry.handler(frozenCtx);
-              return isAsyncGenerator(invoked) ? drainGenerator(invoked, onYield) : invoked;
-            };
-            const name = entry.name;
-            const output: HookOutput =
-              (await (name === undefined
-                ? run()
-                : this.logScope.run(
-                    () => ({ ...frame?.scope(), module: name, hook: hookLabel }),
-                    run
-                  ))) ?? {};
-            if (output.result !== undefined && output.result !== null) {
-              // Validate + normalize (strip) each handler's partial result. A failure is
-              // isolated to this handler (pushed to errors[]), like a throwing handler.
-              const validated = hookSchemas?.result
-                ? hookSchemas.result.parse(output.result)
-                : output.result;
-              results.push(validated);
-            }
-            // Merge provided capabilities from returned data (no host-side closure).
-            // Skip undefined-valued keys: requires/ANY_VALUE test key *presence*, so a
-            // key must only appear when it carries a defined value.
-            if (output.provides) {
-              const validated = hookSchemas?.provides
-                ? hookSchemas.provides.parse(output.provides)
-                : output.provides;
-              for (const [key, value] of Object.entries(validated)) {
-                if (value !== undefined) capabilities[key] = value;
-              }
-            }
-          } catch (err) {
-            errors.push(err instanceof Error ? err : new Error(String(err)));
-          }
-          if (entry.name) ran.push(entry.name);
-          progressMade = true;
-        } else {
-          nextPending.push(entry);
+    /**
+     * Start a handler. A handler returns a HookOutput (result and/or provided
+     * capabilities); void is shorthand for an empty output. A streaming handler
+     * is an async generator: drain its yielded progress frames to onYield
+     * (host-side), and use its return value as the output. The non-generator
+     * path returns the handler's own promise, so awaiting it adds no microtask
+     * hop — that preserves emit/dispatch timing. The handler runs in a scope
+     * naming its module and hook, so every line it causes says which handler
+     * that was.
+     */
+    const invoke = (entry: HookHandler, ctx: HookContext): Promise<HookOutput | void> => {
+      const run = (): Promise<HookOutput | void> => {
+        const invoked = entry.handler(ctx);
+        return isAsyncGenerator(invoked) ? drainGenerator(invoked, onYield) : invoked;
+      };
+      const name = entry.name;
+      return name === undefined
+        ? run()
+        : this.logScope.run(() => ({ ...frame?.scope(), module: name, hook: hookLabel }), run);
+    };
+
+    /** Fold a finished handler's output into the results and the capability bag. */
+    const absorb = (output: HookOutput): void => {
+      if (output.result !== undefined && output.result !== null) {
+        // Validate + normalize (strip) each handler's partial result. A failure is
+        // isolated to this handler (pushed to errors[]), like a throwing handler.
+        const validated = hookSchemas?.result
+          ? hookSchemas.result.parse(output.result)
+          : output.result;
+        results.push(validated);
+      }
+      // Merge provided capabilities from returned data (no host-side closure).
+      // Skip undefined-valued keys: requires/ANY_VALUE test key *presence*, so a
+      // key must only appear when it carries a defined value.
+      if (output.provides) {
+        const validated = hookSchemas?.provides
+          ? hookSchemas.provides.parse(output.provides)
+          : output.provides;
+        for (const [key, value] of Object.entries(validated)) {
+          if (value !== undefined) capabilities[key] = value;
         }
       }
+    };
 
-      pending = nextPending;
-      if (!progressMade) break;
+    const toError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
+    const ready = (entry: HookHandler): boolean =>
+      requirementsSatisfied(entry.requires ?? {}, capabilities);
+
+    // A lone handler has nothing to overlap with: it takes the sequential path,
+    // whose timing (no extra microtask hops) is the same in both modes.
+    if (hookHandlers.length > 1 && this.concurrentHooks()) {
+      // Eager: start everything ready, wait for any one to finish, repeat.
+      // A handler's synchronous part runs as it starts; `settle` never rejects.
+      const settle = async (entry: HookHandler, ctx: HookContext): Promise<void> => {
+        try {
+          absorb((await invoke(entry, ctx)) ?? {});
+        } catch (err) {
+          errors.push(toError(err));
+        }
+        if (entry.name) ran.push(entry.name);
+      };
+      const inFlight = new Set<Promise<void>>();
+      for (;;) {
+        const starting = pending.filter(ready);
+        pending = pending.filter((entry) => !starting.includes(entry));
+        for (const entry of starting) {
+          const running: Promise<void> = settle(entry, contextFor()).finally(() =>
+            inFlight.delete(running)
+          );
+          inFlight.add(running);
+        }
+        if (inFlight.size === 0) break;
+        await Promise.race(inFlight);
+      }
+    } else {
+      while (pending.length > 0) {
+        let progressMade = false;
+        const nextPending: HookHandler[] = [];
+
+        for (const entry of pending) {
+          if (ready(entry)) {
+            const ctx = contextFor();
+            try {
+              absorb((await invoke(entry, ctx)) ?? {});
+            } catch (err) {
+              errors.push(toError(err));
+            }
+            if (entry.name) ran.push(entry.name);
+            progressMade = true;
+          } else {
+            nextPending.push(entry);
+          }
+        }
+
+        pending = nextPending;
+        if (!progressMade) break;
+      }
     }
 
     const skipped: SkippedHandler[] = [];

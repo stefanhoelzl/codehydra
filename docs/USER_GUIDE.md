@@ -343,6 +343,10 @@ under **General**.
   applies now, but the override wins again at the next start.
 - Each changed key has a reset button, and **Reset all to defaults** resets
   everything. Resetting removes the key from `config.json`.
+- `experimental.concurrent-hooks` (off by default) runs the independent steps
+  inside an operation — starting, quitting, opening or deleting a workspace —
+  at the same time instead of one after another. It applies at once; turn it
+  off again if something behaves differently.
 
 ### Where settings come from
 

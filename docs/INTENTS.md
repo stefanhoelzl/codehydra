@@ -271,6 +271,8 @@ The scope follows every callback created inside a dispatch — including long-li
 
 Hooks are unordered by default. When execution order matters, a handler declares the capabilities it `requires` (a static field) and returns the capabilities it `provides` (in its `HookOutput`). The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers. Registration order is not part of the contract: every dependency between two handlers on a hook point is a capability, never the order modules are registered in `main.ts`.
 
+With `experimental.concurrent-hooks` on (default off; the dispatcher's `concurrentHooks` option, read once per `collect()`), a hook point's handlers -- and an event's -- run eagerly: every handler whose `requires` are met starts at once, and each completion re-checks the ones still waiting. A handler sees the capabilities provided before it started. A hook point with a single handler always takes the sequential path, whose timing is the same in both modes. Off, handlers run one at a time; either way the contract is the same, so nothing may rely on the sequential order.
+
 An unsatisfied requirement **skips** its handler silently. A provider whose dependents must run therefore provides on every path, failures included -- e.g. the api-server's `agent-stopped` (`CAPABILITY_AGENT_STOPPED`, delete `shutdown`), the lifecycle module's `workspace-claimed` (delete/hibernate `shutdown`, which the agent resolver and the api-server's terminal close require), and terminal-focus's `modal-recorded` (vscode:modal-changed, before the agents re-report status).
 
 Each `HookHandler` has two fields; capabilities are returned, not declared via a closure:

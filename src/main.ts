@@ -331,6 +331,16 @@ const sidebarWidthConfig = configService.register("sidebar.width", {
   ...storeNumber({ min: 250, max: 100000 }),
 });
 
+// Run the handlers of one hook point (and of one domain event) concurrently
+// rather than one at a time. Read by the dispatcher once per hook point, so a
+// change applies from the next one.
+const concurrentHooksConfig = configService.register("experimental.concurrent-hooks", {
+  default: false,
+  description: "Run a hook point's ready handlers concurrently instead of one at a time",
+  applies: "live",
+  ...storeBoolean(),
+});
+
 // 3. Electron layers (all constructors are pure — just store deps)
 
 const dialogLayer = new DefaultDialogBoundary(loggingService.createLogger("dialog"));
@@ -396,6 +406,7 @@ const agentBinaryResolvers = {
 const dispatcher = new Dispatcher({
   logger: loggingService.createLogger("dispatcher"),
   logScope: loggingService.scope,
+  concurrentHooks: () => concurrentHooksConfig.get(),
   initialCapabilities: {
     platform: platformInfo.platform,
     posix: platformInfo.posix,
