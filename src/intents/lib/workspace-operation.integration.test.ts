@@ -8,7 +8,7 @@
  * - workspace:resolve failure short-circuits before the hook runs
  * - project:resolve is dispatched only when resolveProject is set
  * - lone hook error is rethrown raw; multiple errors aggregate under errorLabel
- * - extract() receives results in handler order (last-write-wins via lastDefined)
+ * - extract() receives every handler's result (single-writer via onlyDefined)
  * - onSuccess event is emitted with resolved identity and the extracted result
  */
 
@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod/v4";
 import { createMockDispatcher } from "./dispatcher.test-utils";
 import { WorkspaceHookOperation } from "./workspace-operation";
-import { lastDefined, requireResult } from "./hook-helpers";
+import { onlyDefined, requireResult } from "./hook-helpers";
 import type { Intent, DomainEvent } from "./types";
 import type { HookHandler, HookOutput, OperationSchemas } from "./operation";
 import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "../resolve-workspace";
@@ -68,7 +68,7 @@ class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
       errorLabel: "test-workspace-hook work hooks failed",
       extract: (results) =>
         requireResult(
-          lastDefined(results, (r) => r.value),
+          onlyDefined(results, "value", "test work"),
           "Test hook did not provide value result"
         ),
       ...(opts?.emitEvent && {

@@ -17,7 +17,7 @@ import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
-import { lastDefined, requireResult } from "./lib/hook-helpers";
+import { onlyDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_GET_METADATA = "workspace:get-metadata" as const;
 export const GET_METADATA_OPERATION_ID = "get-metadata";
@@ -92,7 +92,7 @@ export class GetMetadataOperation extends WorkspaceHookOperation<typeof schemas>
       errorLabel: "get-metadata get hooks failed",
       extract: (results) =>
         requireResult(
-          lastDefined(results, (r) => r.metadata),
+          onlyDefined(results, "metadata", "workspace:get-metadata get"),
           "Get metadata hook did not provide metadata result"
         ),
     });

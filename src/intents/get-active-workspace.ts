@@ -16,7 +16,7 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, workspaceLocatorSchema } from "./contract";
-import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_GET_ACTIVE_WORKSPACE = "ui:get-active-workspace" as const;
 export const GET_ACTIVE_WORKSPACE_OPERATION_ID = "get-active-workspace";
@@ -84,9 +84,9 @@ export class GetActiveWorkspaceOperation implements Operation<typeof schemas> {
     const { results, errors } = await ctx.hooks.collect("get", hookCtx);
     throwHookErrors(errors, "get-active-workspace get hooks failed");
 
-    // Merge results — last-write-wins for workspaceRef
+    // Merge results — one handler provides workspaceRef
     return requireResult(
-      lastDefined(results, (r) => r.workspaceRef),
+      onlyDefined(results, "workspaceRef", "ui:get-active-workspace get"),
       "Get active workspace hook did not provide workspaceRef result"
     );
   }

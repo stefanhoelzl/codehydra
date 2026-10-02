@@ -92,6 +92,7 @@ import {
   type WorkspaceCreateFailedEvent,
 } from "../../intents/open-workspace";
 import {
+  CAPABILITY_AGENT_STOPPED,
   DELETE_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
@@ -2558,17 +2559,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
       [DELETE_WORKSPACE_OPERATION_ID]: {
         // Release the workspace's IDE frame — but only after the agent has been
-        // stopped. `requires` defers this to a later wave than the api-server
-        // handler that asks the agent to exit, so the iframe (and with it the
-        // IDE client connection the request travels over) survives until that
-        // has either succeeded or hit its own timeout.
+        // stopped. `requires` holds this until the api-server handler that asks
+        // the agent to exit is done, so the iframe (and with it the IDE client
+        // connection the request travels over) survives until that has either
+        // succeeded or hit its own timeout.
         //
         // Dropping the frame earlier is what orphans the agent: the disconnect
         // disposes the extension host, whose terminals then report "closed"
         // while the pty — and the agent under it — keeps running with the
         // workspace as its CWD, so the worktree removal cannot delete it.
         shutdown: {
-          requires: { "agent-stopped": ANY_VALUE },
+          requires: { [CAPABILITY_AGENT_STOPPED]: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspaceRef } = ctx as DeletePipelineHookInput;
             framesReleased.add(workspaceRef);

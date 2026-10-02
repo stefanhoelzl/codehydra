@@ -22,7 +22,7 @@ import {
   workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
-import { lastDefined, requireResult } from "./lib/hook-helpers";
+import { onlyDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_GET_AGENT_SESSION = "agent:get-session" as const;
 export const GET_AGENT_SESSION_OPERATION_ID = "get-agent-session";
@@ -99,7 +99,7 @@ export class GetAgentSessionOperation extends WorkspaceHookOperation<typeof sche
       errorLabel: "get-agent-session get hooks failed",
       extract: (results) =>
         requireResult(
-          lastDefined(results, (r) => r.session),
+          onlyDefined(results, "session", "agent:get-session get"),
           "Get agent session hook did not provide session result"
         ),
     });

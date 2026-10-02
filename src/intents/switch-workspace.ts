@@ -37,7 +37,7 @@ import {
 import type { WorkspaceRef } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
-import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_SWITCH_WORKSPACE = "workspace:switch" as const;
 export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
@@ -364,8 +364,8 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
     );
     throwHookErrors(activateErrors, "workspace:switch activate hooks failed");
 
-    // Merge results — last-write-wins for resolvedRef
-    const resolvedRef = lastDefined(activateResults, (r) => r.resolvedRef);
+    // Merge results — one handler provides resolvedRef
+    const resolvedRef = onlyDefined(activateResults, "resolvedRef", "workspace:switch activate");
 
     // No-op: hook resolved workspace but it was already active
     // (resolvedRef left unset intentionally)
@@ -407,10 +407,7 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       candidates: allCandidates,
     };
     const { results: selectResults } = await ctx.hooks.collect("select-next", selectCtx);
-    let best: WorkspaceCandidate | undefined;
-    for (const r of selectResults) {
-      if (r.selected !== undefined) best = r.selected;
-    }
+    const best = onlyDefined(selectResults, "selected", "workspace:switch select-next");
 
     const targetRef =
       best?.workspaceRef ?? (payload.fallbackToCurrent ? payload.currentRef : undefined);

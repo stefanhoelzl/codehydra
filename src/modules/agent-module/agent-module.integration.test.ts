@@ -46,9 +46,11 @@ import {
 } from "../../intents/open-workspace";
 import type { SetupHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
+  CAPABILITY_AGENT_STOPPED,
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
 } from "../../intents/delete-workspace";
+import { MODAL_RECORDED_CAPABILITY } from "../terminal-focus-module";
 import type {
   ShutdownHookResult,
   DeletePipelineHookInput,
@@ -353,9 +355,13 @@ function minimalSetup(
 
 /**
  * Minimal delete operation that runs the "shutdown" hook point, seeding the delete pipeline
- * context (with `agentCapability` as the agent capability) and returning the first hook result.
+ * context (with `agentCapability` as the agent capability, and `agent-stopped` unless
+ * `agentStopped` is false) and returning the first hook result.
  */
-function minimalShutdown(agentCapability: string | null = "claude"): Operation<OperationSchemas> {
+function minimalShutdown(
+  agentCapability: string | null = "claude",
+  agentStopped = true
+): Operation<OperationSchemas> {
   return createMinimalOperation<ShutdownHookResult | undefined>(
     DELETE_WORKSPACE_OPERATION_ID,
     INTENT_DELETE_WORKSPACE,
@@ -371,9 +377,10 @@ function minimalShutdown(agentCapability: string | null = "claude"): Operation<O
           projectPath: projPath("/test/project"),
           workspaceName: "test-workspace" as WorkspaceName,
           active: false,
-          ...(agentCapability !== null && {
-            capabilities: { agent: agentCapability },
-          }),
+          capabilities: {
+            ...(agentCapability !== null && { agent: agentCapability }),
+            ...(agentStopped && { [CAPABILITY_AGENT_STOPPED]: true }),
+          },
         };
       },
     }
@@ -1255,6 +1262,25 @@ describe("createAgentModule", () => {
       ).rejects.toThrow("server busy");
     });
 
+    it("waits for the agent terminal to be closed (agent-stopped)", async () => {
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
+
+      dispatcher.registerOperation(minimalShutdown("claude", false));
+
+      await dispatcher.dispatch<DeleteWorkspaceIntent>({
+        type: "workspace:delete",
+        payload: {
+          workspaceRef: TEST_WS_REF,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      });
+
+      expect(mockProvider.stopWorkspace).not.toHaveBeenCalled();
+    });
+
     it("does not run when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
@@ -1682,7 +1708,7 @@ describe("createAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("modal", () => {
-    function registerModalOp(dispatcher: Dispatcher, agent: string): void {
+    function registerModalOp(dispatcher: Dispatcher, agent: string, modalRecorded = true): void {
       dispatcher.registerOperation(
         createMinimalOperation<void>(
           VSCODE_MODAL_CHANGED_OPERATION_ID,
@@ -1693,7 +1719,7 @@ describe("createAgentModule", () => {
               intent: ctx.intent,
               workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
               open: (ctx.intent.payload as { open: boolean }).open,
-              capabilities: { agent },
+              capabilities: { agent, ...(modalRecorded && { [MODAL_RECORDED_CAPABILITY]: true }) },
             }),
           }
         )
@@ -1713,6 +1739,18 @@ describe("createAgentModule", () => {
         testPath("/test/workspace").toNative(),
         true
       );
+    });
+
+    it("waits for terminal-focus to record the modal (modal-recorded)", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerModalOp(dispatcher, "claude", false);
+
+      await dispatcher.dispatch({
+        type: INTENT_VSCODE_MODAL_CHANGED,
+        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+      });
+
+      expect(mockProvider.setModalOpen).not.toHaveBeenCalled();
     });
 
     it("does not run when agent capability does not match provider type", async () => {

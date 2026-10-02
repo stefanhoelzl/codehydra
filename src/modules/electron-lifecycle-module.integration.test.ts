@@ -6,6 +6,7 @@
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { createIdempotencyModule } from "../intents/lib/idempotency-module";
 import { describe, it, expect, vi, onTestFinished } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -179,6 +180,46 @@ describe("ElectronLifecycleModule Integration", () => {
     });
 
     expect(mockApp.quit).toHaveBeenCalledOnce();
+  });
+
+  it("quits after the handoff, holding a quit the handoff started until then", async () => {
+    type Listener = (event: { preventDefault(): void }) => void;
+    const mockApp = createMockApp();
+    const listeners = new Map<string, Listener>();
+    mockApp.on = vi.fn((event: string, listener: Listener) => {
+      listeners.set(event, listener);
+    });
+    const order: string[] = [];
+    mockApp.quit = vi.fn(() => {
+      order.push("app.quit");
+    });
+    const dispatcher = createMockDispatcher();
+    dispatcher.registerOperation(new AppShutdownOperation());
+    // As in main.ts: a quit held mid-shutdown re-dispatches app:shutdown, which this drops.
+    dispatcher.registerModule(createIdempotencyModule([{ intentType: INTENT_APP_SHUTDOWN }]));
+    dispatcher.registerModule(
+      createElectronLifecycleModule(createDeps({ app: mockApp, dispatcher }))
+    );
+    // The update installer quits the app itself (electron-updater's quitAndInstall).
+    const installerQuit = { preventDefault: vi.fn() };
+    dispatcher.registerModule({
+      name: "installer",
+      hooks: {
+        [APP_SHUTDOWN_OPERATION_ID]: {
+          handoff: {
+            handler: async () => {
+              order.push("quitAndInstall");
+              listeners.get("before-quit")!(installerQuit);
+            },
+          },
+        },
+      },
+    });
+
+    await dispatcher.dispatch<AppShutdownIntent>({ type: INTENT_APP_SHUTDOWN, payload: {} });
+
+    expect(order).toEqual(["quitAndInstall", "app.quit"]);
+    expect(installerQuit.preventDefault).toHaveBeenCalledOnce();
   });
 
   // ---------------------------------------------------------------------------

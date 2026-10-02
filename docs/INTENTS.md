@@ -269,7 +269,9 @@ The scope follows every callback created inside a dispatch — including long-li
 
 ## Capability-Based Hook Ordering
 
-Hooks are unordered by default. When execution order matters, a handler declares the capabilities it `requires` (a static field) and returns the capabilities it `provides` (in its `HookOutput`). The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers.
+Hooks are unordered by default. When execution order matters, a handler declares the capabilities it `requires` (a static field) and returns the capabilities it `provides` (in its `HookOutput`). The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers. Registration order is not part of the contract: every dependency between two handlers on a hook point is a capability, never the order modules are registered in `main.ts`.
+
+An unsatisfied requirement **skips** its handler silently. A provider whose dependents must run therefore provides on every path, failures included -- e.g. the api-server's `agent-stopped` (`CAPABILITY_AGENT_STOPPED`, delete `shutdown`), the lifecycle module's `workspace-claimed` (delete/hibernate `shutdown`, which the agent resolver and the api-server's terminal close require), and terminal-focus's `modal-recorded` (vscode:modal-changed, before the agents re-report status).
 
 Each `HookHandler` has two fields; capabilities are returned, not declared via a closure:
 
@@ -294,7 +296,7 @@ A `HookOutput` has two channels — `result` (accumulated into `results[]` for t
 
 Capabilities exist for ordering; results carry data out to the operation. Emitting a value as a capability that nothing requires couples the operation to the capability bag for no ordering benefit, and — because capabilities are keyed while results are positional — hides that the value is really operation output. (Example: `workspaceUrl` and `agentType` in `workspace:open` are read only by the operation, so they are results, not capabilities.)
 
-**Rider (multiple result-producers):** results are a positional array. If more than one handler on a hook point returns a result, the operation cannot pick one by key — type the result as a discriminated union (`collect<T>` with a discriminant), or keep the value keyed as a capability. When a single handler produces the result, `results[0]` is unambiguous.
+**Rider (multiple result-producers):** results are an array in no particular order -- the operation must not depend on which handler's result comes first or last. If more than one handler on a hook point returns a result, the operation cannot pick one by key — type the result as a discriminated union (`collect<T>` with a discriminant), or keep the value keyed as a capability. When a single handler produces the result, `results[0]` is unambiguous.
 
 **Federation note:** this keeps the wire clean — `result` and `provides` are both plain data on the returned `HookOutput`, and `requires` is evaluated host-side by the single dispatcher (the `ANY_VALUE` symbol never crosses the wire). See `planning/REMOTE_WORKSPACES_FEDERATION.md`.
 
@@ -304,17 +306,18 @@ Capabilities exist for ordering; results carry data out to the operation. Emitti
 
 Source: `src/intents/lib/hook-helpers.ts`, `src/intents/lib/workspace-operation.ts`
 
-Operations apply a small set of shared policies to `collect()` results. Use these helpers instead of hand-rolling the loops:
+Operations apply a small set of shared policies to `collect()` results. `results[]` carries no order, so every fold is single-writer: a field (or record entry) two handlers provide has no winner and throws. Aggregates that do not depend on order -- an OR (`isDirty`, `alreadyOpen`), a max, a concatenated list -- are the exception. Use these helpers instead of hand-rolling the loops:
 
 | Helper                 | Policy                                                                                                                                                                             |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `throwHookErrors`      | Standard guard for fatal hook points: a lone error is rethrown raw (its message reaches IPC/MCP callers), multiple errors aggregate in an `AggregateError` with the given label    |
-| `lastDefined`          | Last-write-wins extraction of one field across handler results (`null` is a valid value; only `undefined` means "not provided")                                                    |
+| `onlyDefined`          | Single-writer extraction of one field across handler results; throws if two handlers define it (`null` is a valid value; only `undefined` means "not provided")                    |
+| `mergeRecords`         | Merges a record-valued field (an env, a metadata map) across handler results; throws on an entry two handlers set                                                                  |
 | `requireResult`        | Throws the given message when a required hook result is missing                                                                                                                    |
 | `mergeHookResults`     | Conflict-throwing field merge — handlers contribute disjoint field subsets; the same field from two handlers is an error (used by open-workspace, get-project-bases)               |
 | `collectErrorMessages` | Folds thrown handler errors plus per-result `error` strings into one message list for best-effort pipelines that report via progress events instead of throwing (delete-workspace) |
 
-Best-effort hook points (app-shutdown `stop`/`quit`, app-resume `resume`, hibernate/wake teardown, switch-workspace auto-select) intentionally ignore or collect errors — that is documented in each operation header, not a missing guard.
+Best-effort hook points (app-shutdown `stop`/`handoff`/`quit`, app-resume `resume`, hibernate/wake teardown, switch-workspace auto-select) intentionally ignore or collect errors — that is documented in each operation header, not a missing guard.
 
 ### WorkspaceHookOperation
 
@@ -332,7 +335,7 @@ export class GetMetadataOperation extends WorkspaceHookOperation<
       errorLabel: "get-metadata get hooks failed",
       extract: (results) =>
         requireResult(
-          lastDefined(results, (r) => r.metadata),
+          onlyDefined(results, "metadata", "workspace:get-metadata get"),
           "Get metadata hook did not provide metadata result"
         ),
     });
@@ -494,7 +497,7 @@ All operations use the intent dispatcher. Intents are dispatched through operati
 | `get-project-bases`    | `project:get-bases`       | `list`, `refresh`                                                                                                          | `bases:updated`                                                               |
 | `app-start`            | `app:start`               | `before-ready`, `init`, `show-ui`, `migrations`, `register-agents`, `agent-selection`, `save-agent`, `check-deps`, `start` | --                                                                            |
 | `app-ready`            | `app:ready`               | `available-agents`, `load-projects`                                                                                        | `app:started`                                                                 |
-| `app-shutdown`         | `app:shutdown`            | `stop`, `quit`                                                                                                             | --                                                                            |
+| `app-shutdown`         | `app:shutdown`            | `stop`, `handoff`, `quit`                                                                                                  | --                                                                            |
 | `setup`                | `app:setup`               | `show-ui`, `binary`, `extensions`, `hide-ui`                                                                               | `setup:progress`, `setup:error`                                               |
 | `app-resume`           | `app:resume`              | `resume`                                                                                                                   | `app:resumed`                                                                 |
 | `shortcut-key`         | `shortcut:key`            | --                                                                                                                         | `shortcut:key-pressed`                                                        |
@@ -515,7 +518,7 @@ The `open-workspace` operation uses these hook modules:
 - **setup**: AgentModule (starts agent server, fatal) -- passed `workspaceEnv`, which OpenCode's server manager spawns `opencode serve` with (kept in memory for restarts, forgotten on stop). Both repository hook points precede this one, so the agent never starts against a tree a setup script is still preparing, nor without its environment
 - **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), ApiServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's metadata)
 
-The metadata a `workspace:open` reports is the `create` snapshot plus whatever provision, setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads the metadata. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because finalize results fold in last and last write wins, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what the metadata store actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
+The metadata a `workspace:open` reports is the `create` snapshot plus whatever provision, setup and finalize handlers **return in their results** -- so it can only be as complete as its reporters. An agent acting on its own workspace during creation writes through `workspace:set-metadata`, which is not a hook result: its `metadata:changed` event lands on a row the presenter is about to overwrite with that snapshot, and the change is lost until a restart re-reads the metadata. (OpenCode hits this readily -- it sends its initial prompt from the setup hook, one MCP call away from `workspace_set_title`.) WorktreeModule's finalize handler re-reads the metadata and contributes it; because the finalize hook point folds in last, that read supersedes the snapshot, and `workspace:created` and the returned `Workspace` both carry what the metadata store actually holds. It is best-effort -- an unreadable workspace still opens with the snapshot it had. Covered end to end by `e2e/agent-turn.e2e.ts`.
 
 The `delete-workspace` operation uses these hook modules:
 
@@ -555,9 +558,11 @@ Agent selection **must** precede `check-deps`: the deps check is agent-specific 
 
 The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (start hook modules read ports from capabilities). Errors in early hooks abort startup.
 
-The `app-shutdown` operation uses a single hook point:
+The `app-shutdown` operation runs three hook points in sequence:
 
 - **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across the `window-all-closed` and `before-quit` entry points, both registered by `electron-lifecycle-module`. Electron does not wait for async `before-quit` listeners, so that module holds every quit (`preventDefault`) until app:shutdown reaches its `quit` hook, which releases it.
+- **handoff**: Starts what outlives the process, once everything is released: the auto-updater's `quitAndInstall()` when `installUpdate` is set. It must not run in `stop` -- it spawns the installer (Windows) or swaps and relaunches the AppImage (Linux) on the spot, which would race the teardown -- nor after electron's own `app.quit()`, whose on-quit install skips the relaunch. Its own `app.quit()` is held by the `before-quit` gate like any other.
+- **quit**: `electron-lifecycle-module` releases the gate and calls `app.quit()`.
 
 ---
 

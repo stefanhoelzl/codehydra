@@ -296,8 +296,8 @@ describe("AppShutdown Operation", () => {
     });
   });
 
-  describe("quit hook runs after stop hooks", () => {
-    it("quit hook fires after all stop hooks complete", async () => {
+  describe("hook points run in sequence", () => {
+    it("stop, then handoff, then quit — whatever order modules registered in", async () => {
       const order: string[] = [];
       const stopModule: IntentModule = {
         name: "test",
@@ -323,12 +323,24 @@ describe("AppShutdown Operation", () => {
           },
         },
       };
+      const handoffModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [APP_SHUTDOWN_OPERATION_ID]: {
+            handoff: {
+              handler: async () => {
+                order.push("handoff");
+              },
+            },
+          },
+        },
+      };
 
-      const { dispatcher } = createTestSetup([stopModule, quitModule]);
+      const { dispatcher } = createTestSetup([quitModule, handoffModule, stopModule]);
 
       await dispatcher.dispatch(appShutdownIntent());
 
-      expect(order).toEqual(["stop", "quit"]);
+      expect(order).toEqual(["stop", "handoff", "quit"]);
     });
   });
 

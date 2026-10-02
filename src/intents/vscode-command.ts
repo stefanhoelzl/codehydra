@@ -17,7 +17,7 @@ import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
-import { lastDefined } from "./lib/hook-helpers";
+import { onlyDefined } from "./lib/hook-helpers";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 
 export const INTENT_VSCODE_COMMAND = "vscode:command" as const;
@@ -91,7 +91,7 @@ export class VscodeCommandOperation extends WorkspaceHookOperation<typeof schema
       buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "vscode-command execute hooks failed",
       // No required result — a command may legitimately return undefined.
-      extract: (results) => lastDefined(results, (r) => r.result),
+      extract: (results) => onlyDefined(results, "result", "vscode:command execute"),
     });
   }
 }

@@ -19,7 +19,7 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, projectIdSchema, projectPathSchema, projectRefSchema } from "./contract";
-import { throwHookErrors } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 import { Path } from "../utils/path/path";
 
 export const INTENT_RESOLVE_PROJECT = "project:resolve" as const;
@@ -107,14 +107,9 @@ export class ResolveProjectOperation implements Operation<typeof schemas> {
     const { results, errors } = await ctx.hooks.collect("resolve", resolveCtx);
     throwHookErrors(errors, "project:resolve hooks failed");
 
-    let projectId: ResolveProjectResult["projectId"] | undefined;
-    let projectPath: ResolveProjectResult["projectPath"] | undefined;
-    let projectName: string | undefined;
-    for (const r of results) {
-      if (r.projectId !== undefined) projectId = r.projectId;
-      if (r.projectPath !== undefined) projectPath = r.projectPath;
-      if (r.projectName !== undefined) projectName = r.projectName;
-    }
+    const projectId = onlyDefined(results, "projectId", "project:resolve resolve");
+    const projectPath = onlyDefined(results, "projectPath", "project:resolve resolve");
+    const projectName = onlyDefined(results, "projectName", "project:resolve resolve");
 
     if (!projectId || !projectPath) {
       throw new Error(`Project not found: ${payload.projectRef}`);

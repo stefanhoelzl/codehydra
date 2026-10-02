@@ -530,7 +530,7 @@ describe("AutoUpdaterModule Integration", () => {
     await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
   });
 
-  it("quit hook calls quitAndInstall when installUpdate is set", async () => {
+  it("handoff hook calls quitAndInstall when installUpdate is set", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
     await dispatcher.dispatch(shutdownIntent(true));
@@ -538,7 +538,7 @@ describe("AutoUpdaterModule Integration", () => {
     expect(autoUpdater.quitAndInstallCalled).toBe(true);
   });
 
-  it("quit hook does NOT call quitAndInstall when installUpdate is not set", async () => {
+  it("handoff hook does NOT call quitAndInstall when installUpdate is not set", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
     await dispatcher.dispatch(shutdownIntent());

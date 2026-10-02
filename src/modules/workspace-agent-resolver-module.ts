@@ -11,7 +11,13 @@
  *     `requires: { agent: provider.type }`.
  */
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookHandler, HookOutput } from "../intents/lib/operation";
+import {
+  ANY_VALUE,
+  type HookContext,
+  type HookHandler,
+  type HookOutput,
+} from "../intents/lib/operation";
+import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
@@ -169,17 +175,19 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: openSetupHandler,
       },
+      // Teardown: the agents stop once `agent` is provided, so it is provided
+      // only after the workspace is claimed.
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        shutdown: makeResolverHandler(
-          deps,
-          (ctx) => (ctx as DeletePipelineHookInput).workspacePath
-        ),
+        shutdown: {
+          ...makeResolverHandler(deps, (ctx) => (ctx as DeletePipelineHookInput).workspacePath),
+          requires: { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE },
+        },
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
-        shutdown: makeResolverHandler(
-          deps,
-          (ctx) => (ctx as HibernatePipelineHookInput).workspacePath
-        ),
+        shutdown: {
+          ...makeResolverHandler(deps, (ctx) => (ctx as HibernatePipelineHookInput).workspacePath),
+          requires: { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE },
+        },
       },
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: makeResolverHandler(deps, (ctx) => (ctx as GetStatusHookInput).workspacePath),

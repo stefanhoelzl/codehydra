@@ -34,8 +34,7 @@ import {
   workspacePathSchema,
   workspaceRefSchema,
 } from "./contract";
-import type { WorkspaceClosing } from "./contract";
-import { throwHookErrors } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 import { WorkspaceError } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
 
@@ -161,12 +160,18 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
     const { results, errors } = await ctx.hooks.collect("resolve", { intent: ctx.intent });
     throwHookErrors(errors, "workspace:resolve hooks failed");
 
-    // The identity comes whole from one module; the last complete one wins.
-    let identity: z.infer<z.ZodObject<typeof workspaceIdentityShape>> | undefined;
+    // The identity comes whole from one module; two would have no winner.
+    const identities: z.infer<z.ZodObject<typeof workspaceIdentityShape>>[] = [];
     for (const r of results) {
       const parsed = z.object(workspaceIdentityShape).safeParse(r);
-      if (parsed.success) identity = parsed.data;
+      if (parsed.success) identities.push(parsed.data);
     }
+    if (identities.length > 1) {
+      throw new Error(
+        "workspace:resolve resolve hook conflict: identity provided by multiple handlers"
+      );
+    }
+    const identity = identities[0];
 
     if (!identity) {
       // Coded so callers can tell "you named a workspace that isn't there" apart
@@ -186,12 +191,8 @@ export class ResolveWorkspaceOperation implements Operation<typeof schemas> {
     const state = await ctx.hooks.collect("state", stateCtx);
     throwHookErrors(state.errors, "workspace:resolve state hooks failed");
 
-    let active = false;
-    let closing: WorkspaceClosing | null = null;
-    for (const r of state.results) {
-      if (r.active === true) active = true;
-      if (r.closing !== undefined) closing = r.closing;
-    }
+    const active = state.results.some((r) => r.active === true);
+    const closing = onlyDefined(state.results, "closing", "workspace:resolve state") ?? null;
 
     // The resolve step is where a workspace becomes a name: tag this dispatch,
     // and the operation that asked, with it.

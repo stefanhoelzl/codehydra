@@ -71,7 +71,10 @@ import {
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import { streamProgress } from "../../intents/lib/hook-helpers";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
+import {
+  CAPABILITY_AGENT_STOPPED,
+  DELETE_WORKSPACE_OPERATION_ID,
+} from "../../intents/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-status";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
@@ -84,6 +87,7 @@ import { agentSpecSchema } from "../../intents/contract";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { AgentUnreachableError, type AgentPromptConfig, type McpConfig } from "./types";
 import { CLI_CONNECTION_CAPABILITY } from "../cli-module";
+import { MODAL_RECORDED_CAPABILITY } from "../terminal-focus-module";
 import type { AgentModuleProvider } from "./agent-module-provider";
 
 // =============================================================================
@@ -475,8 +479,10 @@ export function createAgentModule(
       },
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
+        // Stopping the agent cuts the connection the api-server's terminal close
+        // travels over, so it waits for that close to finish.
         shutdown: {
-          requires: { agent: provider.type },
+          requires: { agent: provider.type, [CAPABILITY_AGENT_STOPPED]: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
@@ -579,8 +585,10 @@ export function createAgentModule(
       },
 
       [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
+        // After terminal-focus has recorded the modal, so the status this
+        // re-reports is never acted on against a stale modal state.
         modal: {
-          requires: { agent: provider.type },
+          requires: { agent: provider.type, [MODAL_RECORDED_CAPABILITY]: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<void> => {
             const { workspacePath, open } = ctx as ModalHookInput;
             provider.setModalOpen(workspacePath, open);

@@ -8,8 +8,8 @@
  * - `throwHookErrors` — the standard fatal-hook error guard: a lone error is
  *   rethrown raw (preserving its message for IPC/MCP callers), multiple
  *   errors are wrapped in an AggregateError.
- * - `lastDefined` — last-write-wins extraction of a single field across
- *   handler results.
+ * - `onlyDefined` — single-writer extraction of a single field across
+ *   handler results; `mergeRecords` the same for a keyed record (env, metadata).
  * - `requireResult` — guard for hook points that must produce a result.
  * - `mergeHookResults` — conflict-throwing field merge (multiple handlers may
  *   each contribute a disjoint subset of fields).
@@ -30,20 +30,54 @@ export function throwHookErrors(errors: readonly Error[], message: string): void
 }
 
 /**
- * Last-write-wins extraction over hook results: returns the value picked from
- * the last result for which `pick` returned a defined value.
+ * Single-writer extraction over hook results: the one defined value of `key`.
+ * Results carry no order, so a field two handlers define has no winner — that
+ * is a wiring bug, and it throws.
  * `null` is a valid value — only `undefined` means "not provided".
  */
-export function lastDefined<T, V>(
+export function onlyDefined<T, K extends keyof T & string>(
   results: readonly T[],
-  pick: (result: T) => V | undefined
-): V | undefined {
-  let value: V | undefined;
+  key: K,
+  hookPoint: string
+): Exclude<T[K], undefined> | undefined {
+  let value: Exclude<T[K], undefined> | undefined;
   for (const result of results) {
-    const picked = pick(result);
-    if (picked !== undefined) value = picked;
+    const picked = result[key];
+    if (picked === undefined) continue;
+    if (value !== undefined) {
+      throw new Error(`${hookPoint} hook conflict: "${key}" provided by multiple handlers`);
+    }
+    value = picked as Exclude<T[K], undefined>;
   }
   return value;
+}
+
+/** The value type of a record-valued (possibly absent) result field. */
+type RecordValue<R> = R extends Readonly<Record<string, infer V>> ? V : never;
+
+/**
+ * Merge the record each result carries under `key` (an env, a metadata map).
+ * Handlers may contribute disjoint entries; an entry two handlers set has no
+ * winner, since results carry no order, and throws.
+ */
+export function mergeRecords<T, K extends keyof T & string>(
+  results: readonly T[],
+  key: K,
+  hookPoint: string
+): Record<string, RecordValue<T[K]>> {
+  const merged: Record<string, RecordValue<T[K]>> = {};
+  for (const result of results) {
+    const record = result[key] as Readonly<Record<string, RecordValue<T[K]>>> | undefined;
+    for (const [entry, value] of Object.entries(record ?? {})) {
+      if (entry in merged) {
+        throw new Error(
+          `${hookPoint} hook conflict: ${key} "${entry}" provided by multiple handlers`
+        );
+      }
+      merged[entry] = value;
+    }
+  }
+  return merged;
 }
 
 /** Guard for hook points that must produce a result. */

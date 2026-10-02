@@ -20,7 +20,7 @@
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import { ANY_VALUE, type HookContext, type HookOutput } from "../intents/lib/operation";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
@@ -51,7 +51,10 @@ import {
 import { registerTestInfrastructure } from "../intents/operations.test-utils";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { SET_METADATA_OPERATION_ID, INTENT_SET_METADATA } from "../intents/set-metadata";
-import { createWorkspaceLifecycleModule } from "./workspace-lifecycle-module";
+import {
+  createWorkspaceLifecycleModule,
+  WORKSPACE_CLAIMED_CAPABILITY,
+} from "./workspace-lifecycle-module";
 import type { WorkspaceClosing } from "../intents/contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
@@ -63,15 +66,16 @@ const PROJECT_PATH = projPath("/test/project");
 const WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-1");
 const OTHER_WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-2");
 const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_PATH), "feature-1");
+const CLAIMED = { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE };
 
 /**
  * Register the lifecycle module plus enough infrastructure for the real
  * teardown operations to run, and a probe that records what `closing` says at
  * each hook point.
  *
- * The lifecycle module is registered before the probe, mirroring production:
- * handlers in a hook point run in registration order, so the probe observes the
- * claim exactly as a real consumer would.
+ * The probe's "shutdown" handlers require the claim, as production teardown
+ * does, and are registered *before* the lifecycle module: the capability, not
+ * registration order, is what puts them after it.
  */
 function setup(options?: { deleteError?: string; hibernateShutdownError?: string }) {
   const dispatcher = new Dispatcher({ logger: SILENT_LOGGER });
@@ -98,8 +102,6 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     },
   });
 
-  dispatcher.registerModule(createWorkspaceLifecycleModule());
-
   /** What `closing` reported at each hook point, in execution order. */
   const observed: Array<{ hook: string; closing: WorkspaceClosing | null }> = [];
   const record =
@@ -114,7 +116,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     name: "probe",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
-        shutdown: { handler: record("delete:shutdown") },
+        shutdown: { requires: CLAIMED, handler: record("delete:shutdown") },
         release: { handler: record("delete:release") },
         delete: {
           handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
@@ -126,6 +128,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
+          requires: CLAIMED,
           handler: async (ctx: HookContext): Promise<HookOutput<Record<string, never>>> => {
             await record("hibernate:shutdown")(ctx);
             if (options?.hibernateShutdownError) throw new Error(options.hibernateShutdownError);
@@ -137,6 +140,7 @@ function setup(options?: { deleteError?: string; hibernateShutdownError?: string
     },
   };
   dispatcher.registerModule(probe);
+  dispatcher.registerModule(createWorkspaceLifecycleModule());
 
   return { dispatcher, observed };
 }
