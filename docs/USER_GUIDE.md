@@ -552,8 +552,8 @@ A script's output never reaches CodeHydra's own log, and an error never quotes
 it — output can carry credentials an automation inlines. Instead:
 
 - a failed run raises a **Plugin failed** notification naming the plugin, the
-  entry, the exit and the run log (`local:github automations.reviews: exit 1 —
-log: …`); a plugin that cannot run at all — an invalid manifest, a folder
+  entry and the exit, and pointing to `ch plugin errors` for the run log
+  (`local:github automations.reviews: exit 1 — see ch plugin errors`); a plugin that cannot run at all — an invalid manifest, a folder
   without `plugin.yaml` — raises **Plugin cannot run**. Each is raised once
   per distinct message, not every time it happens again;
 - `ch plugin errors` lists the same: every plugin that cannot run, and the last
@@ -871,7 +871,9 @@ number of seconds between the end of one poll and the start of the next
 `auto-workspace.poll-interval` is still read). Every automation runs each
 poll. The script gets `{}` on stdin and is killed after 30 seconds. A failed or
 timed-out script, or output that is not a JSON array, skips that automation for
-the poll and raises **Plugin failed**.
+the poll and raises **Plugin failed**. Exit 75 (`EX_TEMPFAIL`) marks a temporary
+failure: the poll is skipped, and **Plugin failed** is raised only once it has
+persisted for 10 minutes.
 
 `ch plugin schema --items` prints the item format as a JSON Schema, one branch
 per action; `ch <command> --help` (`ch ws create --help`, …) describes each

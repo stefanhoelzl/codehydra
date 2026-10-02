@@ -14,9 +14,13 @@
  * A notification is raised when an entry appears or its message changes, never
  * for the same message again: an automation fails every poll cycle until it is
  * fixed, and one card saying so is enough. The text never quotes a script's
- * output — that can carry credentials — only the exit and the path of the run
- * log that holds the rest.
+ * output — that can carry credentials — and never names the run log either:
+ * each run has its own, so a card naming it would never join the identical
+ * card already open. It points at `ch plugin errors`, which lists the log.
  */
+
+/** Where a card sends the reader for the rest: the run log and the full list. */
+export const ERRORS_POINTER = "see ch plugin errors";
 
 import { notify } from "../presentation/notification-card";
 
@@ -56,11 +60,15 @@ export interface PluginErrorBook {
     scope: ProblemScope,
     problems: readonly { readonly plugin: string; readonly message: string }[]
   ): void;
-  /** A run failed. */
+  /**
+   * A run failed. `quiet` records it without a card — an automation's
+   * temporary failure, until it has lasted long enough to be worth one.
+   */
   failure(
     key: Required<Pick<ErrorKey, "entry">> & ErrorKey,
     message: string,
-    logPath?: string
+    logPath?: string,
+    options?: { readonly quiet?: boolean }
   ): void;
   /** A run succeeded: forget its entry's failure. */
   success(key: Required<Pick<ErrorKey, "entry">> & ErrorKey): void;
@@ -73,8 +81,7 @@ function keyOf(key: ErrorKey): string {
 
 function describe(entry: PluginErrorEntry): string {
   const where = entry.entry !== undefined ? `${entry.plugin} ${entry.entry}` : entry.plugin;
-  const log = entry.logPath !== undefined ? ` — log: ${entry.logPath}` : "";
-  return `${where}: ${entry.message}${log}`;
+  return `${where}: ${entry.message} — ${ERRORS_POINTER}`;
 }
 
 export function createPluginErrorBook(deps: {
@@ -84,7 +91,7 @@ export function createPluginErrorBook(deps: {
   const entries = new Map<string, PluginErrorEntry>();
   const now = deps.now ?? ((): Date => new Date());
 
-  function record(key: ErrorKey, message: string, logPath?: string): void {
+  function record(key: ErrorKey, message: string, logPath?: string, quiet = false): void {
     const id = keyOf(key);
     const previous = entries.get(id);
     const entry: PluginErrorEntry = {
@@ -96,7 +103,7 @@ export function createPluginErrorBook(deps: {
       at: now().toISOString(),
     };
     entries.set(id, entry);
-    if (previous?.message === message) return;
+    if (quiet || previous?.message === message) return;
     notify(deps.dispatcher, {
       type: "error",
       title: key.entry !== undefined ? "Plugin failed" : "Plugin cannot run",
@@ -129,7 +136,8 @@ export function createPluginErrorBook(deps: {
         );
       }
     },
-    failure: (key, message, logPath) => record(key, message, logPath),
+    failure: (key, message, logPath, options) =>
+      record(key, message, logPath, options?.quiet ?? false),
     success: (key) => void entries.delete(keyOf(key)),
     list: () => [...entries.values()],
   };

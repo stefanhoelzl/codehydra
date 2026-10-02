@@ -125,7 +125,7 @@ import {
   type LoadedPlugin,
 } from "./discovery";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
-import { createPluginErrorBook, type PluginErrorBook } from "./errors";
+import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
 import { createPluginTrust, type PluginTrust } from "./trust";
 import { createShellResolver, ShellUnavailableError } from "./shells";
 import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
@@ -268,6 +268,15 @@ const ACTION_MIGRATE = "Migrate";
 
 /** How long an automation's script may run before it is killed. */
 const AUTOMATION_TIMEOUT_MS = 30_000;
+
+/**
+ * The exit an automation uses to say "temporary, try again next poll" —
+ * `EX_TEMPFAIL` from sysexits.h, as mail servers use it.
+ */
+const TEMPORARY_FAILURE_EXIT = 75;
+
+/** How long temporary failures may go on before they are worth a card. */
+const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
 
 /** A hook script one plugin contributes to one entry. */
 interface HookScript {
@@ -571,7 +580,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           ? error.message
           : `could not start: ${getErrorMessage(error)}`;
       errors.failure(key, message);
-      throw new HookFailedError(entry, `${label(script, entry)} ${message}`);
+      throw new HookFailedError(entry, `${label(script, entry)} ${message} — ${ERRORS_POINTER}`);
     }
 
     const { result } = pending;
@@ -609,8 +618,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         entry,
         reason: failure,
       });
-      const where = logPath !== undefined ? ` (log: ${logPath.toNative()})` : "";
-      throw new HookFailedError(entry, `${label(script, entry)} failed: ${failure}${where}`);
+      throw new HookFailedError(
+        entry,
+        `${label(script, entry)} failed: ${failure} — ${ERRORS_POINTER}`
+      );
     }
     errors.success(key);
     return output;
@@ -947,6 +958,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   /** Automations that failed in the current cycle, and the ones run in the last. */
   let failedThisCycle = new Set<string>();
   let ranLastCycle: readonly AutomationSource[] = [];
+  /**
+   * When each automation's current run of temporary failures began. Any other
+   * outcome — a success or a real failure — ends it.
+   */
+  const temporarySince = new Map<string, number>();
   /** Workspace plugins already warned about for shipping automations. */
   const warnedWorkspaceAutomations = new Set<string>();
 
@@ -997,6 +1013,32 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     errors.failure(automationKey(source), message, logPath?.toNative());
   }
 
+  /**
+   * An automation exited 75: skip it this poll and try again next. Listed in
+   * `ch plugin errors` straight away, but raised as a card only once the
+   * failures have gone on for the grace period — then as an ordinary `exit 75`,
+   * whose new message is what raises the card.
+   */
+  function temporaryFailure(source: AutomationSource, logPath?: Path): void {
+    const now = Date.now();
+    const since = temporarySince.get(source.id) ?? now;
+    temporarySince.set(source.id, since);
+    failedThisCycle.add(source.id);
+    deps.logger.debug("Automation failed temporarily, retrying next cycle", {
+      automation: source.id,
+    });
+    if (now - since >= TEMPORARY_FAILURE_GRACE_MS) {
+      errors.failure(automationKey(source), `exit ${TEMPORARY_FAILURE_EXIT}`, logPath?.toNative());
+    } else {
+      errors.failure(
+        automationKey(source),
+        `temporary failure (exit ${TEMPORARY_FAILURE_EXIT}), retrying`,
+        logPath?.toNative(),
+        { quiet: true }
+      );
+    }
+  }
+
   /** Run an automation's script and read the array it prints; null when it failed. */
   async function runAutomationScript(source: AutomationSource): Promise<unknown[] | null> {
     const entry = automationScripts.get(source.id);
@@ -1017,6 +1059,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         timeoutMs: AUTOMATION_TIMEOUT_MS,
       });
     } catch (error) {
+      temporarySince.delete(source.id);
       automationFailed(
         source,
         error instanceof ShellUnavailableError ? error.message : getErrorMessage(error)
@@ -1025,9 +1068,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     }
 
     const { result } = pending;
+    const temporary = result.status === "exited" && result.exitCode === TEMPORARY_FAILURE_EXIT;
+    if (!temporary) temporarySince.delete(source.id);
     let failure: string | undefined;
     let items: unknown[] | undefined;
-    if (result.status !== "exited" || result.exitCode !== 0) {
+    if (temporary) {
+      failure = `temporary failure (exit ${TEMPORARY_FAILURE_EXIT})`;
+    } else if (result.status !== "exited" || result.exitCode !== 0) {
       failure = describeStatus(result);
     } else {
       try {
@@ -1041,6 +1088,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const logPath = await pending.finish(
       failure === undefined ? { outcome: "ok" } : { outcome: "failed", reason: failure }
     );
+    if (temporary) {
+      temporaryFailure(source, logPath);
+      return null;
+    }
     if (failure !== undefined || items === undefined) {
       deps.logger.warn("Automation script failed, skipping its items this cycle", {
         automation: source.id,
