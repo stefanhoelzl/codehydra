@@ -1151,20 +1151,23 @@
     position: relative;
   }
 
-  /* Overlays the end of the first line and is hidden at rest, so it never
-     takes width from the labels; while shown, the first line makes room. */
+  /* Overlays the end of the first line, so it never takes width from the
+     labels; while shown, the first line makes room. Invisible at rest, but still
+     in the accessibility tree and the tab order (a pointer over it hovers the
+     row, so it is never clicked unseen). */
   .row-actions {
     position: absolute;
     top: 4px;
     right: 0;
-    display: none;
+    display: flex;
     align-items: center;
     height: 18px;
+    opacity: 0;
   }
 
   .workspace-item:hover .row-actions,
   .workspace-item:focus-within .row-actions {
-    display: flex;
+    opacity: 1;
   }
 
   .workspace-item:hover .workspace-label-cell:has(.row-actions) .ws-primary-line,
