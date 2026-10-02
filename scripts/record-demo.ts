@@ -18,7 +18,7 @@
  * CodeHydra data dir or your ~/.claude — it seeds an isolated root and an isolated
  * CLAUDE_CONFIG_DIR, so the video shows no personal account details.
  */
-// MUST stay first: importing this sets _CH_ROOT_DIR / CLAUDE_CONFIG_DIR / DISPLAY
+// MUST stay first: importing this sets _CHDEV_ROOT_DIR / CLAUDE_CONFIG_DIR / DISPLAY
 // as a side effect, and e2e/fixtures.ts (below) transitively evaluates e2e/env.ts,
 // which reads them at module-eval time. ESM evaluates in import order.
 import { APP_ROOT, CLAUDE_CONFIG_DIR, DISPLAY } from "./demo-env.ts";

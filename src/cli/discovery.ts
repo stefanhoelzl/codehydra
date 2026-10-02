@@ -69,12 +69,12 @@ export interface ConnectionEnv {
  * Pick the connection: `_CH_DATA_DIR`, then `_CH_API_PORT` +
  * `_CH_API_TOKEN`, then the data directory this copy of `ch` belongs to.
  *
- * The port and token exist so `ch mcp` can run with no state file to read, as
- * it does under OpenCode's server. `_CH_DATA_DIR` beats them because it is the
- * one deliberate choice: anything launched from inside a CodeHydra agent
- * inherits that instance's port and token, and `pnpm preview` sets
- * `_CH_DATA_DIR` so the app it starts — and every terminal and agent in it —
- * talks to itself rather than to the instance it was launched from.
+ * The port and token exist so `ch` and `ch mcp` can run with no state file to
+ * read, as they do under OpenCode's server. `_CH_DATA_DIR` beats them because
+ * it is the one deliberate choice: a shell that inherited one instance's port
+ * and token can still point `ch` at another. (An instance started from inside
+ * another one clears every inherited `_CH_*` at startup, so its own children
+ * never carry the parent's.)
  */
 export function chooseConnection(
   selfPath: string,

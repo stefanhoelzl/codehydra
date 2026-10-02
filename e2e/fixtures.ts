@@ -120,7 +120,7 @@ export async function launchCommand(options: LaunchAppOptions = {}): Promise<{
     exe: packaged ? packagedExecutable() : DEV_ELECTRON,
     argv: [...(packaged ? [] : [REPO_ROOT]), ...DRIVER_APP_ARGS, ...(await appFlags(options))],
     cwd: REPO_ROOT,
-    env: { ...process.env, _CH_ROOT_DIR: ROOT_DIR },
+    env: { ...process.env, _CHDEV_ROOT_DIR: ROOT_DIR },
   };
 }
 
@@ -132,10 +132,10 @@ export async function launchApp(driver: AppDriver, options: LaunchAppOptions = {
     ...(mode() === "packaged" && { executablePath: packagedExecutable(), appPath: null }),
     cwd: REPO_ROOT,
     args,
-    // _CH_ROOT_DIR moves dataRoot and bundlesRoot together, whatever the build flavor.
+    // _CHDEV_ROOT_DIR moves dataRoot and bundlesRoot together, whatever the build flavor.
     env: {
       ...process.env,
-      _CH_ROOT_DIR: ROOT_DIR,
+      _CHDEV_ROOT_DIR: ROOT_DIR,
       ...(typeof options.env === "function" ? options.env() : (options.env ?? {})),
     },
     timeout: 120_000,

@@ -33,7 +33,7 @@ describe("Main process wiring", () => {
     resetElectronFake();
     vi.stubGlobal("__IS_DEV_BUILD__", true);
     // Clear the root override to ensure tests use expected paths
-    vi.stubEnv("_CH_ROOT_DIR", "");
+    vi.stubEnv("_CHDEV_ROOT_DIR", "");
   });
 
   afterEach(() => {

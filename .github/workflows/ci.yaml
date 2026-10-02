@@ -115,7 +115,7 @@ jobs:
 
   # Drive the exact artifacts `build` uploaded, on the OS each ships to.
   #
-  # `_CH_ROOT_DIR` puts the app's data root *and* its binary bundles under the runner
+  # `_CHDEV_ROOT_DIR` puts the app's data root *and* its binary bundles under the runner
   # temp dir, so download-binaries can wipe it: e2e/env.ts refuses to rm -rf anything outside
   # os.tmpdir() or RUNNER_TEMP. It also overrides the value the setup action exports.
   e2e:
@@ -140,11 +140,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
 
-      # Must come *after* the setup action, which exports its own _CH_ROOT_DIR:
+      # Must come *after* the setup action, which exports its own _CHDEV_ROOT_DIR:
       # a later GITHUB_ENV write wins, whereas job-level `env:` would not.
       - name: Point the app at a disposable root
         shell: bash
-        run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e" >> "$GITHUB_ENV"
+        run: echo "_CHDEV_ROOT_DIR=${{ runner.temp }}/ch-e2e" >> "$GITHUB_ENV"
 
       # agent-turn.e2e.ts launches Claude for real. With version.claude unset,
       # CodeHydra runs a system install when there is one (binary-resolver.ts), so
@@ -242,7 +242,7 @@ jobs:
 
       - name: Point the app at a disposable root
         shell: bash
-        run: echo "_CH_ROOT_DIR=${{ runner.temp }}/ch-e2e-nsis" >> "$GITHUB_ENV"
+        run: echo "_CHDEV_ROOT_DIR=${{ runner.temp }}/ch-e2e-nsis" >> "$GITHUB_ENV"
 
       - name: Download installer
         uses: actions/download-artifact@v8

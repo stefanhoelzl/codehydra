@@ -91,7 +91,7 @@ export interface AppBoundary {
    * Electron keys the lock on the `userData` directory, which
    * electron-lifecycle relocates to `<dataRoot>/electron/userData` — so the
    * lock is per data root for free: a packaged install, an e2e run under
-   * `_CH_ROOT_DIR`, and each `pnpm dev` worktree all contend separately, which
+   * `_CHDEV_ROOT_DIR`, and each `pnpm dev` worktree all contend separately, which
    * is exactly the granularity we want.
    *
    * Exits with code 0 when another instance already holds it: nothing failed,

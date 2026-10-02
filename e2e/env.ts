@@ -1,7 +1,7 @@
 /**
  * Roots, executable resolution, and the reset helpers for the e2e suite.
  *
- * `_CH_ROOT_DIR` relocates the app's data root *and* its bundles root together, in
+ * `_CHDEV_ROOT_DIR` relocates the app's data root *and* its bundles root together, in
  * every build flavor (path-provider.ts). So the suite has exactly one root to reason
  * about, and neither `~/.local/share/codehydra` nor the repo's `./app-data` is ever
  * touched — which matters, because "packaged" does not imply "production": a build's
@@ -40,7 +40,7 @@ export function mode(): Mode {
  */
 export const ROOT_DIR =
   // `||`, not `??`: an empty string means "unset" here, as it does everywhere else.
-  process.env._CH_ROOT_DIR ||
+  process.env._CHDEV_ROOT_DIR ||
   join(
     realpathSync(tmpdir()),
     `codehydra-e2e-${createHash("sha256").update(realpathSync(REPO_ROOT)).digest("hex").slice(0, 8)}`
@@ -50,7 +50,7 @@ export const ROOT_DIR =
 export const DATA_ROOT = ROOT_DIR;
 
 /**
- * The app's home root: config.json and plugins/. `_CH_ROOT_DIR` puts it inside
+ * The app's home root: config.json and plugins/. `_CHDEV_ROOT_DIR` puts it inside
  * the data root, so a run never reads or writes the user's real `~/.codehydra`.
  */
 export const HOME_ROOT = join(DATA_ROOT, "home");
@@ -84,7 +84,7 @@ function disposableRoots(): string[] {
 /** Refuse to delete anything outside a disposable root. */
 function assertDisposable(path: string): void {
   if (!path || !isAbsolute(path)) {
-    throw new Error(`_CH_ROOT_DIR must be an absolute path, got: ${JSON.stringify(path)}`);
+    throw new Error(`_CHDEV_ROOT_DIR must be an absolute path, got: ${JSON.stringify(path)}`);
   }
   const target = normalizePath(existsSync(path) ? realpathSync(path) : path);
   const allowed = disposableRoots();
@@ -92,7 +92,7 @@ function assertDisposable(path: string): void {
   if (!ok) {
     throw new Error(
       `refusing to rm -rf a path outside ${allowed.join(" or ")}: ${target}\n` +
-        `unset, _CH_ROOT_DIR resolves to your real CodeHydra data directory — use a temp path.`
+        `unset, _CHDEV_ROOT_DIR resolves to your real CodeHydra data directory — use a temp path.`
     );
   }
 }

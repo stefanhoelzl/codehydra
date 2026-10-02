@@ -361,7 +361,19 @@ test.beforeAll(async () => {
   );
 });
 
-const app = useApp({ extraArgs: launchFlags });
+/**
+ * What an app launched from inside another CodeHydra inherits. The app clears
+ * every `_CH_*` at startup; if it ever stopped, the `ch` in the hook below would
+ * follow these to an instance that does not exist and the `via-ch` tag would
+ * never show.
+ */
+const INHERITED_ENV = {
+  _CH_API_PORT: "1",
+  _CH_API_TOKEN: "inherited",
+  _CH_DATA_DIR: join(tmpdir(), "ch-e2e-not-this-instance"),
+};
+
+const app = useApp({ extraArgs: launchFlags, env: INHERITED_ENV });
 
 // After useApp's own beforeAll: it resets the home right before launching.
 test.beforeAll(() => {

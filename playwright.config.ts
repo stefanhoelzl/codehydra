@@ -3,7 +3,7 @@ import { ROOT_DIR } from "./e2e/env";
 
 // Children inherit this; env.ts already resolved it deterministically so every
 // worker and project agrees on which root download-binaries seeded.
-process.env._CH_ROOT_DIR = ROOT_DIR;
+process.env._CHDEV_ROOT_DIR = ROOT_DIR;
 
 const WARM_SPECS = "**/!(download-binaries).e2e.ts";
 

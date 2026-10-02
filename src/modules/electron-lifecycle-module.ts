@@ -290,7 +290,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             // Strictly after the setPath loop above: Electron keys the
             // single-instance lock on `userData`, so claiming it before the
             // redirect would key it on the system default and make every data
-            // root — dev worktrees, e2e runs under `_CH_ROOT_DIR` — contend
+            // root — dev worktrees, e2e runs under `_CHDEV_ROOT_DIR` — contend
             // with the installed app. Returns false only when another instance
             // holds the lock, and then the process is already exiting; bail so
             // nothing below touches state that instance owns.
