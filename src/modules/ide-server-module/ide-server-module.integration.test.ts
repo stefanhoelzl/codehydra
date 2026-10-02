@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // patched. Passed as vi.fn's implementation rather than mockResolvedValue so the
 // suite's `mockReset` restores it between tests; a rewrite is opted into per test.
 vi.mock("./bundle-patches", () => ({ applyBundlePatches: vi.fn(async () => false) }));
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { IntentModule } from "../../intents/lib/module";
@@ -1449,7 +1449,8 @@ describe("IdeServerModule", () => {
       const binDir = testPath("/test/app-data/bin").toNative();
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
-      expect(env.PATH).toBe(`${binDir}${delimiter}/usr/bin:/usr/local/bin`);
+      // The mock deps run as linux; serve-env.test.ts covers the Windows form.
+      expect(env.PATH).toBe(`${binDir}:/usr/bin:/usr/local/bin`);
     });
 
     it("includes EDITOR with absolute path and flags", async () => {
@@ -1460,9 +1461,8 @@ describe("IdeServerModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const binDir = testPath("/test/app-data/bin").toNative();
-      const isWindows = process.platform === "win32";
-      const expectedCodeCmd = isWindows ? `"${join(binDir, "code.cmd")}"` : join(binDir, "code");
-      const expectedEditor = `${expectedCodeCmd} --wait --reuse-window`;
+      // The mock deps run as linux; serve-env.test.ts covers the quoted code.cmd.
+      const expectedEditor = `${join(binDir, "code")} --wait --reuse-window`;
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;

@@ -101,7 +101,7 @@ describe("OpenCodeServerManager", () => {
         {
           command: expect.stringContaining("opencode") as string,
           args: expect.arrayContaining(["serve", "--port", "14001"]) as unknown as string[],
-          cwd: "/workspace/feature-a",
+          cwd: new Path("/workspace/feature-a").toNative(),
         },
       ]);
     });
