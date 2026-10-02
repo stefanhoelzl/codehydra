@@ -169,7 +169,7 @@ describe("DebugModule Integration", () => {
       const result = ((await resolveHook.handler(resolveCtx)) as HookOutput<ResolveHookResult>)
         .result!;
       expect(result).toMatchObject({
-        projectPath: testPath("/projects/my-app").toNative(),
+        projectPath: testPath("/projects/my-app").toString(),
         workspaceName: "test-1",
       });
     });

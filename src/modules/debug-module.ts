@@ -34,6 +34,7 @@ import type { Dispatcher } from "../intents/lib/dispatcher";
 import { NotificationCard, notify } from "./presentation/notification-card";
 import type { NotificationConfig } from "../shared/notification-types";
 import type { WorkspacePath } from "../intents/contract";
+import { Path } from "../utils/path/path";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 interface DebugModuleDeps {
@@ -131,10 +132,12 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { payload } = (ctx as ResolveHookInput).intent;
             for (const cached of debugWorkspaces.values()) {
-              if (
-                cached.workspaceRef === payload.workspaceRef ||
-                cached.workspacePath === payload.workspacePath
-              ) {
+              // A path compares as a path: a caller may hand it over in the OS's form.
+              const byPath =
+                payload.workspacePath !== undefined &&
+                cached.workspacePath !== undefined &&
+                new Path(cached.workspacePath).equals(payload.workspacePath);
+              if (cached.workspaceRef === payload.workspaceRef || byPath) {
                 return { result: cached };
               }
             }
