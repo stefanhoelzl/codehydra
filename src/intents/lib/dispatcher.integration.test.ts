@@ -2174,4 +2174,317 @@ describe("Dispatcher", () => {
       );
     });
   });
+  // ===========================================================================
+  // Concurrent hooks (experimental.concurrent-hooks)
+  // ===========================================================================
+
+  describe("concurrent hooks", () => {
+    /** A promise resolved from outside, to hold a handler mid-flight. */
+    function gate(): { promise: Promise<void>; open: () => void } {
+      let open!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { promise, open };
+    }
+
+    /** Let every queued microtask and timer callback run. */
+    const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+    function setup(handlers: HookHandler[], concurrent: () => boolean = () => true) {
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        concurrentHooks: concurrent,
+      });
+      handlers.forEach((h, i) =>
+        dispatcher.registerModule({
+          name: h.name ?? `handler-${i}`,
+          hooks: { "test-op": { "test-hook": h } },
+        })
+      );
+      dispatcher.registerOperation(
+        defineOp("test:collect", {
+          id: "test-op",
+          execute: async (opCtx) =>
+            opCtx.hooks.collect(
+              "test-hook",
+              { intent: opCtx.intent },
+              {
+                onYield: (frame) => {
+                  frames.push(frame);
+                },
+              }
+            ),
+        })
+      );
+      const frames: unknown[] = [];
+      const run = (): Promise<HookResult> =>
+        dispatcher.dispatch({
+          type: "test:collect",
+          payload: {},
+        }) as unknown as Promise<HookResult>;
+      return { dispatcher, run, frames };
+    }
+
+    it("starts every ready handler without waiting for the others", async () => {
+      const a = gate();
+      const b = gate();
+      const started: string[] = [];
+      const { run } = setup([
+        {
+          handler: async () => {
+            started.push("a");
+            await a.promise;
+          },
+        },
+        {
+          handler: async () => {
+            started.push("b");
+            await b.promise;
+          },
+        },
+      ]);
+
+      const done = run();
+      await flush();
+      expect(started).toEqual(["a", "b"]);
+
+      b.open();
+      a.open();
+      const result = await done;
+      expect(result.errors).toEqual([]);
+    });
+
+    it("runs one at a time when the flag is off", async () => {
+      const a = gate();
+      const started: string[] = [];
+      const { run } = setup(
+        [
+          {
+            handler: async () => {
+              started.push("a");
+              await a.promise;
+            },
+          },
+          {
+            handler: async () => {
+              started.push("b");
+            },
+          },
+        ],
+        () => false
+      );
+
+      const done = run();
+      await flush();
+      expect(started).toEqual(["a"]);
+
+      a.open();
+      await done;
+      expect(started).toEqual(["a", "b"]);
+    });
+
+    it("starts a consumer as soon as its provider finishes, not when slow siblings do", async () => {
+      const slow = gate();
+      const order: string[] = [];
+      const { run } = setup([
+        {
+          name: "slow",
+          handler: async () => {
+            await slow.promise;
+            order.push("slow");
+          },
+        },
+        {
+          name: "consumer",
+          requires: { cap: ANY_VALUE },
+          handler: async () => {
+            order.push("consumer");
+          },
+        },
+        {
+          name: "provider",
+          handler: async () => {
+            order.push("provider");
+            return { provides: { cap: 1 } };
+          },
+        },
+      ]);
+
+      const done = run();
+      await flush();
+      expect(order).toEqual(["provider", "consumer"]);
+
+      slow.open();
+      await done;
+      expect(order).toEqual(["provider", "consumer", "slow"]);
+    });
+
+    it("gives a handler the capabilities provided before it started", async () => {
+      const seen: Record<string, unknown>[] = [];
+      const { run } = setup([
+        { handler: async () => ({ provides: { first: true } }) },
+        {
+          requires: { first: ANY_VALUE },
+          handler: async (ctx: HookContext) => {
+            seen.push({ ...ctx.capabilities });
+            return { provides: { second: true } };
+          },
+        },
+      ]);
+
+      const result = await run();
+
+      expect(seen[0]).toMatchObject({ first: true });
+      expect(seen[0]).not.toHaveProperty("second");
+      expect(result.capabilities).toMatchObject({ first: true, second: true });
+    });
+
+    it("runs every handler and collects every error and result", async () => {
+      const { run } = setup([
+        {
+          handler: async () => {
+            throw new Error("boom");
+          },
+        },
+        { handler: async () => ({ result: "ok" }) },
+        {
+          handler: () => {
+            throw new Error("sync boom");
+          },
+        },
+      ]);
+
+      const result = await run();
+
+      expect(result.results).toEqual(["ok"]);
+      expect(result.errors.map((e) => e.message).sort()).toEqual(["boom", "sync boom"]);
+    });
+
+    it("skips a handler whose requirement nothing provides", async () => {
+      const ran = vi.fn();
+      const { run } = setup([
+        { handler: async () => ({ result: "ok" }) },
+        {
+          requires: { never: ANY_VALUE },
+          handler: async () => {
+            ran();
+          },
+        },
+      ]);
+
+      const result = await run();
+
+      expect(ran).not.toHaveBeenCalled();
+      expect(result.results).toEqual(["ok"]);
+    });
+
+    it("keeps each streaming handler's frames in order while interleaving them", async () => {
+      const step = gate();
+      const { run, frames } = setup([
+        {
+          handler: async function* () {
+            yield "a1";
+            await step.promise;
+            yield "a2";
+          },
+        },
+        {
+          handler: async function* () {
+            yield "b1";
+            yield "b2";
+          },
+        },
+      ]);
+
+      const done = run();
+      await flush();
+      step.open();
+      await done;
+
+      expect(frames.filter((f) => String(f).startsWith("a"))).toEqual(["a1", "a2"]);
+      expect(frames.filter((f) => String(f).startsWith("b"))).toEqual(["b1", "b2"]);
+      expect(frames.indexOf("b2")).toBeLessThan(frames.indexOf("a2"));
+    });
+
+    it("runs an event's handlers concurrently", async () => {
+      const a = gate();
+      const started: string[] = [];
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        concurrentHooks: () => true,
+      });
+      dispatcher.registerModule({
+        name: "slow",
+        events: {
+          "test:happened": {
+            handler: async () => {
+              started.push("slow");
+              await a.promise;
+            },
+          },
+        },
+      });
+      dispatcher.registerModule({
+        name: "fast",
+        events: {
+          "test:happened": {
+            handler: async () => {
+              started.push("fast");
+            },
+          },
+        },
+      });
+      dispatcher.registerOperation(
+        defineOp("test:emit", {
+          id: "emit-op",
+          execute: async (ctx) => ctx.emit({ type: "test:happened", payload: {} }),
+        })
+      );
+
+      const done = dispatcher.dispatch({ type: "test:emit", payload: {} });
+      await flush();
+      expect(started).toEqual(["slow", "fast"]);
+
+      a.open();
+      await done;
+    });
+
+    it("reads the flag once per hook point", async () => {
+      let concurrent = false;
+      let hold = gate();
+      const started: string[] = [];
+      const { run } = setup(
+        [
+          {
+            handler: async () => {
+              started.push("a");
+              await hold.promise;
+            },
+          },
+          {
+            handler: async () => {
+              started.push("b");
+            },
+          },
+        ],
+        () => concurrent
+      );
+
+      const first = run();
+      concurrent = true; // too late for the hook point already running
+      await flush();
+      expect(started).toEqual(["a"]);
+      hold.open();
+      await first;
+
+      started.length = 0;
+      hold = gate();
+      const second = run();
+      await flush();
+      expect(started).toEqual(["a", "b"]);
+      hold.open();
+      await second;
+    });
+  });
 });
