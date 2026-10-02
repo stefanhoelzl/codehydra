@@ -124,11 +124,12 @@ export interface SpawnedProcess {
 
   /**
    * Graceful shutdown: SIGTERM → wait → SIGKILL → wait.
-   * Also kills child processes.
+   * Also kills child processes, and on Unix each wait lasts until the process
+   * *and* every descendant signalled with it have exited.
    *
    * @param termTimeout - Wait time after SIGTERM (ms). undefined = skip wait, proceed to SIGKILL.
    * @param killTimeout - Wait time after SIGKILL (ms). undefined = skip wait, return immediately.
-   * @returns {success: true, reason: "SIGTERM"|"SIGKILL"} if exited, {success: false} if still running
+   * @returns {success: true, reason: "SIGTERM"|"SIGKILL"} if the tree exited, {success: false} if any of it is still running
    */
   kill(termTimeout?: number, killTimeout?: number): Promise<KillResult>;
 
@@ -350,7 +351,7 @@ async function killProcessTree(
   }
 }
 
-/** Interval between liveness probes while waiting for a foreign PID to exit. */
+/** Interval between liveness probes while waiting for PIDs to exit. */
 const PID_EXIT_POLL_INTERVAL_MS = 50;
 
 /**
@@ -370,20 +371,22 @@ function pidExists(pid: number): boolean {
 }
 
 /**
- * Wait for a foreign PID to disappear, up to `timeout` ms.
+ * Wait for every one of `pids` to disappear, up to `timeout` ms.
  *
- * Polls rather than waiting on a handle: we did not spawn this process, so
- * there is no child handle to await. Returns true if it is gone.
+ * Polls rather than waiting on a handle: a foreign process, or a descendant of
+ * one we spawned, has no child handle here to await. Returns true if all are gone.
  *
  * Note this observes process *exit*, which is not the same as the OS having
  * released the file handles it held — termination is asynchronous with respect
  * to teardown. It is still strictly better than the alternative of assuming a
  * kill landed because the kill *command* exited.
  */
-async function waitForPidExit(pid: number, timeout: number): Promise<boolean> {
+async function waitForPidsExit(pids: Iterable<number>, timeout: number): Promise<boolean> {
   const deadline = Date.now() + timeout;
+  let alive = [...pids];
   for (;;) {
-    if (!pidExists(pid)) return true;
+    alive = alive.filter(pidExists);
+    if (alive.length === 0) return true;
     if (Date.now() >= deadline) return false;
     const remaining = deadline - Date.now();
     await new Promise((resolve) =>
@@ -457,11 +460,8 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     this.logger.info("Killed", { command: this.loggableCommand, pid, signal: "SIGTERM" });
 
     // 2. If termTimeout defined, wait for graceful exit
-    if (termTimeout !== undefined) {
-      const result = await this.wait(termTimeout);
-      if (!result.running) {
-        return { success: true, reason: "SIGTERM" };
-      }
+    if (termTimeout !== undefined && (await this.waitForTreeExit(termTimeout))) {
+      return { success: true, reason: "SIGTERM" };
     }
 
     // 3. Send SIGKILL
@@ -469,11 +469,8 @@ class ExecaSpawnedProcess implements SpawnedProcess {
     this.logger.warn("Killed", { command: this.loggableCommand, pid, signal: "SIGKILL" });
 
     // 4. If killTimeout defined, wait for forced exit
-    if (killTimeout !== undefined) {
-      const result = await this.wait(killTimeout);
-      if (!result.running) {
-        return { success: true, reason: "SIGKILL" };
-      }
+    if (killTimeout !== undefined && (await this.waitForTreeExit(killTimeout))) {
+      return { success: true, reason: "SIGKILL" };
     }
 
     // 5. Process may still be running
@@ -482,6 +479,19 @@ class ExecaSpawnedProcess implements SpawnedProcess {
 
   private async killProcess(pid: number, force: boolean): Promise<void> {
     return killProcessTree(pid, force, this.killTree);
+  }
+
+  /**
+   * Whether the process and every descendant the kill signalled exit within
+   * `timeout`. The process alone is not enough: a descendant that handles the
+   * signal (an agent shutting down cleanly, say) can take far longer than its
+   * parent, and returning without it lets it outlive whoever called kill() —
+   * or never die at all, if its shutdown hangs.
+   */
+  private async waitForTreeExit(timeout: number): Promise<boolean> {
+    const deadline = Date.now() + timeout;
+    if ((await this.wait(timeout)).running) return false;
+    return waitForPidsExit(this.killTree, Math.max(0, deadline - Date.now()));
   }
 
   async wait(timeout?: number): Promise<ProcessResult> {
@@ -892,7 +902,7 @@ export class ExecaProcessRunner implements ProcessRunner {
       this.logger.warn("Killed foreign process", { pid, signal: "TASKKILL" });
 
       const timeout = (termTimeout ?? 0) + (killTimeout ?? 0);
-      if (timeout > 0 && (await waitForPidExit(pid, timeout))) {
+      if (timeout > 0 && (await waitForPidsExit([pid], timeout))) {
         return { success: true, reason: "SIGKILL" };
       }
       if (timeout === 0) return { success: false };
@@ -904,13 +914,14 @@ export class ExecaProcessRunner implements ProcessRunner {
     const tree = new Set<number>();
     await killProcessTree(pid, false, tree);
     this.logger.info("Killed foreign process", { pid, signal: "SIGTERM" });
-    if (termTimeout !== undefined && (await waitForPidExit(pid, termTimeout))) {
+    // The whole tree, not just `pid` — see ExecaSpawnedProcess.waitForTreeExit.
+    if (termTimeout !== undefined && (await waitForPidsExit([pid, ...tree], termTimeout))) {
       return { success: true, reason: "SIGTERM" };
     }
 
     await killProcessTree(pid, true, tree);
     this.logger.warn("Killed foreign process", { pid, signal: "SIGKILL" });
-    if (killTimeout !== undefined && (await waitForPidExit(pid, killTimeout))) {
+    if (killTimeout !== undefined && (await waitForPidsExit([pid, ...tree], killTimeout))) {
       return { success: true, reason: "SIGKILL" };
     }
 

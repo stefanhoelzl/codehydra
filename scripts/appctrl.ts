@@ -236,18 +236,19 @@ function stillRunning(captured: readonly ProcessEntry[]): ProcessEntry[] {
 }
 
 /**
- * Kill whatever of the app's tree outlived it, and wait until it is gone.
+ * Kill whatever of the app's tree outlived it, wait until it is gone, and
+ * return what that was.
  *
  * The app reaps its own children on a clean quit, so normally there is nothing
- * to do. This is the backstop for a quit that did not finish (a crash, a
- * shutdown past the timeout), and it matters most on Windows: a leftover
- * process sitting in a worktree keeps the next reset of the data root from
- * deleting it. So a kill is not done when it is sent — termination is
- * asynchronous there, and the handles go only once the process has.
+ * to do — and anything found here is a bug in the app's shutdown, which `stop`
+ * reports as a failure. The kill is still needed, and it matters most on
+ * Windows: a leftover process sitting in a worktree keeps the next reset of
+ * the data root from deleting it. So a kill is not done when it is sent —
+ * termination is asynchronous there, and the handles go only once the process has.
  */
-async function killLeftovers(captured: readonly ProcessEntry[]): Promise<void> {
+async function killLeftovers(captured: readonly ProcessEntry[]): Promise<ProcessEntry[]> {
   const leftovers = stillRunning(captured);
-  if (leftovers.length === 0) return;
+  if (leftovers.length === 0) return [];
 
   const names = leftovers.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
   process.stderr.write(`appctrl: killing processes the app left running: ${names}\n`);
@@ -274,6 +275,7 @@ async function killLeftovers(captured: readonly ProcessEntry[]): Promise<void> {
     const pids = alive.map((entry) => entry.pid).join(", ");
     process.stderr.write(`appctrl: processes still running after kill: ${pids}\n`);
   }
+  return leftovers;
 }
 
 /**
@@ -495,7 +497,8 @@ export function createDriver() {
       // Subscribe to new pages (WebContentsViews created after launch)
       electronApp.context().on("page", (page) => subscribePageConsole(page));
     } catch (err) {
-      await stop();
+      // The launch failure is the one to surface; leftovers are already on stderr.
+      await stop().catch(() => {});
       throw err;
     }
 
@@ -512,8 +515,11 @@ export function createDriver() {
    * how a Playwright worker ends up hanging in teardown.
    *
    * `killLeftovers` is the backstop for whatever the app does not take down.
+   * Needing it means the app's shutdown is broken, so once everything is torn
+   * down this throws, naming what was left.
    */
   async function stop(): Promise<void> {
+    let leftovers: ProcessEntry[] = [];
     if (electronApp) {
       const app = electronApp;
       electronApp = null;
@@ -552,7 +558,7 @@ export function createDriver() {
       );
       await Promise.race([exited, timedOut]);
 
-      await killLeftovers(tree);
+      leftovers = await killLeftovers(tree);
 
       // close() talks CDP to a process we just killed; it can hang rather than reject.
       await Promise.race([
@@ -566,6 +572,11 @@ export function createDriver() {
       proc.stdin?.destroy();
     }
     consoleBuffer.length = 0;
+
+    if (leftovers.length > 0) {
+      const names = leftovers.map((entry) => `${entry.name} (${entry.pid})`).join(", ");
+      throw new Error(`the app left processes running after it quit: ${names}`);
+    }
   }
 
   /** Sync cleanup — for signal handlers (SIGINT, SIGTERM, exit, uncaughtException). */
@@ -1206,7 +1217,9 @@ const COMMANDS: Record<string, CliCommand> = {
   },
   stop: {
     usage: "stop",
-    summary: "Quit the app through its own shutdown path. The daemon exits with it.",
+    summary:
+      "Quit the app through its own shutdown path. The daemon exits with it. Fails if the app " +
+      "left processes running (they are killed).",
     run: async () => {
       const state = readDaemonState();
       if (!state) {
