@@ -26,8 +26,8 @@
  *   so nothing is sent while one is open; closing it re-reports the real status,
  *   which triggers the focus if the agent is idle. The edge is recorded long
  *   before that re-report lands (it is dispatched unawaited and resolves the
- *   workspace first); registering this module ahead of the agent modules makes
- *   the order certain rather than likely.
+ *   workspace first); the agent modules' "modal" handlers require
+ *   MODAL_RECORDED_CAPABILITY, which makes the order certain rather than likely.
  *
  * Subscribes to:
  * - workspace:deleted: forgets the workspace (also runtime teardown on
@@ -37,7 +37,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
@@ -51,6 +51,12 @@ import type { VscodeCommandIntent } from "../intents/vscode-command";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { WorkspaceRef } from "../intents/contract";
+
+/**
+ * Capability the vscode:modal-changed "modal" handler provides once the modal
+ * edge is recorded. The agent modules require it before re-reporting status.
+ */
+export const MODAL_RECORDED_CAPABILITY = "modal-recorded";
 
 // =============================================================================
 // Dependency Interface
@@ -113,10 +119,11 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
     hooks: {
       [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
         modal: {
-          handler: async (ctx: HookContext): Promise<void> => {
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
             const { workspaceRef, open } = ctx as ModalHookInput;
             if (open) modalOpen.add(workspaceRef);
             else modalOpen.delete(workspaceRef);
+            return { provides: { [MODAL_RECORDED_CAPABILITY]: true } };
           },
         },
       },

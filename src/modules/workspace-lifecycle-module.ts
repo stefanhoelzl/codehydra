@@ -51,17 +51,17 @@
  * Post-confirm is early enough — the teardown work that races the app all
  * happens after this point.
  *
- * Within "shutdown", handlers run sequentially in registration order (see
- * `collectHookResults` in intents/lib/dispatcher). This module MUST therefore be
- * registered before any module whose shutdown handler assumes the claim is
- * already taken — see the ordering note in main.ts. Nothing needs a `requires`
- * declaration for it, and deliberately so: an unsatisfied requirement *skips* a
- * handler silently, which would turn a mandatory teardown step into one that
- * quietly does not run.
+ * Within "shutdown", handlers are unordered: the claim provides
+ * `WORKSPACE_CLAIMED_CAPABILITY`, and every teardown that must start after it
+ * requires it — directly (the agent resolver, the api-server's terminal close)
+ * or through a capability those provide (the agents need `agent`, the frame
+ * release `agent-stopped`).
  *
- * A throwing shutdown handler already aborts the teardown before "release" and
- * "delete" run (see DeleteWorkspaceOperation), so a failed claim fails the
- * dispatch rather than proceeding with a workspace nothing has quiesced.
+ * An unsatisfied requirement *skips* a handler silently, so the claim provides
+ * on every path: it is a synchronous map write that cannot fail on a validated
+ * path. Were it ever to throw, the teardown would abort before "release" and
+ * "delete" anyway (see DeleteWorkspaceOperation), so skipping its dependents
+ * loses nothing.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -103,6 +103,12 @@ import {
   type WorkspaceHibernatedEvent,
   type WorkspaceHibernateFailedEvent,
 } from "../intents/hibernate-workspace";
+
+/**
+ * Capability the delete/hibernate "shutdown" claim provides. Teardown that must
+ * not start before the workspace is marked closing requires it.
+ */
+export const WORKSPACE_CLAIMED_CAPABILITY = "workspace-claimed";
 
 // =============================================================================
 // Module Factory
@@ -227,7 +233,7 @@ export function createWorkspaceLifecycleModule(): IntentModule {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             claim(workspaceRef, payload.removeWorktree ? "delete" : "close");
             clearActiveIfMatches(workspaceRef);
-            return { result: {} };
+            return { result: {}, provides: { [WORKSPACE_CLAIMED_CAPABILITY]: true } };
           },
         },
       },
@@ -245,7 +251,7 @@ export function createWorkspaceLifecycleModule(): IntentModule {
             const { workspaceRef } = ctx as HibernatePipelineHookInput;
             claim(workspaceRef, "hibernate");
             clearActiveIfMatches(workspaceRef);
-            return { result: {} };
+            return { result: {}, provides: { [WORKSPACE_CLAIMED_CAPABILITY]: true } };
           },
         },
       },

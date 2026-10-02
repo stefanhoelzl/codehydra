@@ -1052,21 +1052,12 @@ const hibernationScreenshotModule = createHibernationScreenshotModule({
 // 9. Register all modules
 
 dispatcher.registerModule(idempotencyModule);
-// Registered before the modules with delete/hibernate "shutdown" handlers:
-// handlers in a hook point run sequentially in registration order, and this one
-// claims the workspace so the rest of the teardown observes a consistent
-// `closing`. Deliberately ordered by registration rather than a `requires`
-// capability — an unsatisfied requirement SKIPS a handler silently, which would
-// make mandatory teardown steps stop running altogether if this module ever
-// failed. See workspace-lifecycle-module.ts.
 dispatcher.registerModule(workspaceLifecycleModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(apiServerModule.module);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(ideServerModule.module);
 dispatcher.registerModule(workspaceAgentResolverModule);
-// Ahead of the agent modules, so its vscode:modal-changed handler records a modal
-// before they re-report the status that modal forces.
 dispatcher.registerModule(terminalFocusModule);
 // A repository's open hooks run at their own hook points ("provision",
 // "prepare"), which precede the agents' "setup" — so the tree is set up and its

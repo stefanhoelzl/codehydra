@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import {
   throwHookErrors,
-  lastDefined,
+  onlyDefined,
+  mergeRecords,
   requireResult,
   mergeHookResults,
   collectErrorMessages,
@@ -41,23 +42,55 @@ describe("throwHookErrors", () => {
   });
 });
 
-describe("lastDefined", () => {
+describe("onlyDefined", () => {
   it("returns undefined for empty results", () => {
-    expect(lastDefined([], (r: { v?: number }) => r.v)).toBeUndefined();
+    const results: { v?: number }[] = [];
+    expect(onlyDefined(results, "v", "get")).toBeUndefined();
   });
 
   it("returns undefined when no result provides the field", () => {
-    expect(lastDefined([{}, {}], (r: { v?: number }) => r.v)).toBeUndefined();
+    const results: { v?: number }[] = [{}, {}];
+    expect(onlyDefined(results, "v", "get")).toBeUndefined();
   });
 
-  it("returns the last defined value (last-write-wins)", () => {
-    const results = [{ v: 1 }, {}, { v: 2 }, {}];
-    expect(lastDefined(results, (r) => r.v)).toBe(2);
+  it("returns the one defined value", () => {
+    const results: { v?: number }[] = [{}, { v: 2 }, {}];
+    expect(onlyDefined(results, "v", "get")).toBe(2);
   });
 
   it("treats null as a provided value", () => {
+    const results: { v?: string | null }[] = [{}, { v: null }];
+    expect(onlyDefined(results, "v", "get")).toBeNull();
+  });
+
+  it("throws when two results provide the field, naming the hook point and field", () => {
     const results: { v?: string | null }[] = [{ v: "x" }, { v: null }];
-    expect(lastDefined(results, (r) => r.v)).toBeNull();
+    expect(() => onlyDefined(results, "v", "get")).toThrow(
+      'get hook conflict: "v" provided by multiple handlers'
+    );
+  });
+});
+
+describe("mergeRecords", () => {
+  it("merges disjoint entries from multiple results", () => {
+    const results: { env?: Record<string, string> }[] = [
+      { env: { A: "1" } },
+      {},
+      { env: { B: "2" } },
+    ];
+    expect(mergeRecords(results, "env", "prepare")).toEqual({ A: "1", B: "2" });
+  });
+
+  it("returns an empty record when no result provides one", () => {
+    const results: { env?: Record<string, string> }[] = [{}];
+    expect(mergeRecords(results, "env", "prepare")).toEqual({});
+  });
+
+  it("throws on an entry two results set, naming the hook point, field and entry", () => {
+    const results: { env?: Record<string, string> }[] = [{ env: { A: "1" } }, { env: { A: "1" } }];
+    expect(() => mergeRecords(results, "env", "prepare")).toThrow(
+      'prepare hook conflict: env "A" provided by multiple handlers'
+    );
   });
 });
 

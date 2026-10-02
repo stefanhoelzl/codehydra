@@ -295,7 +295,10 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             deps.autoUpdater.dispose();
           },
         },
-        quit: {
+        // After every "stop" handler, so the installer (or the relaunched
+        // AppImage) never races our teardown; before "quit", whose own
+        // app.quit() would otherwise install without the restart.
+        handoff: {
           handler: async (ctx: HookContext) => {
             const intent = ctx.intent as AppShutdownIntent;
             if (intent.payload.installUpdate) {

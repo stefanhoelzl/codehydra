@@ -43,7 +43,7 @@ import type { ProjectRef } from "./contract";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
-import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_CLOSE_PROJECT = "project:close" as const;
 export const CLOSE_PROJECT_OPERATION_ID = "close-project";
@@ -294,10 +294,10 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     );
     throwHookErrors(resolveErrors, "close-project resolve hooks failed");
 
-    // Merge resolve results — last-write-wins
+    // Merge resolve results — one handler provides each field
     let removeLocalRepo = payload.removeLocalRepo ?? false;
-    const remoteUrl = lastDefined(resolveResults, (r) => r.remoteUrl);
-    const workspaces = lastDefined(resolveResults, (r) => r.workspaces) ?? [];
+    const remoteUrl = onlyDefined(resolveResults, "remoteUrl", "project:close resolve");
+    const workspaces = onlyDefined(resolveResults, "workspaces", "project:close resolve") ?? [];
 
     // A non-interactive dispatch has no confirm hook, so nothing can raise
     // removeAll — deleting the directory would leave every worktree orphaned
@@ -333,8 +333,9 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
         this.emitCloseFailed(ctx, projectRef);
         return;
       }
-      removeAll = lastDefined(confirmResults, (r) => r.removeAll) ?? false;
-      removeLocalRepo = lastDefined(confirmResults, (r) => r.removeLocalRepo) ?? removeLocalRepo;
+      removeAll = onlyDefined(confirmResults, "removeAll", "project:close confirm") ?? false;
+      removeLocalRepo =
+        onlyDefined(confirmResults, "removeLocalRepo", "project:close confirm") ?? removeLocalRepo;
     }
 
     // The invariant, enforced here rather than left to the dialog: a confirm
@@ -388,8 +389,12 @@ export class CloseProjectOperation implements Operation<typeof schemas> {
     );
     throwHookErrors(closeErrors, "close-project close hooks failed");
 
-    // Merge close results — last-write-wins for otherProjectsExist
-    const otherProjectsExist = lastDefined(closeResults, (r) => r.otherProjectsExist);
+    // Merge close results — one handler provides otherProjectsExist
+    const otherProjectsExist = onlyDefined(
+      closeResults,
+      "otherProjectsExist",
+      "project:close close"
+    );
 
     // 5. Deselect if no other projects remain.
     //

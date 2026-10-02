@@ -30,7 +30,7 @@ import { workspaceAtPath, type ProjectLocation } from "../api/workspace-lookup";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import type { ListProjectsIntent } from "../intents/list-projects";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import { ANY_VALUE, type HookContext, type HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { LogContext, Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel, toLogContext } from "../boundaries/platform/logging";
@@ -93,9 +93,11 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import {
+  CAPABILITY_AGENT_STOPPED,
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
+import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
@@ -1579,6 +1581,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         // business so no sidekick can open a terminal in a directory that is
         // about to disappear, and stop the agent that is already running in it.
         shutdown: {
+          requires: { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspaceRef: normalized } = ctx as DeletePipelineHookInput;
 
@@ -1606,10 +1609,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               // travel over this socket, so disconnecting first would leave the
               // agent process tree running inside the worktree being removed.
               //
-              // This lives here rather than in the agent module because that
-              // module's shutdown handler `requires` the agent capability, which
-              // defers it to a later wave than this one — it cannot run while
-              // the socket is still open.
+              // This lives here rather than in the agent module, whose shutdown
+              // stops the agent; that handler requires CAPABILITY_AGENT_STOPPED,
+              // so it cannot run while the socket is still open.
               await closeAgentTerminal(normalized);
 
               connections.get(normalized)?.disconnect(true);
@@ -1624,7 +1626,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
             return {
               result: error === undefined ? {} : { error },
-              provides: { "agent-stopped": true },
+              provides: { [CAPABILITY_AGENT_STOPPED]: true },
             };
           },
         },

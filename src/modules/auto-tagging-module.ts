@@ -14,7 +14,7 @@
  * and neither is a new workspace.
  *
  * The tag is written from the "setup" hook rather than a workspace:created subscriber
- * so it rides along in the metadata the created event carries (see mergeMetadata in
+ * so it rides along in the metadata the created event carries (see the setup fold in
  * open-workspace.ts) — that lands it on the row's first paint, and since setup is
  * awaited before the operation's switch dispatch, it also can't race the removal below.
  *

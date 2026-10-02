@@ -38,6 +38,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { z } from "zod/v4";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
+import { WORKSPACE_CLAIMED_CAPABILITY } from "./workspace-lifecycle-module";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { WorkspacePath } from "../intents/contract";
 import { projectRefFor } from "../utils/ref";
@@ -67,6 +68,8 @@ function createDeleteShutdownOperation(
         workspacePath,
         workspaceName: "ws" as WorkspaceName,
         active: false,
+        // The workspace-lifecycle module's claim, which the teardown waits for.
+        capabilities: { [WORKSPACE_CLAIMED_CAPABILITY]: true },
       };
       await ctx.hooks.collect("shutdown", hookCtx);
       if (ends === EVENT_WORKSPACE_DELETED) {

@@ -23,10 +23,9 @@ import {
   workspaceTargetShape,
 } from "./contract";
 import type { WorkspaceStatus } from "../shared/api/types";
-import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
-import { throwHookErrors } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_GET_WORKSPACE_STATUS = "workspace:get-status" as const;
 export const GET_WORKSPACE_STATUS_OPERATION_ID = "get-workspace-status";
@@ -171,15 +170,13 @@ export class GetWorkspaceStatusOperation implements Operation<typeof schemas> {
     // Merge results — isDirty uses OR, unmergedCommits uses max
     let isDirty = false;
     let unmergedCommits = 0;
-    let agentStatus: AggregatedAgentStatus | undefined;
-
     for (const result of results) {
       if (result.isDirty) isDirty = true;
       if (result.unmergedCommits !== undefined && result.unmergedCommits > unmergedCommits) {
         unmergedCommits = result.unmergedCommits;
       }
-      if (result.agentStatus !== undefined) agentStatus = result.agentStatus;
     }
+    const agentStatus = onlyDefined(results, "agentStatus", "workspace:get-status get");
 
     const finalAgentStatus = agentStatus ?? {
       status: "none" as const,

@@ -56,7 +56,7 @@ import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./ge
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "./list-projects";
 import type { OpenProjectIntent } from "./open-project";
 import { looksLikeGitUrl, matchOpenProject } from "../utils/project-reference";
-import { throwHookErrors, mergeHookResults, lastDefined } from "./lib/hook-helpers";
+import { throwHookErrors, mergeHookResults, mergeRecords, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_OPEN_WORKSPACE = "workspace:open" as const;
 export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
@@ -249,7 +249,8 @@ export const setupResultSchema = z
      *  Operation-consumed (no sibling requires), so a result — not a capability. */
     agentType: agentTypeSchema.nullable().optional(),
     /** Metadata keys this handler wrote, folded into the create hook's snapshot
-     *  so the workspace:created event carries them. See mergeMetadata. */
+     *  so the workspace:created event carries them. Handlers contribute disjoint
+     *  keys (`mergeRecords`); a later hook point's keys override an earlier one's. */
     metadata: z.record(z.string(), z.string()).readonly().optional(),
   })
   .readonly();
@@ -395,19 +396,6 @@ export interface WorkspaceCreateFailedEvent extends DomainEvent {
 // =============================================================================
 // Operation
 // =============================================================================
-
-/**
- * Folds a hook handler's metadata contribution into the accumulator, last write
- * winning per key. Unlike mergeHookResults' conflict-throw — right for fields like
- * workspacePath, where two providers means a bug — contributing disjoint metadata
- * keys is the intended use, so a duplicate key must not fail workspace creation.
- */
-function mergeMetadata(
-  target: Record<string, string>,
-  contribution: Readonly<Record<string, string>> | undefined
-): void {
-  if (contribution) Object.assign(target, contribution);
-}
 
 export class OpenWorkspaceOperation implements Operation<typeof schemas> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
@@ -586,9 +574,10 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // is a bug and fatal like any other.
     const provisionResult = await ctx.hooks.collect("provision", identity);
     throwHookErrors(provisionResult.errors, "workspace:open provision hooks failed");
-    for (const result of provisionResult.results) {
-      mergeMetadata(mergedMetadata, result.metadata);
-    }
+    Object.assign(
+      mergedMetadata,
+      mergeRecords(provisionResult.results, "metadata", "workspace:open provision")
+    );
 
     // Hook: "prepare" — the workspace environment, on every open. Runs before
     // "setup" because that is where the agent server starts, and it must start
@@ -599,9 +588,10 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     for (const [name, value] of Object.entries(WORKSPACE_ENV_DEFAULTS)) {
       if (process.env[name] === undefined) workspaceEnv[name] = value;
     }
-    for (const result of prepareResult.results) {
-      if (result.env) Object.assign(workspaceEnv, result.env);
-    }
+    Object.assign(
+      workspaceEnv,
+      mergeRecords(prepareResult.results, "env", "workspace:open prepare")
+    );
 
     // Hook: "setup" — the agent (fatal)
     const setupCtx: SetupHookInput = { ...identity, workspaceEnv };
@@ -613,17 +603,16 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
     // with what the agent contributes — CodeHydra's own variables win a clash.
     // The active agent module also contributes agentType (a result, not a
     // capability — nothing in the hook point requires it).
-    const envVars: Record<string, string> = { ...workspaceEnv };
-    let agentType: AgentType | null = null;
-    for (const result of setupResult.results) {
-      if (result.envVars) {
-        Object.assign(envVars, result.envVars);
-      }
-      if (result.agentType != null) {
-        agentType = result.agentType;
-      }
-      mergeMetadata(mergedMetadata, result.metadata);
-    }
+    const envVars: Record<string, string> = {
+      ...workspaceEnv,
+      ...mergeRecords(setupResult.results, "envVars", "workspace:open setup"),
+    };
+    const agentType: AgentType | null =
+      onlyDefined(setupResult.results, "agentType", "workspace:open setup") ?? null;
+    Object.assign(
+      mergedMetadata,
+      mergeRecords(setupResult.results, "metadata", "workspace:open setup")
+    );
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
@@ -641,13 +630,14 @@ export class OpenWorkspaceOperation implements Operation<typeof schemas> {
 
     throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
-    for (const result of finalizeResults) {
-      mergeMetadata(mergedMetadata, result.metadata);
-    }
+    Object.assign(
+      mergedMetadata,
+      mergeRecords(finalizeResults, "metadata", "workspace:open finalize")
+    );
 
     // Only the IDE server contributes a workspace URL; other finalize handlers
     // contribute metadata or nothing at all.
-    const workspaceUrl = lastDefined(finalizeResults, (result) => result.workspaceUrl);
+    const workspaceUrl = onlyDefined(finalizeResults, "workspaceUrl", "workspace:open finalize");
     if (!workspaceUrl) {
       throw new Error("Finalize hook did not provide workspaceUrl");
     }

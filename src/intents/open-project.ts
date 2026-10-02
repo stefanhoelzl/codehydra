@@ -23,7 +23,7 @@ import { z } from "zod/v4";
 import type { DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import type { ProjectId, Project } from "../shared/api/types";
+import type { Project } from "../shared/api/types";
 import {
   projectSchema,
   projectIdSchema,
@@ -32,7 +32,7 @@ import {
   discoveredWorkspaceSchema,
   hookCtxSchema,
 } from "./contract";
-import type { ProjectPath, DiscoveredWorkspace, WorkspaceRef } from "./contract";
+import type { DiscoveredWorkspace, WorkspaceRef } from "./contract";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -46,7 +46,7 @@ import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import { compareDisplayNames } from "../shared/ui-state";
-import { throwHookErrors } from "./lib/hook-helpers";
+import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 // Defined in ./contract so open-workspace can import it without a module cycle;
 // re-exported here so this stays the obvious place to find it.
@@ -355,10 +355,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         selectCtx
       );
       throwHookErrors(selectErrors, "project:open select-folder hooks failed");
-      let folderPath: ProjectPath | null = null;
-      for (const r of selectResults) {
-        if (r.folderPath) folderPath = r.folderPath;
-      }
+      const folderPath = onlyDefined(selectResults, "folderPath", "project:open select-folder");
       if (!folderPath) {
         return null; // User canceled dialog
       }
@@ -410,14 +407,9 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       }
     );
     throwHookErrors(resolveErrors, "project:open resolve hooks failed");
-    let projectPath: ProjectPath | undefined;
-    let resolvedRemoteUrl: string | undefined;
-    let alreadyOpen = false;
-    for (const r of resolveResults) {
-      if (r.projectPath && !projectPath) projectPath = r.projectPath;
-      if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
-      if (r.alreadyOpen) alreadyOpen = true;
-    }
+    const projectPath = onlyDefined(resolveResults, "projectPath", "project:open resolve");
+    const resolvedRemoteUrl = onlyDefined(resolveResults, "remoteUrl", "project:open resolve");
+    let alreadyOpen = resolveResults.some((r) => r.alreadyOpen);
     if (!projectPath) {
       throw new Error("Resolve hook did not provide projectPath");
     }
@@ -437,13 +429,9 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       registerCtx
     );
     throwHookErrors(registerErrors, "project:open register hooks failed");
-    let projectId: ProjectId | undefined;
-    let name: string | undefined;
-    for (const r of registerResults) {
-      if (r.projectId) projectId = r.projectId;
-      if (r.name !== undefined) name = r.name;
-      if (r.alreadyOpen) alreadyOpen = true;
-    }
+    const projectId = onlyDefined(registerResults, "projectId", "project:open register");
+    const name = onlyDefined(registerResults, "name", "project:open register");
+    if (registerResults.some((r) => r.alreadyOpen)) alreadyOpen = true;
     if (!projectId) {
       throw new Error("Register hook did not provide projectId");
     }
@@ -456,11 +444,14 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     );
     throwHookErrors(discoverErrors, "project:open discover hooks failed");
     const workspaces: DiscoveredWorkspace[] = [];
-    let defaultBaseBranch: string | undefined;
     for (const r of discoverResults) {
       if (r.workspaces) workspaces.push(...r.workspaces);
-      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
     }
+    const defaultBaseBranch = onlyDefined(
+      discoverResults,
+      "defaultBaseBranch",
+      "project:open discover"
+    );
 
     // Build Project return value
     let project: Project = {

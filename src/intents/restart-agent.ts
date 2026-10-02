@@ -27,7 +27,7 @@ import {
   workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
-import { lastDefined, requireResult } from "./lib/hook-helpers";
+import { onlyDefined, requireResult } from "./lib/hook-helpers";
 
 export const INTENT_RESTART_AGENT = "agent:restart" as const;
 
@@ -124,7 +124,7 @@ export class RestartAgentOperation extends WorkspaceHookOperation<typeof schemas
       errorLabel: "restart-agent restart hooks failed",
       extract: (results) =>
         requireResult(
-          lastDefined(results, (r) => r.port),
+          onlyDefined(results, "port", "agent:restart restart"),
           "Restart agent hook did not provide port result"
         ),
       onSuccess: ({ resolved, project, result }) =>

@@ -20,7 +20,7 @@ import { z } from "zod/v4";
 import type { HookContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
-import { lastDefined } from "./lib/hook-helpers";
+import { onlyDefined } from "./lib/hook-helpers";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
 
 export const INTENT_VSCODE_SHOW_MESSAGE = "vscode:show-message" as const;
@@ -102,7 +102,7 @@ export class VscodeShowMessageOperation extends WorkspaceHookOperation<typeof sc
       hookPoint: "show",
       buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "vscode-show-message show hooks failed",
-      extract: (results) => lastDefined(results, (r) => r.result) ?? null,
+      extract: (results) => onlyDefined(results, "result", "vscode:show-message show") ?? null,
     });
   }
 }

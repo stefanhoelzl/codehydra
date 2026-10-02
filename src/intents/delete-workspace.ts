@@ -58,7 +58,7 @@ import type { ProjectRef, WorkspaceRef } from "./contract";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
-import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
+import { throwHookErrors, collectErrorMessages, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_DELETE_WORKSPACE = "workspace:delete" as const;
 export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
@@ -73,6 +73,14 @@ export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" a
  * it is the only place a row can be claimed in time to be listed with the rest.
  */
 export const CAPABILITY_REPO_HOOK = "repo-hook" as const;
+
+/**
+ * Capability the "shutdown" handler that closes the agent terminal provides once
+ * it is done trying — closed, timed out or failed. Teardown that would cut the
+ * connection the close travels over (stopping the agent, releasing the IDE
+ * frame) requires it.
+ */
+export const CAPABILITY_AGENT_STOPPED = "agent-stopped" as const;
 
 // =============================================================================
 // Contract schemas (single source of truth)
@@ -353,10 +361,7 @@ function mergeShutdown(
   results: readonly ShutdownHookResult[],
   collectErrors: readonly Error[]
 ): MergedShutdown {
-  let serverName: string | undefined;
-  for (const r of results) {
-    if (r.serverName && !serverName) serverName = r.serverName;
-  }
+  const serverName = onlyDefined(results, "serverName", "workspace:delete shutdown");
   return { serverName, errors: errorMessages(results, collectErrors) };
 }
 
@@ -371,9 +376,12 @@ function mergeDetect(
   results: readonly DetectHookResult[],
   collectErrors: readonly Error[]
 ): MergedDetect {
+  // A list, so several handlers' findings add up rather than conflict.
   let blockingProcesses: readonly BlockingProcess[] | undefined;
   for (const r of results) {
-    if (r.blockingProcesses !== undefined) blockingProcesses = r.blockingProcesses;
+    if (r.blockingProcesses !== undefined) {
+      blockingProcesses = [...(blockingProcesses ?? []), ...r.blockingProcesses];
+    }
   }
   return {
     ...(blockingProcesses !== undefined && { blockingProcesses }),
@@ -565,7 +573,9 @@ export class DeleteWorkspaceOperation implements Operation<typeof schemas> {
       }
       effectivePayload = {
         ...payload,
-        keepBranch: lastDefined(confirmResults, (r) => r.keepBranch) ?? payload.keepBranch,
+        keepBranch:
+          onlyDefined(confirmResults, "keepBranch", "workspace:delete confirm") ??
+          payload.keepBranch,
         ignoreWarnings: true,
       };
     }

@@ -32,7 +32,7 @@
 import { z } from "zod/v4";
 import type { HookContext, Operation, OperationContext, OperationSchemas } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
-import { lastDefined, requireResult, throwHookErrors } from "./lib/hook-helpers";
+import { onlyDefined, requireResult, throwHookErrors } from "./lib/hook-helpers";
 import { hookCtxSchema, workspaceRefSchema } from "./contract";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import type { NotificationConfig } from "../shared/notification-types";
@@ -198,7 +198,7 @@ export class ShowNotificationOperation implements Operation<typeof schemas> {
     const { results, errors } = await ctx.hooks.collect("show", { intent: ctx.intent });
     throwHookErrors(errors, "notification:show hooks failed");
     return requireResult(
-      lastDefined(results, (r) => r.result),
+      onlyDefined(results, "result", "notification:show show"),
       "notification:show: no handler showed the notification"
     );
   }
