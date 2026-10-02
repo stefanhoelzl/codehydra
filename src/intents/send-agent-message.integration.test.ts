@@ -37,14 +37,13 @@ import type { HookContext, HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { WorkspaceRef } from "./contract";
 
 const PROJECT_ROOT = projPath("/project");
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "feature-x");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, "feature-x");
 
 interface Delivery {
   readonly workspacePath: WorkspacePath;
@@ -256,7 +255,7 @@ describe("SendAgentMessage Operation", () => {
         ...sendIntent(false),
         payload: {
           ...sendIntent(false).payload,
-          workspaceRef: makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "nonexistent"),
+          workspaceRef: workspaceRefIn(PROJECT_ROOT, "nonexistent"),
         },
       })
     ).rejects.toThrow(/Workspace not found/);

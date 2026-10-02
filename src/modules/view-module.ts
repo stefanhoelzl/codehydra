@@ -23,14 +23,16 @@ import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
 import type { AppBoundary } from "../boundaries/shell/app";
+import type { MenuBoundary } from "../boundaries/shell/menu";
 import type { WebPreferences } from "../boundaries/shell/types";
 import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_START_OPERATION_ID, type InitResult } from "../intents/app-start";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import { projectPathSchema } from "../intents/contract";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Types
@@ -41,9 +43,6 @@ import { projectPathSchema } from "../intents/contract";
  *
  * Shell layers are nullable because they may not exist in test environments
  * or when the app quits before full initialization.
- *
- * Lifecycle deps (menuLayer, windowManager, uiHtmlPath) are nullable
- * so existing call sites that don't need them pass unchanged.
  */
 export interface ViewModuleDeps {
   readonly viewManager: IViewManager & { create(): void };
@@ -52,16 +51,16 @@ export interface ViewModuleDeps {
   readonly windowLayer: WindowBoundary | null;
   readonly sessionLayer: SessionBoundary | null;
   readonly dialogLayer?: Pick<DialogBoundary, "showDialog"> | null;
-  readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
-  readonly windowManager?: {
+  readonly menuLayer: MenuBoundary;
+  readonly windowManager: {
     create(webPreferences?: WebPreferences): void;
     maximizeAsync(): Promise<void>;
     focus(): void;
     present(): void;
-  } | null;
+  };
   /** App layer, for the "another launch wants us in front" subscription. */
   readonly appLayer?: Pick<AppBoundary, "onReactivate"> | null;
-  readonly uiHtmlPath?: string | null;
+  readonly uiHtmlPath: string;
   /** Preload script for the UI page hosted directly by the window. */
   readonly uiPreloadPath?: string | null;
 }
@@ -82,7 +81,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
   const module: IntentModule = {
     name: "view",
-    hooks: {
+    hooks: defineHooks({
       // -------------------------------------------------------------------
       // app-start → init: Shell creation + UI loading (post-ready)
       //
@@ -95,37 +94,29 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
-          handler: async (): Promise<HookOutput> => {
+          handler: async (): Promise<HookOutput<InitResult>> => {
             // Disable application menu
-            if (deps.menuLayer) {
-              deps.menuLayer.setApplicationMenu(null);
-            }
+            deps.menuLayer.setApplicationMenu(null);
 
             // Create the window as a BrowserWindow hosting the UI page directly:
             // its webContents (UI preload + shared partition) auto-fills the
             // window, so there is no child view to size. viewManager.create()
             // then adopts that webContents for the UI's webContents concerns.
-            if (deps.windowManager) {
-              deps.windowManager.create({
-                nodeIntegration: false,
-                contextIsolation: true,
-                sandbox: true,
-                partition: GLOBAL_SESSION_PARTITION,
-                ...(deps.uiPreloadPath ? { preload: deps.uiPreloadPath } : {}),
-              });
-            }
+            deps.windowManager.create({
+              nodeIntegration: false,
+              contextIsolation: true,
+              sandbox: true,
+              partition: GLOBAL_SESSION_PARTITION,
+              ...(deps.uiPreloadPath ? { preload: deps.uiPreloadPath } : {}),
+            });
             viewManager.create();
 
             // Load the UI HTML into the window's own webContents.
-            if (deps.uiHtmlPath) {
-              await viewManager.loadUIContent(deps.uiHtmlPath);
-            }
+            await viewManager.loadUIContent(deps.uiHtmlPath);
 
             // Maximize and focus window
-            if (deps.windowManager) {
-              await deps.windowManager.maximizeAsync();
-              deps.windowManager.focus();
-            }
+            await deps.windowManager.maximizeAsync();
+            deps.windowManager.focus();
 
             // Focus UI
             viewManager.focus();
@@ -134,7 +125,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             // instance to come forward. Subscribed here, after the window
             // exists — the lock is claimed in before-ready, so a launch landing
             // in that gap finds no window to present and is simply dropped.
-            if (deps.appLayer && deps.windowManager) {
+            if (deps.appLayer) {
               const windowManager = deps.windowManager;
               unsubscribeReactivate = deps.appLayer.onReactivate(() => {
                 deps.logger.info("Another launch asked us to come forward");
@@ -196,9 +187,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
 
-    events: {
+    events: defineEvents({
       // -------------------------------------------------------------------
       // ide-server:restarted → reload every workspace iframe. A resume
       // restart replaced the IDE server process, so each frame's connection
@@ -223,7 +214,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           viewManager.reloadFrames();
         },
       },
-    },
+    }),
   };
 
   return module;

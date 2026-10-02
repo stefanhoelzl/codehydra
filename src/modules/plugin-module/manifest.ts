@@ -27,6 +27,7 @@ import { z } from "zod/v4";
 import { parseAllDocuments } from "yaml";
 import { ALL_ENTRIES } from "./hook-map";
 import { SHELL_NAMES, type ShellName } from "./shells";
+import { describeIssue } from "./util";
 
 // =============================================================================
 // Platforms
@@ -135,20 +136,6 @@ export class ManifestError extends Error {
   }
 }
 
-function describeIssue(issue: z.core.$ZodIssue): string {
-  const at = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
-  if (issue.code === "invalid_key") {
-    // A rejected record key (an automation name) says only "Invalid key in
-    // record"; the reason is on the key's own issues.
-    return `${at}${issue.issues.map((keyIssue) => keyIssue.message).join("; ")}`;
-  }
-  if (issue.code === "unrecognized_keys") {
-    const keys = issue.keys.join(", ");
-    return `${at}unknown ${issue.keys.length === 1 ? "key" : "keys"} ${keys} (a typo, or a section a newer CodeHydra adds)`;
-  }
-  return `${at}${issue.message}`;
-}
-
 /**
  * Parse a manifest. Throws `ManifestError` naming the document and the first
  * problem — a plugin with any invalid document is skipped whole, so a broken
@@ -167,7 +154,13 @@ export function parseManifest(text: string): PluginDocument[] {
 
     const parsed = manifestDocumentSchema.safeParse(raw);
     if (!parsed.success) {
-      throw new ManifestError(`document ${index}: ${describeIssue(parsed.error.issues[0]!)}`);
+      throw new ManifestError(
+        `document ${index}: ${describeIssue(
+          parsed.error.issues[0]!,
+          "key",
+          "a typo, or a section a newer CodeHydra adds"
+        )}`
+      );
     }
     const value = parsed.data;
     const platforms =

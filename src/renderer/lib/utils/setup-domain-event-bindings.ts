@@ -11,7 +11,7 @@
  * @param onState - ui:state subscription (injectable for testing)
  * @returns Cleanup function to unsubscribe
  */
-import type { Unsubscribe } from "@shared/electron-api";
+import type { Unsubscribe } from "@shared/types";
 import type { UiState } from "@shared/ui-state";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";

@@ -19,6 +19,7 @@
  * bounded so an unreachable host can't stall a bug report or the app quit.
  */
 
+import { getErrorMessage } from "../../shared/error-utils";
 import { randomUUID } from "node:crypto";
 import { PostHog } from "posthog-node";
 import type { Logger } from "./logging-types";
@@ -168,7 +169,7 @@ export function createPostHogBoundary(deps: PostHogBoundaryDeps): PostHogBoundar
   function logSendFailure(op: "flush" | "shutdown", error: unknown): void {
     deps.logger.warn("PostHog delivery failed", {
       op,
-      error: error instanceof Error ? error.message : String(error),
+      error: getErrorMessage(error),
     });
   }
 

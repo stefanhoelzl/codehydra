@@ -11,13 +11,11 @@ import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod/v4";
 import { Dispatcher } from "../../intents/lib/dispatcher";
-import type {
-  Operation,
-  OperationContext,
-  OperationSchemas,
-  IntentOf,
-} from "../../intents/lib/operation";
-import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
+import type { Operation, OperationSchemas } from "../../intents/lib/operation";
+import {
+  createMinimalOperation,
+  createStreamingMinimalOperation,
+} from "../../intents/lib/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -98,13 +96,13 @@ import type { WorkspaceName } from "../../shared/api/types";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
-import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
+import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import type { WorkspacePath } from "../../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projectRefFor } from "../../utils/ref";
 import type { WorkspaceRef } from "../../intents/contract";
 
 /** The ref of the one workspace these tests act on. */
-const TEST_WS_REF = makeWorkspaceRef(projectRefFor(projPath("/test/project")), "test-workspace");
+const TEST_WS_REF = workspaceRefIn(projPath("/test/project"), "test-workspace");
 
 // =============================================================================
 // Mock AgentModuleProvider Factory
@@ -112,7 +110,7 @@ const TEST_WS_REF = makeWorkspaceRef(projectRefFor(projPath("/test/project")), "
 
 /** Captured onStatusChange callback from the mock provider */
 let capturedStatusCallback:
-  ((workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void) | null = null;
+  ((workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void) | null = null;
 
 function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): AgentModuleProvider {
   capturedStatusCallback = null;
@@ -146,7 +144,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "session-1" }),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     onStatusChange: vi.fn(
-      (cb: (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => void) => {
+      (cb: (workspaceRef: WorkspaceRef, status: AggregatedAgentStatus) => void) => {
         capturedStatusCallback = cb;
         return vi.fn();
       }
@@ -160,60 +158,44 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
 // Minimal Test Operations
 // =============================================================================
 
-const beforeReadySchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<readonly ConfigureResult[]>(),
-  hooks: { "before-ready": { result: configureResultSchema } },
-} satisfies OperationSchemas;
-
-class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = beforeReadySchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>, typeof beforeReadySchemas>
-  ): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect("before-ready", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results;
-  }
+/** The app:start "before-ready" hook point, returning every handler's result. */
+function minimalBeforeReady(): Operation<OperationSchemas> {
+  return createMinimalOperation<readonly ConfigureResult[], ConfigureResult>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "before-ready",
+    { hookSchemas: { result: configureResultSchema }, select: ({ results }) => results }
+  );
 }
 
-const checkDepsSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<CheckDepsResult>(),
-  hooks: { "check-deps": { result: checkDepsResultSchema } },
-} satisfies OperationSchemas;
-
-function minimalCheckDeps(
-  configuredAgent: string | null = "claude"
-): Operation<typeof checkDepsSchemas> {
-  return {
-    id: APP_START_OPERATION_ID,
-    schemas: checkDepsSchemas,
-    async execute(ctx): Promise<CheckDepsResult> {
-      const hookCtx: CheckDepsHookContext = {
+/** The app:start "check-deps" hook point, merging every handler's `missingBinaries`. */
+function minimalCheckDeps(configuredAgent: string | null = "claude"): Operation<OperationSchemas> {
+  return createMinimalOperation<CheckDepsResult, CheckDepsResult>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "check-deps",
+    {
+      throwOnError: false,
+      hookSchemas: { result: checkDepsResultSchema },
+      hookContext: (ctx): CheckDepsHookContext => ({
         intent: ctx.intent,
         configuredAgent: configuredAgent as CheckDepsHookContext["configuredAgent"],
         extensionRequirements: [],
-      };
-      const { results } = await ctx.hooks.collect("check-deps", hookCtx);
-      const merged: CheckDepsResult = {};
-      for (const r of results) {
-        if (r.missingBinaries) {
-          (merged as Record<string, unknown>).missingBinaries = [
-            ...((merged.missingBinaries as string[]) ?? []),
-            ...r.missingBinaries,
-          ];
+      }),
+      select: ({ results }) => {
+        const merged: CheckDepsResult = {};
+        for (const r of results) {
+          if (r.missingBinaries) {
+            (merged as Record<string, unknown>).missingBinaries = [
+              ...((merged.missingBinaries as string[]) ?? []),
+              ...r.missingBinaries,
+            ];
+          }
         }
-      }
-      return merged;
-    },
-  };
+        return merged;
+      },
+    }
+  );
 }
 
 /**
@@ -245,26 +227,14 @@ const TEST_MCP_CONFIG: McpConfig = {
   token: "test-token",
 };
 
-const registerAgentsSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<readonly RegisterAgentResult[]>(),
-  hooks: { "register-agents": { result: registerAgentResultSchema } },
-} satisfies OperationSchemas;
-
-class MinimalRegisterAgentsOperation implements Operation<typeof registerAgentsSchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = registerAgentsSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof registerAgentsSchemas>, typeof registerAgentsSchemas>
-  ): Promise<readonly RegisterAgentResult[]> {
-    const { results, errors } = await ctx.hooks.collect("register-agents", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results;
-  }
+/** The app:start "register-agents" hook point, returning every handler's result. */
+function minimalRegisterAgents(): Operation<OperationSchemas> {
+  return createMinimalOperation<readonly RegisterAgentResult[], RegisterAgentResult>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "register-agents",
+    { hookSchemas: { result: registerAgentResultSchema }, select: ({ results }) => results }
+  );
 }
 
 /** Minimal app:start operation that runs the "save-agent" hook point with `selectedAgent` seeded. */
@@ -277,38 +247,14 @@ function minimalSaveAgent(selectedAgent: string): Operation<OperationSchemas> {
   });
 }
 
-const binarySchemas = {
-  type: "setup",
-  payload: z.unknown(),
-} satisfies OperationSchemas;
-
-/** Bespoke binary operation exposing the streamed progress `frames` for assertions. */
-type MinimalBinaryOperation = Operation<typeof binarySchemas> & {
-  readonly frames: SetupProgressPayload[];
-};
-
-function minimalBinary(hookInput: Partial<BinaryHookInput> = {}): MinimalBinaryOperation {
-  const frames: SetupProgressPayload[] = [];
-  return {
-    id: SETUP_OPERATION_ID,
-    schemas: binarySchemas,
-    frames,
-    async execute(ctx): Promise<void> {
-      const { errors } = await ctx.hooks.collect(
-        "binary",
-        {
-          intent: ctx.intent,
-          ...hookInput,
-        },
-        {
-          onYield: (frame) => {
-            frames.push(frame as SetupProgressPayload);
-          },
-        }
-      );
-      if (errors.length > 0) throw errors[0]!;
-    },
-  };
+/** The setup "binary" hook point, exposing the streamed progress `frames` for assertions. */
+function minimalBinary(hookInput: Partial<BinaryHookInput> = {}) {
+  return createStreamingMinimalOperation<SetupProgressPayload>(
+    SETUP_OPERATION_ID,
+    "setup",
+    "binary",
+    { hookContext: (ctx) => ({ intent: ctx.intent, ...hookInput }) }
+  );
 }
 
 interface SetupOperationResult {
@@ -331,8 +277,18 @@ function minimalSetup(
     id: OPEN_WORKSPACE_OPERATION_ID,
     schemas: setupSchemas,
     async execute(ctx): Promise<SetupOperationResult | undefined> {
+      // What the real operation decides once per open: a payload without an
+      // existing workspace is a fresh creation.
+      const payload = ctx.intent.payload;
+      const fresh = !(
+        typeof payload === "object" &&
+        payload !== null &&
+        "existingWorkspace" in payload &&
+        payload.existingWorkspace !== undefined
+      );
       const { results, errors } = await ctx.hooks.collect("setup", {
         intent: ctx.intent,
+        fresh,
         workspaceRef: TEST_WS_REF,
         workspacePath: testPath("/test/workspace").toNative(),
         projectRef: projectRefFor(projPath("/test/project")),
@@ -425,6 +381,74 @@ function createTestSetup(
   return { mockProvider, agentConfig, moduleDeps, dispatcher, agentModule, metadata };
 }
 
+/** Run app:start's "start" hook point with `apiPort` as the capability. */
+async function startApp(dispatcher: Dispatcher, apiPort: number | null): Promise<void> {
+  dispatcher.registerOperation(minimalStart(apiPort));
+  await dispatcher.dispatch({ type: "app:start", payload: {} });
+}
+
+/** Register the workspace:open "setup" operation for the test workspace and project. */
+function registerSetup(dispatcher: Dispatcher, agentCapability: string | null = "claude"): void {
+  dispatcher.registerOperation(
+    minimalSetup(
+      { workspacePath: wsPath("/test/workspace"), projectPath: projPath("/test/project") },
+      agentCapability
+    )
+  );
+}
+
+/** Dispatch workspace:open with `payload`. */
+function openWorkspace(dispatcher: Dispatcher, payload: Record<string, unknown>) {
+  return dispatcher.dispatch({
+    type: "workspace:open",
+    payload,
+  } as unknown as OpenWorkspaceIntent);
+}
+
+/** Start the app and open a first workspace, which initializes the provider lazily. */
+async function initializeViaFirstOpen(dispatcher: Dispatcher): Promise<void> {
+  await startApp(dispatcher, 9999);
+  registerSetup(dispatcher);
+  await openWorkspace(dispatcher, { projectId: "p1", workspaceName: "a", base: "main" });
+}
+
+/** Dispatch workspace:delete (full removal) for the test workspace. */
+function deleteWorkspace(dispatcher: Dispatcher, { force }: { force: boolean }) {
+  return dispatcher.dispatch<DeleteWorkspaceIntent>({
+    type: "workspace:delete",
+    payload: { workspaceRef: TEST_WS_REF, keepBranch: false, force, removeWorktree: true },
+  });
+}
+
+/**
+ * A minimal operation running one hook point for the test workspace, as the
+ * agent `agent` (plus any `extra` hook-context fields).
+ */
+function workspaceHookOperation<TResult>(
+  operationId: string,
+  intentType: string,
+  hookPoint: string,
+  agent: string,
+  extra: Record<string, unknown> = {}
+): Operation<OperationSchemas> {
+  return createMinimalOperation<TResult>(operationId, intentType, hookPoint, {
+    hookContext: (ctx) => ({
+      intent: ctx.intent,
+      workspaceRef: TEST_WS_REF,
+      workspacePath: testPath("/test/workspace").toNative(),
+      ...extra,
+      capabilities: { agent },
+    }),
+  });
+}
+
+/** The app:shutdown "stop" hook point, collecting (not throwing) handler errors. */
+function minimalStop(): Operation<OperationSchemas> {
+  return createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+    throwOnError: false,
+  });
+}
+
 /**
  * Set agent config value to activate the module, then run a start operation.
  */
@@ -433,8 +457,7 @@ async function activateModule(
   agentConfig: PersistedAccessor<ConfigAgentType>
 ): Promise<void> {
   await agentConfig.set("claude");
-  dispatcher.registerOperation(minimalStart());
-  await dispatcher.dispatch({ type: "app:start", payload: {} });
+  await startApp(dispatcher, null);
 }
 
 // =============================================================================
@@ -517,7 +540,7 @@ describe("createAgentModule", () => {
   describe("before-ready", () => {
     it("returns provider scripts", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(minimalBeforeReady());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
@@ -596,9 +619,7 @@ describe("createAgentModule", () => {
   describe("start", () => {
     it("does not initialize provider during app:start (lazy init)", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      await startApp(dispatcher, 9999);
 
       expect(mockProvider.initialize).not.toHaveBeenCalled();
       expect(mockProvider.onStatusChange).not.toHaveBeenCalled();
@@ -612,24 +633,15 @@ describe("createAgentModule", () => {
   describe("lazy init", () => {
     it("initializes provider with the resolved MCP config on first workspace:open", async () => {
       const { dispatcher, mockProvider } = createTestSetup({}, TEST_MCP_CONFIG);
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      await startApp(dispatcher, 9999);
 
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
+      registerSetup(dispatcher);
 
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as unknown as OpenWorkspaceIntent);
+      await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+      });
 
       expect(mockProvider.initialize).toHaveBeenCalledWith(TEST_MCP_CONFIG);
       expect(mockProvider.onStatusChange).toHaveBeenCalled();
@@ -637,74 +649,37 @@ describe("createAgentModule", () => {
 
     it("passes null mcpConfig when none could be resolved", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(null));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      await startApp(dispatcher, null);
 
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
+      registerSetup(dispatcher);
 
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as unknown as OpenWorkspaceIntent);
+      await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+      });
 
       expect(mockProvider.initialize).toHaveBeenCalledWith(null);
     });
 
     it("only initializes once across multiple workspace:open calls", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
-
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "b", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
+      await initializeViaFirstOpen(dispatcher);
+      await openWorkspace(dispatcher, { projectId: "p1", workspaceName: "b", base: "main" });
 
       expect(mockProvider.initialize).toHaveBeenCalledTimes(1);
     });
 
     it("dispatches INTENT_UPDATE_AGENT_STATUS when onStatusChange fires", async () => {
       const { dispatcher, moduleDeps } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
+      await initializeViaFirstOpen(dispatcher);
 
       expect(capturedStatusCallback).not.toBeNull();
 
       const dispatchSpy = vi.spyOn(moduleDeps.dispatcher, "dispatch").mockResolvedValue(undefined);
 
       const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 1, busy: 0 } };
-      capturedStatusCallback!(testPath("/test/workspace").toNative() as WorkspacePath, status);
+      capturedStatusCallback!(TEST_WS_REF, status);
 
       expect(dispatchSpy).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -715,42 +690,13 @@ describe("createAgentModule", () => {
       );
     });
 
-    it("drops a status report for a workspace it never set up", async () => {
-      const { dispatcher, moduleDeps } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-      dispatcher.registerOperation(minimalSetup());
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
-
-      const dispatchSpy = vi.spyOn(moduleDeps.dispatcher, "dispatch").mockResolvedValue(undefined);
-      const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 1, busy: 0 } };
-      capturedStatusCallback!(testPath("/other/workspace").toNative() as WorkspacePath, status);
-
-      expect(dispatchSpy).not.toHaveBeenCalled();
-    });
-
     it("does not initialize when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      await startApp(dispatcher, 9999);
 
-      dispatcher.registerOperation(
-        minimalSetup(
-          {
-            workspacePath: wsPath("/test/workspace"),
-            projectPath: projPath("/test/project"),
-          },
-          "opencode"
-        )
-      );
+      registerSetup(dispatcher, "opencode");
 
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
+      await openWorkspace(dispatcher, { projectId: "p1", workspaceName: "a", base: "main" });
 
       expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
@@ -763,7 +709,7 @@ describe("createAgentModule", () => {
   describe("register-agents", () => {
     it("returns provider agent info", async () => {
       const { dispatcher } = createTestSetup();
-      dispatcher.registerOperation(new MinimalRegisterAgentsOperation());
+      dispatcher.registerOperation(minimalRegisterAgents());
 
       const results = (await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -921,26 +867,18 @@ describe("createAgentModule", () => {
       const { dispatcher, agentConfig, mockProvider } = createTestSetup();
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
+      registerSetup(dispatcher);
 
-      const result = (await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as unknown as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
+      const result = (await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+      })) as SetupOperationResult | undefined;
 
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
-        testPath("/test/workspace").toString(),
+        TEST_WS_REF,
+        testPath("/test/workspace"),
         {
-          workspaceRef: TEST_WS_REF,
           isNewWorkspace: true,
         }
       );
@@ -953,27 +891,19 @@ describe("createAgentModule", () => {
       const { dispatcher, agentConfig, mockProvider } = createTestSetup();
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
+      registerSetup(dispatcher);
 
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-          agent: { type: "default", prompt: "Hello Claude" },
-        },
-      } as unknown as OpenWorkspaceIntent);
+      await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+        agent: { type: "default", prompt: "Hello Claude" },
+      });
 
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
-        testPath("/test/workspace").toString(),
+        TEST_WS_REF,
+        testPath("/test/workspace"),
         {
-          workspaceRef: TEST_WS_REF,
           initialPrompt: { prompt: "Hello Claude" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
@@ -986,47 +916,36 @@ describe("createAgentModule", () => {
       const spec = { type: "claude", prompt: "Review PR #65", permissionMode: "plan" } as const;
 
       function openNew(dispatcher: Dispatcher, agent?: unknown) {
-        return dispatcher.dispatch({
-          type: "workspace:open",
-          payload: {
-            projectId: "test-12345678",
-            workspaceName: "feature-1",
-            base: "main",
-            ...(agent !== undefined && { agent }),
-          },
-        } as unknown as OpenWorkspaceIntent);
+        return openWorkspace(dispatcher, {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+          ...(agent !== undefined && { agent }),
+        });
       }
 
       function reopen(dispatcher: Dispatcher, metadata: Record<string, string>) {
-        return dispatcher.dispatch({
-          type: "workspace:open",
-          payload: {
-            projectId: "test-12345678",
-            workspaceName: "feature-1",
-            existingWorkspace: {
-              path: testPath("/test/workspace").toNative(),
-              name: "feature-1",
-              branch: "feature-1",
-              metadata,
-            },
+        return openWorkspace(dispatcher, {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          existingWorkspace: {
+            path: testPath("/test/workspace").toNative(),
+            name: "feature-1",
+            branch: "feature-1",
+            metadata,
           },
-        } as unknown as OpenWorkspaceIntent);
+        });
       }
 
       function startOptions(mockProvider: AgentModuleProvider): WorkspaceStartOptions {
         const calls = vi.mocked(mockProvider.startWorkspace).mock.calls;
-        return calls.at(-1)![1]!;
+        return calls.at(-1)![2]!;
       }
 
       async function setup() {
         const ctx = createTestSetup();
         await activateModule(ctx.dispatcher, ctx.agentConfig);
-        ctx.dispatcher.registerOperation(
-          minimalSetup({
-            workspacePath: wsPath("/test/workspace"),
-            projectPath: projPath("/test/project"),
-          })
-        );
+        registerSetup(ctx.dispatcher);
         return ctx;
       }
 
@@ -1068,7 +987,6 @@ describe("createAgentModule", () => {
         await reopen(dispatcher, { [PENDING_KEY]: JSON.stringify(spec) });
 
         expect(startOptions(mockProvider)).toEqual({
-          workspaceRef: TEST_WS_REF,
           initialPrompt: { prompt: "Review PR #65", permissionMode: "plan" },
           onInitialPromptDelivered: expect.any(Function),
           isNewWorkspace: true,
@@ -1088,7 +1006,6 @@ describe("createAgentModule", () => {
 
         expect(metadata.has(PENDING_KEY)).toBe(false);
         expect(startOptions(mockProvider)).toEqual({
-          workspaceRef: TEST_WS_REF,
           isNewWorkspace: false,
         });
       });
@@ -1102,7 +1019,6 @@ describe("createAgentModule", () => {
 
         expect(metadata.has(PENDING_KEY)).toBe(false);
         expect(startOptions(mockProvider)).toEqual({
-          workspaceRef: TEST_WS_REF,
           isNewWorkspace: false,
         });
       });
@@ -1112,32 +1028,24 @@ describe("createAgentModule", () => {
       const { dispatcher, agentConfig, mockProvider } = createTestSetup();
       await activateModule(dispatcher, agentConfig);
 
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
+      registerSetup(dispatcher);
 
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-          existingWorkspace: {
-            path: testPath("/test/workspace").toNative(),
-            name: "feature-1",
-            branch: "feature-1",
-            metadata: {},
-          },
+      await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+        existingWorkspace: {
+          path: testPath("/test/workspace").toNative(),
+          name: "feature-1",
+          branch: "feature-1",
+          metadata: {},
         },
-      } as unknown as OpenWorkspaceIntent);
+      });
 
       expect(mockProvider.startWorkspace).toHaveBeenCalledWith(
-        testPath("/test/workspace").toString(),
+        TEST_WS_REF,
+        testPath("/test/workspace"),
         {
-          workspaceRef: TEST_WS_REF,
           isNewWorkspace: false,
         }
       );
@@ -1146,24 +1054,13 @@ describe("createAgentModule", () => {
     it("does not run when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
-      dispatcher.registerOperation(
-        minimalSetup(
-          {
-            workspacePath: wsPath("/test/workspace"),
-            projectPath: projPath("/test/project"),
-          },
-          "opencode"
-        )
-      );
+      registerSetup(dispatcher, "opencode");
 
-      const result = (await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as unknown as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
+      const result = (await openWorkspace(dispatcher, {
+        projectId: "test-12345678",
+        workspaceName: "feature-1",
+        base: "main",
+      })) as SetupOperationResult | undefined;
 
       expect(result).toBeUndefined();
       expect(mockProvider.startWorkspace).not.toHaveBeenCalled();
@@ -1181,19 +1078,10 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: TEST_WS_REF,
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      })) as ShutdownHookResult | undefined;
+      const result = (await deleteWorkspace(dispatcher, { force: false })) as
+        ShutdownHookResult | undefined;
 
-      expect(mockProvider.stopWorkspace).toHaveBeenCalledWith(
-        testPath("/test/workspace").toString()
-      );
+      expect(mockProvider.stopWorkspace).toHaveBeenCalledWith(TEST_WS_REF);
       expect(result).toBeDefined();
       expect(result!.serverName).toBe("Claude Code hook");
     });
@@ -1204,19 +1092,9 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: TEST_WS_REF,
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      });
+      await deleteWorkspace(dispatcher, { force: false });
 
-      expect(mockProvider.clearWorkspaceTracking).toHaveBeenCalledWith(
-        testPath("/test/workspace").toString()
-      );
+      expect(mockProvider.clearWorkspaceTracking).toHaveBeenCalledWith(TEST_WS_REF);
     });
 
     it("returns error in result when stop fails in force mode", async () => {
@@ -1227,15 +1105,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: TEST_WS_REF,
-          keepBranch: false,
-          force: true,
-          removeWorktree: true,
-        },
-      })) as ShutdownHookResult | undefined;
+      const result = (await deleteWorkspace(dispatcher, { force: true })) as
+        ShutdownHookResult | undefined;
 
       expect(result).toBeDefined();
       expect(result!.error).toBe("server busy");
@@ -1249,17 +1120,7 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown());
 
-      await expect(
-        dispatcher.dispatch<DeleteWorkspaceIntent>({
-          type: "workspace:delete",
-          payload: {
-            workspaceRef: TEST_WS_REF,
-            keepBranch: false,
-            force: false,
-            removeWorktree: true,
-          },
-        })
-      ).rejects.toThrow("server busy");
+      await expect(deleteWorkspace(dispatcher, { force: false })).rejects.toThrow("server busy");
     });
 
     it("waits for the agent terminal to be closed (agent-stopped)", async () => {
@@ -1286,15 +1147,8 @@ describe("createAgentModule", () => {
 
       dispatcher.registerOperation(minimalShutdown("opencode"));
 
-      const result = (await dispatcher.dispatch<DeleteWorkspaceIntent>({
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: TEST_WS_REF,
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      })) as ShutdownHookResult | undefined;
+      const result = (await deleteWorkspace(dispatcher, { force: false })) as
+        ShutdownHookResult | undefined;
 
       expect(result).toBeUndefined();
       expect(mockProvider.stopWorkspace).not.toHaveBeenCalled();
@@ -1317,17 +1171,11 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        createMinimalOperation<GetStatusHookResult | undefined>(
+        workspaceHookOperation<GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
           INTENT_GET_WORKSPACE_STATUS,
           "get",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "claude" },
-            }),
-          }
+          "claude"
         )
       );
 
@@ -1344,17 +1192,11 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
-        createMinimalOperation<GetStatusHookResult | undefined>(
+        workspaceHookOperation<GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
           INTENT_GET_WORKSPACE_STATUS,
           "get",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "opencode" },
-            }),
-          }
+          "opencode"
         )
       );
 
@@ -1377,17 +1219,11 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        createMinimalOperation<GetAgentSessionHookResult | undefined>(
+        workspaceHookOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           INTENT_GET_AGENT_SESSION,
           "get",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "claude" },
-            }),
-          }
+          "claude"
         )
       );
 
@@ -1407,17 +1243,11 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        createMinimalOperation<GetAgentSessionHookResult | undefined>(
+        workspaceHookOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           INTENT_GET_AGENT_SESSION,
           "get",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "claude" },
-            }),
-          }
+          "claude"
         )
       );
 
@@ -1434,17 +1264,11 @@ describe("createAgentModule", () => {
       const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
-        createMinimalOperation<GetAgentSessionHookResult | undefined>(
+        workspaceHookOperation<GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           INTENT_GET_AGENT_SESSION,
           "get",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "opencode" },
-            }),
-          }
+          "opencode"
         )
       );
 
@@ -1467,17 +1291,11 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        createMinimalOperation<RestartAgentHookResult | undefined>(
+        workspaceHookOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           INTENT_RESTART_AGENT,
           "restart",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "claude" },
-            }),
-          }
+          "claude"
         )
       );
 
@@ -1486,9 +1304,7 @@ describe("createAgentModule", () => {
         payload: { workspacePath: testPath("/test/workspace").toNative() },
       })) as RestartAgentHookResult | undefined;
 
-      expect(mockProvider.restartWorkspace).toHaveBeenCalledWith(
-        testPath("/test/workspace").toNative()
-      );
+      expect(mockProvider.restartWorkspace).toHaveBeenCalledWith(TEST_WS_REF);
       expect(result).toBeDefined();
       expect(result!.port).toBe(8081);
     });
@@ -1503,17 +1319,11 @@ describe("createAgentModule", () => {
       await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
-        createMinimalOperation<RestartAgentHookResult | undefined>(
+        workspaceHookOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           INTENT_RESTART_AGENT,
           "restart",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "claude" },
-            }),
-          }
+          "claude"
         )
       );
 
@@ -1529,17 +1339,11 @@ describe("createAgentModule", () => {
       const { dispatcher, mockProvider } = createTestSetup();
 
       dispatcher.registerOperation(
-        createMinimalOperation<RestartAgentHookResult | undefined>(
+        workspaceHookOperation<RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           INTENT_RESTART_AGENT,
           "restart",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              capabilities: { agent: "opencode" },
-            }),
-          }
+          "opencode"
         )
       );
 
@@ -1560,18 +1364,12 @@ describe("createAgentModule", () => {
   describe("send", () => {
     function registerSendOp(dispatcher: Dispatcher, agent: string): void {
       dispatcher.registerOperation(
-        createMinimalOperation<SendHookResult | undefined>(
+        workspaceHookOperation<SendHookResult | undefined>(
           SEND_AGENT_MESSAGE_OPERATION_ID,
           INTENT_SEND_AGENT_MESSAGE,
           "send",
-          {
-            hookContext: (ctx) => ({
-              intent: ctx.intent,
-              workspacePath: testPath("/test/workspace").toNative(),
-              waitMs: 1234,
-              capabilities: { agent },
-            }),
-          }
+          agent,
+          { waitMs: 1234 }
         )
       );
     }
@@ -1579,6 +1377,7 @@ describe("createAgentModule", () => {
     const intent = {
       type: INTENT_SEND_AGENT_MESSAGE,
       payload: {
+        workspaceRef: TEST_WS_REF,
         workspacePath: testPath("/test/workspace").toNative(),
         text: "hello",
         from: "CodeHydra · ch",
@@ -1594,7 +1393,7 @@ describe("createAgentModule", () => {
       const result = (await dispatcher.dispatch(intent)) as SendHookResult | undefined;
 
       expect(mockProvider.sendMessage).toHaveBeenCalledWith(
-        testPath("/test/workspace").toNative(),
+        TEST_WS_REF,
         { text: "hello", from: "CodeHydra · ch" },
         { waitMs: 1234 }
       );
@@ -1649,6 +1448,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
+              workspaceRef: TEST_WS_REF,
               workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
               event: (ctx.intent.payload as { event: "open" | "close" }).event,
               capabilities: { agent },
@@ -1668,10 +1468,7 @@ describe("createAgentModule", () => {
         payload: { workspacePath: testPath("/test/workspace").toNative(), event: "open" },
       });
 
-      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(
-        testPath("/test/workspace").toNative(),
-        "open"
-      );
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(TEST_WS_REF, "open");
     });
 
     it("forwards close to provider.applyTerminalLifecycle when active", async () => {
@@ -1684,10 +1481,7 @@ describe("createAgentModule", () => {
         payload: { workspacePath: testPath("/test/workspace").toNative(), event: "close" },
       });
 
-      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(
-        testPath("/test/workspace").toNative(),
-        "close"
-      );
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith(TEST_WS_REF, "close");
     });
 
     it("does not run when agent capability does not match provider type", async () => {
@@ -1717,6 +1511,7 @@ describe("createAgentModule", () => {
           {
             hookContext: (ctx) => ({
               intent: ctx.intent,
+              workspaceRef: TEST_WS_REF,
               workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
               open: (ctx.intent.payload as { open: boolean }).open,
               capabilities: { agent, ...(modalRecorded && { [MODAL_RECORDED_CAPABILITY]: true }) },
@@ -1735,10 +1530,7 @@ describe("createAgentModule", () => {
         payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
       });
 
-      expect(mockProvider.setModalOpen).toHaveBeenCalledWith(
-        testPath("/test/workspace").toNative(),
-        true
-      );
+      expect(mockProvider.setModalOpen).toHaveBeenCalledWith(TEST_WS_REF, true);
     });
 
     it("waits for terminal-focus to record the modal (modal-recorded)", async () => {
@@ -1777,24 +1569,9 @@ describe("createAgentModule", () => {
         onStatusChange: vi.fn().mockReturnValue(cleanupFn),
       });
       // Initialize provider via lazy path so dispose has something to clean up.
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
+      await initializeViaFirstOpen(dispatcher);
 
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
-          throwOnError: false,
-        })
-      );
+      dispatcher.registerOperation(minimalStop());
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -1804,14 +1581,9 @@ describe("createAgentModule", () => {
 
     it("skips dispose when provider was never initialized", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      await startApp(dispatcher, 9999);
 
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
-          throwOnError: false,
-        })
-      );
+      dispatcher.registerOperation(minimalStop());
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -1823,24 +1595,9 @@ describe("createAgentModule", () => {
         dispose: vi.fn().mockRejectedValue(new Error("dispose failed")),
       });
       // Initialize first so dispose runs
-      dispatcher.registerOperation(minimalStart(9999));
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-      dispatcher.registerOperation(
-        minimalSetup({
-          workspacePath: wsPath("/test/workspace"),
-          projectPath: projPath("/test/project"),
-        })
-      );
-      await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: { projectId: "p1", workspaceName: "a", base: "main" },
-      } as unknown as OpenWorkspaceIntent);
+      await initializeViaFirstOpen(dispatcher);
 
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
-          throwOnError: false,
-        })
-      );
+      dispatcher.registerOperation(minimalStop());
 
       await expect(
         dispatcher.dispatch({ type: "app:shutdown", payload: {} })

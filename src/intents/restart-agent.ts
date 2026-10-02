@@ -21,13 +21,13 @@ import type { OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
-  projectIdSchema,
-  workspaceNameSchema,
+  workspaceIdentityPayloadSchema,
   workspaceRefSchema,
   workspaceTargetShape,
 } from "./contract";
 import { WorkspaceHookOperation } from "./lib/workspace-operation";
 import { onlyDefined, requireResult } from "./lib/hook-helpers";
+import { workspaceIdentityPayload } from "./lib/workspace-identity";
 
 export const INTENT_RESTART_AGENT = "agent:restart" as const;
 
@@ -50,9 +50,7 @@ export const restartAgentResultSchema = z.number();
 
 export const agentRestartedPayloadSchema = z
   .object({
-    projectId: projectIdSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
     port: z.number(),
   })
   .readonly();
@@ -120,20 +118,17 @@ export class RestartAgentOperation extends WorkspaceHookOperation<typeof schemas
     super(RESTART_AGENT_OPERATION_ID, {
       hookPoint: "restart",
       buildInput: (intent, target) => ({ intent, ...target }),
-      resolveProject: true,
       errorLabel: "restart-agent restart hooks failed",
       extract: (results) =>
         requireResult(
           onlyDefined(results, "port", "agent:restart restart"),
           "Restart agent hook did not provide port result"
         ),
-      onSuccess: ({ resolved, project, result }) =>
+      onSuccess: ({ identity, result }) =>
         ({
           type: EVENT_AGENT_RESTARTED,
           payload: {
-            projectId: project!.projectId,
-            workspaceName: resolved.workspaceName,
-            workspaceRef: resolved.workspaceRef,
+            ...workspaceIdentityPayload(identity),
             port: result,
           },
         }) satisfies AgentRestartedEvent,

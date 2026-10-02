@@ -379,3 +379,39 @@ describe("sidekick output channels", () => {
     expect(lastChannel().appendLine).toHaveBeenCalledWith("[after-worktree-created] installing");
   });
 });
+
+describe("sidekick tag commands", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_API_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_API_PORT;
+  });
+
+  function runCommand(id: string, arg: unknown): unknown {
+    const registration = vi
+      .mocked(commands.registerCommand)
+      .mock.calls.find(([registered]) => registered === id);
+    return registration![1](arg);
+  }
+
+  it.each([
+    ["codehydra.setTag", { name: "review", color: "#8b949e" }, '{"color":"#8b949e"}'],
+    ["codehydra.deleteTag", "review", null],
+  ])("%s writes the tag's metadata key", (command, arg, value) => {
+    activate(makeContext());
+    const socket = getSocket();
+
+    void runCommand(command, arg);
+
+    expect(socket.emit).toHaveBeenCalledWith(
+      "api:workspace:setMetadata",
+      { key: "tags.review", value },
+      expect.any(Function)
+    );
+  });
+});

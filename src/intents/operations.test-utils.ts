@@ -17,7 +17,8 @@
 
 import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
-import type { HookContext, HookOutput } from "./lib/operation";
+import type { HookOutput } from "./lib/operation";
+import { defineHooks, type HooksOf, type OperationSchemaMap } from "./declarations";
 import type { ProjectId, WorkspaceName, WorkspaceLocator } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
@@ -26,31 +27,35 @@ import { ResolveWorkspaceOperation, RESOLVE_WORKSPACE_OPERATION_ID } from "./res
 import type {
   ResolveHookResult as ResolveWorkspaceHookResult,
   ResolveWorkspaceIntent,
-  StateHookInput,
   StateHookResult,
 } from "./resolve-workspace";
 import { ResolveProjectOperation, RESOLVE_PROJECT_OPERATION_ID } from "./resolve-project";
-import type {
-  ResolveHookResult as ResolveProjectHookResult,
-  ResolveHookInput as ResolveProjectHookInput,
-} from "./resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
 import {
   GetActiveWorkspaceOperation,
   GET_ACTIVE_WORKSPACE_OPERATION_ID,
 } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import { SwitchWorkspaceOperation, SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
-import type {
-  SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
-  ActivateHookInput,
-} from "./switch-workspace";
+import type { SwitchWorkspaceHookResult } from "./switch-workspace";
 import type { WorkspacePath, ProjectPath } from "./contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 import type { ProjectRef, WorkspaceRef } from "./contract";
 import { workspacePathSchema } from "./contract";
 import { parseProjectRef } from "../utils/ref";
 import { projectPathSchema } from "./contract";
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
+import {
+  SetMetadataOperation,
+  SET_METADATA_OPERATION_ID,
+  INTENT_SET_METADATA,
+} from "./set-metadata";
+import type { SetMetadataIntent } from "./set-metadata";
+import { GetMetadataOperation, GET_METADATA_OPERATION_ID } from "./get-metadata";
+import type { GetMetadataHookResult } from "./get-metadata";
+import { isValidMetadataKey } from "../shared/api/types";
+import { Path } from "../utils/path/path";
+import { projPath, testPath, workspaceRefIn, wsPath } from "../shared/test-fixtures";
 
 // =============================================================================
 // Configuration Types
@@ -235,10 +240,7 @@ export function createTestViewManager(initialActive: string | null = null): Test
  * - switch-workspace activate: calls config.viewManager.setActiveWorkspace() (if provided)
  */
 export function createTestMockModule(config: TestMockConfig): IntentModule {
-  const hooks: Record<
-    string,
-    Record<string, { handler: (ctx: HookContext) => Promise<HookOutput | void> }>
-  > = {};
+  const hooks: { -readonly [Id in keyof OperationSchemaMap]?: HooksOf<Id> } = {};
 
   // -- resolve-workspace --
   if (config.workspaces) {
@@ -269,8 +271,8 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     };
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
-        handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
-          const found = find((ctx.intent as ResolveWorkspaceIntent).payload);
+        handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
+          const found = find(ctx.intent.payload);
           if (!found) return { result: {} };
           const { entry, path } = found;
           return {
@@ -287,8 +289,8 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
         },
       },
       state: {
-        handler: async (ctx: HookContext): Promise<HookOutput<StateHookResult>> => {
-          const { workspacePath } = ctx as StateHookInput;
+        handler: async (ctx): Promise<HookOutput<StateHookResult>> => {
+          const { workspacePath } = ctx;
           const entry = lookupWorkspace(workspacePath);
           return {
             result: {
@@ -329,9 +331,9 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     };
     hooks[RESOLVE_PROJECT_OPERATION_ID] = {
       resolve: {
-        handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
+        handler: async (ctx): Promise<HookOutput<ResolveProjectHookResult>> => {
           // Test projects are checkouts, so a ref's project part is the path an entry is under.
-          const { projectRef } = ctx as ResolveProjectHookInput;
+          const { projectRef } = ctx;
           const found = findProject(projectRef);
           if (found === undefined) return { result: {} };
           const { entry, projectPath } = found;
@@ -364,9 +366,9 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const vm = config.viewManager;
     hooks[SWITCH_WORKSPACE_OPERATION_ID] = {
       activate: {
-        handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
-          const { workspaceRef, workspacePath, active } = ctx as ActivateHookInput;
-          const intent = ctx.intent as SwitchWorkspaceIntent;
+        handler: async (ctx): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
+          const { workspaceRef, workspacePath, active } = ctx;
+          const intent = ctx.intent;
           // Deselect: mirrors the production view-module null branch.
           if (workspaceRef === null || workspacePath === null) {
             vm.setActiveWorkspace(null);
@@ -383,7 +385,7 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     };
   }
 
-  return { name: "test-mock", hooks };
+  return { name: "test-mock", hooks: defineHooks(hooks) };
 }
 
 // =============================================================================
@@ -409,4 +411,112 @@ export function registerTestInfrastructure(
   dispatcher.registerModule(mockModule);
 
   return { mockModule };
+}
+
+// =============================================================================
+// Metadata operations (set-metadata / get-metadata)
+// =============================================================================
+
+const METADATA_PROJECT_ROOT = testPath("/project");
+const METADATA_WORKSPACES_DIR = testPath("/workspaces");
+
+export interface MetadataTestSetup {
+  readonly dispatcher: Dispatcher;
+  /** Simple Map-based metadata store: workspacePath → Record<string, string>. */
+  readonly metadataStore: Map<string, Record<string, string>>;
+  readonly projectId: ProjectId;
+  readonly workspaceName: WorkspaceName;
+  readonly workspacePath: WorkspacePath;
+}
+
+/**
+ * A dispatcher with the set-metadata and get-metadata operations, one workspace
+ * (`feature-x` of the project at `/project`), and a module serving both
+ * operations' hooks from a Map-based metadata store.
+ */
+export function createMetadataTestSetup(): MetadataTestSetup {
+  const workspacePath = new Path(METADATA_WORKSPACES_DIR, "feature-x");
+  const projectId = "project-ea0135bc" as ProjectId;
+  const workspaceName = "feature-x" as WorkspaceName;
+
+  const metadataStore = new Map<string, Record<string, string>>();
+
+  const dispatcher = createMockDispatcher();
+  dispatcher.registerOperation(new SetMetadataOperation());
+  dispatcher.registerOperation(new GetMetadataOperation());
+
+  // Infrastructure operations (resolve-workspace, resolve-project, etc.)
+  registerTestInfrastructure(dispatcher, {
+    workspaces: {
+      [workspacePath.toString()]: {
+        projectPath: projPath(METADATA_PROJECT_ROOT.toString()),
+        workspaceName,
+      },
+    },
+    projects: {
+      [METADATA_PROJECT_ROOT.toString()]: { projectId },
+    },
+  });
+
+  // set/get module: performs metadata operations using the Map store
+  const metadataModule: IntentModule = {
+    name: "test-metadata",
+    hooks: defineHooks({
+      [SET_METADATA_OPERATION_ID]: {
+        set: {
+          handler: async (ctx) => {
+            const { workspacePath: wp, intent } = ctx;
+            if (!isValidMetadataKey(intent.payload.key)) {
+              throw new Error(
+                `Invalid metadata key '${intent.payload.key}': must start with a letter, contain only letters, digits, and hyphens, and not end with a hyphen`
+              );
+            }
+            const record = metadataStore.get(wp) ?? {};
+            if (intent.payload.value === null) {
+              delete record[intent.payload.key];
+            } else {
+              record[intent.payload.key] = intent.payload.value;
+            }
+            metadataStore.set(wp, record);
+          },
+        },
+      },
+      [GET_METADATA_OPERATION_ID]: {
+        get: {
+          handler: async (ctx): Promise<HookOutput<GetMetadataHookResult>> => {
+            const metadata = metadataStore.get(ctx.workspacePath) ?? {};
+            return { result: { metadata } };
+          },
+        },
+      },
+    }),
+  };
+  dispatcher.registerModule(metadataModule);
+
+  return {
+    dispatcher,
+    metadataStore,
+    projectId,
+    workspaceName,
+    workspacePath: wsPath(workspacePath.toString()),
+  };
+}
+
+/** The ref of a workspace of the {@link createMetadataTestSetup} project, by its path. */
+export function metadataWorkspaceRef(workspacePath: WorkspacePath): WorkspaceRef {
+  return workspaceRefIn(
+    projPath(METADATA_PROJECT_ROOT.toString()),
+    new Path(workspacePath).basename
+  );
+}
+
+export function setMetadataIntent(
+  workspacePath: WorkspacePath,
+  key: string,
+  value: string | null
+): SetMetadataIntent {
+  return {
+    type: INTENT_SET_METADATA,
+    payload: { workspaceRef: metadataWorkspaceRef(workspacePath), key, value },
+  };
 }

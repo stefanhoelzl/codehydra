@@ -6,7 +6,7 @@
  * write persisted state without constructing a real DefaultStateService.
  */
 import type { StateService } from "./state-service";
-import type { PersistedAccessor, DeprecatedPersistedAccessor } from "./store-definition";
+import { createMockPersistedStore } from "./persisted-store.test-utils";
 
 /**
  * Mock StateService with a test-only inspection helper for the in-memory store.
@@ -33,42 +33,11 @@ export interface CreateMockStateOptions {
  * exactly as it would in production. load() is a no-op (values are seeded up front).
  */
 export function createMockState(options?: CreateMockStateOptions): MockStateService {
-  const store = new Map<string, unknown>(Object.entries(options?.values ?? {}));
+  const { store, register } = createMockPersistedStore(options?.values);
   const overrides = { ...(options?.overrides ?? {}) };
-  const defaultsByKey = new Map<string, unknown>();
-
-  function makeAccessor(key: string): PersistedAccessor<unknown> {
-    return {
-      name: key,
-      get default() {
-        return defaultsByKey.get(key);
-      },
-      get: () => store.get(key),
-      set: async (value: unknown) => {
-        store.set(key, value);
-      },
-      reset: async () => {
-        store.set(key, defaultsByKey.get(key));
-      },
-      isDefault: () => store.get(key) === defaultsByKey.get(key),
-    };
-  }
-
-  const register = ((
-    key: string,
-    definition: { default?: unknown }
-  ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor => {
-    defaultsByKey.set(key, definition.default);
-    // Mirror production: registered defaults seed the store for unset keys,
-    // but never overwrite values pre-populated via the `values` option.
-    if (!store.has(key) && definition.default !== undefined) {
-      store.set(key, definition.default);
-    }
-    return makeAccessor(key);
-  }) as StateService["register"];
 
   return {
-    register,
+    register: register as StateService["register"],
     load: async () => {},
     getEffective: () => Object.fromEntries(store),
     getRedactedOverrides: () => ({ ...overrides }),

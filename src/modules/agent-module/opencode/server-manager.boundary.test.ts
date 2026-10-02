@@ -24,12 +24,14 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
-import { delay } from "@shared/test-fixtures";
+import { delay, testWorkspaceRef as refOf } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
+import { Path } from "../../../utils/path/path";
+import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 
-/** The ref every workspace in these tests is started with. */
-const TEST_WORKSPACE_REF = "ch::local::/workspace::feature-a";
+/** The platform these tests run on: the real one. */
+const HOST_PLATFORM = process.platform as SupportedPlatform;
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
@@ -88,13 +90,13 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         pathProvider,
         SILENT_LOGGER,
+        HOST_PLATFORM,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
 
-      const port = await manager.startServer(workspacePath, {
-        workspaceRef: TEST_WORKSPACE_REF,
+      const port = await manager.startServer(refOf(workspacePath), new Path(workspacePath), {
         binary: TEST_BINARY,
       });
 
@@ -113,12 +115,12 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         pathProvider,
         SILENT_LOGGER,
+        HOST_PLATFORM,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath, {
-        workspaceRef: TEST_WORKSPACE_REF,
+      const port = await manager.startServer(refOf(workspacePath), new Path(workspacePath), {
         binary: TEST_BINARY,
       });
 
@@ -138,12 +140,12 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         pathProvider,
         SILENT_LOGGER,
+        HOST_PLATFORM,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
       const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath, {
-        workspaceRef: TEST_WORKSPACE_REF,
+      const port = await manager.startServer(refOf(workspacePath), new Path(workspacePath), {
         binary: TEST_BINARY,
       });
 
@@ -154,7 +156,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       expect(runningResponse.ok).toBe(true);
 
       // Stop the server
-      await manager.stopServer(workspacePath);
+      await manager.stopServer(refOf(workspacePath));
 
       // Wait a bit for port to be released
       await delay(1000);
@@ -180,6 +182,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         pathProvider,
         SILENT_LOGGER,
+        HOST_PLATFORM,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
@@ -190,8 +193,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       expect(existsSync(portsJsonPath)).toBe(false);
 
       // Start the server
-      await manager.startServer(workspacePath, {
-        workspaceRef: TEST_WORKSPACE_REF,
+      await manager.startServer(refOf(workspacePath), new Path(workspacePath), {
         binary: TEST_BINARY,
       });
 
@@ -200,7 +202,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       expect(existsSync(portsJsonPath)).toBe(false);
 
       // Stop the server
-      await manager.stopServer(workspacePath);
+      await manager.stopServer(refOf(workspacePath));
 
       // Still no ports.json after stopping
       expect(existsSync(portsJsonPath)).toBe(false);
@@ -217,6 +219,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         pathProvider,
         SILENT_LOGGER,
+        HOST_PLATFORM,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
 
@@ -229,8 +232,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         JSON.stringify({ instructions: ["USER_RULES.md"] })
       );
 
-      const port = await manager.startServer(workspacePath, {
-        workspaceRef: TEST_WORKSPACE_REF,
+      const port = await manager.startServer(refOf(workspacePath), new Path(workspacePath), {
         binary: TEST_BINARY,
       });
 

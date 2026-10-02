@@ -3,12 +3,14 @@
  *
  * Simulates the contract in `dialog-manager.ts`: `manager.open()` returns a
  * DialogHandle whose listeners tests fire via the captured MockDialogHandle's
- * emit helpers. `update`/`close` are tracked (config history, closed flag),
+ * emit helpers. `update`/`close` are tracked (config history, closed flag; an
+ * unchanged config is skipped, like the real handle),
  * `closed` resolves on close(), and `nextEvent()` settles on the next action
  * or dismiss — mirroring the real handle.
  */
 
 import { vi } from "vitest";
+import { withTimeout } from "../../utils/timeout";
 import type { DialogManager, DialogHandle } from "./sessions";
 import type { UiPresenter } from "./presentation-module";
 import type {
@@ -145,7 +147,8 @@ export function createMockDialogHandle(
     id,
     closed: closedPromise,
     update: vi.fn((newConfig: DialogConfig) => {
-      if (mock.closed) return;
+      // Like the real handle: closed or unchanged is a no-op.
+      if (mock.closed || JSON.stringify(newConfig) === JSON.stringify(mock.config)) return;
       mock.config = newConfig;
       mock.configs.push(newConfig);
     }),
@@ -186,15 +189,11 @@ export function createMockDialogHandle(
         const unsubDismiss = handle.onDismiss(settle);
       });
       if (timeoutMs === undefined) return eventPromise;
-      return Promise.race([
+      return withTimeout(
         eventPromise,
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Dialog ${id}: no response within ${timeoutMs}ms`)),
-            timeoutMs
-          )
-        ),
-      ]);
+        timeoutMs,
+        () => new Error(`Dialog ${id}: no response within ${timeoutMs}ms`)
+      );
     }),
   };
 

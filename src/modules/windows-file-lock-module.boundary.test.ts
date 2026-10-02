@@ -23,6 +23,7 @@ import {
   type ProcessRunner,
   type SpawnedProcess,
 } from "../boundaries/platform/process";
+import { isProcessRunning } from "../boundaries/platform/process.boundary-test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { delay } from "@shared/test-fixtures";
@@ -39,21 +40,6 @@ const isWindows = process.platform === "win32";
  */
 const SCAN_TIMEOUT = 20000;
 const TEST_TIMEOUT = 30000;
-
-/**
- * Check if a process is running using signal 0.
- */
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
-      return false;
-    }
-    throw err;
-  }
-}
 
 describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => {
   let tempDir: string;

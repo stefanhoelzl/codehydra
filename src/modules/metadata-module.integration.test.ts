@@ -25,9 +25,8 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, testPath } from "../shared/test-fixtures";
+import { projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -102,7 +101,7 @@ function createTestSetup(): TestSetup {
     mockClient,
     projectId,
     workspaceName,
-    workspaceRef: makeWorkspaceRef(projectRefFor(PROJECT_ROOT.toString()), workspaceName),
+    workspaceRef: workspaceRefIn(PROJECT_ROOT.toString(), workspaceName),
   };
 }
 

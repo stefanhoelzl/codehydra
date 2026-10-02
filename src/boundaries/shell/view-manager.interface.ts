@@ -8,13 +8,9 @@
  * derived from the workspace stores.
  */
 
+import type { Unsubscribe } from "../../shared/types";
 import type { ViewHandle } from "./types";
 import type { DevtoolsTarget, KeyboardTarget } from "./view-manager-types";
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
 
 /**
  * Interface for managing the single UI view.

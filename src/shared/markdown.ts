@@ -17,20 +17,13 @@
 
 import { Marked, type RendererObject } from "marked";
 import { slugifyHeading } from "./user-guide";
+import { escapeHtml } from "./html";
 
 export interface RenderOptions {
   readonly safe?: boolean;
 }
 
 const KBD_TAG = /(<\/?kbd>)/;
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 const headingRenderer: RendererObject = {
   heading({ tokens, depth, text }) {

@@ -13,6 +13,7 @@ import {
 import { SILENT_LOGGER } from "./logging";
 import { createBehavioralLogger } from "./logging.test-utils";
 import {
+  isProcessRunning,
   isWindows,
   spawnIgnoringSignals,
   spawnLongRunning,
@@ -34,21 +35,6 @@ const spawnedPids: number[] = [];
 function trackProcess(proc: SpawnedProcess): void {
   if (proc.pid !== undefined) {
     spawnedPids.push(proc.pid);
-  }
-}
-
-/**
- * Check if a process is running using signal 0.
- */
-function isProcessRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
-      return false;
-    }
-    throw err;
   }
 }
 

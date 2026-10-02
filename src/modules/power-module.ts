@@ -27,6 +27,7 @@ import type { WorkspaceRef, AggregatedAgentStatus } from "../shared/ipc";
 import { createWorkspaceStatusCache } from "./workspace-status-cache";
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { Logger } from "../boundaries/platform/logging";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Aggregation (pure function)
@@ -82,8 +83,8 @@ export function createPowerModule(deps: PowerModuleDeps): IntentModule {
 
   return {
     name: "power",
-    events: cache.events,
-    hooks: {
+    events: defineEvents(cache.events),
+    hooks: defineHooks({
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
@@ -94,6 +95,6 @@ export function createPowerModule(deps: PowerModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

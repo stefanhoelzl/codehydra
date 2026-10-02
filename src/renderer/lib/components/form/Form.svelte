@@ -37,6 +37,7 @@
   import { sendDialogEvent } from "$lib/api";
   import { trapTabKey, getFocusables } from "$lib/utils/focus-trap";
   import Section from "./Section.svelte";
+  import { reconcileField, suggestionLabel } from "./reconcile-field";
   import type {
     ButtonItem,
     CheckboxSectionConfig,
@@ -163,115 +164,28 @@
   // input displays the suggestion's label while the field reports its value).
   let dropdownDisplay = $state<Record<string, string>>({});
 
-  /** A dropdown section's suggestions flattened across groups. */
-  function flatSuggestions(
-    section: DropdownSectionConfig
-  ): readonly { value: string; label: string }[] {
-    return section.suggestions.flatMap((group) => group.items);
-  }
-
-  /** The label of the suggestion with this value, or the value itself. */
-  function suggestionLabel(section: DropdownSectionConfig, value: string): string {
-    return flatSuggestions(section).find((o) => o.value === value)?.label ?? value;
-  }
-
-  // Last backend-pushed `value` adopted per dropdown field. A deliberately
+  // Last backend-pushed `value` adopted per controlled field. A deliberately
   // non-reactive record: only the reconcile effect reads/writes it, to decide
   // whether a config's `value` is new (adopt) or a re-send (preserve edits).
   const adoptedValues: Record<string, string> = {};
 
-  // Reconcile field values whenever the config changes: rebuild the map so it
-  // mirrors the current field sections (dropping removed-field keys) while
-  // preserving values for fields that remain.
-  // - radio: keep the existing choice if still a valid option id, else the
-  //   first option's id.
-  // - dropdown (controlled): when the config carries a `value` the renderer
-  //   has not adopted yet, adopt it (strict mode falls back below when it
-  //   names no suggestion). Re-sends of the same value preserve user edits.
-  //   Only a value the reconcile actually applies is recorded as adopted — a
-  //   rejected one must stay adoptable, or the backend re-sending it (e.g. the
-  //   creation form seeding the base branch before the branch list arrives,
-  //   then re-sending it with the list) would be dismissed as a re-send.
-  // - dropdown (freeText): like input — keep existing edits/picks, else seed
-  //   from initialValue on first sight.
-  // - dropdown (strict): keep the existing choice if still a valid suggestion
-  //   value; on first sight start at initialValue when it names a suggestion;
-  //   else the first suggestion's value. An empty suggestion list accepts any
-  //   value, so a seeded default paints while the list is still loading; the
-  //   value is re-validated (and re-defaulted) once the list arrives. Display
-  //   text follows the value (suggestion label) unless the value is unchanged
-  //   (preserving what the user sees, e.g. typed free text).
-  // - input: keep existing edits/seeded value; otherwise seed from initialValue
-  //   on first sight (a later initialValue change does not re-seed).
-  // Existing values are read via untrack to avoid a write -> retrigger loop.
+  // Reconcile field values whenever the config changes: rebuild the maps so
+  // they mirror the current field sections (dropping removed-field keys) while
+  // preserving values for fields that remain. The per-type rules live in
+  // `reconcileField`. Existing values are read via untrack to avoid a
+  // write -> retrigger loop.
   $effect(() => {
     const next: Record<string, string> = {};
     const nextDisplay: Record<string, string> = {};
     for (const section of fieldSectionsOf(config)) {
-      if (section.type === "radio") {
-        const existing = untrack(() => fieldValues[section.id]);
-        const stillValid = existing !== undefined && section.options.some((o) => o.id === existing);
-        next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
-      } else if (section.type === "dropdown") {
-        const existing = untrack(() => fieldValues[section.id]);
-        const pushed =
-          section.value !== undefined && section.value !== adoptedValues[section.id]
-            ? section.value
-            : undefined;
-        if (section.freeText) {
-          if (pushed !== undefined) {
-            adoptedValues[section.id] = pushed;
-          }
-          next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
-        } else {
-          const options = flatSuggestions(section);
-          const isValid = (v: string | undefined): v is string =>
-            v !== undefined && (options.length === 0 || options.some((o) => o.value === v));
-          if (pushed !== undefined && isValid(pushed)) {
-            adoptedValues[section.id] = pushed;
-          }
-          next[section.id] = isValid(pushed)
-            ? pushed
-            : pushed === undefined && isValid(existing)
-              ? existing
-              : existing === undefined && pushed === undefined && isValid(section.initialValue)
-                ? section.initialValue
-                : (options[0]?.value ?? "");
-        }
-        const existingDisplay = untrack(() => dropdownDisplay[section.id]);
-        nextDisplay[section.id] =
-          next[section.id] === existing && existingDisplay !== undefined && pushed === undefined
-            ? existingDisplay
-            : suggestionLabel(section, next[section.id]!);
-      } else if (section.type === "input") {
-        // Controlled push with the dropdown/checkbox adopt-once semantics: adopt
-        // a pushed value the renderer has not seen yet (e.g. a reset-to-default);
-        // re-sends preserve the user's edits. Absent value = seed from
-        // initialValue, then user-driven.
-        const existing = untrack(() => fieldValues[section.id]);
-        const pushed =
-          section.value !== undefined && section.value !== adoptedValues[section.id]
-            ? section.value
-            : undefined;
-        if (pushed !== undefined) {
-          adoptedValues[section.id] = pushed;
-        }
-        next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
-      } else if (section.type === "checkbox") {
-        // Controlled push with the dropdown's adopt-once semantics: adopt a
-        // pushed value the renderer has not seen yet; re-sends preserve the
-        // user's toggles. Absent value = starts unchecked.
-        const existing = untrack(() => fieldValues[section.id]);
-        const pushedRaw = section.value === undefined ? undefined : String(section.value);
-        const pushed =
-          pushedRaw !== undefined && pushedRaw !== adoptedValues[section.id]
-            ? pushedRaw
-            : undefined;
-        if (pushed !== undefined) {
-          adoptedValues[section.id] = pushed;
-        }
-        next[section.id] = pushed ?? existing ?? "false";
-      }
+      const existing = untrack(() => ({
+        value: fieldValues[section.id],
+        display: dropdownDisplay[section.id],
+      }));
+      const result = reconcileField(section, existing, adoptedValues[section.id]);
+      next[section.id] = result.value;
+      if (result.display !== undefined) nextDisplay[section.id] = result.display;
+      if (result.adopt !== undefined) adoptedValues[section.id] = result.adopt;
     }
     fieldValues = next;
     dropdownDisplay = nextDisplay;
@@ -290,6 +204,11 @@
   // prop getter dereferencing an undefined dialog — firing this after destroy
   // threw the "reading 'config'" crash. At most one is pending at a time.
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // The deferred orphan-focus check (see the autofocus-follow effect), tracked
+  // like focusTimer so it never fires after unmount. Separate from focusTimer:
+  // the check itself schedules a focus, and must not cancel one in flight.
+  let orphanTimer: ReturnType<typeof setTimeout> | undefined;
 
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
@@ -359,6 +278,7 @@
   onDestroy(() => {
     cancelChangeTimers();
     if (focusTimer !== undefined) clearTimeout(focusTimer);
+    if (orphanTimer !== undefined) clearTimeout(orphanTimer);
   });
 
   /**
@@ -370,6 +290,15 @@
     if (focusTimer !== undefined) clearTimeout(focusTimer);
     focusTimer = setTimeout(() => {
       focusTimer = undefined;
+      run();
+    }, 0);
+  }
+
+  /** Defer the orphan-focus check to the next tick, cancelable on unmount. */
+  function scheduleOrphanCheck(run: () => void): void {
+    if (orphanTimer !== undefined) clearTimeout(orphanTimer);
+    orphanTimer = setTimeout(() => {
+      orphanTimer = undefined;
       run();
     }, 0);
   }
@@ -502,12 +431,12 @@
     // update orphans focus, restore the autofocus target. Focus parked
     // anywhere real (a field, the workspace iframe) is left alone.
     if (id !== null) {
-      setTimeout(() => {
+      scheduleOrphanCheck(() => {
         const active = document.activeElement;
         if (active === document.body || active === null) {
           focusAutofocusTarget();
         }
-      }, 0);
+      });
     }
   });
 

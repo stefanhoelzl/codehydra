@@ -5,11 +5,7 @@
 
 import type { UiEvent } from "./ui-event";
 import type { UiState } from "./ui-state";
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
+import type { Unsubscribe } from "./types";
 
 /**
  * Type-safe Electron API exposed to the renderer via contextBridge.

@@ -30,8 +30,7 @@ import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceLocator } from "../shared/api/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, workspaceRefIn } from "../shared/test-fixtures";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 
@@ -39,7 +38,7 @@ const PROJECT_ID = "project-ea0135bc" as ProjectId;
 // Test Constants
 // =============================================================================
 
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(projPath("/project")), "feature-x");
+const WORKSPACE_REF = workspaceRefIn(projPath("/project"), "feature-x");
 
 // =============================================================================
 // Test Setup

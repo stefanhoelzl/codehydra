@@ -46,17 +46,3 @@ export class ShellError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
-
-/**
- * Type guard to check if an error is a ShellError.
- */
-export function isShellError(error: unknown): error is ShellError {
-  return error instanceof ShellError;
-}
-
-/**
- * Type guard to check if an error is a ShellError with a specific code.
- */
-export function isShellErrorWithCode(error: unknown, code: ShellErrorCode): error is ShellError {
-  return isShellError(error) && error.code === code;
-}

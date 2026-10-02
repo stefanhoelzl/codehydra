@@ -9,7 +9,13 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "
 import { join } from "node:path";
 // Explicit .ts extension so `scripts/record-demo.ts` can import these fixtures
 // under bare node (which requires extensions in relative ESM specifiers).
-import { DEV_ELECTRON, DRIVER_APP_ARGS, createDriver, type AppDriver } from "../scripts/appctrl.ts";
+import {
+  DEV_ELECTRON,
+  DRIVER_APP_ARGS,
+  createDriver,
+  expandSidebarOn,
+  type AppDriver,
+} from "../scripts/appctrl.ts";
 import {
   CONFIG_FILE,
   DATA_ROOT,
@@ -520,40 +526,11 @@ export const POLL_INTERVALS = [100, 250];
 // =============================================================================
 
 /**
- * The sidebar is 20px wide with its overflow clipped, and expands to 250px on
- * hover. Its buttons are therefore not clickable until it expands — Playwright's
- * auto-hover doesn't help, because the ancestor is what clips them.
+ * Expand the sidebar and wait until its buttons are clickable. One
+ * implementation with the appctrl `expand-sidebar` command: `expandSidebarOn`.
  */
 export async function expandSidebar(ui: Page): Promise<void> {
-  // Re-sent until it takes: an enter that lands just after a collapse fired, but
-  // before the collapsed state reached the renderer, is not eligible to expand,
-  // and a synthetic enter brings no mousemove to arm it again.
-  await expect(async () => {
-    await ui.locator("nav.sidebar").dispatchEvent("mouseenter");
-    await expect(ui.getByRole("button", { name: "Settings" })).toBeVisible({ timeout: 1_000 });
-  }).toPass({ timeout: 15_000 });
-
-  // Visible is not clickable yet: the sidebar widens over a CSS transition, and
-  // Chromium routes a trusted click by the last composited frame, not the DOM.
-  // A click mid-transition can land on the workspace iframe the old frame still
-  // showed there, while Playwright, which checks the DOM, reports it clicked.
-  // So wait for the full width, then for two frames to be painted at it.
-  await expect
-    .poll(
-      () =>
-        ui.locator("nav.sidebar").evaluate((nav) => {
-          const target = parseFloat(nav.style.getPropertyValue("--ch-sidebar-width"));
-          return Math.abs(nav.getBoundingClientRect().width - target) < 0.5;
-        }),
-      { intervals: POLL_INTERVALS, message: "the sidebar never reached its expanded width" }
-    )
-    .toBe(true);
-  await ui.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      )
-  );
+  await expandSidebarOn(ui);
 }
 
 export async function collapseSidebar(ui: Page): Promise<void> {

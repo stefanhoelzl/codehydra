@@ -9,6 +9,7 @@
 - [Renderer Setup Functions](#renderer-setup-functions)
 - [Service Layer Patterns](#service-layer-patterns) - See [INTENTS.md](INTENTS.md)
 - [Error Classification](#error-classification)
+- [Error Surfacing](#error-surfacing)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration) - See [AGENTS.md](AGENTS.md)
 - [API Server Interface](#api-server-interface)
@@ -429,6 +430,16 @@ Use the global `.ch-visually-hidden` class for screen reader only text (NOT comp
 
 The class is defined in `src/renderer/lib/styles/global.css`.
 
+### Icon Buttons
+
+A borderless icon-only `<button>` (muted until hovered) uses the global `.ch-icon-button` class from `global.css`; add a component class only for what differs (placement, visibility):
+
+```svelte
+<button type="button" class="ch-icon-button" aria-label="Help" title="Help">
+  <Icon name="question" size={14} />
+</button>
+```
+
 ---
 
 ## Renderer Setup Functions
@@ -524,17 +535,15 @@ it("cleanup stops reacting", () => {
 
 ### Naming Convention
 
-- Use `setup*` prefix (e.g., `setupDomainEventBindings`, `setupDeletionProgress`)
-- For one-time async initialization, use `initialize*` (e.g., `initializeApp`)
+- Use `setup*` prefix (e.g., `setupDomainEventBindings`)
+- For one-time async initialization, use `initialize*`
 - Always return `() => void` cleanup callback for consistent composition
 
 ### Files
 
-| File                             | Purpose                                        |
-| -------------------------------- | ---------------------------------------------- |
-| `setup-deletion-progress.ts`     | Workspace deletion progress event subscription |
-| `setup-domain-event-bindings.ts` | Domain events wired to stores                  |
-| `initialize-app.ts`              | App initialization (projects, statuses, focus) |
+| File                             | Purpose                                            |
+| -------------------------------- | -------------------------------------------------- |
+| `setup-domain-event-bindings.ts` | Snapshot-driven agent chime (`ui:state` → service) |
 
 ---
 
@@ -577,6 +586,23 @@ never on Node's, the OS's or a library's.
 The one exception is `toUncaughtExceptionDetails` in `src/boundaries/shell/view.ts`. CDP's
 `ExceptionDetails` has no field for a promise rejection, and `text` is V8's fixed
 `Uncaught (in promise)`, which is never localized.
+
+## Error Surfacing
+
+Every failure is logged. Which of the user-facing mechanisms below also tells the user depends
+on **who saw the failure**, and on whether the user has to decide something:
+
+| Situation                                                                                                                      | Mechanism                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| An **operation** failed as a whole (its intent rejects)                                                                        | It emits a `*-failed` domain event: operations own emits, and the event also feeds idempotency resets, the sidebar row and the workspace log. A module subscribed to it shows the card. Use `error-notification-module` when the failure has no other surface (`workspace:create-failed`, `app:resume-failed`); a module that already shows the operation's progress shows the error there instead (the clone card turns into the error on `project:open-failed`; a deletion's errors stay in its deletion dialog, fed by `workspace:deletion-progress`). Skip the card when the caller gets the error back anyway (`source: "mcp"`) |
+| A **hook handler** absorbed a failure so the operation goes on (best-effort cleanup, a partial adopt, a migration's leftovers) | The handler logs and calls `notify()` itself (`presentation/notification-card.ts`). It cannot emit an event, and the operation did not fail, so there is no failure event to hang it on. Only when the user would otherwise miss something they asked for, e.g. a directory they asked to delete still on disk                                                                                                                                                                                                                                                                                                                       |
+| A producer that already owns a card (update flow, clone progress)                                                              | Turn its `NotificationCard` into the error in place, with a Retry action when one helps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| A **plugin** hook or automation failed, or a plugin cannot run                                                                 | The plugin error book (`plugin-module/errors.ts`): one card per distinct message, the full list and run logs in `ch plugin errors`. User scripts fail repeatedly, so they never notify directly                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| The user must **choose** before the app can go on (retry / continue / quit)                                                    | An in-app dialog (startup surface, the workspaces-root migration's failure dialog), not a card                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| The in-app UI **cannot** show anything: startup failed before it, or the renderer crashed                                      | `DialogBoundary.showErrorBox` / `showMessageBox`, then quit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+
+An operation called through `ch` / MCP / the API server also returns its error to that caller,
+which is what the caller sees; the card is for the user watching the app.
 
 ---
 
@@ -851,7 +877,9 @@ interface CommandRequest {
 **Acknowledgment result:**
 
 ```typescript
-type ApiResult<T> = { success: true; data: T } | { success: false; error: string };
+// src/shared/api-protocol.ts
+type ApiResult<T> =
+  { success: true; data: T } | { success: false; error: string; category?: ApiErrorCategory };
 ```
 
 ### Extension Host Shutdown

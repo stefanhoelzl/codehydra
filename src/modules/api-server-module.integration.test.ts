@@ -10,17 +10,11 @@
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
 import { describe, it, expect, vi } from "vitest";
 
-import { z } from "zod/v4";
-import type {
-  Operation,
-  OperationContext,
-  OperationSchemas,
-  IntentOf,
-} from "../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
@@ -38,8 +32,8 @@ import { createPortManagerMock } from "../boundaries/platform/port-manager.state
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 
 import { COMMAND_TIMEOUT_MS } from "../shared/api-protocol";
-import { wsPath, testPath } from "../shared/test-fixtures";
-import { projPath } from "../shared/test-fixtures";
+import { wsPath, testPath, projPath } from "../shared/test-fixtures";
+import { createMinimalStartOperation } from "./api-server.test-utils";
 import type { WorkspaceName } from "../intents/contract";
 import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
@@ -50,57 +44,21 @@ const FEATURE_REF = makeWorkspaceRef(PROJECT_REF, "feature-1");
 // Minimal Test Operations
 // =============================================================================
 
-const startSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<number | null>(),
-} satisfies OperationSchemas;
-
-class MinimalStartOperation implements Operation<typeof startSchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = startSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
-  ): Promise<number | null> {
-    const { errors, capabilities } = await ctx.hooks.collect("start", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return (capabilities.apiPort as number | null) ?? null;
-  }
-}
-
-const finalizeSchemas = {
-  type: INTENT_OPEN_WORKSPACE,
-  payload: z.unknown(),
-} satisfies OperationSchemas;
-
-/**
- * Finalize operation whose hook input is captured in a closure. The dispatcher
- * invokes `execute` detached from the object, so `this` is unavailable — read the
- * config from the enclosing scope instead.
- */
+/** The open-workspace "finalize" hook point with a canned feature-1 context. */
 function createMinimalFinalizeOperation(
   hookInput: Partial<FinalizeHookInput> = {}
-): Operation<typeof finalizeSchemas> {
-  return {
-    id: OPEN_WORKSPACE_OPERATION_ID,
-    schemas: finalizeSchemas,
-    async execute(
-      ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
-    ): Promise<void> {
-      const { errors } = await ctx.hooks.collect("finalize", {
-        intent: ctx.intent,
-        workspaceRef: FEATURE_REF,
-        workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
-        envVars: { OPENCODE_PORT: "8080" },
-        agentType: "opencode" as const,
-        ...hookInput,
-      });
-      if (errors.length > 0) throw errors[0]!;
-    },
-  };
+): Operation<OperationSchemas> {
+  return createMinimalOperation(OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE, "finalize", {
+    hookContext: (ctx) => ({
+      intent: ctx.intent,
+      workspaceRef: FEATURE_REF,
+      workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
+      envVars: { OPENCODE_PORT: "8080" },
+      agentType: "opencode" as const,
+      ...hookInput,
+    }),
+    select: () => undefined,
+  });
 }
 
 /** Runs the "delete" hook point with a canned delete-pipeline context. */
@@ -133,6 +91,7 @@ function createMockDeps(overrides?: Partial<ApiServerModuleDeps>): ApiServerModu
     portManager: createPortManagerMock(),
     dispatcher: { dispatch: vi.fn() } as unknown as ApiServerModuleDeps["dispatcher"],
     appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
+    fileSystem: createFileSystemMock(),
     logger: SILENT_LOGGER,
     ...overrides,
   };
@@ -179,7 +138,7 @@ describe("ApiServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(createMinimalStartOperation());
 
       const apiPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -213,7 +172,7 @@ describe("ApiServerModule", () => {
         },
       });
       const { dispatcher, apiServer } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(createMinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -251,7 +210,7 @@ describe("ApiServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start the server first
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(createMinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
@@ -335,7 +294,7 @@ describe("ApiServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start the server first
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(createMinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(createMinimalDeleteOperation());

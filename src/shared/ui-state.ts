@@ -3,7 +3,7 @@
  * the api:ui:state channel (planning/UI_STATE_ARCHITECTURE.md).
  *
  * The shape is the final render-ready view-model: regions are self-contained
- * (the renderer never joins), rows carry presenter-assigned opaque keys, and
+ * (the renderer never joins), rows carry opaque keys (workspace refs), and
  * `main` describes what the main view shows.
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
@@ -104,9 +104,10 @@ export interface UiDeletionProgress {
 
 export interface UiWorkspaceRow {
   /**
-   * Opaque presenter-assigned identity; stable across the creating → ready
-   * swap. The renderer must never parse or construct keys — it only echoes
-   * them back in ui:events.
+   * The row's identity: the workspace's ref (`ch::<machine>::<project>::<name>`),
+   * known from the start and so stable across the creating → ready swap. Also
+   * the key of its frame in `frames`. Opaque to the renderer: it must never
+   * parse or construct keys — it only echoes them back in ui:events.
    */
   readonly key: string;
   readonly name: string;

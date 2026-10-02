@@ -46,9 +46,8 @@
  */
 
 import type { z } from "zod/v4";
-import type { IntentModule, EventDeclarations, HookDeclarations } from "../../intents/lib/module";
-import type { DomainEvent } from "../../intents/lib/types";
-import type { HookContext, HookOutput } from "../../intents/lib/operation";
+import type { IntentModule } from "../../intents/lib/module";
+import type { HookOutput } from "../../intents/lib/operation";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { UiPresenter } from "../presentation/presentation-module";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
@@ -66,27 +65,24 @@ import {
 import { projectDirName } from "../../boundaries/platform/paths";
 import { Path } from "../../utils/path/path";
 import { getErrorMessage } from "../../shared/error-utils";
-import { TAGS_METADATA_KEY_PREFIX, TITLE_METADATA_KEY } from "../../shared/api/types";
+import { encodeTag, tagKey, TITLE_METADATA_KEY } from "../../shared/api/types";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_CREATED,
-  type OpenWorkspaceIntent,
+  schemas as openWorkspaceSchemas,
   type PrepareHookInput,
   type PrepareHookResult,
   type ProvisionHookInput,
   type ProvisionHookResult,
-  type WorkspaceCreatedEvent,
 } from "../../intents/open-workspace";
 import {
   CAPABILITY_REPO_HOOK,
   DELETE_WORKSPACE_OPERATION_ID,
-  type DeletePipelineHookInput,
-  type DeleteWorkspaceIntent,
+  schemas as deleteWorkspaceSchemas,
   type PreDeleteHookResult,
   type PreDeleteStartedFrame,
   type PreflightHookResult,
   EVENT_WORKSPACE_DELETED,
-  type WorkspaceDeletedEvent,
 } from "../../intents/delete-workspace";
 import {
   INTENT_RESOLVE_WORKSPACE,
@@ -107,14 +103,14 @@ import { invokePluginAction } from "../../api/adapters/plugin-actions";
 import { notify } from "../presentation/notification-card";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
-  AFTER_WORKTREE_CREATED,
-  BEFORE_WORKSPACE_OPENED,
-  BEFORE_WORKTREE_DELETED,
+  DELETE_WORKSPACE_HOOKS,
   ON_WORKSPACE_OPENED,
-  afterWorktreeCreatedOutputSchema,
-  beforeWorkspaceOpenedOutputSchema,
-  beforeWorktreeDeletedOutputSchema,
+  OPEN_WORKSPACE_HOOKS,
+  bindHookPoints,
   type AfterWorktreeCreatedOutput,
+  type AFTER_WORKTREE_CREATED,
+  type BEFORE_WORKSPACE_OPENED,
+  type BEFORE_WORKTREE_DELETED,
   type CoreInput,
 } from "./hook-map";
 import { HookFailedError, parseHookOutput } from "./hook-output";
@@ -127,12 +123,24 @@ import {
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
 import { createPluginTrust, type PluginTrust, type TrustProject } from "./trust";
-import { createShellResolver, ShellUnavailableError } from "./shells";
-import { createScriptRunner, describeStatus, type ScriptRunner } from "./script-runner";
+import { createShellResolver, ShellUnavailableError, type ShellName } from "./shells";
+import {
+  createScriptRunner,
+  describeStatus,
+  type PendingRun,
+  type ScriptRequest,
+  type ScriptRunner,
+} from "./script-runner";
 import type { HookOutputSink } from "./output-sink";
 import { createItemSchemas, type ItemSchemas } from "./items";
 import { parseTemplate, renderInput, type TemplateObject } from "./template-render";
-import { createAutomations, type AutomationSource } from "./automations";
+import { safeJsonParse } from "./util";
+import {
+  createAutomations,
+  TEMPORARY_FAILURE_EXIT,
+  type AutomationRun,
+  type AutomationSource,
+} from "./automations";
 import {
   convertLegacySources,
   LEGACY_SOURCES_DIR,
@@ -146,6 +154,12 @@ import {
   listLegacyHooks,
   migrateLegacyHooks,
 } from "./legacy-hooks";
+import {
+  defineEvents,
+  defineHooks,
+  type EventFor,
+  type HookInput,
+} from "../../intents/declarations";
 
 // =============================================================================
 // Dependencies
@@ -205,7 +219,7 @@ export function toMetadata(output: AfterWorktreeCreatedOutput): Record<string, s
     metadata[TITLE_METADATA_KEY] = output.title;
   }
   for (const [name, tag] of Object.entries(output.tags ?? {})) {
-    metadata[`${TAGS_METADATA_KEY_PREFIX}${name}`] = JSON.stringify(tag);
+    metadata[tagKey(name)] = encodeTag(tag);
   }
   return metadata;
 }
@@ -238,14 +252,6 @@ export function splitReservedEnv(env: Readonly<Record<string, string>>): {
 // State + config
 // =============================================================================
 
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 /** Keep only string→boolean pairs; a hand-edited oddity costs its own entry. */
 function parseBooleanMap(value: unknown): Record<string, boolean> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -272,20 +278,63 @@ const ACTION_MIGRATE = "Migrate";
 /** How long an automation's script may run before it is killed. */
 const AUTOMATION_TIMEOUT_MS = 30_000;
 
-/**
- * The exit an automation uses to say "temporary, try again next poll" —
- * `EX_TEMPFAIL` from sysexits.h, as mail servers use it.
- */
-const TEMPORARY_FAILURE_EXIT = 75;
-
-/** How long temporary failures may go on before they are worth a card. */
-const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
-
 /** A hook script one plugin contributes to one entry. */
 interface HookScript {
   readonly plugin: LoadedPlugin;
   readonly doc: PluginDocument;
   readonly script: string;
+}
+
+/** An automation, with the plugin and the script that run it. */
+interface PluginAutomation extends AutomationSource {
+  readonly owner: LoadedPlugin;
+  readonly shell: ShellName;
+  readonly script: string;
+}
+
+/** What a script printed and how it ended. */
+type ScriptOutput = PendingRun["result"];
+
+/**
+ * A judged run: what its output parsed to, or why it failed. `output` is absent
+ * only when the script never started; `logPath` when the log could not be written.
+ */
+type ScriptOutcome<T> =
+  | {
+      readonly ok: true;
+      readonly value: T;
+      readonly output: ScriptOutput;
+      readonly logPath?: Path;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: string;
+      readonly output: ScriptOutput;
+      readonly logPath?: Path;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: string;
+      readonly output?: undefined;
+      readonly logPath?: undefined;
+    };
+
+/** An automation's exit 75: temporary, try again next poll. */
+function isTemporaryFailure(output: ScriptOutput): boolean {
+  return output.status === "exited" && output.exitCode === TEMPORARY_FAILURE_EXIT;
+}
+
+/** An automation's entry name: its run logs and its key in the error book. */
+function automationEntry(source: AutomationSource): string {
+  return `automations.${source.name}`;
+}
+
+/** An automation's stdout: the JSON array of its items. */
+function parseItems(stdout: string): readonly unknown[] {
+  const parsed = safeJsonParse(stdout);
+  if (parsed === undefined) throw new Error("printed something that is not JSON");
+  if (!Array.isArray(parsed)) throw new Error("printed JSON that is not an array");
+  return parsed;
 }
 
 /** The workspace a hook is about: by ref, and by the paths its scripts run in. */
@@ -401,6 +450,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return plugins;
   }
 
+  /** Workspace plugins already warned about for shipping automations. */
+  const warnedWorkspaceAutomations = new Set<string>();
+
   async function loadWorkspace(worktree: Path, projectPath: string): Promise<LoadedPlugin[]> {
     const { plugins, problems } = await loadPlugins(
       deps.fileSystem,
@@ -495,6 +547,47 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return `${entry} (${script.plugin.id})`;
   }
 
+  /**
+   * Run one script — a hook's or an automation's — and judge it, recording the
+   * verdict in its run log. A shell that is missing or a process that cannot
+   * start, an exit other than 0 (worded by `describeExit`), and stdout that
+   * `parse` throws on are failures; the caller decides whom to tell.
+   */
+  async function runScript<T>(
+    request: ScriptRequest,
+    parse: (stdout: string) => T,
+    describeExit: (output: ScriptOutput) => string = describeStatus
+  ): Promise<ScriptOutcome<T>> {
+    let pending: PendingRun;
+    try {
+      pending = await runner.run(request);
+    } catch (error) {
+      return {
+        ok: false,
+        failure:
+          error instanceof ShellUnavailableError
+            ? error.message
+            : `could not start: ${getErrorMessage(error)}`,
+      };
+    }
+
+    const output = pending.result;
+    let verdict: { ok: true; value: T } | { ok: false; failure: string };
+    if (output.status !== "exited" || output.exitCode !== 0) {
+      verdict = { ok: false, failure: describeExit(output) };
+    } else {
+      try {
+        verdict = { ok: true, value: parse(output.stdout) };
+      } catch (error) {
+        verdict = { ok: false, failure: getErrorMessage(error) };
+      }
+    }
+    const logPath = await pending.finish(
+      verdict.ok ? { outcome: "ok" } : { outcome: "failed", reason: verdict.failure }
+    );
+    return { ...verdict, output, ...(logPath !== undefined && { logPath }) };
+  }
+
   // ---------------------------------------------------------------------------
   // Runs in flight, for shutdown
   // ---------------------------------------------------------------------------
@@ -569,9 +662,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     };
     const worktree = new Path(target.workspacePath);
 
-    let pending;
-    try {
-      pending = await runner.run({
+    const run = await runScript(
+      {
         plugin: script.plugin.id,
         entry,
         shell: script.doc.shell,
@@ -582,20 +674,23 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         workspaceDir: worktree,
         ...(script.plugin.pluginDir !== undefined && { pluginDir: script.plugin.pluginDir }),
         signal,
-      });
-    } catch (error) {
-      const message =
-        error instanceof ShellUnavailableError
-          ? error.message
-          : `could not start: ${getErrorMessage(error)}`;
-      errors.failure(key, message);
-      throw new HookFailedError(entry, `${label(script, entry)} ${message} — ${ERRORS_POINTER}`);
+      },
+      (stdout): z.infer<S> | undefined =>
+        schema === null ? undefined : parseHookOutput(stdout, schema)
+    );
+
+    if (run.output === undefined) {
+      // It never started: there is no output and no run log.
+      errors.failure(key, run.failure);
+      throw new HookFailedError(
+        entry,
+        `${label(script, entry)} ${run.failure} — ${ERRORS_POINTER}`
+      );
     }
 
-    const { result } = pending;
     for (const [stream, text] of [
-      ["stderr", result.stderr],
-      ["stdout", result.stdout],
+      ["stderr", run.output.stderr],
+      ["stdout", run.output.stdout],
     ] as const) {
       for (const line of text.split(/\r?\n/)) {
         if (line.trim() !== "") {
@@ -604,36 +699,21 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       }
     }
 
-    let failure: string | undefined;
-    let output: z.infer<S> | undefined;
-    if (result.status !== "exited" || result.exitCode !== 0) {
-      failure = describeStatus(result);
-    } else if (schema !== null) {
-      try {
-        output = parseHookOutput(result.stdout, schema);
-      } catch (error) {
-        failure = getErrorMessage(error);
-      }
-    }
-
-    const logPath = await pending.finish(
-      failure === undefined ? { outcome: "ok" } : { outcome: "failed", reason: failure }
-    );
-    if (failure !== undefined) {
+    if (!run.ok) {
       // Canceled by the quit itself: nobody is left to read a notification.
-      if (!shutdown.signal.aborted) errors.failure(key, failure, logPath?.toNative());
+      if (!shutdown.signal.aborted) errors.failure(key, run.failure, run.logPath?.toNative());
       deps.logger.warn("Plugin hook failed", {
         plugin: script.plugin.id,
         entry,
-        reason: failure,
+        reason: run.failure,
       });
       throw new HookFailedError(
         entry,
-        `${label(script, entry)} failed: ${failure} — ${ERRORS_POINTER}`
+        `${label(script, entry)} failed: ${run.failure} — ${ERRORS_POINTER}`
       );
     }
     errors.success(key);
-    return output;
+    return run.value;
   }
 
   /** Run a blocking script with a Cancel on offer for as long as it runs. */
@@ -694,21 +774,21 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // after-worktree-created
   // ---------------------------------------------------------------------------
 
-  async function afterWorktreeCreated(ctx: HookContext): Promise<HookOutput<ProvisionHookResult>> {
-    const input = ctx as ProvisionHookInput;
-    const intent = ctx.intent as OpenWorkspaceIntent;
-
+  async function afterWorktreeCreated(
+    spec: typeof AFTER_WORKTREE_CREATED,
+    input: HookInput<typeof OPEN_WORKSPACE_OPERATION_ID, "provision">
+  ): Promise<HookOutput<ProvisionHookResult>> {
     // Activating a discovered workspace is not a creation. Re-running a setup
     // script for every workspace at every project open would be both surprising
     // and slow — that is what `before-workspace-opened` is for.
-    if (intent.payload.existingWorkspace !== undefined) return { result: {} };
+    if (!input.fresh) return { result: {} };
 
-    const core = coreInput(input, intent);
+    const core = coreInput(input);
     const outputs = await runOpenEntry(
-      AFTER_WORKTREE_CREATED.name,
+      spec.name,
       targetOf(input, core.workspaceName),
       core,
-      afterWorktreeCreatedOutputSchema
+      spec.output
     );
 
     const merged: AfterWorktreeCreatedOutput = {};
@@ -725,16 +805,16 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // before-workspace-opened
   // ---------------------------------------------------------------------------
 
-  async function beforeWorkspaceOpened(ctx: HookContext): Promise<HookOutput<PrepareHookResult>> {
-    const input = ctx as PrepareHookInput;
-    const intent = ctx.intent as OpenWorkspaceIntent;
-
-    const core = coreInput(input, intent);
+  async function beforeWorkspaceOpened(
+    spec: typeof BEFORE_WORKSPACE_OPENED,
+    input: HookInput<typeof OPEN_WORKSPACE_OPERATION_ID, "prepare">
+  ): Promise<HookOutput<PrepareHookResult>> {
+    const core = coreInput(input);
     const outputs = await runOpenEntry(
-      BEFORE_WORKSPACE_OPENED.name,
+      spec.name,
       targetOf(input, core.workspaceName),
-      { ...core, reopened: intent.payload.existingWorkspace !== undefined },
-      beforeWorkspaceOpenedOutputSchema
+      { ...core, reopened: !input.fresh },
+      spec.output
     );
 
     const merged: Record<string, string> = {};
@@ -744,7 +824,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     const { env: kept, dropped } = splitReservedEnv(merged);
     if (dropped.length > 0) {
       deps.logger.warn("Plugin env may not set CodeHydra's own variables", {
-        entry: BEFORE_WORKSPACE_OPENED.name,
+        entry: spec.name,
         dropped: dropped.join(","),
       });
     }
@@ -752,12 +832,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   }
 
   /** The core every open entry is handed. `branch`/`base` stay absent when unknown. */
-  function coreInput(
-    input: ProvisionHookInput | PrepareHookInput,
-    intent: OpenWorkspaceIntent
-  ): CoreInput {
+  function coreInput(input: ProvisionHookInput | PrepareHookInput): CoreInput {
     return {
-      workspaceName: intent.payload.existingWorkspace?.name ?? intent.payload.workspaceName,
+      workspaceName: input.workspaceName,
       workspacePath: input.workspacePath,
       projectPath: input.projectPath,
       workspace: input.workspaceRef,
@@ -795,13 +872,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // ---------------------------------------------------------------------------
 
   async function* beforeWorktreeDeleted(
-    ctx: HookContext
+    spec: typeof BEFORE_WORKTREE_DELETED,
+    input: HookInput<typeof DELETE_WORKSPACE_OPERATION_ID, "pre-delete">
   ): AsyncGenerator<PreDeleteStartedFrame, HookOutput<PreDeleteHookResult>, void> {
-    const input = ctx as DeletePipelineHookInput;
-    const intent = ctx.intent as DeleteWorkspaceIntent;
+    const { intent } = input;
     if (!allowed()) return { result: {} };
 
-    const entry = BEFORE_WORKTREE_DELETED.name;
+    const entry = spec.name;
     const target = targetOf(input, input.workspaceName);
 
     // Claim a row on the deletion panel before anything slow happens — the
@@ -834,7 +911,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       // A throw is the "could not tell" half of the gate and stops the deletion
       // by itself; a returned `blocked` is the deliberate refusal.
       const output = await runCancelable(script, entry, target, "delete", (signal) =>
-        runHookScript(script, entry, target, stdin, beforeWorktreeDeletedOutputSchema, signal)
+        runHookScript(script, entry, target, stdin, spec.output, signal)
       );
       if (output?.blocked === true) {
         return {
@@ -858,18 +935,18 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * asks nothing about trust, because a question raised here would arrive
    * before the user has even seen a deletion start.
    */
-  async function announceDeleteHook(ctx: HookContext): Promise<HookOutput<PreflightHookResult>> {
-    const input = ctx as DeletePipelineHookInput;
-    const { payload } = ctx.intent as DeleteWorkspaceIntent;
+  async function announceDeleteHook(
+    spec: typeof BEFORE_WORKTREE_DELETED,
+    input: HookInput<typeof DELETE_WORKSPACE_OPERATION_ID, "preflight">
+  ): Promise<HookOutput<PreflightHookResult>> {
+    const { payload } = input.intent;
 
     // Exactly the conditions under which the stage will actually run.
     if (!payload.removeWorktree || payload.force || !allowed()) return {};
 
-    const scripts = await hookScripts(
-      BEFORE_WORKTREE_DELETED.name,
-      targetOf(input, input.workspaceName),
-      { ask: false }
-    );
+    const scripts = await hookScripts(spec.name, targetOf(input, input.workspaceName), {
+      ask: false,
+    });
     return scripts.length > 0 ? { provides: { [CAPABILITY_REPO_HOOK]: true } } : {};
   }
 
@@ -877,8 +954,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // on-workspace-opened (fire-and-forget)
   // ---------------------------------------------------------------------------
 
-  function onWorkspaceOpened(event: DomainEvent): void {
-    const payload = (event as WorkspaceCreatedEvent).payload;
+  function onWorkspaceOpened(event: EventFor<typeof EVENT_WORKSPACE_CREATED>): void {
+    const payload = event.payload;
     const entry = ON_WORKSPACE_OPENED.name;
 
     void (async (): Promise<void> => {
@@ -898,7 +975,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           project: payload.projectRef,
           ...(payload.branch !== undefined && { branch: payload.branch }),
           ...(payload.base !== undefined && { base: payload.base }),
-          reopened: payload.reopened === true,
+          reopened: !payload.fresh,
         };
         for (const script of await hookScripts(entry, target, { ask: true })) {
           // Output is ignored: nothing waits for an event hook's answer.
@@ -985,159 +1062,70 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Automations
   // ---------------------------------------------------------------------------
 
-  /** An automation's script, and the plugin it runs for. */
-  interface AutomationScript {
-    readonly plugin: LoadedPlugin;
-    readonly doc: PluginDocument;
-    readonly script: string;
-  }
-  let automationScripts = new Map<string, AutomationScript>();
-  /** Automations that failed in the current cycle, and the ones run in the last. */
-  let failedThisCycle = new Set<string>();
-  let ranLastCycle: readonly AutomationSource[] = [];
-  /**
-   * When each automation's current run of temporary failures began. Any other
-   * outcome — a success or a real failure — ends it.
-   */
-  const temporarySince = new Map<string, number>();
-  /** Workspace plugins already warned about for shipping automations. */
-  const warnedWorkspaceAutomations = new Set<string>();
-
   /** An automation's key in the error book. */
   function automationKey(source: AutomationSource): { plugin: string; entry: string } {
-    return { plugin: source.plugin, entry: `automations.${source.name}` };
+    return { plugin: source.plugin, entry: automationEntry(source) };
   }
 
-  /**
-   * The automations to run this cycle: every enabled local plugin's, for this
-   * platform. Also settles the last cycle's error book: an automation that ran
-   * then without failing is no longer failing. (Settling here, rather than the
-   * moment its script succeeds, keeps an item error found after a good run
-   * from being cleared and re-notified every cycle.)
-   */
-  async function automationSources(): Promise<readonly AutomationSource[]> {
-    for (const source of ranLastCycle) {
-      if (!failedThisCycle.has(source.id)) errors.success(automationKey(source));
-    }
-    failedThisCycle = new Set();
-
-    const scripts = new Map<string, AutomationScript>();
-    const sources: AutomationSource[] = [];
+  /** The automations to run this cycle: every enabled local plugin's, for this platform. */
+  async function automationSources(): Promise<readonly PluginAutomation[]> {
+    const sources: PluginAutomation[] = [];
+    const seen = new Set<string>();
     for (const plugin of await loadLocal()) {
       if (plugin.error !== undefined || trust.state("local", plugin.name) === "disabled") continue;
       for (const doc of plugin.applied) {
         for (const spec of doc.automations) {
           const id = `${plugin.name}/${spec.name}`;
-          if (scripts.has(id)) {
+          if (seen.has(id)) {
             deps.logger.warn("Automation defined twice for this platform; running the first", {
               plugin: plugin.id,
               automation: spec.name,
             });
             continue;
           }
-          scripts.set(id, { plugin, doc, script: spec.script });
-          sources.push({ id, plugin: plugin.id, name: spec.name });
+          seen.add(id);
+          sources.push({
+            id,
+            plugin: plugin.id,
+            name: spec.name,
+            owner: plugin,
+            shell: doc.shell,
+            script: spec.script,
+          });
         }
       }
     }
-    automationScripts = scripts;
-    ranLastCycle = sources;
     return sources;
   }
 
-  function automationFailed(source: AutomationSource, message: string, logPath?: Path): void {
-    failedThisCycle.add(source.id);
-    errors.failure(automationKey(source), message, logPath?.toNative());
-  }
-
-  /**
-   * An automation exited 75: skip it this poll and try again next. Listed in
-   * `ch plugin errors` straight away, but raised as a card only once the
-   * failures have gone on for the grace period — then as an ordinary `exit 75`,
-   * whose new message is what raises the card.
-   */
-  function temporaryFailure(source: AutomationSource, logPath?: Path): void {
-    const now = Date.now();
-    const since = temporarySince.get(source.id) ?? now;
-    temporarySince.set(source.id, since);
-    failedThisCycle.add(source.id);
-    deps.logger.debug("Automation failed temporarily, retrying next cycle", {
-      automation: source.id,
-    });
-    if (now - since >= TEMPORARY_FAILURE_GRACE_MS) {
-      errors.failure(automationKey(source), `exit ${TEMPORARY_FAILURE_EXIT}`, logPath?.toNative());
-    } else {
-      errors.failure(
-        automationKey(source),
-        `temporary failure (exit ${TEMPORARY_FAILURE_EXIT}), retrying`,
-        logPath?.toNative(),
-        { quiet: true }
-      );
-    }
-  }
-
-  /** Run an automation's script and read the array it prints; null when it failed. */
-  async function runAutomationScript(source: AutomationSource): Promise<unknown[] | null> {
-    const entry = automationScripts.get(source.id);
-    if (entry === undefined) return null;
-    const { plugin, doc, script } = entry;
-
-    let pending;
-    try {
-      pending = await runner.run({
-        plugin: plugin.id,
-        entry: `automations.${source.name}`,
-        shell: doc.shell,
-        script,
-        cwd: plugin.pluginDir ?? localDir,
+  /** Run an automation's script and read the array of items it prints. */
+  async function runAutomationScript(source: PluginAutomation): Promise<AutomationRun> {
+    const { owner } = source;
+    const run = await runScript(
+      {
+        plugin: owner.id,
+        entry: automationEntry(source),
+        shell: source.shell,
+        script: source.script,
+        cwd: owner.pluginDir ?? localDir,
         input: {},
-        logDir: logDir(plugin, "", "automations", source.name),
-        ...(plugin.pluginDir !== undefined && { pluginDir: plugin.pluginDir }),
+        logDir: logDir(owner, "", "automations", source.name),
+        ...(owner.pluginDir !== undefined && { pluginDir: owner.pluginDir }),
         timeoutMs: AUTOMATION_TIMEOUT_MS,
-      });
-    } catch (error) {
-      temporarySince.delete(source.id);
-      automationFailed(
-        source,
-        error instanceof ShellUnavailableError ? error.message : getErrorMessage(error)
-      );
-      return null;
-    }
-
-    const { result } = pending;
-    const temporary = result.status === "exited" && result.exitCode === TEMPORARY_FAILURE_EXIT;
-    if (!temporary) temporarySince.delete(source.id);
-    let failure: string | undefined;
-    let items: unknown[] | undefined;
-    if (temporary) {
-      failure = `temporary failure (exit ${TEMPORARY_FAILURE_EXIT})`;
-    } else if (result.status !== "exited" || result.exitCode !== 0) {
-      failure = describeStatus(result);
-    } else {
-      try {
-        const parsed: unknown = JSON.parse(result.stdout);
-        if (Array.isArray(parsed)) items = parsed;
-        else failure = "printed JSON that is not an array";
-      } catch {
-        failure = "printed something that is not JSON";
-      }
-    }
-    const logPath = await pending.finish(
-      failure === undefined ? { outcome: "ok" } : { outcome: "failed", reason: failure }
+      },
+      parseItems,
+      (output) =>
+        isTemporaryFailure(output)
+          ? `temporary failure (exit ${TEMPORARY_FAILURE_EXIT})`
+          : describeStatus(output)
     );
-    if (temporary) {
-      temporaryFailure(source, logPath);
-      return null;
-    }
-    if (failure !== undefined || items === undefined) {
-      deps.logger.warn("Automation script failed, skipping its items this cycle", {
-        automation: source.id,
-        reason: failure ?? "",
-      });
-      automationFailed(source, failure ?? "failed", logPath);
-      return null;
-    }
-    return items;
+    if (run.ok) return { ok: true, items: run.value };
+    return {
+      ok: false,
+      failure: run.failure,
+      temporary: run.output !== undefined && isTemporaryFailure(run.output),
+      ...(run.logPath !== undefined && { logPath: run.logPath.toNative() }),
+    };
   }
 
   /** Item schemas, built from the registry the first time they are needed. */
@@ -1159,7 +1147,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     invokeAction: async (action, input) => {
       await invokePluginAction({ registry: deps.registry() }, action, input);
     },
-    reportError: (source, message) => automationFailed(source, message),
+    errors: {
+      failure: (source, message, logPath, options) =>
+        errors.failure(automationKey(source), message, logPath, options),
+      success: (source) => errors.success(automationKey(source)),
+    },
   });
 
   /**
@@ -1417,7 +1409,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     }
   }
 
-  const hooks: HookDeclarations = {
+  const hooks = defineHooks({
     [APP_START_OPERATION_ID]: {
       migrations: { handler: migrateProjectKeys },
     },
@@ -1429,17 +1421,24 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         },
       },
     },
-    [OPEN_WORKSPACE_OPERATION_ID]: {
-      provision: { handler: afterWorktreeCreated },
-      prepare: { handler: beforeWorkspaceOpened },
-    },
+    // Driven by the hook maps: exposing an entry at another point fails to
+    // compile here until it is bound.
+    [OPEN_WORKSPACE_OPERATION_ID]: bindHookPoints(openWorkspaceSchemas, OPEN_WORKSPACE_HOOKS, {
+      provision: (spec) => ({ handler: (ctx) => afterWorktreeCreated(spec, ctx) }),
+      prepare: (spec) => ({ handler: (ctx) => beforeWorkspaceOpened(spec, ctx) }),
+    }),
     [DELETE_WORKSPACE_OPERATION_ID]: {
-      preflight: { handler: announceDeleteHook },
-      "pre-delete": { handler: beforeWorktreeDeleted },
+      ...bindHookPoints(deleteWorkspaceSchemas, DELETE_WORKSPACE_HOOKS, {
+        "pre-delete": (spec) => ({ handler: (ctx) => beforeWorktreeDeleted(spec, ctx) }),
+      }),
+      // Not an entry of its own: claims the deletion panel's row for the gate.
+      preflight: {
+        handler: (ctx) => announceDeleteHook(DELETE_WORKSPACE_HOOKS["pre-delete"], ctx),
+      },
     },
-  };
+  });
 
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_APP_STARTED]: {
       handler: async (): Promise<void> => {
         await moveLegacySources();
@@ -1449,17 +1448,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     [EVENT_WORKSPACE_CREATED]: {
       // Returns immediately: the emitter must never wait on a plugin's script,
       // least of all one that may park on a trust dialog.
-      handler: async (event: DomainEvent): Promise<void> => {
+      handler: async (event): Promise<void> => {
         onWorkspaceOpened(event);
       },
     },
     [EVENT_WORKSPACE_DELETED]: {
       // Its editor is never coming back, so neither is a reason to hold its output.
-      handler: async (event: DomainEvent): Promise<void> => {
-        deps.sink.closed((event as WorkspaceDeletedEvent).payload.workspaceRef);
+      handler: async (event): Promise<void> => {
+        deps.sink.closed(event.payload.workspaceRef);
       },
     },
-  };
+  });
 
   return { name: "plugins", hooks, events, api };
 }

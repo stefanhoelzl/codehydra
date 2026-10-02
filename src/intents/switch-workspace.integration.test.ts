@@ -44,9 +44,9 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspacePath, ProjectPath, WorkspaceRef } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 
 // =============================================================================
@@ -158,7 +158,7 @@ function createTestSetup(opts?: {
     projects: (projectPath) => {
       const project = appState.getProject(projectPath);
       if (!project) return undefined;
-      return { projectId: generateProjectId(project.path), projectName: project.name };
+      return { projectId: fakeProjectId(project.path), projectName: project.name };
     },
     viewManager,
   });
@@ -236,15 +236,19 @@ function createTestSetup(opts?: {
 // Helpers
 // =============================================================================
 
-/** Generate a project ID from a path (base64url, matching production). */
-function generateProjectId(path: string): ProjectId {
+/**
+ * A stable, opaque project ID for a path. Not production's format
+ * (local-project-module's `<name>-<sha256 prefix>`): the switch operation only
+ * passes the ID through, so any value unique per path will do.
+ */
+function fakeProjectId(path: string): ProjectId {
   return Buffer.from(path).toString("base64url") as ProjectId;
 }
 
 /** The ref of a workspace at `<project>/workspaces/<name>`. */
 function wsRef(workspacePath: string): WorkspaceRef {
   const path = new Path(workspacePath);
-  return makeWorkspaceRef(projectRefFor(path.dirname.dirname.toString()), path.basename);
+  return workspaceRefIn(path.dirname.dirname.toString(), path.basename);
 }
 
 function switchIntent(workspacePath?: WorkspacePath, focus?: boolean): SwitchWorkspaceIntent {
@@ -294,7 +298,7 @@ describe("SwitchWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceSwitchedEvent;
       expect(event.type).toBe(EVENT_WORKSPACE_SWITCHED);
       expect(event.payload).toEqual({
-        projectId: generateProjectId(TEST_PROJECT_PATH),
+        projectId: fakeProjectId(TEST_PROJECT_PATH),
         projectName: TEST_PROJECT_NAME,
         projectRef: projectRefFor(TEST_PROJECT_PATH),
         workspaceName: TEST_WORKSPACE_NAME,

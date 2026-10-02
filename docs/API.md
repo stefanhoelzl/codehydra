@@ -1291,7 +1291,7 @@ interface AppStateResult {
 | `workspace:removed`           | `WorkspaceLocator`                               | Workspace removed                                                            |
 | `workspace:switched`          | `WorkspaceLocator \| null`                       | Active workspace changed                                                     |
 | `workspace:status-changed`    | `WorkspaceLocator & { status: WorkspaceStatus }` | Status changed                                                               |
-| `workspace:metadata-changed`  | `{ projectId, workspaceName, key, value }`       | Metadata updated                                                             |
+| `workspace:metadata-changed`  | workspace identity + `{ key, value }`            | Metadata updated                                                             |
 | `workspace:loading-changed`   | `{ path: string, loading: boolean }`             | Workspace loading state changed                                              |
 | `workspace:deletion-progress` | `DeletionProgress`                               | Workspace deletion progress update (includes `blockingProcesses` on Windows) |
 | `ui:mode-changed`             | `{ mode: UIMode, previousMode: UIMode }`         | UI mode changed                                                              |

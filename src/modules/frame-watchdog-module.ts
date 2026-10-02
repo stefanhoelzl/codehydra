@@ -46,6 +46,7 @@ import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../
 import type { Logger } from "../boundaries/platform/logging";
 import type { WorkspaceDisconnect } from "./api-server-module";
 import type { UiPresenter } from "./presentation/presentation-module";
+import { defineEvents, defineHooks } from "../intents/declarations";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 
 /**
@@ -192,7 +193,7 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
 
   return {
     name: "frame-watchdog",
-    events: {
+    events: defineEvents({
       // Both already reload every frame; a verdict pending here would only
       // reload one of them a second time.
       [EVENT_IDE_SERVER_RESTARTED]: {
@@ -205,8 +206,8 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
           forgetAll();
         },
       },
-    },
-    hooks: {
+    }),
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
@@ -224,6 +225,6 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
           },
         },
       },
-    },
+    }),
   };
 }

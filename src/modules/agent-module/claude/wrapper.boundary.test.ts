@@ -82,6 +82,44 @@ function buildPath(fakeBinDir: string): string {
   return `${fakeBinDir}${delimiter}${dirname(process.execPath)}`;
 }
 
+/** The configuration a CodeHydra workspace terminal hands `ch claude`. */
+const WORKSPACE_CONFIG_ENV = {
+  _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+  _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+  _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
+};
+
+/**
+ * Run `ch claude` in `cwd` the way a workspace terminal does: the workspace
+ * configuration, then `env` on top (an `undefined` value leaves a variable out).
+ */
+function runClaudeWrapper(
+  cwd: string,
+  env: Record<string, string | undefined>
+): ReturnType<typeof executeScript> {
+  return executeScript(COMPILED_SCRIPT_PATH, { ...WORKSPACE_CONFIG_ENV, ...env }, cwd, ["claude"]);
+}
+
+/** Assert the wrapper exited 0, and return what the fake claude it launched received. */
+function expectLaunched(result: Awaited<ReturnType<typeof executeScript>>): FakeClaudeOutput {
+  expect(
+    result.status,
+    `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+  ).toBe(0);
+  const output = parseFakeClaudeOutput(result.stdout);
+  expect(output).not.toBeNull();
+  return output!;
+}
+
+/** Write an initial-prompt file under `dir` as CodeHydra does, and return its path. */
+async function writePromptFile(dir: string, content: Record<string, unknown>): Promise<string> {
+  const promptDir = join(dir, "prompt-dir");
+  await mkdir(promptDir, { recursive: true });
+  const promptFile = join(promptDir, "initial-prompt.json");
+  await writeFile(promptFile, JSON.stringify(content));
+  return promptFile;
+}
+
 describe("ch claude boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let fakeBinDir: string;
@@ -106,19 +144,18 @@ describe("ch claude boundary tests", () => {
     await tempDir.cleanup();
   });
 
+  /** {@link runClaudeWrapper} with the shared fake claude as `_CH_CLAUDE_BIN` and on PATH. */
+  function run(env: Record<string, string | undefined> = {}): ReturnType<typeof executeScript> {
+    return runClaudeWrapper(tempDir.path, {
+      _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
+      PATH: buildPath(fakeBinDir),
+      ...env,
+    });
+  }
+
   describe("environment variable validation", () => {
     it("errors when _CH_CLAUDE_SETTINGS is not set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_CLAUDE_SETTINGS: undefined });
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("CodeHydra Claude configuration not set");
@@ -126,17 +163,7 @@ describe("ch claude boundary tests", () => {
     });
 
     it("errors when _CH_CLAUDE_MCP_CONFIG is not set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_CLAUDE_MCP_CONFIG: undefined });
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("CodeHydra Claude configuration not set");
@@ -144,17 +171,7 @@ describe("ch claude boundary tests", () => {
     });
 
     it("errors when _CH_CLAUDE_SYSTEM_PROMPT is not set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_CLAUDE_SYSTEM_PROMPT: undefined });
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("CodeHydra Claude configuration not set");
@@ -164,17 +181,7 @@ describe("ch claude boundary tests", () => {
 
   describe("binary", () => {
     it("errors when _CH_CLAUDE_BIN is not set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_CLAUDE_BIN: undefined });
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("CodeHydra Claude configuration not set");
@@ -182,36 +189,17 @@ describe("ch claude boundary tests", () => {
 
     it("runs _CH_CLAUDE_BIN, not the claude on PATH", async () => {
       // PATH has no claude at all: only the resolved path can be what ran.
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: dirname(process.execPath),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ PATH: dirname(process.execPath) });
 
       expect(result.status, result.stderr).toBe(0);
       expect(parseFakeClaudeOutput(result.stdout)).not.toBeNull();
     });
 
     it("exits with code 2 when _CH_CLAUDE_BIN does not exist", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: join(tempDir.path, "missing", "claude"),
-          PATH: dirname(process.execPath),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({
+        _CH_CLAUDE_BIN: join(tempDir.path, "missing", "claude"),
+        PATH: dirname(process.execPath),
+      });
 
       expect(result.status).toBe(2);
       expect(result.stderr).toContain("Failed to start Claude");
@@ -220,104 +208,44 @@ describe("ch claude boundary tests", () => {
 
   describe("binary spawning", () => {
     it("spawns claude with correct base args", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run();
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("--ide");
-      expect(output!.args).toContain("--settings");
-      expect(output!.args).toContain("/tmp/settings.json");
-      expect(output!.args).toContain("--mcp-config");
-      expect(output!.args).toContain("/tmp/mcp.json");
-      expect(output!.args).toContain("--append-system-prompt-file");
-      expect(output!.args).toContain("/tmp/codehydra-prompt.md");
-      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
-      expect(output!.args).toContain("--disallowedTools=Artifact");
+      const output = expectLaunched(result);
+      expect(output.args).toContain("--ide");
+      expect(output.args).toContain("--settings");
+      expect(output.args).toContain("/tmp/settings.json");
+      expect(output.args).toContain("--mcp-config");
+      expect(output.args).toContain("/tmp/mcp.json");
+      expect(output.args).toContain("--append-system-prompt-file");
+      expect(output.args).toContain("/tmp/codehydra-prompt.md");
+      expect(output.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output.args).toContain("--disallowedTools=Artifact");
     });
 
     it("deletes CLAUDECODE env var before spawning", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-          CLAUDECODE: "1",
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ CLAUDECODE: "1" });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.env.CLAUDECODE).toBeNull();
+      const output = expectLaunched(result);
+      expect(output.env.CLAUDECODE).toBeNull();
     });
 
     it("deletes inherited CLAUDE_CODE_CHILD_SESSION env var before spawning", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-          CLAUDE_CODE_CHILD_SESSION: "1",
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ CLAUDE_CODE_CHILD_SESSION: "1" });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
+      const output = expectLaunched(result);
       // A leaked marker would make the workspace agent a "child session" and
       // disable transcript saving, so the wrapper must strip it.
-      expect(output!.env.CLAUDE_CODE_CHILD_SESSION).toBeNull();
+      expect(output.env.CLAUDE_CODE_CHILD_SESSION).toBeNull();
     });
 
     it("propagates exit code from claude binary", async () => {
       const counterFile = join(tempDir.path, "exit-counter");
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-          // Both --continue attempt and retry exit 42
-          CLAUDE_EXIT_CODE: "42",
-          CLAUDE_COUNTER_FILE: counterFile,
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({
+        // Both --continue attempt and retry exit 42
+        CLAUDE_EXIT_CODE: "42",
+        CLAUDE_COUNTER_FILE: counterFile,
+      });
 
       expect(result.status).toBe(42);
     });
@@ -325,226 +253,96 @@ describe("ch claude boundary tests", () => {
 
   describe("initial prompt", () => {
     it("passes prompt as first argument", async () => {
-      const promptDir = join(tempDir.path, "prompt-dir");
-      await mkdir(promptDir, { recursive: true });
-      const promptFile = join(promptDir, "initial-prompt.json");
-      await writeFile(promptFile, JSON.stringify({ prompt: "Hello world" }));
+      const promptFile = await writePromptFile(tempDir.path, { prompt: "Hello world" });
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_INITIAL_PROMPT_FILE: promptFile,
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_INITIAL_PROMPT_FILE: promptFile });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("Hello world");
+      const output = expectLaunched(result);
+      expect(output.args).toContain("Hello world");
     });
 
     it("deletes prompt file after reading", async () => {
-      const promptDir = join(tempDir.path, "prompt-dir");
-      await mkdir(promptDir, { recursive: true });
-      const promptFile = join(promptDir, "initial-prompt.json");
-      await writeFile(promptFile, JSON.stringify({ prompt: "test" }));
+      const promptFile = await writePromptFile(tempDir.path, { prompt: "test" });
 
-      await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_INITIAL_PROMPT_FILE: promptFile,
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      await run({ _CH_INITIAL_PROMPT_FILE: promptFile });
 
       expect(existsSync(promptFile)).toBe(false);
     });
 
     it("preserves multi-line prompt and all flags", async () => {
-      const promptDir = join(tempDir.path, "prompt-dir");
-      await mkdir(promptDir, { recursive: true });
-      const promptFile = join(promptDir, "initial-prompt.json");
       const multiLinePrompt =
         "Please review these changes:\n\n- Fix the login bug\n- Update the tests\n\nFocus on error handling.";
-      await writeFile(
-        promptFile,
-        JSON.stringify({ prompt: multiLinePrompt, permissionMode: "plan" })
-      );
+      const promptFile = await writePromptFile(tempDir.path, {
+        prompt: multiLinePrompt,
+        permissionMode: "plan",
+      });
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_INITIAL_PROMPT_FILE: promptFile,
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_INITIAL_PROMPT_FILE: promptFile });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
+      const output = expectLaunched(result);
       // Verify full multi-line prompt is received as a single argument
-      expect(output!.args).toContain(multiLinePrompt);
+      expect(output.args).toContain(multiLinePrompt);
       // Verify all CLI flags are present (not lost due to newline splitting)
-      expect(output!.args).toContain("--ide");
-      expect(output!.args).toContain("--settings");
-      expect(output!.args).toContain("/tmp/settings.json");
-      expect(output!.args).toContain("--mcp-config");
-      expect(output!.args).toContain("/tmp/mcp.json");
-      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
-      expect(output!.args).toContain("--permission-mode");
-      expect(output!.args).toContain("plan");
+      expect(output.args).toContain("--ide");
+      expect(output.args).toContain("--settings");
+      expect(output.args).toContain("/tmp/settings.json");
+      expect(output.args).toContain("--mcp-config");
+      expect(output.args).toContain("/tmp/mcp.json");
+      expect(output.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output.args).toContain("--permission-mode");
+      expect(output.args).toContain("plan");
     });
 
     it("has no prompt args when no prompt file is set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run();
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
+      const output = expectLaunched(result);
       // Without initial prompt, first non-continue arg should be a flag, not a prompt string
-      const firstNonContinueArg = output!.args.find((a) => a !== "--continue");
+      const firstNonContinueArg = output.args.find((a) => a !== "--continue");
       expect(firstNonContinueArg).toBe("--allow-dangerously-skip-permissions");
     });
   });
 
   describe("permission modes", () => {
     it("uses only --allow-dangerously-skip-permissions when no mode is set", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run();
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
-      expect(output!.args).not.toContain("--permission-mode");
+      const output = expectLaunched(result);
+      expect(output.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output.args).not.toContain("--permission-mode");
     });
 
     it("uses plan permission mode when permissionMode is 'plan'", async () => {
-      const promptDir = join(tempDir.path, "prompt-dir");
-      await mkdir(promptDir, { recursive: true });
-      const promptFile = join(promptDir, "initial-prompt.json");
-      await writeFile(promptFile, JSON.stringify({ prompt: "test", permissionMode: "plan" }));
+      const promptFile = await writePromptFile(tempDir.path, {
+        prompt: "test",
+        permissionMode: "plan",
+      });
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_INITIAL_PROMPT_FILE: promptFile,
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_INITIAL_PROMPT_FILE: promptFile });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
-      expect(output!.args).toContain("--permission-mode");
-      expect(output!.args).toContain("plan");
-      expect(output!.args).not.toContain("--dangerously-skip-permissions");
+      const output = expectLaunched(result);
+      expect(output.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output.args).toContain("--permission-mode");
+      expect(output.args).toContain("plan");
+      expect(output.args).not.toContain("--dangerously-skip-permissions");
     });
   });
 
   describe("session resume (--continue)", () => {
     it("prepends --continue on first attempt", async () => {
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run();
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args[0]).toBe("--continue");
+      const output = expectLaunched(result);
+      expect(output.args[0]).toBe("--continue");
     });
 
     it("retries without --continue when first attempt fails", async () => {
       const counterFile = join(tempDir.path, "call-counter");
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-          CLAUDE_EXIT_CODES: "1,0",
-          CLAUDE_COUNTER_FILE: counterFile,
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({
+        CLAUDE_EXIT_CODES: "1,0",
+        CLAUDE_COUNTER_FILE: counterFile,
+      });
 
       expect(
         result.status,
@@ -562,27 +360,10 @@ describe("ch claude boundary tests", () => {
       const markerPath = join(tempDir.path, "no-session-marker");
       await writeFile(markerPath, "");
 
-      const result = await executeScript(
-        COMPILED_SCRIPT_PATH,
-        {
-          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-          _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-          _CH_CLAUDE_NO_SESSION_MARKER_PATH: markerPath,
-          _CH_CLAUDE_BIN: claudeIn(fakeBinDir),
-          PATH: buildPath(fakeBinDir),
-        },
-        tempDir.path,
-        ["claude"]
-      );
+      const result = await run({ _CH_CLAUDE_NO_SESSION_MARKER_PATH: markerPath });
 
-      expect(
-        result.status,
-        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-      ).toBe(0);
-      const output = parseFakeClaudeOutput(result.stdout);
-      expect(output).not.toBeNull();
-      expect(output!.args[0]).not.toBe("--continue");
+      const output = expectLaunched(result);
+      expect(output.args[0]).not.toBe("--continue");
     });
   });
 });
@@ -654,58 +435,29 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
   });
 
   it("spawns a claude.cmd shim through a shell", async () => {
-    const result = await executeScript(
-      COMPILED_SCRIPT_PATH,
-      {
-        _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-        _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-        _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-        _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
-        PATH: buildPath(cmdBinDir),
-      },
-      tempDir.path,
-      ["claude"]
-    );
+    const result = await runClaudeWrapper(tempDir.path, {
+      _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
+      PATH: buildPath(cmdBinDir),
+    });
 
-    expect(
-      result.status,
-      `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-    ).toBe(0);
-    const output = parseFakeClaudeOutput(result.stdout);
-    expect(output).not.toBeNull();
-    expect(output!.args).toContain("--ide");
-    expect(output!.args).toContain("--settings");
-    expect(output!.args).toContain("/tmp/settings.json");
-    expect(output!.args).toContain("--mcp-config");
-    expect(output!.args).toContain("/tmp/mcp.json");
+    const output = expectLaunched(result);
+    expect(output.args).toContain("--ide");
+    expect(output.args).toContain("--settings");
+    expect(output.args).toContain("/tmp/settings.json");
+    expect(output.args).toContain("--mcp-config");
+    expect(output.args).toContain("/tmp/mcp.json");
   });
 
   it("forwards initial-prompt argument through .cmd shim intact", async () => {
-    const promptDir = join(tempDir.path, "prompt-dir");
-    await mkdir(promptDir, { recursive: true });
-    const promptFile = join(promptDir, "initial-prompt.json");
-    await writeFile(promptFile, JSON.stringify({ prompt: "hello world" }));
+    const promptFile = await writePromptFile(tempDir.path, { prompt: "hello world" });
 
-    const result = await executeScript(
-      COMPILED_SCRIPT_PATH,
-      {
-        _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
-        _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
-        _CH_CLAUDE_SYSTEM_PROMPT: "/tmp/codehydra-prompt.md",
-        _CH_INITIAL_PROMPT_FILE: promptFile,
-        _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
-        PATH: buildPath(cmdBinDir),
-      },
-      tempDir.path,
-      ["claude"]
-    );
+    const result = await runClaudeWrapper(tempDir.path, {
+      _CH_INITIAL_PROMPT_FILE: promptFile,
+      _CH_CLAUDE_BIN: join(cmdBinDir, "claude.cmd"),
+      PATH: buildPath(cmdBinDir),
+    });
 
-    expect(
-      result.status,
-      `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
-    ).toBe(0);
-    const output = parseFakeClaudeOutput(result.stdout);
-    expect(output).not.toBeNull();
-    expect(output!.args).toContain("hello world");
+    const output = expectLaunched(result);
+    expect(output.args).toContain("hello world");
   });
 });

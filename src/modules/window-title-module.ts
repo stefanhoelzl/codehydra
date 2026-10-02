@@ -14,14 +14,12 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import type { MetadataChangedEvent } from "../intents/set-metadata";
 import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { readTitle, TITLE_METADATA_KEY } from "../shared/api/types";
 import type { WindowManager } from "../boundaries/shell/window-manager";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 /**
  * Formats the window title based on the current workspace.
@@ -95,7 +93,7 @@ export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModu
 
   return {
     name: "window-title",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
@@ -103,11 +101,11 @@ export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModu
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       [EVENT_WORKSPACE_SWITCHED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceSwitchedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const payload = event.payload;
 
           if (payload === null) {
             currentProjectName = undefined;
@@ -125,8 +123,8 @@ export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModu
         },
       },
       [EVENT_METADATA_CHANGED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { projectId, workspaceName, key, value } = (event as MetadataChangedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { projectId, workspaceName, key, value } = event.payload;
 
           // Only the active workspace's title shows in the window title.
           if (key !== TITLE_METADATA_KEY) return;
@@ -138,6 +136,6 @@ export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModu
           updateTitle();
         },
       },
-    },
+    }),
   };
 }

@@ -13,14 +13,8 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
 import { describe, it, expect, vi } from "vitest";
-import { z } from "zod/v4";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import type {
-  Operation,
-  OperationContext,
-  OperationSchemas,
-  IntentOf,
-} from "../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
@@ -49,6 +43,20 @@ import type { ProjectPath } from "../intents/contract";
 // Mock IViewManager
 // =============================================================================
 
+/** The window/menu/UI-page deps every ViewModule gets in production. */
+function createLifecycleDeps() {
+  return {
+    menuLayer: { setApplicationMenu: vi.fn() },
+    windowManager: {
+      create: vi.fn(),
+      maximizeAsync: vi.fn().mockResolvedValue(undefined),
+      focus: vi.fn(),
+      present: vi.fn(),
+    },
+    uiHtmlPath: "file:///app/ui.html",
+  } satisfies Pick<ViewModuleDeps, "menuLayer" | "windowManager" | "uiHtmlPath">;
+}
+
 function createMockShellLayers() {
   return {
     viewLayer: {
@@ -64,30 +72,24 @@ function createMockShellLayers() {
 // Minimal Test Operations
 // =============================================================================
 
-const selectFolderOpSchemas = {
-  type: INTENT_OPEN_PROJECT,
-  payload: z.unknown(),
-  result: z.custom<SelectFolderHookResult | null>(),
-  hooks: { "select-folder": { result: selectFolderHookResultSchema } },
-} satisfies OperationSchemas;
-
 /** Runs "select-folder" hook point (matches OpenProjectOperation's conditional hook). */
-class MinimalSelectFolderOperation implements Operation<typeof selectFolderOpSchemas> {
-  readonly id = OPEN_PROJECT_OPERATION_ID;
-  readonly schemas = selectFolderOpSchemas;
-  async execute(
-    ctx: OperationContext<IntentOf<typeof selectFolderOpSchemas>, typeof selectFolderOpSchemas>
-  ): Promise<SelectFolderHookResult | null> {
-    const { results, errors } = await ctx.hooks.collect("select-folder", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    let folderPath: ProjectPath | null = null;
-    for (const r of results) {
-      if (r.folderPath) folderPath = r.folderPath;
+function minimalSelectFolder(): Operation<OperationSchemas> {
+  return createMinimalOperation<SelectFolderHookResult, SelectFolderHookResult>(
+    OPEN_PROJECT_OPERATION_ID,
+    INTENT_OPEN_PROJECT,
+    "select-folder",
+    {
+      hookContext: (ctx) => ({ intent: ctx.intent }),
+      hookSchemas: { result: selectFolderHookResultSchema },
+      select: ({ results }) => {
+        let folderPath: ProjectPath | null = null;
+        for (const r of results) {
+          if (r.folderPath) folderPath = r.folderPath;
+        }
+        return { folderPath };
+      },
     }
-    return { folderPath };
-  }
+  );
 }
 
 // =============================================================================
@@ -126,6 +128,7 @@ function createTestSetup<S extends OperationSchemas = OperationSchemas>(
       ? null
       : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
     ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
+    ...createLifecycleDeps(),
   };
 
   const module = createViewModule(deps);
@@ -207,6 +210,7 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
+        ...createLifecycleDeps(),
       });
 
       dispatcher.registerModule(module);
@@ -249,6 +253,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
+        ...createLifecycleDeps(),
       });
 
       dispatcher.registerModule(module);
@@ -269,12 +274,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("reactivation", () => {
     function createWindowManager() {
-      return {
-        create: vi.fn(),
-        maximizeAsync: vi.fn().mockResolvedValue(undefined),
-        focus: vi.fn(),
-        present: vi.fn(),
-      };
+      return createLifecycleDeps().windowManager;
     }
 
     it("presents the window when another launch asks it to come forward", async () => {
@@ -295,6 +295,7 @@ describe("ViewModule Integration", () => {
           viewLayer: null,
           windowLayer: null,
           sessionLayer: null,
+          ...createLifecycleDeps(),
           windowManager,
           appLayer,
         })
@@ -321,6 +322,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
+        ...createLifecycleDeps(),
         windowManager,
         appLayer,
       });
@@ -350,6 +352,7 @@ describe("ViewModule Integration", () => {
           viewLayer: null,
           windowLayer: null,
           sessionLayer: null,
+          ...createLifecycleDeps(),
           windowManager,
           appLayer,
         })
@@ -382,13 +385,7 @@ describe("ViewModule Integration", () => {
         })
       );
 
-      const menuLayer = { setApplicationMenu: vi.fn() };
-      const windowManager = {
-        create: vi.fn(),
-        maximizeAsync: vi.fn().mockResolvedValue(undefined),
-        focus: vi.fn(),
-        present: vi.fn(),
-      };
+      const { menuLayer, windowManager } = createLifecycleDeps();
       const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
@@ -416,39 +413,6 @@ describe("ViewModule Integration", () => {
       expect(viewManager.loadUIContent).toHaveBeenCalledWith("file:///app/ui.html");
       expect(viewManager.focus).toHaveBeenCalled();
     });
-
-    it("skips optional deps when not provided", async () => {
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(
-        createMinimalOperation(APP_START_OPERATION_ID, INTENT_APP_START, "init", {
-          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
-        })
-      );
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-      });
-
-      dispatcher.registerModule(module);
-
-      // Should not throw when optional deps are omitted
-      await expect(
-        dispatcher.dispatch<AppStartIntent>({
-          type: INTENT_APP_START,
-          payload: {},
-        })
-      ).resolves.not.toThrow();
-
-      // viewManager.create() and focus() are always called
-      expect(viewManager.create).toHaveBeenCalled();
-      expect(viewManager.focus).toHaveBeenCalled();
-    });
   });
 
   // -------------------------------------------------------------------------
@@ -464,7 +428,7 @@ describe("ViewModule Integration", () => {
       };
 
       const { dispatcher } = createTestSetup(
-        { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
+        { intentType: INTENT_OPEN_PROJECT, operation: minimalSelectFolder() },
         { dialogLayer: mockDialogBoundary }
       );
 
@@ -488,7 +452,7 @@ describe("ViewModule Integration", () => {
       };
 
       const { dispatcher } = createTestSetup(
-        { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
+        { intentType: INTENT_OPEN_PROJECT, operation: minimalSelectFolder() },
         { dialogLayer: mockDialogBoundary }
       );
 
@@ -503,7 +467,7 @@ describe("ViewModule Integration", () => {
     it("returns null when no dialogLayer provided", async () => {
       const { dispatcher } = createTestSetup({
         intentType: INTENT_OPEN_PROJECT,
-        operation: new MinimalSelectFolderOperation(),
+        operation: minimalSelectFolder(),
       });
 
       const result = (await dispatcher.dispatch({

@@ -22,27 +22,22 @@
  * - app-shutdown/stop: closes notifications still on screen — one whose click
  *   would focus a dead app is a dead end.
  *
- * Unlike badge-module and power-module this does not use
- * createWorkspaceStatusCache: that helper reports *that* something changed, and
- * every question here is about the transition itself — which workspace moved,
- * and what its counts were beforehand. Both need the event payload and a map
- * the handler updates itself, so the shared cache would be carried alongside
- * that map rather than replacing it.
+ * Tracks statuses through createWorkspaceStatusCache, like badge-module and
+ * power-module; every question here is about the transition itself — which
+ * workspace moved, and what its counts were beforehand — which the cache's
+ * change callback carries.
  *
  * Distinct from clone-notification-module and error-notification-module, which
  * despite the name drive *sidebar* notifications through the presenter. This is
  * the only module that raises OS-level toasts.
  */
 
-import type { EventDeclarations, IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
+import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { InternalAgentCounts } from "../shared/ipc";
+import type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
 import type { WorkspaceRef } from "../intents/contract";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
+import { createWorkspaceStatusCache } from "./workspace-status-cache";
+import { workspaceNameOf } from "../utils/ref";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "../intents/switch-workspace";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { OsNotificationBoundary } from "../boundaries/shell/os-notification";
@@ -51,6 +46,7 @@ import type { Config } from "../boundaries/platform/config";
 import { storeEnum } from "../boundaries/platform/store-definition";
 import type { Logger } from "../boundaries/platform/logging";
 import { getErrorMessage } from "../shared/error-utils";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Config
@@ -72,11 +68,6 @@ const NOTIFICATION_TITLE = "CodeHydra agent needs your attention";
 // =============================================================================
 // Transition detection (pure functions)
 // =============================================================================
-
-/** What the module remembers about a workspace between status reports. */
-interface TrackedWorkspace {
-  readonly counts: InternalAgentCounts;
-}
 
 /**
  * Whether a status change means "an agent just became available".
@@ -111,15 +102,32 @@ export function isIdleIncrease(
  * matching how the badge treats "none": they are not evidence of work in
  * progress, and they must not suppress the notification forever either.
  *
- * @param tracked - Per-workspace state as it was before the change
+ * @param counts - Every tracked workspace's counts as they were before the change
  */
-export function wasEveryAgentBusy(tracked: ReadonlyMap<WorkspaceRef, TrackedWorkspace>): boolean {
+export function wasEveryAgentBusy(counts: Iterable<InternalAgentCounts>): boolean {
   let hasBusy = false;
-  for (const workspace of tracked.values()) {
-    if (workspace.counts.idle > 0) return false;
-    if (workspace.counts.busy > 0) hasBusy = true;
+  for (const workspace of counts) {
+    if (workspace.idle > 0) return false;
+    if (workspace.busy > 0) hasBusy = true;
   }
   return hasBusy;
+}
+
+/**
+ * The counts of every tracked workspace as they were before `changed` moved
+ * from `previous` (undefined = it was not tracked).
+ */
+function countsBefore(
+  statuses: ReadonlyMap<WorkspaceRef, AggregatedAgentStatus>,
+  changed: WorkspaceRef,
+  previous: AggregatedAgentStatus | undefined
+): InternalAgentCounts[] {
+  const counts: InternalAgentCounts[] = [];
+  for (const [ref, status] of statuses) {
+    if (ref !== changed) counts.push(status.counts);
+  }
+  if (previous !== undefined) counts.push(previous.counts);
+  return counts;
 }
 
 // =============================================================================
@@ -157,9 +165,6 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
     ...storeEnum(NOTIFICATION_MODES),
   });
 
-  /** Workspace state as of its previous status report — the "before" side. */
-  const tracked = new Map<WorkspaceRef, TrackedWorkspace>();
-
   function notify(workspaceRef: WorkspaceRef, workspaceName: string): void {
     osNotificationLayer.show({
       title: NOTIFICATION_TITLE,
@@ -189,44 +194,34 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
     logger.debug("Idle-agent notification shown", { workspaceName });
   }
 
-  const events: EventDeclarations = {
-    [EVENT_AGENT_STATUS_UPDATED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-        const ref = workspace.ref;
+  function onStatusChange(
+    ref: WorkspaceRef,
+    previous: AggregatedAgentStatus | undefined,
+    next: AggregatedAgentStatus | undefined
+  ): void {
+    if (next === undefined) return;
+    // Both questions are about the world *before* this report.
+    if (!isIdleIncrease(previous?.counts, next.counts)) return;
 
-        const previous = tracked.get(ref);
-        // Both questions are about the world *before* this report, so ask them
-        // while the map still describes it.
-        const idleIncrease = isIdleIncrease(previous?.counts, status.counts);
-        const everyAgentWasBusy = wasEveryAgentBusy(tracked);
+    const mode = modeConfig.get();
+    if (mode === "disabled") return;
+    // Notifying about a window the user is already looking at is exactly
+    // the noise this feature exists to remove. Sampled now, not earlier:
+    // focus can change between reports.
+    if (windowManager.isFocused()) return;
+    if (mode === "first-workspace" && !wasEveryAgentBusy(countsBefore(statuses, ref, previous))) {
+      return;
+    }
 
-        tracked.set(ref, { counts: { ...status.counts } });
+    notify(ref, workspaceNameOf(ref));
+  }
 
-        if (!idleIncrease) return;
-
-        const mode = modeConfig.get();
-        if (mode === "disabled") return;
-        // Notifying about a window the user is already looking at is exactly
-        // the noise this feature exists to remove. Sampled now, not earlier:
-        // focus can change between reports.
-        if (windowManager.isFocused()) return;
-        if (mode === "first-workspace" && !everyAgentWasBusy) return;
-
-        notify(ref, workspace.name);
-      },
-    },
-    [EVENT_WORKSPACE_DELETED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        tracked.delete((event as WorkspaceDeletedEvent).payload.workspaceRef);
-      },
-    },
-  };
+  const { statuses, events } = createWorkspaceStatusCache(onStatusChange);
 
   return {
     name: "os-notification",
-    events,
-    hooks: {
+    events: defineEvents(events),
+    hooks: defineHooks({
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
@@ -234,6 +229,6 @@ export function createOsNotificationModule(deps: OsNotificationModuleDeps): Inte
           },
         },
       },
-    },
+    }),
   };
 }

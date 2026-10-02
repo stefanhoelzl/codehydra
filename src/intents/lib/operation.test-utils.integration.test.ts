@@ -10,7 +10,8 @@ import { createMockDispatcher } from "./dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import type { HookContext } from "./operation";
 import type { Intent } from "./types";
-import { createMinimalOperation } from "./operation.test-utils";
+import { createMinimalOperation, createStreamingMinimalOperation } from "./operation.test-utils";
+import { z } from "zod/v4";
 import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
@@ -180,5 +181,78 @@ describe("createMinimalOperation", () => {
 
     expect(receivedContext?.intent).toEqual(intent);
     expect(Object.keys(receivedContext!)).toEqual(["intent", "capabilities"]);
+  });
+
+  it("derives the result from everything collected with select", async () => {
+    const { dispatcher } = createTestSetup();
+    for (const value of [1, 2]) {
+      dispatcher.registerModule({
+        name: `test-handler-${value}`,
+        hooks: {
+          [TEST_OPERATION_ID]: {
+            [TEST_HOOK_POINT]: { handler: async () => ({ result: { value } }) },
+          },
+        },
+      });
+    }
+
+    const op = createMinimalOperation<number[], { value: number }>(
+      TEST_OPERATION_ID,
+      TEST_INTENT_TYPE,
+      TEST_HOOK_POINT,
+      { select: ({ results }) => results.map((r) => r.value) }
+    );
+    dispatcher.registerOperation(op);
+
+    await expect(dispatcher.dispatch(testIntent())).resolves.toEqual([1, 2]);
+  });
+
+  it("validates handler results against the declared hookSchemas", async () => {
+    const { dispatcher } = createTestSetup();
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: { handler: async () => ({ result: { value: "not a number" } }) },
+        },
+      },
+    });
+
+    const op = createMinimalOperation(TEST_OPERATION_ID, TEST_INTENT_TYPE, TEST_HOOK_POINT, {
+      hookSchemas: { result: z.object({ value: z.number() }) },
+    });
+    dispatcher.registerOperation(op);
+
+    await expect(dispatcher.dispatch(testIntent())).rejects.toThrow();
+  });
+});
+
+describe("createStreamingMinimalOperation", () => {
+  it("keeps every frame a streaming handler yields", async () => {
+    const { dispatcher } = createTestSetup();
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: {
+            handler: async function* () {
+              yield { step: 1 };
+              yield { step: 2 };
+            },
+          },
+        },
+      },
+    });
+
+    const op = createStreamingMinimalOperation<{ step: number }>(
+      TEST_OPERATION_ID,
+      TEST_INTENT_TYPE,
+      TEST_HOOK_POINT
+    );
+    dispatcher.registerOperation(op);
+
+    await dispatcher.dispatch(testIntent());
+
+    expect(op.frames).toEqual([{ step: 1 }, { step: 2 }]);
   });
 });

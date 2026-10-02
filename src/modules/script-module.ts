@@ -17,8 +17,6 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
-import type { InitHookContext } from "../intents/app-start";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { Logger } from "../boundaries/platform/logging-types";
@@ -28,6 +26,7 @@ import { getErrorMessage } from "../shared/error-utils";
 import { Path } from "../utils/path/path";
 import { renderTemplate } from "../utils/liquid/liquid-renderer";
 import type { RequiredScript } from "../intents/app-start";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Constants
@@ -227,12 +226,12 @@ async function syncRequiredScripts(
 export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
   return {
     name: "script",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
-          handler: async (ctx: HookContext): Promise<void> => {
-            const { requiredScripts } = ctx as InitHookContext;
+          handler: async (ctx): Promise<void> => {
+            const { requiredScripts } = ctx;
 
             const binDir = deps.pathProvider.dataPath("bin");
             // Source the bundled wrappers from runtimePath (extraResources /
@@ -249,6 +248,6 @@ export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

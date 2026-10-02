@@ -10,6 +10,7 @@
  * 2. create(): creates the BaseWindow and wires event listeners
  */
 
+import type { Unsubscribe } from "../../shared/types";
 import type { Logger } from "../platform/logging";
 import type { ImageBoundary } from "./image";
 import type { ImageHandle } from "./image-types";
@@ -33,11 +34,6 @@ const BACKGROUND_COLOR_LIGHT = "#ffffff";
 function colorForTheme(theme: Theme): string {
   return theme === "dark" ? BACKGROUND_COLOR_DARK : BACKGROUND_COLOR_LIGHT;
 }
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
 
 /**
  * Dependencies for creating a WindowManager.

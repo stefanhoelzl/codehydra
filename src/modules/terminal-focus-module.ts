@@ -36,21 +36,17 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import type { HookOutput } from "../intents/lib/operation";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
-import type { ModalHookInput } from "../intents/vscode-modal-changed";
 import { VSCODE_MODAL_CHANGED_OPERATION_ID } from "../intents/vscode-modal-changed";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { WorkspaceRef } from "../intents/contract";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 /**
  * Capability the vscode:modal-changed "modal" handler provides once the modal
@@ -116,30 +112,30 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
 
   return {
     name: "terminal-focus",
-    hooks: {
+    hooks: defineHooks({
       [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
         modal: {
-          handler: async (ctx: HookContext): Promise<HookOutput> => {
-            const { workspaceRef, open } = ctx as ModalHookInput;
+          handler: async (ctx): Promise<HookOutput<void>> => {
+            const { workspaceRef, open } = ctx;
             if (open) modalOpen.add(workspaceRef);
             else modalOpen.delete(workspaceRef);
             return { provides: { [MODAL_RECORDED_CAPABILITY]: true } };
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, active, status } = event.payload;
           if (status.status !== "idle") return;
-          if (!workspace.active) return;
-          focusTerminal(workspace.ref);
+          if (!active) return;
+          focusTerminal(workspaceRef);
         },
       },
       [EVENT_WORKSPACE_SWITCHED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceSwitchedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const payload = event.payload;
           if (!payload) return;
           const path = payload.workspaceRef;
           if (focused.has(path)) return;
@@ -157,12 +153,12 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
         },
       },
       [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef } = (event as WorkspaceDeletedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef } = event.payload;
           focused.delete(workspaceRef);
           modalOpen.delete(workspaceRef);
         },
       },
-    },
+    }),
   };
 }

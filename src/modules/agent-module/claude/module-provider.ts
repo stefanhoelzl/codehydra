@@ -108,8 +108,8 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       }),
 
       // --- Provider lifecycle ---
-      createProvider: (workspacePath) =>
-        new ClaudeCodeProvider({ serverManager, workspacePath, logger }),
+      createProvider: (workspaceRef) =>
+        new ClaudeCodeProvider({ serverManager, workspaceRef, logger }),
 
       connectProvider: (provider, port) => provider.connect(port),
 
@@ -118,27 +118,27 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       initialStatus: () => "none",
 
       // --- Workspace start ---
-      startServer: async (workspacePath, options) => {
-        await serverManager.startServer(workspacePath, { workspaceRef: options.workspaceRef });
+      startServer: async (workspaceRef) => {
+        await serverManager.startServer(workspaceRef);
       },
 
-      afterProviderReady: async (workspacePath, options) => {
-        if (options?.initialPrompt) {
+      afterProviderReady: async (workspaceRef, options) => {
+        if (options.initialPrompt) {
           await serverManager.setInitialPrompt(
-            workspacePath,
+            workspaceRef,
             options.initialPrompt,
             options.onInitialPromptDelivered
           );
         }
-        if (options?.isNewWorkspace) {
-          await serverManager.setNoSessionMarker(workspacePath);
+        if (options.isNewWorkspace) {
+          await serverManager.setNoSessionMarker(workspaceRef);
         }
       },
 
       // --- Terminal lifecycle ---
-      applyTerminalLifecycle: (workspacePath, event) => {
+      applyTerminalLifecycle: (workspaceRef, event) => {
         serverManager.triggerWrapperLifecycle(
-          workspacePath,
+          workspaceRef,
           event === "open" ? "WrapperStart" : "WrapperEnd"
         );
       },

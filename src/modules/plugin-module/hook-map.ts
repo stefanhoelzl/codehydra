@@ -13,6 +13,8 @@
  * (`Record<HookPointOf<typeof schemas>, …>`), so adding a hook point to either
  * operation fails to compile until someone says what a repository may do there
  * — or writes an explicit `null`, which is a decision rather than an oversight.
+ * The plugin module registers its handlers from these maps (`bindHookPoints`),
+ * so an entry exposed at a new point fails to compile there until it is bound.
  *
  * The name decides blocking: an `on-` entry reports something that already
  * happened, so it is fire-and-forget and its output is ignored; every other
@@ -23,19 +25,10 @@
 
 import { z } from "zod/v4";
 import type { OperationSchemas, HookPointOf } from "../../intents/lib/operation";
+import type { HookHandlerFor, OperationHooks } from "../../intents/lib/module";
 import { schemas as openWorkspaceSchemas } from "../../intents/open-workspace";
 import { schemas as deleteWorkspaceSchemas } from "../../intents/delete-workspace";
-import { isValidMetadataKey, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
-
-// =============================================================================
-// Directories
-// =============================================================================
-
-/** Repository-owned directory. */
-export const HOOKS_ROOT = ".codehydra";
-
-/** Every entry, blocking or not, lives here. */
-export const HOOKS_DIR = "hooks";
+import { isValidMetadataKey, tagKey } from "../../shared/api/types";
 
 // =============================================================================
 // Input
@@ -122,14 +115,12 @@ const tagSchema = z
  * the strict-schema rule applied to keys — the author finds out now, with the
  * name in the message.
  */
-const tagNameSchema = z
-  .string()
-  .refine((name) => isValidMetadataKey(`${TAGS_METADATA_KEY_PREFIX}${name}`), {
-    error:
-      `not a valid tag name (each dot-separated part must ` +
-      `start with a letter, contain only letters, digits and -, and not end with -; ` +
-      `at most 59 characters in all)`,
-  });
+const tagNameSchema = z.string().refine((name) => isValidMetadataKey(tagKey(name)), {
+  error:
+    `not a valid tag name (each dot-separated part must ` +
+    `start with a letter, contain only letters, digits and -, and not end with -; ` +
+    `at most 59 characters in all)`,
+});
 
 /**
  * What `after-worktree-created` may contribute back.
@@ -203,10 +194,10 @@ export type BeforeWorktreeDeletedOutput = z.infer<typeof beforeWorktreeDeletedOu
  * Something is waiting on it — a workspace opening, a deletion pausing — so it
  * gets to return a result, and a failure is worth reporting.
  */
-export interface HookSpec {
+export interface HookSpec<O extends z.ZodType = z.ZodType> {
   readonly name: string;
   readonly input: z.ZodType;
-  readonly output: z.ZodType;
+  readonly output: O;
 }
 
 /**
@@ -220,19 +211,19 @@ export interface EventSpec {
   readonly input: z.ZodType;
 }
 
-export const AFTER_WORKTREE_CREATED: HookSpec = {
+export const AFTER_WORKTREE_CREATED: HookSpec<typeof afterWorktreeCreatedOutputSchema> = {
   name: "after-worktree-created",
   input: afterWorktreeCreatedInputSchema,
   output: afterWorktreeCreatedOutputSchema,
 };
 
-export const BEFORE_WORKSPACE_OPENED: HookSpec = {
+export const BEFORE_WORKSPACE_OPENED: HookSpec<typeof beforeWorkspaceOpenedOutputSchema> = {
   name: "before-workspace-opened",
   input: beforeWorkspaceOpenedInputSchema,
   output: beforeWorkspaceOpenedOutputSchema,
 };
 
-export const BEFORE_WORKTREE_DELETED: HookSpec = {
+export const BEFORE_WORKTREE_DELETED: HookSpec<typeof beforeWorktreeDeletedOutputSchema> = {
   name: "before-worktree-deleted",
   input: beforeWorktreeDeletedInputSchema,
   output: beforeWorktreeDeletedOutputSchema,
@@ -250,6 +241,56 @@ export const ON_WORKSPACE_OPENED: EventSpec = {
 /** Exhaustive over one operation's hook points. `null` = not exposed. */
 type HookPointMap<S extends OperationSchemas> = Readonly<Record<HookPointOf<S>, HookSpec | null>>;
 
+/** A hook map as `bindHookPoints` reads it: exhaustive over `S`, and indexable by any point. */
+type BindableHookMap<S extends OperationSchemas> = HookPointMap<S> &
+  Readonly<Record<string, HookSpec | null>>;
+
+/**
+ * The points of a hook map that expose an entry. The maps below are checked
+ * with `satisfies`, so each keeps its points' own types and this picks exactly
+ * the non-null ones.
+ */
+export type ExposedHookPoint<M> = {
+  [K in keyof M]: M[K] extends HookSpec ? K : never;
+}[keyof M] &
+  string;
+
+/**
+ * One handler per exposed point of a hook map, built from the entry it serves.
+ * Exhaustive: exposing an entry at another point fails to compile until the
+ * module binds it, and a point the map does not expose cannot be bound. Each
+ * handler is typed from the operation's hook point (`S`): its context and result.
+ */
+export type HookPointBindings<S extends OperationSchemas, M> = {
+  readonly [K in ExposedHookPoint<M> & HookPointOf<S>]: (spec: M[K]) => HookHandlerFor<S, K>;
+};
+
+/**
+ * Bind a hook map's exposed points — each one's handler, built from its entry:
+ * the hook declarations of one operation. `schemas` is read only for its type.
+ */
+export function bindHookPoints<S extends OperationSchemas, M extends BindableHookMap<S>>(
+  _schemas: S,
+  map: M,
+  bindings: HookPointBindings<S, M>
+): OperationHooks<S> {
+  const bound: Record<string, unknown> = {};
+  for (const point of Object.keys(map)) {
+    if (!isExposed<S, M>(map, point)) continue;
+    bound[point] = bindings[point](map[point]);
+  }
+  // Built key by key from `bindings`, which the type above makes exhaustive and
+  // typed per point; a loop over the keys cannot carry that pairing itself.
+  return bound as OperationHooks<S>;
+}
+
+function isExposed<S extends OperationSchemas, M extends BindableHookMap<S>>(
+  map: M,
+  point: string
+): point is ExposedHookPoint<M> & HookPointOf<S> {
+  return map[point] !== null;
+}
+
 /**
  * The two points before `setup` exist for this map, one per entry, in the order
  * a repository needs them: `provision` sets a genuinely new worktree up once,
@@ -258,20 +299,20 @@ type HookPointMap<S extends OperationSchemas> = Readonly<Record<HookPointOf<S>, 
  * tree with the environment already known. `create` runs before the worktree
  * exists; `finalize` runs after the environment has been consumed.
  */
-export const OPEN_WORKSPACE_HOOKS: HookPointMap<typeof openWorkspaceSchemas> = {
+export const OPEN_WORKSPACE_HOOKS = {
   create: null,
   provision: AFTER_WORKTREE_CREATED,
   prepare: BEFORE_WORKSPACE_OPENED,
   setup: null,
   finalize: null,
-};
+} as const satisfies HookPointMap<typeof openWorkspaceSchemas>;
 
 /**
  * `pre-delete` exists for this map. The gates that precede it are internal
  * policy (`preflight`) or the user's own answer (`confirm`), and the points
  * after it are teardown — by `delete` the worktree is being removed.
  */
-export const DELETE_WORKSPACE_HOOKS: HookPointMap<typeof deleteWorkspaceSchemas> = {
+export const DELETE_WORKSPACE_HOOKS = {
   confirm: null,
   preflight: null,
   shutdown: null,
@@ -280,7 +321,7 @@ export const DELETE_WORKSPACE_HOOKS: HookPointMap<typeof deleteWorkspaceSchemas>
   delete: null,
   detect: null,
   flush: null,
-};
+} as const satisfies HookPointMap<typeof deleteWorkspaceSchemas>;
 
 /** Every entry, for diagnostics and docs. */
 export const ALL_ENTRIES: readonly (HookSpec | EventSpec)[] = [

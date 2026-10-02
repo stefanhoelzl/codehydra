@@ -27,7 +27,8 @@ import type { ViewBoundary, WindowOpenDetails } from "./view";
 import type { ViewHandle } from "./types";
 import type { WindowBoundary } from "./window";
 import type { WindowManager } from "./window-manager";
-import type { IViewManager, Unsubscribe } from "./view-manager.interface";
+import type { IViewManager } from "./view-manager.interface";
+import type { Unsubscribe } from "../../shared/types";
 import { type DevtoolsTarget, type KeyboardTarget } from "./view-manager-types";
 
 /**

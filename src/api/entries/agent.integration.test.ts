@@ -27,8 +27,8 @@ import type {
 } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { ProjectPath, WorkspaceRef } from "../../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
-import { projPath, wsPath } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
@@ -40,7 +40,7 @@ const LIB = projPath("/projects/lib");
 function workspace(project: ProjectPath, dir: string, name = dir) {
   return {
     path: wsPath(`${project}/workspaces/${dir}`),
-    ref: makeWorkspaceRef(projectRefFor(project), name),
+    ref: workspaceRefIn(project, name),
     name,
   };
 }

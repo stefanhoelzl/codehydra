@@ -7,6 +7,8 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
+import { getErrorMessage } from "../../shared/error-utils";
+import type { Unsubscribe } from "../../shared/types";
 import type { BrowserWindow, WebContents } from "electron";
 import type { WindowHandle, Rectangle, WebPreferences } from "./types";
 import { createWindowHandle } from "./types";
@@ -40,11 +42,6 @@ export interface WindowOptions {
    */
   readonly webPreferences?: WebPreferences;
 }
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
 
 /**
  * Content view that can contain child views.
@@ -352,7 +349,7 @@ export class DefaultWindowBoundary implements WindowBoundary {
       // Log but don't throw - overlay icon is non-critical
       this.logger.warn("Failed to set overlay icon", {
         id: handle.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

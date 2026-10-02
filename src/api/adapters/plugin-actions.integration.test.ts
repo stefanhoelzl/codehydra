@@ -10,8 +10,8 @@ import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
 import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
-import { projPath, wsPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
 import { OperationRegistry } from "../registry";
 import { defineEntry, type OperationContext } from "../types";
 import { OPERATION_NAMES } from "../names";
@@ -39,7 +39,7 @@ class ListProjectsOp implements Operation<typeof listProjectsSchemas> {
         path: APP,
         workspaces: [
           {
-            ref: makeWorkspaceRef(projectRefFor(APP), "feat"),
+            ref: workspaceRefIn(APP, "feat"),
             projectId: "app-1" as ProjectId,
             name: "feat" as WorkspaceName,
             path: FEAT,

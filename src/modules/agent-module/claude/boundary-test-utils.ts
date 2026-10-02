@@ -8,11 +8,11 @@
  *         -> dist/bin/claude-code-hook-handler.cjs (the shipped handler)
  *           -> a recording tap
  *             -> a real ClaudeCodeServerManager bridge
- *               -> AgentStatus
+ *               -> AgentActivity
  *
  * Only the model is fake. Everything the hooks travel through is the code that
  * ships, so a Claude release that changes what it emits shows up here as a
- * wrong `AgentStatus` rather than as a silent regression in production.
+ * wrong `AgentActivity` rather than as a silent regression in production.
  *
  * By default `claude` runs headless rather than in the interactive TUI
  * CodeHydra actually launches. The hook payloads are built by the same code
@@ -52,11 +52,13 @@ import { NodePlatformInfo } from "../../../boundaries/platform/node-platform-inf
 import { createMockBuildInfo } from "../../../boundaries/platform/build-info.test-utils";
 import { createTempDir, createTestGitRepo } from "../../../utils/testing/test-utils";
 import { ClaudeCodeServerManager } from "./server-manager";
+import { quoteForCmd } from "../cmd-quote";
+import { workspaceRefSchema } from "../../../intents/contract";
 import { isValidHookName, type ClaudeCodeHookName } from "./types";
-import type { AgentMessage, AgentStatus } from "../types";
+import type { AgentMessage, AgentActivity } from "../types";
 
 /** The ref the boundary tests' one workspace goes by, in its hooks and the manager alike. */
-const BOUNDARY_WORKSPACE_REF = "ch::local::/boundary/repo::main";
+const BOUNDARY_WORKSPACE_REF = workspaceRefSchema.parse("ch::local::/boundary/repo::main");
 
 /** The shipped hook handler. Built by `pnpm build:wrappers`. */
 const HOOK_HANDLER_PATH = resolve(__dirname, "../../../../dist/bin/claude-code-hook-handler.cjs");
@@ -68,9 +70,9 @@ const RESOURCES_BIN = resolve(__dirname, "../../../../resources/bin");
 export interface HookRecord {
   readonly hook: ClaudeCodeHookName;
   /** Status immediately before the bridge handled this hook. */
-  readonly before: AgentStatus;
+  readonly before: AgentActivity;
   /** Status immediately after — the bridge handles a hook before it responds. */
-  readonly after: AgentStatus;
+  readonly after: AgentActivity;
   /**
    * The payload's `tool_name`, for the tool hooks. Only for telling one record
    * from another (which `PreToolUse` is the fork's) — assertions stay on status.
@@ -83,16 +85,16 @@ export interface ScenarioRun {
   /** Every hook the bridge handled, in arrival order. */
   readonly records: readonly HookRecord[];
   /** Status after the `index`-th (default: first) occurrence of `hook`. */
-  statusAfter(hook: ClaudeCodeHookName, index?: number): AgentStatus;
+  statusAfter(hook: ClaudeCodeHookName, index?: number): AgentActivity;
   /** Status either side of the `index`-th (default: first) occurrence of `hook`. */
   statusAcross(
     hook: ClaudeCodeHookName,
     index?: number
-  ): { before: AgentStatus; after: AgentStatus };
+  ): { before: AgentActivity; after: AgentActivity };
   /** How many times `hook` arrived. */
   count(hook: ClaudeCodeHookName): number;
   /** Status after the last hook of the run. */
-  readonly finalStatus: AgentStatus;
+  readonly finalStatus: AgentActivity;
   /**
    * With `ScenarioOptions.message`: the text of the user message the model was
    * handed that carries it, or undefined when it never reached the model.
@@ -562,13 +564,13 @@ async function runScenarioInner(
   disposables.cleanups.push(() => manager.dispose());
 
   // Registers the workspace AND writes the real settings file Claude is given.
-  const bridgePort = await manager.startServer(repo.path, { workspaceRef: BOUNDARY_WORKSPACE_REF });
-  const settingsPath = manager.getHooksConfigPath(repo.path).toNative();
+  const bridgePort = await manager.startServer(BOUNDARY_WORKSPACE_REF);
+  const settingsPath = manager.getHooksConfigPath(BOUNDARY_WORKSPACE_REF).toNative();
 
   // Track the status the bridge reports, so the tap can sample it either side
   // of each hook.
-  let status: AgentStatus = "none";
-  manager.onStatusChange(repo.path, (next) => {
+  let status: AgentActivity = "none";
+  manager.onStatusChange(BOUNDARY_WORKSPACE_REF, (next) => {
     status = next;
   });
 
@@ -600,7 +602,7 @@ async function runScenarioInner(
   let deliveredMessage: string | undefined;
   if (options.message !== undefined) {
     const { text } = options.message;
-    await manager.sendMessage(repo.path, options.message, { waitMs: 10_000 });
+    await manager.sendMessage(BOUNDARY_WORKSPACE_REF, options.message, { waitMs: 10_000 });
     const deadline = Date.now() + (options.messageWaitMs ?? 20_000);
     while (deliveredMessage === undefined && Date.now() < deadline) {
       deliveredMessage = requests
@@ -644,7 +646,7 @@ interface AgentHandle {
 async function startRecordingTap(
   bridgePort: number,
   records: HookRecord[],
-  readStatus: () => AgentStatus
+  readStatus: () => AgentActivity
 ): Promise<{ readonly port: number; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     let body = "";
@@ -741,17 +743,6 @@ interface SpawnAgentOptions {
   readonly configDir: string;
   readonly pathPrefix: readonly string[];
   readonly permissionMode: "default" | "bypassPermissions";
-}
-
-/**
- * Quote an argument for cmd.exe, the way `wrapper.ts` does.
- *
- * Node's `shell: true` joins the file and args with single spaces and wraps the
- * whole line in ONE outer pair of quotes — it does not quote them individually,
- * so any arg containing a space (every temp path here) is re-split by cmd.exe.
- */
-function quoteForCmd(arg: string): string {
-  return `"${arg.replace(/"/g, '""')}"`;
 }
 
 /**

@@ -29,13 +29,11 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app.state-mock";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { WorkspaceRef } from "../intents/contract";
 
 /** The ref of test workspace `name` (at `/workspace/<name>`). */
-const ref = (name: string): WorkspaceRef =>
-  makeWorkspaceRef(projectRefFor(projPath("/projects/test")), name);
+const ref = (name: string): WorkspaceRef => workspaceRefIn(projPath("/projects/test"), name);
 
 // =============================================================================
 // Helpers
@@ -74,6 +72,14 @@ const busy = (n = 1): AggregatedAgentStatus => ({ status: "busy", counts: { idle
 const idle = (n = 1): AggregatedAgentStatus => ({ status: "idle", counts: { idle: n, busy: 0 } });
 const mixed = (): AggregatedAgentStatus => ({ status: "mixed", counts: { idle: 1, busy: 1 } });
 const none = (): AggregatedAgentStatus => ({ status: "none", counts: { idle: 0, busy: 0 } });
+
+/** Fully delete test workspace `name` (fires workspace:deleted). */
+function deleteIntent(name: string): DeleteWorkspaceIntent {
+  return {
+    type: INTENT_DELETE_WORKSPACE,
+    payload: { workspaceRef: ref(name), keepBranch: false, force: false, removeWorktree: true },
+  };
+}
 
 // =============================================================================
 // Tests
@@ -140,16 +146,7 @@ describe("PowerModule Integration", () => {
       await dispatcher.dispatch(updateStatusIntent(ref("1"), busy()));
       expect(appLayer).toBePreventingSleep();
 
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspaceRef: ref("1"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatcher.dispatch(deleteIntent);
+      await dispatcher.dispatch(deleteIntent("1"));
       expect(appLayer).not.toBePreventingSleep();
     });
 
@@ -160,16 +157,7 @@ describe("PowerModule Integration", () => {
       expect(appLayer).toBePreventingSleep();
 
       // Delete the idle one - the busy one remains.
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspaceRef: ref("2"),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatcher.dispatch(deleteIntent);
+      await dispatcher.dispatch(deleteIntent("2"));
       expect(appLayer).toBePreventingSleep();
     });
   });

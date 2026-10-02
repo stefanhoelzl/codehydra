@@ -82,7 +82,7 @@ export const {
 // Re-export branded path types from IPC (still used for type safety)
 export type { ProjectPath, WorkspacePath } from "@shared/ipc";
 
-export type { Unsubscribe } from "@shared/electron-api";
+export type { Unsubscribe } from "@shared/types";
 
 // Re-export API types for convenience
 export type {

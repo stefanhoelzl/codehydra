@@ -18,8 +18,7 @@ import { registerTestInfrastructure, updateStatusIntent } from "./operations.tes
 import type { DomainEvent } from "./lib/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { projPath, wsPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 
 // =============================================================================
 // Test Setup
@@ -29,7 +28,7 @@ const TEST_PROJECT_ID = "test-project-id" as ProjectId;
 const TEST_PROJECT_PATH = projPath("/projects/test");
 const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
 
-const TEST_WORKSPACE_REF = makeWorkspaceRef(projectRefFor(TEST_PROJECT_PATH), TEST_WORKSPACE_NAME);
+const TEST_WORKSPACE_REF = workspaceRefIn(TEST_PROJECT_PATH, TEST_WORKSPACE_NAME);
 
 const TEST_WORKSPACE_ENTRY = {
   projectPath: TEST_PROJECT_PATH,
@@ -68,10 +67,10 @@ describe("UpdateAgentStatus Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.type).toBe(EVENT_AGENT_STATUS_UPDATED);
-      expect(event.payload.workspace.ref).toBe(TEST_WORKSPACE_REF);
-      expect(event.payload.workspace.projectId).toBe(TEST_PROJECT_ID);
-      expect(event.payload.workspace.name).toBe(TEST_WORKSPACE_NAME);
-      expect(event.payload.workspace.active).toBe(false);
+      expect(event.payload.workspaceRef).toBe(TEST_WORKSPACE_REF);
+      expect(event.payload.projectId).toBe(TEST_PROJECT_ID);
+      expect(event.payload.workspaceName).toBe(TEST_WORKSPACE_NAME);
+      expect(event.payload.active).toBe(false);
       expect(event.payload.status).toEqual(status);
     });
 
@@ -87,7 +86,7 @@ describe("UpdateAgentStatus Operation", () => {
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
-      expect(event.payload.workspace.ref).toBe(TEST_WORKSPACE_REF);
+      expect(event.payload.workspaceRef).toBe(TEST_WORKSPACE_REF);
       expect(event.payload.status).toEqual(status);
     });
 
@@ -136,7 +135,7 @@ describe("UpdateAgentStatus Operation", () => {
 
       const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 1 } };
       await dispatcher.dispatch(
-        updateStatusIntent(makeWorkspaceRef(projectRefFor(TEST_PROJECT_PATH), "unknown"), status)
+        updateStatusIntent(workspaceRefIn(TEST_PROJECT_PATH, "unknown"), status)
       );
 
       expect(receivedEvents).toHaveLength(0);

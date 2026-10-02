@@ -7,10 +7,10 @@
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { createHookOutputSink, HOOK_OUTPUT_CHANNEL } from "./output-sink";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
 import type { WorkspaceRef } from "../../intents/contract";
+import { workspaceRefIn } from "../../shared/test-fixtures";
 
-const WS = makeWorkspaceRef(projectRefFor("/workspaces"), "feature-x");
+const WS = workspaceRefIn("/workspaces", "feature-x");
 
 /** A API server stand-in: workspaces are connected or not, and appends land in `shown`. */
 function createTransport() {

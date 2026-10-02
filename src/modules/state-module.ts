@@ -8,6 +8,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { StateService } from "../boundaries/platform/state-service";
+import { defineHooks } from "../intents/declarations";
 
 export interface StateModuleDeps {
   readonly stateService: StateService;
@@ -16,7 +17,7 @@ export interface StateModuleDeps {
 export function createStateModule(deps: StateModuleDeps): IntentModule {
   return {
     name: "state",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         // Run after "app-ready" so the async state.json I/O happens once the
         // AsyncWatcher (which forbids FSREQPROMISE during the pre-ready window)
@@ -28,6 +29,6 @@ export function createStateModule(deps: StateModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

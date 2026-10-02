@@ -77,6 +77,16 @@ describe("DialogManager", () => {
       expect(manager.getSnapshot()[0]!.config).toEqual(newConfig);
     });
 
+    it("skips a config equal to the current one (no notify)", () => {
+      const handle = manager.open(createConfig("Same"));
+      notifyChange.mockClear();
+
+      // A fresh but equal object: callers rebuild configs on every change.
+      handle.update(createConfig("Same"));
+
+      expect(notifyChange).not.toHaveBeenCalled();
+    });
+
     it("does nothing after close", () => {
       const handle = manager.open(createConfig("Test"));
       handle.close();
@@ -222,6 +232,21 @@ describe("DialogManager", () => {
       manager.routeEvent({ dialogId: handle.id, actionId: "ok" });
 
       await expect(promise).resolves.toMatchObject({ actionId: "ok" });
+    });
+
+    it("clears its timer once the event arrives", async () => {
+      vi.useFakeTimers();
+      try {
+        const handle = manager.open(createConfig("Test"));
+
+        const promise = handle.nextEvent(5000);
+        manager.routeEvent({ dialogId: handle.id, actionId: "ok" });
+        await promise;
+
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("should not timeout when no timeout is specified", async () => {

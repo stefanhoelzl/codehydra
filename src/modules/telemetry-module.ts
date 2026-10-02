@@ -28,10 +28,9 @@ import { randomUUID } from "node:crypto";
 import type { PostHogBoundary } from "../boundaries/platform/posthog";
 import type { StateService } from "../boundaries/platform/state-service";
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import { storeString } from "../boundaries/platform/store-definition";
 import type { Config, ConfigAgentType } from "../boundaries/platform/config";
@@ -39,6 +38,7 @@ import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { BuildInfo } from "../boundaries/platform/build-info";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { Logger } from "../boundaries/platform/logging";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Dependencies
@@ -90,7 +90,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
 
   return {
     name: "telemetry",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         // Stamp commonProps onto the boundary before any dependency check or setup
         // screen, so early reports/crashes are triageable (build + OS). distinctId
@@ -145,12 +145,12 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       [EVENT_WORKSPACE_CREATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { reopened } = (event as WorkspaceCreatedEvent).payload;
-          if (enabled && !reopened) {
+        handler: async (event): Promise<void> => {
+          const { fresh } = event.payload;
+          if (enabled && fresh) {
             deps.boundary.capture("workspace_created");
           }
         },
@@ -162,6 +162,6 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           }
         },
       },
-    },
+    }),
   };
 }

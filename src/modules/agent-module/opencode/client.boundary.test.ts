@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeAll, onTestFinished } from "vitest";
 import { OpenCodeClient } from "./client";
-import { withOpencode } from "./boundary-test-utils";
+import { withOpencode, type OpencodeTestContext } from "./boundary-test-utils";
 import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
@@ -28,8 +28,107 @@ import {
 import type { ClientStatus } from "./types";
 import type { UserRequestEvent } from "./client";
 import { OpenCodeProvider } from "./provider";
-import type { AgentStatus } from "../types";
+import { Path } from "../../../utils/path/path";
+import { workspaceRefSchema } from "../../../intents/contract";
+import type { AgentActivity } from "../types";
 import { createOpencodeClient as createV2Client } from "@opencode-ai/sdk/v2";
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+type AskedEvent = Extract<UserRequestEvent, { type: "asked" }>;
+
+/** Every status the client reports, in order. */
+function recordStatuses(client: OpenCodeClient): ClientStatus[] {
+  const statuses: ClientStatus[] = [];
+  client.onStatusChanged((status) => {
+    statuses.push(status);
+  });
+  return statuses;
+}
+
+/** Every user-request event the client emits, in order. */
+function recordUserRequests(client: OpenCodeClient): UserRequestEvent[] {
+  const requestEvents: UserRequestEvent[] = [];
+  client.onUserRequestEvent((event) => {
+    requestEvents.push(event);
+  });
+  return requestEvents;
+}
+
+/** Create a root session via the client (immediately tracked) and return its id. */
+async function createTrackedSession(
+  client: OpenCodeClient,
+  step: OpencodeTestContext["step"]
+): Promise<string> {
+  const sessionResult = await step("create session", client.createSession());
+  expect(sessionResult.ok).toBe(true);
+  return sessionResult.ok ? sessionResult.value.id : "";
+}
+
+/** The first `asked` event, once one has arrived. */
+async function waitForAsked(
+  waitFor: OpencodeTestContext["waitFor"],
+  requestEvents: readonly UserRequestEvent[],
+  label: string
+): Promise<AskedEvent> {
+  await waitFor(label, () => {
+    expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
+  });
+  const asked = requestEvents.find((e) => e.type === "asked");
+  if (asked?.type !== "asked") throw new Error("unreachable");
+  return asked;
+}
+
+/**
+ * Prompt a tool call that needs permission (bash="ask"), answer the request
+ * with `response`, and wait until it resolves, the prompt completes and the
+ * session is idle again. Returns the statuses the client reported.
+ */
+async function answerPermission(
+  { client, sdk, step, waitFor }: OpencodeTestContext,
+  response: "once" | "reject"
+): Promise<ClientStatus[]> {
+  const requestEvents = recordUserRequests(client);
+  const statuses = recordStatuses(client);
+
+  // Connect first to receive SSE events
+  await step("connect", client.connect());
+  const sessionId = await createTrackedSession(client, step);
+
+  // Send prompt - this triggers a tool call that requires permission
+  const promptPromise = sdk.session.prompt({
+    path: { id: sessionId },
+    body: { parts: [{ type: "text", text: "Run a command" }] },
+  });
+
+  const asked = await waitForAsked(waitFor, requestEvents, "permission asked");
+  expect(asked.event.kind).toBe("permission");
+  const permissionId = asked.event.id;
+
+  await step(
+    "reply to permission",
+    sdk.postSessionIdPermissionsPermissionId({
+      path: { id: sessionId, permissionID: permissionId },
+      body: { response },
+    })
+  );
+
+  await waitFor("permission resolved", () => {
+    expect(requestEvents).toContainEqual({
+      type: "resolved",
+      event: { kind: "permission", requestID: permissionId, sessionID: sessionId },
+    });
+  });
+
+  await step("prompt completes", promptPromise);
+
+  await waitFor("session idle", () => {
+    expect(statuses.includes("idle")).toBe(true);
+  });
+  return statuses;
+}
 
 describe("OpenCodeClient boundary tests", () => {
   let binaryPath: string;
@@ -176,8 +275,7 @@ describe("OpenCodeClient boundary tests", () => {
         await expect(step("connect", client.connect())).resolves.toBeUndefined();
 
         // Verify status listeners work
-        const statuses: ClientStatus[] = [];
-        client.onStatusChanged((status) => statuses.push(status));
+        recordStatuses(client);
 
         // Connection established, can be disconnected
         client.disconnect();
@@ -237,15 +335,10 @@ describe("OpenCodeClient boundary tests", () => {
           // Connect first to receive SSE events
           await step("connect", client.connect());
 
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
+          const statuses = recordStatuses(client);
 
           // Create session via client (immediately tracked)
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+          const sessionId = await createTrackedSession(client, step);
 
           await step(
             "prompt",
@@ -274,15 +367,10 @@ describe("OpenCodeClient boundary tests", () => {
           // Connect first to receive SSE events
           await step("connect", client.connect());
 
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
+          const statuses = recordStatuses(client);
 
           // Create session via client (immediately tracked)
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+          const sessionId = await createTrackedSession(client, step);
 
           // Send prompt - will trigger rate limit
           // Rate limit may cause errors
@@ -345,18 +433,13 @@ describe("OpenCodeClient boundary tests", () => {
     async () => {
       await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk, step }) => {
         // Track status changes - should only reflect root session
-        const statuses: ClientStatus[] = [];
-        client.onStatusChanged((status) => {
-          statuses.push(status);
-        });
+        const statuses = recordStatuses(client);
 
         // Connect first to receive SSE events
         await step("connect", client.connect());
 
         // Create root session via client (immediately tracked)
-        const rootResult = await step("create session", client.createSession());
-        expect(rootResult.ok).toBe(true);
-        const sessionId = rootResult.ok ? rootResult.value.id : "";
+        const sessionId = await createTrackedSession(client, step);
 
         // Create a child session directly via SDK (simulates what task tool would do)
         const childSession = await step(
@@ -445,9 +528,7 @@ describe("OpenCodeClient boundary tests", () => {
         await step("connect", client.connect());
 
         // Create root session via client (immediately tracked)
-        const rootResult = await step("create session", client.createSession());
-        expect(rootResult.ok).toBe(true);
-        const rootSessionId = rootResult.ok ? rootResult.value.id : "";
+        const rootSessionId = await createTrackedSession(client, step);
 
         // Create a child session directly via SDK (simulates what task tool would do)
         const childSession = await step(
@@ -500,18 +581,13 @@ describe("OpenCodeClient boundary tests", () => {
         },
         async ({ client, sdk, step, waitFor }) => {
           // Track status changes
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
+          const statuses = recordStatuses(client);
 
           // Connect first to receive SSE events
           await step("connect", client.connect());
 
           // Create session via client (immediately tracked)
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+          const sessionId = await createTrackedSession(client, step);
 
           // Send prompt - tool call executes without permission (bash="allow")
           await step(
@@ -548,68 +624,9 @@ describe("OpenCodeClient boundary tests", () => {
           mockLlmMode: "tool-call",
           permission: { bash: "ask", edit: "allow", webfetch: "allow" },
         },
-        async ({ client, sdk, step, waitFor }) => {
-          // Track permission requests
-          const requestEvents: UserRequestEvent[] = [];
-
-          client.onUserRequestEvent((event) => {
-            requestEvents.push(event);
-          });
-
-          // Track status changes
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
-
-          // Connect first to receive SSE events
-          await step("connect", client.connect());
-
-          // Create session via client (immediately tracked)
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
-
-          // Send prompt - this triggers a tool call that requires permission
-          const promptPromise = sdk.session.prompt({
-            path: { id: sessionId },
-            body: { parts: [{ type: "text", text: "Run a command" }] },
-          });
-
-          // Wait for the permission request
-          await waitFor("permission asked", () => {
-            expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
-          });
-
-          const asked = requestEvents.find((e) => e.type === "asked");
-          if (asked?.type !== "asked") throw new Error("unreachable");
-          expect(asked.event.kind).toBe("permission");
-          const permissionId = asked.event.id;
-
-          // Respond with approval using SDK top-level method
-          await step(
-            "reply to permission",
-            sdk.postSessionIdPermissionsPermissionId({
-              path: { id: sessionId, permissionID: permissionId },
-              body: { response: "once" },
-            })
-          );
-
-          // Wait for the request to be resolved
-          await waitFor("permission resolved", () => {
-            expect(requestEvents).toContainEqual({
-              type: "resolved",
-              event: { kind: "permission", requestID: permissionId, sessionID: sessionId },
-            });
-          });
-
-          // Wait for prompt to complete
-          await step("prompt completes", promptPromise);
-
+        async (ctx) => {
           // Session should return to idle after tool executes
-          await waitFor("session idle", () => {
-            expect(statuses.includes("idle")).toBe(true);
-          });
+          const statuses = await answerPermission(ctx, "once");
 
           // Verify the tool was executed by checking status sequence
           expect(statuses.length).toBeGreaterThan(0);
@@ -628,68 +645,9 @@ describe("OpenCodeClient boundary tests", () => {
           mockLlmMode: "tool-call",
           permission: { bash: "ask", edit: "allow", webfetch: "allow" },
         },
-        async ({ client, sdk, step, waitFor }) => {
-          // Track permission requests
-          const requestEvents: UserRequestEvent[] = [];
-
-          client.onUserRequestEvent((event) => {
-            requestEvents.push(event);
-          });
-
-          // Track status changes
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
-
-          // Connect first to receive SSE events
-          await step("connect", client.connect());
-
-          // Create session via client (immediately tracked)
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
-
-          // Send prompt - this triggers a tool call that requires permission
-          const promptPromise = sdk.session.prompt({
-            path: { id: sessionId },
-            body: { parts: [{ type: "text", text: "Run a command" }] },
-          });
-
-          // Wait for the permission request
-          await waitFor("permission asked", () => {
-            expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
-          });
-
-          const asked = requestEvents.find((e) => e.type === "asked");
-          if (asked?.type !== "asked") throw new Error("unreachable");
-          expect(asked.event.kind).toBe("permission");
-          const permissionId = asked.event.id;
-
-          // Respond with rejection using SDK top-level method
-          await step(
-            "reply to permission",
-            sdk.postSessionIdPermissionsPermissionId({
-              path: { id: sessionId, permissionID: permissionId },
-              body: { response: "reject" },
-            })
-          );
-
-          // Wait for the request to be resolved
-          await waitFor("permission resolved", () => {
-            expect(requestEvents).toContainEqual({
-              type: "resolved",
-              event: { kind: "permission", requestID: permissionId, sessionID: sessionId },
-            });
-          });
-
-          // Wait for prompt to complete
-          await step("prompt completes", promptPromise);
-
-          // Session should return to idle (tool was NOT executed due to rejection)
-          await waitFor("session idle", () => {
-            expect(statuses.includes("idle")).toBe(true);
-          });
+        async (ctx) => {
+          // Session returns to idle (tool was NOT executed due to rejection)
+          await answerPermission(ctx, "reject");
         }
       );
     },
@@ -705,20 +663,12 @@ describe("OpenCodeClient boundary tests", () => {
           // Reply goes through the v2 client: the v1 SDK has no question endpoints.
           const v2 = createV2Client({ baseUrl: `http://127.0.0.1:${port}` });
 
-          const requestEvents: UserRequestEvent[] = [];
-          client.onUserRequestEvent((event) => {
-            requestEvents.push(event);
-          });
-          const statuses: ClientStatus[] = [];
-          client.onStatusChanged((status) => {
-            statuses.push(status);
-          });
+          const requestEvents = recordUserRequests(client);
+          const statuses = recordStatuses(client);
 
           await step("connect", client.connect());
 
-          const sessionResult = await step("create session", client.createSession());
-          expect(sessionResult.ok).toBe(true);
-          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+          const sessionId = await createTrackedSession(client, step);
 
           // Parks on the question tool until it is answered
           const promptPromise = v2.session.prompt({
@@ -726,11 +676,7 @@ describe("OpenCodeClient boundary tests", () => {
             parts: [{ type: "text", text: "Ask me something" }],
           });
 
-          await waitFor("question asked", () => {
-            expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
-          });
-          const asked = requestEvents.find((e) => e.type === "asked");
-          if (asked?.type !== "asked") throw new Error("unreachable");
+          const asked = await waitForAsked(waitFor, requestEvents, "question asked");
           expect(asked.event).toMatchObject({ kind: "question", sessionID: sessionId });
 
           await step(
@@ -762,10 +708,14 @@ describe("OpenCodeClient boundary tests", () => {
         { binaryPath, mockLlmMode: "question" },
         async ({ port, cwd, step, waitFor }) => {
           const v2 = createV2Client({ baseUrl: `http://127.0.0.1:${port}` });
-          const provider = new OpenCodeProvider(cwd, SILENT_LOGGER);
+          const provider = new OpenCodeProvider(
+            workspaceRefSchema.parse("ch::local::/boundary::opencode"),
+            new Path(cwd),
+            SILENT_LOGGER
+          );
           onTestFinished(() => provider.dispose());
 
-          const statuses: AgentStatus[] = [];
+          const statuses: AgentActivity[] = [];
           provider.onStatusChange((status) => statuses.push(status));
 
           await step("connect provider", provider.connect(port));
@@ -814,19 +764,13 @@ describe("OpenCodeClient boundary tests", () => {
         },
         async ({ client, sdk, step, waitFor }) => {
           // Track permission requests
-          const requestEvents: UserRequestEvent[] = [];
-
-          client.onUserRequestEvent((event) => {
-            requestEvents.push(event);
-          });
+          const requestEvents = recordUserRequests(client);
 
           // Connect first to receive SSE events
           await step("connect", client.connect());
 
           // Create root session via client (immediately tracked)
-          const rootResult = await step("create session", client.createSession());
-          expect(rootResult.ok).toBe(true);
-          const rootSessionId = rootResult.ok ? rootResult.value.id : "";
+          const rootSessionId = await createTrackedSession(client, step);
 
           // Create child session (subagent)
           const childSession = await step(
@@ -847,13 +791,8 @@ describe("OpenCodeClient boundary tests", () => {
           });
 
           // Wait for the permission request from the child session
-          await waitFor("permission asked", () => {
-            expect(requestEvents.some((e) => e.type === "asked")).toBe(true);
-          });
-
+          const asked = await waitForAsked(waitFor, requestEvents, "permission asked");
           // Verify the event has the child session ID (not remapped to root)
-          const asked = requestEvents.find((e) => e.type === "asked");
-          if (asked?.type !== "asked") throw new Error("unreachable");
           expect(asked.event.sessionID).toBe(childSessionId);
 
           // Approve permission using child session ID

@@ -19,7 +19,7 @@ import type { EntryDeps, LockKey, LockSnapshot } from "./deps";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { formatAge } from "../../utils/age";
 import { projectNameOf, projectRefOf } from "../../utils/ref";
-import { createTargetResolver, targetFields, workspaceNameOf } from "./target";
+import { createTargetResolver, targetFields, workspaceDisplayName } from "./target";
 
 const lockName = z
   .string()
@@ -209,10 +209,10 @@ export function lockEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
         // Strings throughout, so the human table has no `null` cells.
         name: lock.name,
         project: lock.project === null ? "" : projectNameOf(lock.project),
-        holder: workspaceNameOf(lock.holder),
+        holder: workspaceDisplayName(lock.holder),
         held: formatAge(lock.acquiredAt),
         reason: lock.reason ?? "",
-        waiting: lock.waiting.map(workspaceNameOf).join(", "),
+        waiting: lock.waiting.map(workspaceDisplayName).join(", "),
       }));
     },
   });

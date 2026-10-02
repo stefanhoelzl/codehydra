@@ -454,7 +454,6 @@ Electron APIs are abstracted behind testable interfaces in two domains. This ena
 │  │         (services/shell/)       │  │       (services/platform/)        │ │
 │  │                                 │  │                                   │ │
 │  │  WindowBoundary ───► ImageBoundary ───┼──┼─► ImageBoundary                      │ │
-│  │       │                         │  │   IpcBoundary                        │ │
 │  │       ▼                         │  │   DialogBoundary                     │ │
 │  │  ViewBoundary ───► SessionBoundary    │  │   AppBoundary                        │ │
 │  │                                 │  │   MenuBoundary                       │ │
@@ -502,19 +501,14 @@ This pattern:
 
 **Boundary Tests:**
 
-Each layer has boundary tests (`*.boundary.test.ts`) that verify behavior against real Electron APIs:
+Layers are tested against real Electron APIs in `src/boundaries/shell/`:
 
-| Layer                    | Boundary Test                      |
-| ------------------------ | ---------------------------------- |
-| `IpcBoundary`            | `ipc.boundary.test.ts`             |
-| `DialogBoundary`         | `dialog.boundary.test.ts`          |
-| `ImageBoundary`          | `image.boundary.test.ts`           |
-| `AppBoundary`            | `app.boundary.test.ts`             |
-| `MenuBoundary`           | `menu.boundary.test.ts`            |
-| `WindowBoundary`         | `window.boundary.test.ts`          |
-| `ViewBoundary`           | `view.boundary.test.ts`            |
-| `SessionBoundary`        | `session.boundary.test.ts`         |
-| `OsNotificationBoundary` | `os-notification.boundary.test.ts` |
+| Layer                                                                | Tests                                                         |
+| -------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `DialogBoundary`, `OsNotificationBoundary`                           | `dialog.boundary.test.ts`, `os-notification.boundary.test.ts` |
+| `WindowBoundary`, `ViewBoundary`, `SessionBoundary`, `ImageBoundary` | `window`, `view`, `session`, `image` `*.integration.test.ts`  |
+
+IPC has no layer of its own: it is `ViewBoundary.send` / `onIpc`, scoped to a view's webContents.
 
 ### Platform Abstractions Overview
 
@@ -598,12 +592,12 @@ External Trigger (IPC / MCP / Electron lifecycle)
 
 ### Layer Ownership
 
-| Component                            | Owns                                                                                                                                                                                                                                      | Does NOT Own                           |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `Dispatcher`                         | Intent routing, interceptor pipeline, event delivery                                                                                                                                                                                      | Business logic (in modules)            |
-| `Operations`                         | Workflow orchestration, control flow decisions                                                                                                                                                                                            | Side effects (delegated to hooks)      |
-| `Modules`                            | Hook handlers, event subscriptions, domain logic                                                                                                                                                                                          | Workflow orchestration (in operations) |
-| `PresentationModule` (the presenter) | Owns both UI wires (`api:ui:state` out, `api:ui:event` in): builds the `UiState` view-model from domain events, computes mode, interprets shortcuts, maps domain events to dialogs/notifications, and dispatches intents from `ui:events` | Business logic or workflow control     |
+| Component                            | Owns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Does NOT Own                           |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `Dispatcher`                         | Intent routing, interceptor pipeline, event delivery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Business logic (in modules)            |
+| `Operations`                         | Workflow orchestration, control flow decisions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Side effects (delegated to hooks)      |
+| `Modules`                            | Hook handlers, event subscriptions, domain logic                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Workflow orchestration (in operations) |
+| `PresentationModule` (the presenter) | Owns both UI wires (`api:ui:state` out, `api:ui:event` in): builds the `UiState` view-model from domain events, computes mode, interprets shortcuts, maps domain events to dialogs/notifications, and dispatches intents from `ui:events`. `presentation-module.ts` composes collaborators in `src/modules/presentation/`: `startup-surface.ts` (startup screens, mid-session loading panel), `view-model.ts` (project/workspace rows), `navigation.ts` (shortcut navigation), `running-hooks.ts` (Cancel for running plugin hooks), `sessions.ts` (dialog/notification registries) | Business logic or workflow control     |
 
 ### Core Principles
 
@@ -1608,7 +1602,8 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 | File                                              | Purpose                                                          |
 | ------------------------------------------------- | ---------------------------------------------------------------- |
 | `src/modules/shortcut-module.ts`                  | Main-process key capture (before-input-event) → shortcut intents |
-| `src/modules/presentation/presentation-module.ts` | Interprets shortcut events; computes `ui.mode`                   |
+| `src/modules/presentation/presentation-module.ts` | Receives shortcut events; computes `ui.mode`                     |
+| `src/modules/presentation/navigation.ts`          | Shortcut navigation over the rows the presenter renders          |
 | `src/renderer/App.svelte`                         | Reads `ui.mode` from the snapshot; renders overlay/z-order       |
 
 ### Design Decisions

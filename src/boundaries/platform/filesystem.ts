@@ -312,6 +312,7 @@ function resolveFsPromises(): typeof nodeFsPromises {
 }
 const fs = resolveFsPromises();
 import type { Logger } from "./logging";
+import { withTimeout } from "../../utils/timeout";
 
 /**
  * Known error codes that map to FileSystemErrorCode.
@@ -471,23 +472,10 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
         });
 
         if (options?.timeout !== undefined) {
-          let timer: ReturnType<typeof setTimeout>;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () =>
-                reject(
-                  Object.assign(new Error(`rm timed out after ${options.timeout}ms`), {
-                    code: "ETIMEDOUT",
-                  })
-                ),
-              options.timeout
-            );
-          });
-          try {
-            await Promise.race([rmPromise, timeoutPromise]);
-          } finally {
-            clearTimeout(timer!);
-          }
+          const timeout = options.timeout;
+          await withTimeout(rmPromise, timeout, () =>
+            Object.assign(new Error(`rm timed out after ${timeout}ms`), { code: "ETIMEDOUT" })
+          );
         } else {
           await rmPromise;
         }

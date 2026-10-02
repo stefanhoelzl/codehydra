@@ -7,6 +7,8 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
+import { getErrorMessage } from "../../shared/error-utils";
+import type { Unsubscribe } from "../../shared/types";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { createViewHandle } from "./types";
 import { guardedUnsubscribe } from "./subscription";
@@ -37,11 +39,6 @@ export type WindowOpenAction = { action: "allow" } | { action: "deny" };
  * Handler for window.open() requests.
  */
 export type WindowOpenHandler = (details: WindowOpenDetails) => WindowOpenAction;
-
-/**
- * Function to unsubscribe from an event.
- */
-export type Unsubscribe = () => void;
 
 /**
  * Details about a render-process-gone event.
@@ -543,7 +540,7 @@ export class DefaultViewBoundary implements ViewBoundary {
       // page itself (UiViewManager.loadUI), and a UI that fails to come up
       // surfaces through the renderer crash guard, not here. Workspace
       // iframes never route through this — they navigate in the renderer.
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       this.logger.warn("Navigation failed", {
         id: handle.id,
         url,
@@ -570,7 +567,7 @@ export class DefaultViewBoundary implements ViewBoundary {
     } catch (error) {
       this.logger.debug("capturePNG failed", {
         id: handle.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return null;
     }
@@ -700,7 +697,7 @@ export class DefaultViewBoundary implements ViewBoundary {
       } catch (error) {
         this.logger.warn("Failed to attach exception debugger", {
           id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     };
@@ -781,7 +778,7 @@ export class DefaultViewBoundary implements ViewBoundary {
         // into exit(1). Injection is best-effort; a lost tracker is not fatal.
         this.logger.debug("Child frame script injection skipped", {
           id: handle.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     });
@@ -812,7 +809,7 @@ export class DefaultViewBoundary implements ViewBoundary {
       } catch (error) {
         this.logger.debug("Child frame navigation skipped", {
           id: handle.id,
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
       }
     };

@@ -9,13 +9,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 
-import { z } from "zod/v4";
-import type {
-  Operation,
-  OperationContext,
-  OperationSchemas,
-  IntentOf,
-} from "../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import type { WorkspaceName } from "../shared/api/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
@@ -38,32 +32,13 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
+import { projectRefFor } from "../utils/ref";
+import { createDetectJson } from "./windows-file-lock-module.test-utils";
 
 // =============================================================================
 // Test Helpers
 // =============================================================================
-
-function createDetectJson(
-  blocking: Array<{
-    pid: number;
-    name: string;
-    commandLine: string;
-    files?: string[];
-    cwd?: string | null;
-  }>
-): string {
-  return JSON.stringify({
-    blocking: blocking.map((p) => ({
-      pid: p.pid,
-      name: p.name,
-      commandLine: p.commandLine,
-      files: p.files ?? [],
-      cwd: p.cwd ?? null,
-    })),
-  });
-}
 
 function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>): Intent {
   return {
@@ -118,35 +93,25 @@ const detectOperation = createMinimalOperation<DetectHookResult>(
 /**
  * Runs only the "flush" hook point with provided blockingPids.
  */
-const flushOpSchemas = {
-  type: INTENT_DELETE_WORKSPACE,
-  payload: z.unknown(),
-  result: z.custom<FlushHookResult>(),
-} satisfies OperationSchemas;
-
-class FlushOperation implements Operation<typeof flushOpSchemas> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-  readonly schemas = flushOpSchemas;
-
-  constructor(private readonly blockingPids: readonly number[]) {}
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof flushOpSchemas>, typeof flushOpSchemas>
-  ): Promise<FlushHookResult> {
-    const flushCtx: FlushHookInput = {
-      intent: ctx.intent,
-      projectRef: projectRefFor(projPath("/projects/my-app")),
-      projectPath: projPath("/projects/my-app"),
-      workspaceRef: makeWorkspaceRef(projectRefFor(projPath("/projects/my-app")), "feature-1"),
-      workspacePath: wsPath("/workspaces/feature-1"),
-      workspaceName: "feature-1" as WorkspaceName,
-      active: false,
-      blockingPids: this.blockingPids,
-    };
-    const { results, errors } = await ctx.hooks.collect("flush", flushCtx);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
-  }
+function createFlushOperation(blockingPids: readonly number[]): Operation<OperationSchemas> {
+  return createMinimalOperation<FlushHookResult>(
+    DELETE_WORKSPACE_OPERATION_ID,
+    INTENT_DELETE_WORKSPACE,
+    "flush",
+    {
+      hookContext: (ctx): FlushHookInput => ({
+        intent: ctx.intent,
+        projectRef: projectRefFor(projPath("/projects/my-app")),
+        projectPath: projPath("/projects/my-app"),
+        workspaceRef: workspaceRefIn(projPath("/projects/my-app"), "feature-1"),
+        workspacePath: wsPath("/workspaces/feature-1"),
+        workspaceName: "feature-1" as WorkspaceName,
+        active: false,
+        blockingPids,
+      }),
+      defaultResult: {},
+    }
+  );
 }
 
 // =============================================================================
@@ -198,7 +163,7 @@ function createFlushSetup(
     logger: createMockLogger(),
     initialCapabilities: { platform: "win32" },
   });
-  dispatcher.registerOperation(new FlushOperation(blockingPids));
+  dispatcher.registerOperation(createFlushOperation(blockingPids));
 
   const module = createWindowsFileLockModule({
     processRunner: runner,

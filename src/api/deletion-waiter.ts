@@ -13,11 +13,8 @@
  */
 
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DomainEvent } from "../intents/lib/types";
-import {
-  EVENT_WORKSPACE_DELETION_PROGRESS,
-  type WorkspaceDeletionProgressEvent,
-} from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETION_PROGRESS } from "../intents/delete-workspace";
+import { subscribe } from "../intents/declarations";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspaceRef } from "../intents/contract";
 
@@ -33,20 +30,17 @@ export interface DeletionWaiter {
 export function createDeletionWaiter(dispatcher: Dispatcher): DeletionWaiter {
   const waiters = new Map<string, Set<(progress: DeletionProgress) => void>>();
 
-  const unsubscribe = dispatcher.subscribe(
-    EVENT_WORKSPACE_DELETION_PROGRESS,
-    (event: DomainEvent) => {
-      const progress = (event as WorkspaceDeletionProgressEvent).payload;
-      // In-progress events are steps along the way; only the terminal one
-      // carries the outcome.
-      if (!progress.completed) return;
+  const unsubscribe = subscribe(dispatcher, EVENT_WORKSPACE_DELETION_PROGRESS, (event) => {
+    const progress = event.payload;
+    // In-progress events are steps along the way; only the terminal one
+    // carries the outcome.
+    if (!progress.completed) return;
 
-      const pending = waiters.get(progress.workspaceRef);
-      if (!pending) return;
-      waiters.delete(progress.workspaceRef);
-      for (const resolve of pending) resolve(progress);
-    }
-  );
+    const pending = waiters.get(progress.workspaceRef);
+    if (!pending) return;
+    waiters.delete(progress.workspaceRef);
+    for (const resolve of pending) resolve(progress);
+  });
 
   return {
     await(workspaceRef) {

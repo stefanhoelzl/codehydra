@@ -4,7 +4,7 @@
  *
  * This script is invoked by Claude Code hooks. It:
  * 1. Reads the hook payload from stdin (JSON)
- * 2. Adds workspacePath from environment variable
+ * 2. Adds the workspace ref from the environment
  * 3. POSTs to the bridge server
  *
  * Key requirements:

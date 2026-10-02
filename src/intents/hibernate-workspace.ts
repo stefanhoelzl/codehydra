@@ -47,7 +47,9 @@ import {
   projectIdSchema,
   projectPathSchema,
   projectRefSchema,
+  workspaceIdentityPayloadSchema,
   workspaceNameSchema,
+  workspaceRefIdentitySchema,
   workspaceRefSchema,
   workspaceTargetShape,
 } from "./contract";
@@ -80,16 +82,13 @@ export const hibernateWorkspaceResultSchema = z.object({
 
 export const workspaceHibernatedPayloadSchema = z
   .object({
-    projectId: projectIdSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
-    projectRef: projectRefSchema,
+    ...workspaceIdentityPayloadSchema.shape,
   })
   .readonly();
 
 export const workspaceHibernateFailedPayloadSchema = z
   .object({
-    workspaceRef: workspaceRefSchema,
+    ...workspaceRefIdentitySchema.shape,
     error: z.string(),
   })
   .readonly();

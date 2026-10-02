@@ -6,7 +6,7 @@
  * set-metadata, vscode-command, vscode-show-message) are thin specs; the shared
  * behavior lives here:
  * - workspace:resolve failure short-circuits before the hook runs
- * - project:resolve is dispatched only when resolveProject is set
+ * - project:resolve is dispatched only when the operation emits an event
  * - lone hook error is rethrown raw; multiple errors aggregate under errorLabel
  * - extract() receives every handler's result (single-writer via onlyDefined)
  * - onSuccess event is emitted with resolved identity and the extracted result
@@ -26,8 +26,8 @@ import type { ResolveHookResult as ResolveProjectHookResult } from "../resolve-p
 import type { IntentModule } from "./module";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { workspaceRefSchema } from "../contract";
-import { projPath, wsPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { projPath, wsPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
 
 // =============================================================================
 // Test operation
@@ -37,7 +37,7 @@ const PROJECT_ROOT = projPath("/project");
 const PROJECT_ID = "proj-1" as ProjectId;
 const WORKSPACE_PATH = wsPath("/workspaces/feature-x");
 const WORKSPACE_NAME = "feature-x" as WorkspaceName;
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), WORKSPACE_NAME);
+const WORKSPACE_REF = workspaceRefIn(PROJECT_ROOT, WORKSPACE_NAME);
 
 const INTENT_TEST = "test:workspace-hook" as const;
 const TEST_OPERATION_ID = "test-workspace-hook";
@@ -60,11 +60,10 @@ const testSchemas = {
 class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
   readonly schemas = testSchemas;
 
-  constructor(opts?: { resolveProject?: boolean; emitEvent?: boolean }) {
+  constructor(opts?: { emitEvent?: boolean }) {
     super(TEST_OPERATION_ID, {
       hookPoint: "work",
       buildInput: (intent, target) => ({ intent, ...target }),
-      ...(opts?.resolveProject !== undefined && { resolveProject: opts.resolveProject }),
       errorLabel: "test-workspace-hook work hooks failed",
       extract: (results) =>
         requireResult(
@@ -72,11 +71,11 @@ class TestOperation extends WorkspaceHookOperation<typeof testSchemas> {
           "Test hook did not provide value result"
         ),
       ...(opts?.emitEvent && {
-        onSuccess: ({ intent, resolved, project, result }) => ({
+        onSuccess: ({ intent, identity, result }) => ({
           type: EVENT_TEST_DONE,
           payload: {
-            projectId: project?.projectId,
-            workspaceName: resolved.workspaceName,
+            projectId: identity.projectId,
+            workspaceName: identity.workspaceName,
             workspaceRef: intent.payload.workspaceRef,
             result,
           },
@@ -183,7 +182,7 @@ describe("WorkspaceHookOperation", () => {
       workHandlers: [{ handler: async () => ({ result: { value: "x" } }) }],
     });
 
-    const unknown = makeWorkspaceRef(projectRefFor(PROJECT_ROOT), "unknown");
+    const unknown = workspaceRefIn(PROJECT_ROOT, "unknown");
     await expect(dispatcher.dispatch(testIntent(unknown))).rejects.toThrow(
       `Workspace not found: ${unknown}`
     );
@@ -249,7 +248,7 @@ describe("WorkspaceHookOperation", () => {
 
   it("emits the onSuccess event with resolved identity, project, and result", async () => {
     const { dispatcher } = createSetup({
-      operation: new TestOperation({ resolveProject: true, emitEvent: true }),
+      operation: new TestOperation({ emitEvent: true }),
       workHandlers: [{ handler: async () => ({ result: { value: "done" } }) }],
       registerProject: true,
     });
@@ -268,7 +267,7 @@ describe("WorkspaceHookOperation", () => {
     });
   });
 
-  it("does not dispatch project:resolve unless resolveProject is set", async () => {
+  it("does not dispatch project:resolve for an operation that emits no event", async () => {
     // No project:resolve operation registered — dispatch would throw
     // "No operation registered" if the skeleton tried to resolve the project.
     const { dispatcher } = createSetup({

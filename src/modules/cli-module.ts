@@ -20,7 +20,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import { ANY_VALUE } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
@@ -29,6 +29,7 @@ import type { StateService } from "../boundaries/platform/state-service";
 import { storeNumber, storeString } from "../boundaries/platform/store-definition";
 import type { Logger } from "../boundaries/platform/logging-types";
 import { getErrorMessage } from "../shared/error-utils";
+import { defineHooks } from "../intents/declarations";
 
 /**
  * Capability announcing that the CLI's port and token have been published.
@@ -99,7 +100,7 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
     token: () => token,
     module: {
       name: "cli",
-      hooks: {
+      hooks: defineHooks({
         [APP_START_OPERATION_ID]: {
           "before-ready": {
             handler: async (): Promise<HookOutput<ConfigureResult>> => {
@@ -110,7 +111,7 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
           start: {
             // The port is only known once the API server has bound one.
             requires: { apiPort: ANY_VALUE },
-            handler: async (ctx: HookContext): Promise<HookOutput> => {
+            handler: async (ctx): Promise<HookOutput<void>> => {
               // Capabilities arrive on ctx.capabilities, not on the context
               // itself — the API server provides this one from its own start
               // hook, and `requires` above is what orders us after it.
@@ -165,23 +166,18 @@ export function createCliModule(deps: CliModuleDeps): CliModuleHandle {
               // `ch` present this instance's token to whatever binds that port
               // next — and would make it report a connection error rather than
               // the truth, which is that CodeHydra is not running.
+              // Best-effort, like every other stop handler: the dispatcher logs a
+              // failure, and a stale entry costs a confusing message, not
+              // correctness.
               token = null;
-              try {
-                // Port first, the mirror of the publish order: clearing the
-                // barrier before the token it guards.
-                await portState.set(0);
-                await tokenState.set(null);
-              } catch (error) {
-                // Best-effort, like every other shutdown step: a stale entry
-                // costs a confusing message, not correctness.
-                logger.debug("Could not withdraw CLI connection details", {
-                  error: getErrorMessage(error),
-                });
-              }
+              // Port first, the mirror of the publish order: clearing the
+              // barrier before the token it guards.
+              await portState.set(0);
+              await tokenState.set(null);
             },
           },
         },
-      },
+      }),
     },
   };
 }

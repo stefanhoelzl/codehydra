@@ -30,6 +30,7 @@ import {
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { Path } from "../../utils/path/path";
 import { getErrorMessage } from "../../shared/error-utils";
+import { prependPath } from "../../utils/env-path";
 import { writeRunLog, type RunOutcome } from "./run-log";
 import type { ShellName, ShellResolver } from "./shells";
 
@@ -125,13 +126,8 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
   const baseEnv = deps.env ?? process.env;
 
   function scriptEnv(request: ScriptRequest): NodeJS.ProcessEnv {
-    const pathKey = Object.keys(baseEnv).find((key) => key.toUpperCase() === "PATH") ?? "PATH";
-    const current = baseEnv[pathKey];
-    const bin = deps.binDir.toNative();
-    const delimiter = platform === "win32" ? ";" : ":";
     return {
-      ...baseEnv,
-      [pathKey]: current ? `${bin}${delimiter}${current}` : bin,
+      ...prependPath(baseEnv, deps.binDir.toNative(), platform),
       ...(request.pluginDir !== undefined && { CH_PLUGIN_DIR: request.pluginDir.toNative() }),
       ...(request.workspaceDir !== undefined && {
         CH_WORKSPACE_DIR: request.workspaceDir.toNative(),

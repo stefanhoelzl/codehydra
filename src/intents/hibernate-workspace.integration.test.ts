@@ -54,15 +54,15 @@ import {
   type OpenWorkspacePayload,
 } from "./open-workspace";
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
-import { wsPath, projPath } from "../shared/test-fixtures";
+import { wsPath, projPath, workspaceRefIn } from "../shared/test-fixtures";
 import { workspaceSchema } from "./contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projectRefFor } from "../utils/ref";
 
 const PROJECT_PATH = projPath("/test/project");
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
 const WORKSPACE_PATH = wsPath("/test/project/workspaces/feature-a");
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_PATH), WORKSPACE_NAME);
+const WORKSPACE_REF = workspaceRefIn(PROJECT_PATH, WORKSPACE_NAME);
 const BRANCH = "feature-a-branch";
 const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
 const REOPENED_WORKSPACE: Workspace = {

@@ -9,6 +9,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Dependencies
@@ -28,7 +29,7 @@ export function createTempDirModule(deps: TempDirModuleDeps): IntentModule {
 
   return {
     name: "temp-dir",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
@@ -38,6 +39,6 @@ export function createTempDirModule(deps: TempDirModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

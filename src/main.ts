@@ -103,7 +103,8 @@ import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETE_FAILED,
 } from "./intents/delete-workspace";
-import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./intents/delete-workspace";
+import type { DeleteWorkspacePayload } from "./intents/delete-workspace";
+import { isIntent } from "./intents/declarations";
 import {
   HibernateWorkspaceOperation,
   INTENT_HIBERNATE_WORKSPACE,
@@ -430,6 +431,7 @@ const gitWorktreeProvider = new GitWorktreeProvider(
 const autoUpdater = new AutoUpdater({
   logger: loggingService.createLogger("updater"),
   isDevelopment: buildInfo.isDevelopment,
+  platform,
 });
 
 // Agent services (both server managers + status manager)
@@ -455,7 +457,8 @@ const agentServerManagers = {
     serverManagerDeps.portManager,
     serverManagerDeps.httpClient,
     serverManagerDeps.pathProvider,
-    serverManagerDeps.logger
+    serverManagerDeps.logger,
+    platform
   ),
 };
 const providerLogger = loggingService.createLogger("agent");
@@ -505,7 +508,7 @@ const idempotencyModule = createIdempotencyModule([
       return workspaceRef;
     },
     resetOn: [EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_DELETE_FAILED],
-    isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+    isForced: (intent) => isIntent(intent, INTENT_DELETE_WORKSPACE) && intent.payload.force,
   },
   {
     intentType: INTENT_HIBERNATE_WORKSPACE,
@@ -678,6 +681,7 @@ const apiServerModule = createApiServerModule({
   portManager: networkLayer,
   dispatcher,
   appLayer,
+  fileSystem: fileSystemLayer,
   logger: apiLogger,
   registry: operationRegistry,
   cliToken: () => cliModule.token(),
@@ -820,6 +824,7 @@ const workspacesRootModule = createWorkspacesRootModule({
   dialog: dialogLayer,
   app: appLayer,
   dispatcher,
+  platform,
   logger: loggingService.createLogger("workspaces-root"),
 });
 const workspacesRoot = workspacesRootModule.root;
@@ -831,6 +836,7 @@ const localProjectModule = createLocalProjectModule({
   ui: presentationModule,
   dispatcher,
   gitClient,
+  platform,
   logger: lifecycleLogger,
 });
 const remoteProjectModule = createRemoteProjectModule({
@@ -897,6 +903,7 @@ const electronLifecycleModule = createElectronLifecycleModule({
   app,
   appLayer,
   buildInfo,
+  platform,
   pathProvider,
   asyncWatcher,
   powerMonitor,

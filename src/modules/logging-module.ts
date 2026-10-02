@@ -16,6 +16,7 @@ import type { Config } from "../boundaries/platform/config";
 import { parseLogLevelSpec, splitLogLevelSpec } from "../boundaries/platform/electron-log";
 import { storeCustom, storeEnum, storeEnumList } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Dependency Interface
@@ -62,7 +63,7 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
 
   return {
     name: "logging",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<void> => {
@@ -95,6 +96,6 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
           },
         },
       },
-    },
+    }),
   };
 }

@@ -22,7 +22,7 @@
 
 import * as nodeFs from "node:fs";
 import { dirname, join } from "node:path";
-import { getErrorMessage } from "../../shared/error-utils";
+import { errorCode, getErrorMessage } from "../../shared/error-utils";
 
 /** Must match the workspaces-root module's `ROOT_STATE_KEY`. */
 export const WORKSPACES_ROOT_STATE_KEY = "paths.workspaces";
@@ -230,10 +230,4 @@ function attempt(run: () => void): void {
   } catch {
     // best effort
   }
-}
-
-function errorCode(error: unknown): string | undefined {
-  return error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
 }

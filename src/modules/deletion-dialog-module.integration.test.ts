@@ -93,6 +93,7 @@ function createMockDispatcher() {
 function makeProgress(overrides?: Partial<DeletionProgress>): DeletionProgress {
   return {
     workspaceRef: WS_PATH_A,
+    projectRef: PROJECT_REF,
     workspaceName: WS_NAME_A,
     projectId: PROJECT_ID,
     keepBranch: false,

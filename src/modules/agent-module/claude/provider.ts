@@ -16,17 +16,18 @@ import type {
   AgentMessageOptions,
   AgentProvider,
   AgentSessionInfo,
-  AgentStatus,
+  AgentActivity,
 } from "../types";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import type { Logger } from "../../../boundaries/platform/logging";
+import type { WorkspaceRef } from "../../../intents/contract";
 
 /**
  * Dependencies for ClaudeCodeProvider.
  */
 export interface ClaudeCodeProviderDeps {
   readonly serverManager: ClaudeCodeServerManager;
-  readonly workspacePath: string;
+  readonly workspaceRef: WorkspaceRef;
   readonly logger: Logger;
 }
 
@@ -40,23 +41,23 @@ export interface ClaudeCodeProviderDeps {
  */
 export class ClaudeCodeProvider implements AgentProvider {
   private readonly serverManager: ClaudeCodeServerManager;
-  private readonly workspacePath: string;
+  private readonly workspaceRef: WorkspaceRef;
   private readonly logger: Logger;
 
   /** Port of the bridge server (set during connect) */
   private port: number | null = null;
 
   /** Status change callbacks */
-  private readonly statusCallbacks = new Set<(status: AgentStatus) => void>();
+  private readonly statusCallbacks = new Set<(status: AgentActivity) => void>();
 
   /** Unsubscribe function for ServerManager status changes */
   private unsubscribe: (() => void) | null = null;
 
   constructor(deps: ClaudeCodeProviderDeps) {
     this.serverManager = deps.serverManager;
-    this.workspacePath = deps.workspacePath;
+    this.workspaceRef = deps.workspaceRef;
     // Everything this provider logs is about its one workspace.
-    this.logger = deps.logger;
+    this.logger = deps.logger.scoped({ workspace: deps.workspaceRef });
   }
 
   /**
@@ -72,7 +73,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     this.port = port;
 
     // Subscribe to status changes from ServerManager
-    this.unsubscribe = this.serverManager.onStatusChange(this.workspacePath, (status) => {
+    this.unsubscribe = this.serverManager.onStatusChange(this.workspaceRef, (status) => {
       this.notifyStatusChange(status);
     });
 
@@ -104,7 +105,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     // Re-subscribe to status changes
-    this.unsubscribe = this.serverManager.onStatusChange(this.workspacePath, (status) => {
+    this.unsubscribe = this.serverManager.onStatusChange(this.workspaceRef, (status) => {
       this.notifyStatusChange(status);
     });
 
@@ -115,7 +116,7 @@ export class ClaudeCodeProvider implements AgentProvider {
    * Subscribe to status changes.
    * Returns an unsubscribe function.
    */
-  onStatusChange(callback: (status: AgentStatus) => void): () => void {
+  onStatusChange(callback: (status: AgentActivity) => void): () => void {
     this.statusCallbacks.add(callback);
     return () => this.statusCallbacks.delete(callback);
   }
@@ -129,7 +130,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       return null;
     }
 
-    const sessionId = this.serverManager.getSessionId(this.workspacePath);
+    const sessionId = this.serverManager.getSessionId(this.workspaceRef);
     if (!sessionId) {
       // Session not started yet
       return null;
@@ -151,9 +152,9 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     const mcpConfig = this.serverManager.getMcpConfig();
-    const hooksConfigPath = this.serverManager.getHooksConfigPath(this.workspacePath);
-    const mcpConfigPath = this.serverManager.getMcpConfigPath(this.workspacePath);
-    const initialPromptPath = this.serverManager.getInitialPromptPath(this.workspacePath);
+    const hooksConfigPath = this.serverManager.getHooksConfigPath(this.workspaceRef);
+    const mcpConfigPath = this.serverManager.getMcpConfigPath(this.workspaceRef);
+    const initialPromptPath = this.serverManager.getInitialPromptPath(this.workspaceRef);
 
     const envVars: Record<string, string> = {
       _CH_CLAUDE_SETTINGS: hooksConfigPath.toNative(),
@@ -168,8 +169,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     // The workspace's ref, for every `ch` the agent runs. Also how the sidekick
     // recognises a running agent terminal after an extension host restart
     // (findRunningAgentTerminal) — keep it set.
-    const workspaceRef = this.serverManager.getWorkspaceRef(this.workspacePath);
-    if (workspaceRef !== undefined) envVars._CH_WORKSPACE = workspaceRef;
+    envVars._CH_WORKSPACE = this.workspaceRef;
 
     // Only include initial prompt file path if it was set
     if (initialPromptPath !== undefined) {
@@ -177,7 +177,7 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     // Include no-session marker path if set (new workspaces only)
-    const noSessionMarkerPath = this.serverManager.getNoSessionMarkerPath(this.workspacePath);
+    const noSessionMarkerPath = this.serverManager.getNoSessionMarkerPath(this.workspaceRef);
     if (noSessionMarkerPath !== undefined) {
       envVars._CH_CLAUDE_NO_SESSION_MARKER_PATH = noSessionMarkerPath.toNative();
     }
@@ -198,7 +198,7 @@ export class ClaudeCodeProvider implements AgentProvider {
    * {@link ClaudeCodeServerManager.sendMessage}).
    */
   sendMessage(message: AgentMessage, options: AgentMessageOptions): Promise<void> {
-    return this.serverManager.sendMessage(this.workspacePath, message, options);
+    return this.serverManager.sendMessage(this.workspaceRef, message, options);
   }
 
   /**
@@ -220,7 +220,7 @@ export class ClaudeCodeProvider implements AgentProvider {
   /**
    * Notify all status change callbacks.
    */
-  private notifyStatusChange(status: AgentStatus): void {
+  private notifyStatusChange(status: AgentActivity): void {
     for (const callback of this.statusCallbacks) {
       callback(status);
     }

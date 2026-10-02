@@ -24,6 +24,7 @@ import {
   type ApiServerOptions,
 } from "./api-server-module";
 import { DefaultNetworkLayer } from "../boundaries/platform/network";
+import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher, IntentHandle, type DispatchOptions } from "../intents/lib/dispatcher";
 import type {
@@ -47,7 +48,7 @@ import {
   type VscodeCommandIntent,
 } from "../intents/vscode-command";
 import { executeHookResultSchema } from "../intents/vscode-command";
-import type { ExecuteHookInput } from "../intents/vscode-command";
+import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
 import {
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
   INTENT_VSCODE_SHOW_MESSAGE,
@@ -55,10 +56,11 @@ import {
   type VscodeShowMessageType,
   showHookResultSchema,
 } from "../intents/vscode-show-message";
-import type { ShowHookInput } from "../intents/vscode-show-message";
+import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, parseWorkspaceRef, projectRefFor } from "../utils/ref";
+import { parseWorkspaceRef, projectRefFor } from "../utils/ref";
+import { testWorkspaceRef } from "../shared/test-fixtures";
 import { Path } from "../utils/path/path";
 import type { LogScopeStore } from "../boundaries/platform/logging-types";
 import type { Intent } from "../intents/lib/types";
@@ -201,16 +203,6 @@ function withoutLogScope(
 // Workspace refs
 // ============================================================================
 
-/**
- * The ref a test workspace goes by: a checkout project at its parent directory,
- * named after its own. Every helper here takes a workspace's path and names it
- * to the server by this ref, so tests keep speaking in paths.
- */
-export function testWorkspaceRef(workspacePath: string): WorkspaceRef {
-  const path = new Path(workspacePath);
-  return makeWorkspaceRef(projectRefFor(path.dirname.toString()), path.basename);
-}
-
 /** The path a ref made by {@link testWorkspaceRef} stands for. */
 function testWorkspacePath(workspaceRef: WorkspaceRef): WorkspacePath {
   const parts = parseWorkspaceRef(workspaceRef);
@@ -242,25 +234,12 @@ function createMockDispatch(resolveWith?: unknown, options?: { accepted?: boolea
 // Minimal Test Operations
 // ============================================================================
 
-const startSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<number | null>(),
-} satisfies OperationSchemas;
-
-class MinimalStartOperation implements Operation<typeof startSchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = startSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
-  ): Promise<number | null> {
-    const { errors, capabilities } = await ctx.hooks.collect("start", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return (capabilities.apiPort as number | null) ?? null;
-  }
+/** The app:start "start" hook point, returning the `apiPort` capability (or null). */
+export function createMinimalStartOperation(): Operation<OperationSchemas> {
+  return createMinimalOperation<number | null>(APP_START_OPERATION_ID, INTENT_APP_START, "start", {
+    hookContext: (ctx) => ({ intent: ctx.intent }),
+    select: ({ capabilities }) => (capabilities.apiPort as number | null) ?? null,
+  });
 }
 
 const finalizeSchemas = {
@@ -304,68 +283,46 @@ function createMinimalFinalizeOperation(): Operation<typeof finalizeSchemas> & {
   return op;
 }
 
-const commandSchemas = {
-  type: INTENT_VSCODE_COMMAND,
-  payload: z.unknown(),
-  result: z.custom<unknown>(),
-  hooks: { execute: { result: executeHookResultSchema } },
-} satisfies OperationSchemas;
-
 /** Minimal vscode-command operation that skips workspace resolution. */
-class MinimalCommandOperation implements Operation<typeof commandSchemas> {
-  readonly id = VSCODE_COMMAND_OPERATION_ID;
-  readonly schemas = commandSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof commandSchemas>, typeof commandSchemas>
-  ): Promise<unknown> {
-    const payload = ctx.intent.payload as VscodeCommandIntent["payload"];
-    const executeCtx: ExecuteHookInput = {
-      intent: ctx.intent,
-      workspaceRef: payload.workspaceRef,
-      workspacePath: testWorkspacePath(payload.workspaceRef),
-    };
-    const { results, errors } = await ctx.hooks.collect("execute", executeCtx);
-    if (errors.length > 0) throw errors[0]!;
-
-    let result: unknown;
-    for (const r of results) {
-      if (r.result !== undefined) result = r.result;
+function createMinimalCommandOperation(): Operation<OperationSchemas> {
+  return createMinimalOperation<unknown, ExecuteHookResult>(
+    VSCODE_COMMAND_OPERATION_ID,
+    INTENT_VSCODE_COMMAND,
+    "execute",
+    {
+      hookSchemas: { result: executeHookResultSchema },
+      hookContext: (ctx): ExecuteHookInput => {
+        const payload = ctx.intent.payload as VscodeCommandIntent["payload"];
+        return {
+          intent: ctx.intent,
+          workspaceRef: payload.workspaceRef,
+          workspacePath: testWorkspacePath(payload.workspaceRef),
+        };
+      },
+      select: ({ results }) => results.findLast((r) => r.result !== undefined)?.result,
     }
-    return result;
-  }
+  );
 }
 
-const showMessageSchemas = {
-  type: INTENT_VSCODE_SHOW_MESSAGE,
-  payload: z.unknown(),
-  result: z.custom<string | null>(),
-  hooks: { show: { result: showHookResultSchema } },
-} satisfies OperationSchemas;
-
 /** Minimal vscode-show-message operation that skips workspace resolution. */
-class MinimalShowMessageOperation implements Operation<typeof showMessageSchemas> {
-  readonly id = VSCODE_SHOW_MESSAGE_OPERATION_ID;
-  readonly schemas = showMessageSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof showMessageSchemas>, typeof showMessageSchemas>
-  ): Promise<string | null> {
-    const payload = ctx.intent.payload as VscodeShowMessageIntent["payload"];
-    const showCtx: ShowHookInput = {
-      intent: ctx.intent,
-      workspaceRef: payload.workspaceRef,
-      workspacePath: testWorkspacePath(payload.workspaceRef),
-    };
-    const { results, errors } = await ctx.hooks.collect("show", showCtx);
-    if (errors.length > 0) throw errors[0]!;
-
-    let result: string | null | undefined;
-    for (const r of results) {
-      if (r.result !== undefined) result = r.result;
+function createMinimalShowMessageOperation(): Operation<OperationSchemas> {
+  return createMinimalOperation<string | null, ShowHookResult>(
+    VSCODE_SHOW_MESSAGE_OPERATION_ID,
+    INTENT_VSCODE_SHOW_MESSAGE,
+    "show",
+    {
+      hookSchemas: { result: showHookResultSchema },
+      hookContext: (ctx): ShowHookInput => {
+        const payload = ctx.intent.payload as VscodeShowMessageIntent["payload"];
+        return {
+          intent: ctx.intent,
+          workspaceRef: payload.workspaceRef,
+          workspacePath: testWorkspacePath(payload.workspaceRef),
+        };
+      },
+      select: ({ results }) => results.findLast((r) => r.result !== undefined)?.result ?? null,
     }
-    return result ?? null;
-  }
+  );
 }
 
 // ============================================================================
@@ -442,10 +399,20 @@ export async function createApiServerEnv(
     },
   } as unknown as Dispatcher;
 
+  /** The file system `api:workspace:openSystemPath` probes; seed it per test. */
+  const fileSystem = createFileSystemMock();
+  /** Every path the module asked the OS to open, in order. */
+  const openedPaths: string[] = [];
+
   const moduleDeps: ApiServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
-    appLayer: { openPath: async () => {} },
+    appLayer: {
+      openPath: async (path: string) => {
+        openedPaths.push(path);
+      },
+    },
+    fileSystem,
     logger: SILENT_LOGGER,
     ...(extra?.registry !== undefined && { registry: extra.registry }),
     ...(extra?.cliToken !== undefined && { cliToken: () => extra.cliToken ?? null }),
@@ -465,14 +432,14 @@ export async function createApiServerEnv(
     ...(logScope !== undefined && { logScope }),
   });
   testDispatcher.registerModule(module);
-  testDispatcher.registerOperation(new MinimalStartOperation());
+  testDispatcher.registerOperation(createMinimalStartOperation());
   testDispatcher.registerOperation(
     createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
       throwOnError: false,
     })
   );
-  testDispatcher.registerOperation(new MinimalCommandOperation());
-  testDispatcher.registerOperation(new MinimalShowMessageOperation());
+  testDispatcher.registerOperation(createMinimalCommandOperation());
+  testDispatcher.registerOperation(createMinimalShowMessageOperation());
 
   // Register finalize operation with mutable hook input (shared across setWorkspaceConfig calls)
   const finalizeOp = createMinimalFinalizeOperation();
@@ -491,6 +458,8 @@ export async function createApiServerEnv(
     mockDispatch,
     origins,
     networkLayer,
+    fileSystem,
+    openedPaths,
     testDispatcher,
     /** The module handle, for probes like `isConnected` that read live state. */
     apiServer,
@@ -542,6 +511,7 @@ export async function createApiServerEnv(
         envVars: env,
         workspaceEnv,
         agentType,
+        fresh: resetWorkspace,
       };
 
       await testDispatcher.dispatch({

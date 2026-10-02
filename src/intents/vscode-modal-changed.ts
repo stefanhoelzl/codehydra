@@ -21,7 +21,7 @@ import { z } from "zod/v4";
 import type { Operation, OperationContext, OperationSchemas, HookContext } from "./lib/operation";
 import { type IntentOf } from "./lib/operation";
 import { hookCtxSchema, workspaceRefSchema, workspaceTargetShape } from "./contract";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { throwHookErrors } from "./lib/hook-helpers";
 
 export const INTENT_VSCODE_MODAL_CHANGED = "vscode:modal-changed" as const;
@@ -89,10 +89,7 @@ export class VscodeModalChangedOperation implements Operation<typeof schemas> {
       intent: ctx.intent,
       workspaceRef: payload.workspaceRef,
       workspacePath: (
-        await ctx.dispatch<ResolveWorkspaceIntent>({
-          type: INTENT_RESOLVE_WORKSPACE,
-          payload: { workspaceRef: payload.workspaceRef },
-        })
+        await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef, { withProject: false })
       ).workspacePath,
       open: payload.open,
     };

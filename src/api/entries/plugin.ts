@@ -8,9 +8,10 @@
  * caller outside every workspace sees the user's own plugins only.
  */
 
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { z } from "zod/v4";
 import { defineEntry } from "../types";
+import { Path } from "../../utils/path/path";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps, PluginListing, PluginScope, PluginState } from "./deps";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
@@ -167,7 +168,7 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       const template =
         isAbsolute(input.template) || ctx.cwd === null
           ? input.template
-          : join(ctx.cwd, input.template);
+          : new Path(ctx.cwd, input.template).toString();
       return deps.plugins().render(template, input.items);
     },
   });

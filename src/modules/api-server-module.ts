@@ -14,8 +14,6 @@
 
 import { Server, type Socket } from "socket.io";
 import { createServer, type Server as HttpServer } from "node:http";
-import { dirname } from "node:path";
-import { stat } from "node:fs/promises";
 
 import type { OperationRegistry } from "../api/registry";
 import {
@@ -30,12 +28,14 @@ import { workspaceAtPath, type ProjectLocation } from "../api/workspace-lookup";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import type { ListProjectsIntent } from "../intents/list-projects";
 import type { IntentModule } from "../intents/lib/module";
-import { ANY_VALUE, type HookContext, type HookOutput } from "../intents/lib/operation";
+import { ANY_VALUE, type HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { LogContext, Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel, toLogContext } from "../boundaries/platform/logging";
 import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import { Path } from "../utils/path/path";
 import type { Workspace, WorkspaceStatus } from "../shared/api/types";
 import type {
   AppendOutputRequest,
@@ -73,22 +73,17 @@ import {
   validateAgentLifecycleRequest,
 } from "../shared/api-protocol";
 import type { OpenSystemPathRequest } from "../shared/api-protocol";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
+import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
-import type {
-  DeleteHookResult,
-  DeletePipelineHookInput,
-  ShutdownHookResult,
-} from "../intents/delete-workspace";
+import type { DeleteHookResult, ShutdownHookResult } from "../intents/delete-workspace";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import type { RestartAgentIntent } from "../intents/restart-agent";
 import type { GetMetadataIntent } from "../intents/get-metadata";
 import type { SetMetadataIntent } from "../intents/set-metadata";
-import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
-import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
+import type { ShowHookResult } from "../intents/vscode-show-message";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
-import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
+import type { ExecuteHookResult } from "../intents/vscode-command";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
@@ -114,6 +109,7 @@ import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
+import { raceTimeout, TIMED_OUT } from "../utils/timeout";
 import { metadataTier, visibleMetadata } from "../utils/metadata-tier";
 import type { WorkspaceRef } from "../intents/contract";
 import {
@@ -123,6 +119,7 @@ import {
   projectNameOf,
   projectRefOf,
 } from "../utils/ref";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Types
@@ -162,6 +159,8 @@ export interface ApiServerModuleDeps {
   readonly portManager: Pick<PortManager, "listenOnFreePort">;
   readonly dispatcher: Dispatcher;
   readonly appLayer: Pick<AppBoundary, "openPath">;
+  /** Tells a folder from a file when revealing a path in the file manager. */
+  readonly fileSystem: Pick<FileSystemBoundary, "readdir">;
   readonly logger: Logger;
   /**
    * Registry-backed operations, mounted for every connection.
@@ -277,7 +276,7 @@ const SERVER_DISCONNECT_REASONS: ReadonlySet<string> = new Set([
 ]);
 
 export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModuleHandle {
-  const { portManager, dispatcher, appLayer, logger } = deps;
+  const { portManager, dispatcher, appLayer, fileSystem, logger } = deps;
   const transports: readonly ("polling" | "websocket")[] = deps.options?.transports ?? [
     "websocket",
   ];
@@ -397,40 +396,48 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   // Command sending
   // ---------------------------------------------------------------------------
 
+  /**
+   * The workspace's socket when it is connected, else why not. A socket that
+   * dropped without its disconnect handler having run yet is pruned here.
+   */
+  function liveSocket(workspaceRef: WorkspaceRef): TypedSocket | { readonly error: string } {
+    const socket = connections.get(workspaceRef);
+    if (!socket) {
+      return { error: "Workspace not connected" };
+    }
+    if (!socket.connected) {
+      connections.delete(workspaceRef);
+      return { error: "Workspace disconnected" };
+    }
+    return socket;
+  }
+
   async function sendCommand(
     workspaceRef: WorkspaceRef,
     command: string,
     args?: readonly unknown[],
     timeoutMs: number = COMMAND_TIMEOUT_MS
   ): Promise<ApiResult<unknown>> {
-    const normalized = workspaceRef;
-    const socket = connections.get(normalized);
-
-    if (!socket) {
-      return { success: false, error: "Workspace not connected" };
-    }
-
-    if (!socket.connected) {
-      connections.delete(normalized);
-      return { success: false, error: "Workspace disconnected" };
+    const socket = liveSocket(workspaceRef);
+    if ("error" in socket) {
+      return { success: false, error: socket.error };
     }
 
     const request: CommandRequest = args !== undefined ? { command, args } : { command };
+    const log = logger.scoped({ workspace: workspaceRef });
 
-    return new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        logger.scoped({ workspace: normalized }).warn("Command timeout", { command, timeoutMs });
-        resolve({ success: false, error: "Command timed out" });
-      }, timeoutMs);
-
+    const ack = new Promise<ApiResult<unknown>>((resolve) => {
       socket.emit("command", request, (result: ApiResult<unknown>) => {
-        clearTimeout(timeoutId);
-        logger
-          .scoped({ workspace: normalized })
-          .debug("Command result", { command, success: result.success });
+        log.debug("Command result", { command, success: result.success });
         resolve(result);
       });
     });
+    const result = await raceTimeout(ack, timeoutMs);
+    if (result === TIMED_OUT) {
+      log.warn("Command timeout", { command, timeoutMs });
+      return { success: false, error: "Command timed out" };
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -479,10 +486,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
   /** Wake anything waiting for this workspace's agent terminal to close. */
   function resolveAgentClosed(workspaceRef: WorkspaceRef): void {
-    const normalized = workspaceRef;
-    const waiters = agentClosedWaiters.get(normalized);
+    const waiters = agentClosedWaiters.get(workspaceRef);
     if (!waiters) return;
-    agentClosedWaiters.delete(normalized);
+    agentClosedWaiters.delete(workspaceRef);
     for (const waiter of waiters) waiter();
   }
 
@@ -505,19 +511,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * remains as the backstop for whatever this does not reach.
    */
   async function closeAgentTerminal(workspaceRef: WorkspaceRef): Promise<void> {
-    const normalized = workspaceRef;
-    const socket = connections.get(normalized);
+    const socket = connections.get(workspaceRef);
     if (!socket?.connected) return;
+    const log = logger.scoped({ workspace: workspaceRef });
 
     // Register the waiter BEFORE sending: the extension can report the close
     // between the command returning and us starting to wait.
-    let resolveWaiter!: () => void;
-    const closed = new Promise<void>((resolve) => {
-      resolveWaiter = resolve;
-    });
-    const waiters = agentClosedWaiters.get(normalized) ?? new Set<() => void>();
-    waiters.add(resolveWaiter);
-    agentClosedWaiters.set(normalized, waiters);
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const waiter = (): void => resolve();
+    const waiters = agentClosedWaiters.get(workspaceRef) ?? new Set<() => void>();
+    waiters.add(waiter);
+    agentClosedWaiters.set(workspaceRef, waiters);
 
     try {
       const result = await sendCommand(
@@ -533,35 +537,23 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       // full timeout for nothing.
       const data = result.success ? (result.data as { closed?: boolean } | undefined) : undefined;
       if (!result.success || data?.closed !== true) {
-        logger.scoped({ workspace: normalized }).debug("No agent terminal to close", {
+        log.debug("No agent terminal to close", {
           ...(result.success ? {} : { error: result.error }),
         });
         return;
       }
 
-      let timeoutId: ReturnType<typeof setTimeout>;
-      const timedOut = new Promise<"timeout">((resolve) => {
-        timeoutId = setTimeout(() => resolve("timeout"), AGENT_CLOSE_TIMEOUT_MS);
-      });
-      try {
-        const outcome = await Promise.race([closed.then(() => "closed" as const), timedOut]);
-        if (outcome === "timeout") {
-          logger
-            .scoped({ workspace: normalized })
-            .warn("Agent terminal did not close in time; falling back to process cleanup", {
-              timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
-            });
-        } else {
-          logger.scoped({ workspace: normalized }).debug("Agent terminal closed");
-        }
-      } finally {
-        clearTimeout(timeoutId!);
+      if ((await raceTimeout(closed, AGENT_CLOSE_TIMEOUT_MS)) === TIMED_OUT) {
+        log.warn("Agent terminal did not close in time; falling back to process cleanup", {
+          timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+        });
+      } else {
+        log.debug("Agent terminal closed");
       }
     } finally {
-      const remaining = agentClosedWaiters.get(normalized);
-      if (remaining) {
-        remaining.delete(resolveWaiter);
-        if (remaining.size === 0) agentClosedWaiters.delete(normalized);
+      waiters.delete(waiter);
+      if (waiters.size === 0 && agentClosedWaiters.get(workspaceRef) === waiters) {
+        agentClosedWaiters.delete(workspaceRef);
       }
     }
   }
@@ -586,56 +578,46 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     timeoutMs: number = COMMAND_TIMEOUT_MS,
     options?: { readonly modal?: boolean }
   ): Promise<ApiResult<TRes>> {
-    const normalized = workspaceRef;
-    const socket = connections.get(normalized);
+    const socket = liveSocket(workspaceRef);
+    if ("error" in socket) {
+      return { success: false, error: socket.error };
+    }
+    const log = logger.scoped({ workspace: workspaceRef });
 
-    if (!socket) {
-      return { success: false, error: "Workspace not connected" };
+    const { promise: ack, resolve } = Promise.withResolvers<ApiResult<TRes>>();
+    let modalOpen = options?.modal === true;
+
+    const closeModal = (): void => {
+      if (!modalOpen) return;
+      modalOpen = false;
+      socket.off("disconnect", onDisconnect);
+      modalClosed(workspaceRef);
+    };
+
+    const onDisconnect = (): void => {
+      closeModal();
+      resolve({ success: false, error: "Workspace disconnected" });
+    };
+
+    if (modalOpen) {
+      modalOpened(workspaceRef);
+      socket.on("disconnect", onDisconnect);
     }
 
-    if (!socket.connected) {
-      connections.delete(normalized);
-      return { success: false, error: "Workspace disconnected" };
-    }
-
-    return new Promise((resolve) => {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      let modalOpen = options?.modal === true;
-
-      const closeModal = (): void => {
-        if (!modalOpen) return;
-        modalOpen = false;
-        socket.off("disconnect", onDisconnect);
-        modalClosed(normalized);
-      };
-
-      const onDisconnect = (): void => {
-        closeModal();
-        resolve({ success: false, error: "Workspace disconnected" });
-      };
-
-      if (modalOpen) {
-        modalOpened(normalized);
-        socket.on("disconnect", onDisconnect);
-      }
-
-      if (timeoutMs > 0) {
-        timeoutId = setTimeout(() => {
-          logger.scoped({ workspace: normalized }).warn("UI event timeout", { event, timeoutMs });
-          resolve({ success: false, error: "UI event timed out" });
-        }, timeoutMs);
-      }
-
-      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate generic event dispatch
-      socket.emit(event, request, (result: ApiResult<TRes>) => {
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
-        closeModal();
-        logger
-          .scoped({ workspace: normalized })
-          .debug("UI event result", { event, success: result.success });
-        resolve(result);
-      });
+    // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate generic event dispatch
+    socket.emit(event, request, (result: ApiResult<TRes>) => {
+      closeModal();
+      log.debug("UI event result", { event, success: result.success });
+      resolve(result);
     });
+
+    if (timeoutMs <= 0) return ack;
+    const result = await raceTimeout(ack, timeoutMs);
+    if (result === TIMED_OUT) {
+      log.warn("UI event timeout", { event, timeoutMs });
+      return { success: false, error: "UI event timed out" };
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -746,13 +728,11 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     agentType: AgentType,
     resetWorkspace: boolean
   ): void {
-    const normalized = workspaceRef;
-    workspaceConfigs.set(normalized, { env, workspaceEnv, agentType, resetWorkspace });
+    workspaceConfigs.set(workspaceRef, { env, workspaceEnv, agentType, resetWorkspace });
   }
 
   function removeWorkspaceConfig(workspaceRef: WorkspaceRef): void {
-    const normalized = workspaceRef;
-    workspaceConfigs.delete(normalized);
+    workspaceConfigs.delete(workspaceRef);
   }
 
   // ---------------------------------------------------------------------------
@@ -1025,7 +1005,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
           listener(workspaceRef);
         } catch (error) {
           logger.scoped({ workspace: workspaceRef }).warn("A workspace-connected listener threw", {
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -1073,7 +1053,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               logger
                 .scoped({ workspace: workspaceRef })
                 .warn("A workspace-disconnected listener threw", {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: getErrorMessage(error),
                 });
             }
           }
@@ -1330,8 +1310,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         (req) =>
           handleApiCall(workspaceRef, "openSystemPath", async () => {
             if (req.app === "explorer") {
-              const isDir = await isDirectory(req.path);
-              const target = isDir ? req.path : dirname(req.path);
+              // A file is revealed by opening the folder that holds it.
+              const isDir = await isDirectory(fileSystem, req.path);
+              const target = isDir ? req.path : new Path(req.path).dirname.toNative();
               await appLayer.openPath(target);
             } else {
               await appLayer.openPath(req.path);
@@ -1517,8 +1498,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
   }
 
   function appendOutput(workspaceRef: WorkspaceRef, request: AppendOutputRequest): boolean {
-    const normalized = workspaceRef;
-    const socket = connections.get(normalized);
+    const socket = connections.get(workspaceRef);
     if (!socket?.connected) return false;
     socket.emit("ui:appendOutput", request);
     return true;
@@ -1526,10 +1506,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
   const module: IntentModule = {
     name: "api-server",
-    hooks: {
+    hooks: defineHooks({
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<HookOutput> => {
+          handler: async (): Promise<HookOutput<void>> => {
             // apiPort stays null on failure; the key is still provided (null,
             // not undefined) so the IDE server's `requires: { apiPort: ANY_VALUE }`
             // gate is satisfied and it runs in degraded mode.
@@ -1539,7 +1519,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               apiPort = await start();
               logger.info("API server started", { port: apiPort });
             } catch (error) {
-              const message = error instanceof Error ? error.message : "Unknown error";
+              const message = getErrorMessage(error, "Unknown error");
               logger.warn("ApiServer start failed", { error: message });
             }
 
@@ -1558,18 +1538,14 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<void> => {
-            const finalizeCtx = ctx as FinalizeHookInput;
-
-            if (io && finalizeCtx.agentType) {
-              const intent = ctx.intent as OpenWorkspaceIntent;
-              const resetWs = intent.payload.existingWorkspace === undefined;
+          handler: async (ctx): Promise<void> => {
+            if (io && ctx.agentType) {
               setWorkspaceConfig(
-                finalizeCtx.workspaceRef,
-                finalizeCtx.envVars,
-                finalizeCtx.workspaceEnv,
-                finalizeCtx.agentType,
-                resetWs
+                ctx.workspaceRef,
+                ctx.envVars,
+                ctx.workspaceEnv,
+                ctx.agentType,
+                ctx.fresh
               );
             }
           },
@@ -1582,10 +1558,10 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
         // about to disappear, and stop the agent that is already running in it.
         shutdown: {
           requires: { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
-            const { workspaceRef: normalized } = ctx as DeletePipelineHookInput;
+          handler: async (ctx): Promise<HookOutput<ShutdownHookResult>> => {
+            const { workspaceRef } = ctx;
 
-            closingWorkspaces.add(normalized);
+            closingWorkspaces.add(workspaceRef);
             // "agent-stopped" is provided on EVERY path — including the early
             // returns inside closeAgentTerminal (no sidekick socket, no terminal
             // to close), a close that timed out, and a thrown error. It does not
@@ -1602,7 +1578,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               // Drop the config first. From here on a connecting sidekick gets
               // `env: null, agentType: null` and arms nothing — this, not the
               // connection gate, is what closes the workspace for business.
-              removeWorkspaceConfig(normalized);
+              removeWorkspaceConfig(workspaceRef);
 
               // Ask the agent to exit and wait for it, THEN hang up. The order
               // matters: the close command and the "terminal closed" report both
@@ -1612,16 +1588,16 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               // This lives here rather than in the agent module, whose shutdown
               // stops the agent; that handler requires CAPABILITY_AGENT_STOPPED,
               // so it cannot run while the socket is still open.
-              await closeAgentTerminal(normalized);
+              await closeAgentTerminal(workspaceRef);
 
-              connections.get(normalized)?.disconnect(true);
+              connections.get(workspaceRef)?.disconnect(true);
             } catch (err) {
               // Reported as a result error rather than rethrown: the operation
               // treats both the same way (mergeShutdown folds collect errors and
               // result errors together), but returning lets us still provide.
               error = getErrorMessage(err);
             } finally {
-              closingWorkspaces.delete(normalized);
+              closingWorkspaces.delete(workspaceRef);
             }
 
             return {
@@ -1631,9 +1607,9 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
           },
         },
         delete: {
-          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
-            const { workspaceRef: wsPath } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
+          handler: async (ctx): Promise<HookOutput<DeleteHookResult>> => {
+            const { workspaceRef: wsPath } = ctx;
+            const { payload } = ctx.intent;
 
             try {
               if (io) {
@@ -1653,13 +1629,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       [VSCODE_SHOW_MESSAGE_OPERATION_ID]: {
         show: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ShowHookResult>> => {
+          handler: async (ctx): Promise<HookOutput<ShowHookResult>> => {
             if (!io) {
               throw new Error("API server not available");
             }
 
-            const { workspaceRef } = ctx as ShowHookInput;
-            const intent = ctx.intent as VscodeShowMessageIntent;
+            const { workspaceRef } = ctx;
+            const { intent } = ctx;
             const { type, message, hint, options: msgOptions, timeoutMs } = intent.payload;
 
             return {
@@ -1680,13 +1656,13 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
       [VSCODE_COMMAND_OPERATION_ID]: {
         execute: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ExecuteHookResult>> => {
+          handler: async (ctx): Promise<HookOutput<ExecuteHookResult>> => {
             if (!io) {
               throw new Error("API server not available");
             }
 
-            const { workspaceRef } = ctx as ExecuteHookInput;
-            const intent = ctx.intent as VscodeCommandIntent;
+            const { workspaceRef } = ctx;
+            const { intent } = ctx;
             const { command, args } = intent.payload;
 
             const commandResult = await sendCommand(workspaceRef, command, args);
@@ -1698,7 +1674,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
           },
         },
       },
-    },
+    }),
   };
 
   return {
@@ -1722,10 +1698,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 // Helpers
 // =============================================================================
 
-async function isDirectory(filePath: string): Promise<boolean> {
+/**
+ * True when `filePath` is a directory we can list. Listing follows symlinks, as
+ * the file manager will; anything unlistable counts as a file.
+ */
+async function isDirectory(
+  fileSystem: Pick<FileSystemBoundary, "readdir">,
+  filePath: string
+): Promise<boolean> {
   try {
-    const stats = await stat(filePath);
-    return stats.isDirectory();
+    await fileSystem.readdir(filePath);
+    return true;
   } catch {
     return false;
   }

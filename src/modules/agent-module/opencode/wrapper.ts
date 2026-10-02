@@ -11,6 +11,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { cmdCommandLine, needsCmdShell } from "../cmd-quote";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
@@ -45,9 +46,9 @@ function main(userArgs: readonly string[]): never {
     console.error("Make sure you're in a CodeHydra workspace terminal.");
     process.exit(EXIT_ENV_ERROR);
   }
-  // A Windows .cmd shim requires shell:true, and the shell then needs the
-  // path quoted.
-  const useShell = process.platform === "win32" && binaryPath.toLowerCase().endsWith(".cmd");
+  // A Windows .cmd shim requires shell:true, and the shell then needs every
+  // part of the command line quoted (a path or argument with a space).
+  const useShell = needsCmdShell(binaryPath, process.platform);
 
   // 4. Build base URL
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -63,10 +64,9 @@ function main(userArgs: readonly string[]): never {
   args.push(...userArgs);
 
   // 7. Spawn opencode binary
-  const result = spawnSync(useShell ? `"${binaryPath}"` : binaryPath, args, {
-    stdio: "inherit",
-    shell: useShell,
-  });
+  const result = useShell
+    ? spawnSync(cmdCommandLine(binaryPath, args), [], { stdio: "inherit", shell: true })
+    : spawnSync(binaryPath, args, { stdio: "inherit", shell: false });
 
   // 8. Handle result
   if (result.error) {

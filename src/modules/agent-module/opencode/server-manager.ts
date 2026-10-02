@@ -7,8 +7,6 @@
  * and redirects to `opencode attach`.
  */
 
-import { delimiter } from "node:path";
-
 import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -29,6 +27,9 @@ import type {
 } from "../types";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 import { runAgentBinary, type ResolvedAgentBinary } from "../binary-resolver";
+import type { WorkspaceRef } from "../../../intents/contract";
+import { prependPath } from "../../../utils/env-path";
+import { getErrorMessage } from "../../../shared/error-utils";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -43,16 +44,30 @@ export interface PendingPrompt {
  * Callback types for OpenCodeServerManager.
  */
 export type ServerStartedCallback = (
-  workspacePath: string,
+  workspaceRef: WorkspaceRef,
   port: number,
   pendingPrompt: PendingPrompt | undefined
 ) => void;
 /**
  * Callback for server stopped events.
- * @param workspacePath - Path to the workspace
+ * @param workspaceRef - The workspace
  * @param isRestart - True if this stop is part of a restart (will be followed by start)
  */
-export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) => void;
+export type ServerStoppedCallback = (workspaceRef: WorkspaceRef, isRestart: boolean) => void;
+
+/**
+ * A workspace the manager runs a server for. Kept from start until a stop
+ * that is not part of a restart, so a restart spawns with what the start was
+ * given. Memory only: the open pipeline re-supplies it every time.
+ */
+interface TrackedWorkspace {
+  /** The workspace's directory: the server's working directory. */
+  readonly path: Path;
+  /** Workspace environment for the server process. */
+  readonly env: Readonly<Record<string, string>> | undefined;
+  /** The `opencode` the server runs, so a restart keeps the terminal's binary. */
+  readonly binary: ResolvedAgentBinary | undefined;
+}
 
 /**
  * Server entry in the manager's internal map.
@@ -82,8 +97,6 @@ export interface OpenCodeServerManagerConfig {
  * Options for starting a server.
  */
 export interface StartServerOptions {
-  /** The workspace's ref, which the agent and every `ch` it runs name it by. */
-  readonly workspaceRef: string;
   /** Initial prompt to send after server becomes healthy */
   readonly initialPrompt?: {
     readonly prompt: string;
@@ -117,31 +130,21 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly logger: Logger;
   private readonly config: Required<OpenCodeServerManagerConfig>;
 
-  private readonly servers = new Map<string, ServerEntry>();
+  private readonly platform: SupportedPlatform;
+
+  /** Workspaces by ref, with what their servers are spawned from. */
+  private readonly workspaces = new Map<WorkspaceRef, TrackedWorkspace>();
+  private readonly servers = new Map<WorkspaceRef, ServerEntry>();
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
 
-  /**
-   * Pending initial prompts to send when servers become healthy.
-   * Key is normalized workspace path (via Path.toString()).
-   */
-  private readonly pendingPrompts = new Map<string, PendingPrompt>();
-
-  /**
-   * Workspace environment per workspace, so a restart spawns with what the
-   * start was given. Memory only: the open pipeline re-supplies it every time.
-   */
-  private readonly workspaceEnvs = new Map<string, Readonly<Record<string, string>>>();
-
-  /** The binary each workspace's server runs, kept for restarts like its env. */
-  private readonly workspaceBinaries = new Map<string, ResolvedAgentBinary>();
-  /** Each workspace's ref, for the agent's `_CH_WORKSPACE`. Kept for restarts. */
-  private readonly workspaceRefs = new Map<string, string>();
+  /** Pending initial prompts to send when servers become healthy. */
+  private readonly pendingPrompts = new Map<WorkspaceRef, PendingPrompt>();
 
   private mcpConfig: McpConfig | null = null;
 
   /** Handler called when workspace becomes active (agent terminal opened) */
-  private markActiveHandler: ((workspacePath: string) => void) | null = null;
+  private markActiveHandler: ((workspaceRef: WorkspaceRef) => void) | null = null;
 
   constructor(
     processRunner: ProcessRunner,
@@ -149,6 +152,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     httpClient: HttpClient,
     pathProvider: PathProvider,
     logger: Logger,
+    platform: SupportedPlatform,
     config?: OpenCodeServerManagerConfig
   ) {
     this.processRunner = processRunner;
@@ -156,47 +160,51 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.httpClient = httpClient;
     this.pathProvider = pathProvider;
     this.logger = logger;
+    this.platform = platform;
     this.config = {
       healthCheckTimeoutMs: config?.healthCheckTimeoutMs ?? 30000,
       healthCheckIntervalMs: config?.healthCheckIntervalMs ?? 500,
     };
   }
 
+  /** The directory of a workspace, while it is tracked. */
+  getWorkspacePath(workspaceRef: WorkspaceRef): Path | undefined {
+    return this.workspaces.get(workspaceRef)?.path;
+  }
+
   /**
    * Start an OpenCode server for a workspace.
    * Returns the port number on success.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace's ref, which the agent and every `ch` it runs name it by
+   * @param workspacePath - The workspace's directory, the server's working directory
    * @param options - Optional start options (e.g., initialPrompt)
    * @returns Allocated port number
    * @throws Error if server fails to start or health check times out
    */
-  /** The ref a workspace was started with, while it is tracked. */
-  getWorkspaceRef(workspacePath: string): string | undefined {
-    return this.workspaceRefs.get(workspacePath);
-  }
-
-  async startServer(workspacePath: string, options: StartServerOptions): Promise<number> {
-    this.workspaceRefs.set(workspacePath, options.workspaceRef);
+  async startServer(
+    workspaceRef: WorkspaceRef,
+    workspacePath: Path,
+    options: StartServerOptions = {}
+  ): Promise<number> {
+    const previous = this.workspaces.get(workspaceRef);
+    this.workspaces.set(workspaceRef, {
+      path: workspacePath,
+      env: options.env ?? previous?.env,
+      binary: options.binary ?? previous?.binary,
+    });
     // Store pending prompt if provided
-    if (options?.initialPrompt) {
+    if (options.initialPrompt) {
       this.setPendingPrompt(
-        workspacePath,
+        workspaceRef,
         options.initialPrompt.prompt,
         options.initialPrompt.agentName,
         options.initialPrompt.model
       );
     }
 
-    if (options?.env !== undefined) {
-      this.workspaceEnvs.set(workspacePath, options.env);
-    }
-    if (options?.binary !== undefined) {
-      this.workspaceBinaries.set(workspacePath, options.binary);
-    }
-
     // Check if already running/starting
-    const existing = this.servers.get(workspacePath);
+    const existing = this.servers.get(workspaceRef);
     if (existing) {
       if (existing.state === "starting") {
         return existing.startPromise;
@@ -206,15 +214,15 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Create the start promise.
     // Set entry BEFORE any async work so concurrent callers (e.g. restartServer) can see it
-    const startPromise = this.doStartServer(workspacePath);
-    this.servers.set(workspacePath, { state: "starting", startPromise });
+    const startPromise = this.doStartServer(workspaceRef);
+    this.servers.set(workspaceRef, { state: "starting", startPromise });
 
     try {
       const port = await startPromise;
       return port;
     } catch (error) {
       // Clean up on failure
-      this.servers.delete(workspacePath);
+      this.servers.delete(workspaceRef);
       throw error;
     }
   }
@@ -222,25 +230,27 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   /**
    * Internal method to start the server.
    */
-  private async doStartServer(workspacePath: string): Promise<number> {
+  private async doStartServer(workspaceRef: WorkspaceRef): Promise<number> {
     // Allocate a free port
     const port = await this.portManager.findFreePort();
 
     // Spawn server and wait for health check
-    const proc = await this.spawnServerOnPort(workspacePath, port);
+    const proc = await this.spawnServerOnPort(workspaceRef, port);
 
     // Update the server entry to running state
-    this.servers.set(workspacePath, { state: "running", port, process: proc });
+    this.servers.set(workspaceRef, { state: "running", port, process: proc });
 
     // Consume pending prompt before firing callback
-    const pendingPrompt = this.consumePendingPrompt(workspacePath);
+    const pendingPrompt = this.consumePendingPrompt(workspaceRef);
 
     // pid is guaranteed to be defined since spawnServerOnPort validates it
-    this.logger.scoped({ path: workspacePath }).info("Server started", { port, pid: proc.pid! });
+    this.logger
+      .scoped({ workspace: workspaceRef })
+      .info("Server started", { port, pid: proc.pid! });
 
     // Fire callback with pending prompt (caller handles sending)
     for (const callback of this.startedCallbacks) {
-      callback(workspacePath, port, pendingPrompt);
+      callback(workspaceRef, port, pendingPrompt);
     }
 
     return port;
@@ -250,15 +260,19 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * Spawn an OpenCode server and wait for it to be healthy.
    * Common implementation used by both doStartServer and startServerOnPort.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    * @param port - Port number to use
    * @returns The spawned process
    * @throws Error if server fails to spawn or health check times out
    */
-  private async spawnServerOnPort(workspacePath: string, port: number): Promise<SpawnedProcess> {
-    const binary = this.workspaceBinaries.get(workspacePath);
-    if (binary === undefined) {
-      throw new Error(`No opencode binary given for ${workspacePath}`);
+  private async spawnServerOnPort(
+    workspaceRef: WorkspaceRef,
+    port: number
+  ): Promise<SpawnedProcess> {
+    const workspace = this.workspaces.get(workspaceRef);
+    const binary = workspace?.binary;
+    if (workspace === undefined || binary === undefined) {
+      throw new Error(`No opencode binary given for ${workspaceRef}`);
     }
 
     // OPENCODE_CONFIG_CONTENT is merged into the resolved config last, so these
@@ -268,7 +282,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     //
     // Use Path.toString() for paths (already POSIX format). Backslashes would
     // become invalid escape sequences in JSON.
-    const workspaceRef = this.workspaceRefs.get(workspacePath);
     const config: Record<string, unknown> = {
       // Appended to the system prompt as "Instructions from: <path>".
       instructions: [this.getSystemPromptPath().toString()],
@@ -285,7 +298,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
           type: "local",
           command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
           environment: {
-            ...(workspaceRef !== undefined && { _CH_WORKSPACE: workspaceRef }),
+            _CH_WORKSPACE: workspaceRef,
             _CH_API_PORT: String(this.mcpConfig.port),
             _CH_API_TOKEN: this.mcpConfig.token,
           },
@@ -304,35 +317,27 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     // The workspace environment layers over the inherited one, and CodeHydra's
     // own entries below layer over both: a repository can add to the agent's
     // world but not re-point it (PATH still gets the bin directory prepended).
-    const baseEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      ...this.workspaceEnvs.get(workspacePath),
-    };
-    const existingPath = baseEnv.PATH ?? baseEnv.Path ?? "";
+    // `prependPath` keeps a single PATH key whatever its case (Windows' `Path`).
+    const baseEnv = prependPath({ ...process.env, ...workspace.env }, binDir, this.platform);
     const env: NodeJS.ProcessEnv = {
       ...baseEnv,
-      PATH: existingPath ? `${binDir}${delimiter}${existingPath}` : binDir,
       // The agent's own workspace, so `ch` run from its bash tool resolves the
       // right one without depending on the process's working directory.
-      ...(workspaceRef !== undefined && { _CH_WORKSPACE: workspaceRef }),
+      _CH_WORKSPACE: workspaceRef,
       ...(this.mcpConfig && {
         _CH_API_PORT: String(this.mcpConfig.port),
         _CH_API_TOKEN: this.mcpConfig.token,
       }),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     };
-    // Windows resolves PATH case-insensitively but Node exposes both spellings;
-    // leaving `Path` set would let the un-prefixed copy win.
-    delete env.Path;
 
     // Spawn opencode serve
-    const platform = process.platform as SupportedPlatform;
     const proc = runAgentBinary(
       this.processRunner,
       binary.path,
       ["serve", "--port", String(port)],
-      platform,
-      { cwd: workspacePath, env }
+      this.platform,
+      { cwd: workspace.path.toNative(), env }
     );
 
     // Check if spawn failed
@@ -373,12 +378,13 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   /**
    * Stop an OpenCode server for a workspace.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    * @param isRestart - True if this stop is part of a restart operation
    * @returns StopResult indicating success or failure
    */
-  async stopServer(workspacePath: string, isRestart = false): Promise<StopServerResult> {
-    const entry = this.servers.get(workspacePath);
+  async stopServer(workspaceRef: WorkspaceRef, isRestart = false): Promise<StopServerResult> {
+    const log = this.logger.scoped({ workspace: workspaceRef });
+    const entry = this.servers.get(workspaceRef);
     if (!entry) {
       return { success: true };
     }
@@ -393,7 +399,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     }
 
     // Get the current entry (may have been updated after startPromise resolved)
-    const currentEntry = this.servers.get(workspacePath);
+    const currentEntry = this.servers.get(workspaceRef);
     let stopResult: StopServerResult = { success: true };
 
     // Kill the process if we have a running or restarting server
@@ -405,30 +411,26 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       );
 
       if (!killResult.success) {
-        this.logger
-          .scoped({ path: workspacePath })
-          .warn("Failed to kill OpenCode server", { pid: currentEntry.process.pid ?? 0 });
+        log.warn("Failed to kill OpenCode server", { pid: currentEntry.process.pid ?? 0 });
         stopResult = { success: false, error: "Process did not terminate" };
       }
     }
 
     // Remove from map (but NOT if restarting - the restart will update the entry)
-    const finalEntry = this.servers.get(workspacePath);
+    const finalEntry = this.servers.get(workspaceRef);
     if (finalEntry?.state !== "restarting") {
-      this.servers.delete(workspacePath);
+      this.servers.delete(workspaceRef);
     }
     if (!isRestart) {
-      this.workspaceEnvs.delete(workspacePath);
-      this.workspaceBinaries.delete(workspacePath);
-      this.workspaceRefs.delete(workspacePath);
+      this.workspaces.delete(workspaceRef);
     }
 
     // Fire callback with isRestart flag
     for (const callback of this.stoppedCallbacks) {
-      callback(workspacePath, isRestart);
+      callback(workspaceRef, isRestart);
     }
 
-    this.logger.scoped({ path: workspacePath }).info("Server stopped", { isRestart });
+    log.info("Server stopped", { isRestart });
 
     return stopResult;
   }
@@ -440,11 +442,11 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * times concurrently, it returns the SAME promise object. If it were async,
    * each call would create a new wrapper Promise.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    * @returns RestartServerResult with port on success, or error details on failure
    */
-  restartServer(workspacePath: string): Promise<RestartServerResult> {
-    const entry = this.servers.get(workspacePath);
+  restartServer(workspaceRef: WorkspaceRef): Promise<RestartServerResult> {
+    const entry = this.servers.get(workspaceRef);
 
     // If already restarting, return the in-progress promise (idempotent)
     if (entry?.state === "restarting") {
@@ -454,7 +456,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     // If starting, wait for start to complete, then restart
     if (entry?.state === "starting") {
       return entry.startPromise
-        .then(() => this.restartServer(workspacePath))
+        .then(() => this.restartServer(workspaceRef))
         .catch(() => ({
           success: false as const,
           error: "Server failed to start",
@@ -473,21 +475,20 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const port = entry.port;
     const process = entry.process;
 
-    // Use a deferred promise pattern to set state BEFORE any async work
+    // Use a deferred promise to set state BEFORE any async work
     // This prevents race conditions where concurrent calls both see "running" state
-    let resolveRestart!: (result: RestartServerResult) => void;
-    let rejectRestart!: (error: Error) => void;
-    const restartPromise = new Promise<RestartServerResult>((resolve, reject) => {
-      resolveRestart = resolve;
-      rejectRestart = reject;
-    });
+    const {
+      promise: restartPromise,
+      resolve: resolveRestart,
+      reject: rejectRestart,
+    } = Promise.withResolvers<RestartServerResult>();
 
     // Store entry while restarting BEFORE calling doRestartServer
     // (keep process reference so stopServer can kill it)
-    this.servers.set(workspacePath, { state: "restarting", port, process, restartPromise });
+    this.servers.set(workspaceRef, { state: "restarting", port, process, restartPromise });
 
     // Kick off the restart and resolve the deferred promise
-    this.doRestartServer(workspacePath, port).then(resolveRestart).catch(rejectRestart);
+    this.doRestartServer(workspaceRef, port).then(resolveRestart).catch(rejectRestart);
 
     return restartPromise;
   }
@@ -495,9 +496,12 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   /**
    * Internal method to perform the restart.
    */
-  private async doRestartServer(workspacePath: string, port: number): Promise<RestartServerResult> {
+  private async doRestartServer(
+    workspaceRef: WorkspaceRef,
+    port: number
+  ): Promise<RestartServerResult> {
     // Stop the server first (with isRestart=true to preserve session ID)
-    const stopResult = await this.stopServer(workspacePath, true);
+    const stopResult = await this.stopServer(workspaceRef, true);
     if (!stopResult.success) {
       return {
         success: false,
@@ -507,11 +511,10 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Start the server on the same port
     try {
-      const newPort = await this.startServerOnPort(workspacePath, port);
+      const newPort = await this.startServerOnPort(workspaceRef, port);
       return { success: true, port: newPort };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+      return { success: false, error: getErrorMessage(error) };
     }
   }
 
@@ -519,24 +522,26 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * Start an OpenCode server for a workspace on a specific port.
    * Used by restartServer to preserve the same port.
    *
-   * @param workspacePath - Absolute path to the workspace
+   * @param workspaceRef - The workspace
    * @param port - Port number to use
    * @returns Allocated port number
    * @throws Error if server fails to start or health check times out
    */
-  private async startServerOnPort(workspacePath: string, port: number): Promise<number> {
+  private async startServerOnPort(workspaceRef: WorkspaceRef, port: number): Promise<number> {
     // Spawn server and wait for health check
-    const proc = await this.spawnServerOnPort(workspacePath, port);
+    const proc = await this.spawnServerOnPort(workspaceRef, port);
 
     // Update the server entry to running state
-    this.servers.set(workspacePath, { state: "running", port, process: proc });
+    this.servers.set(workspaceRef, { state: "running", port, process: proc });
 
     // pid is guaranteed to be defined since spawnServerOnPort validates it
-    this.logger.scoped({ path: workspacePath }).info("Server started", { port, pid: proc.pid! });
+    this.logger
+      .scoped({ workspace: workspaceRef })
+      .info("Server started", { port, pid: proc.pid! });
 
     // Fire callback (no pending prompt for restart scenarios)
     for (const callback of this.startedCallbacks) {
-      callback(workspacePath, port, undefined);
+      callback(workspaceRef, port, undefined);
     }
 
     return port;
@@ -565,17 +570,15 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    * agent:lifecycle intent when the sidekick reports the agent terminal opening.
    * Marks the workspace active (TUI attached). Idempotent.
    */
-  triggerWrapperStart(workspacePath: string): void {
-    const normalizedPath = new Path(workspacePath).toString();
-    this.logger.scoped({ path: normalizedPath }).debug("Agent terminal opened");
-    this.markActiveHandler?.(normalizedPath);
+  triggerWrapperStart(workspaceRef: WorkspaceRef): void {
+    this.logger.scoped({ workspace: workspaceRef }).debug("Agent terminal opened");
+    this.markActiveHandler?.(workspaceRef);
   }
 
   /**
    * Set handler called when the workspace becomes active (agent terminal opened).
-   * The handler is invoked with the normalized workspace path.
    */
-  setMarkActiveHandler(handler: (workspacePath: string) => void): void {
+  setMarkActiveHandler(handler: (workspaceRef: WorkspaceRef) => void): void {
     this.markActiveHandler = handler;
   }
 
@@ -603,29 +606,19 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   /**
    * Store a pending initial prompt to send when the server becomes healthy.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @param prompt - The prompt text to send
-   * @param agent - Optional agent name to use
-   * @param model - Optional model to use
    */
-  setPendingPrompt(
-    workspacePath: string,
+  private setPendingPrompt(
+    workspaceRef: WorkspaceRef,
     prompt: string,
     agent?: string,
     model?: PromptModel
   ): void {
-    const normalizedPath = new Path(workspacePath).toString();
-    // Build object conditionally for exactOptionalPropertyTypes
-    const entry: { prompt: string; agent?: string; model?: PromptModel } = { prompt };
-    if (agent !== undefined) {
-      entry.agent = agent;
-    }
-    if (model !== undefined) {
-      entry.model = model;
-    }
-    this.pendingPrompts.set(normalizedPath, entry);
-    this.logger.scoped({ path: normalizedPath }).debug("Pending prompt stored", {
+    this.pendingPrompts.set(workspaceRef, {
+      prompt,
+      ...(agent !== undefined && { agent }),
+      ...(model !== undefined && { model }),
+    });
+    this.logger.scoped({ workspace: workspaceRef }).debug("Pending prompt stored", {
       promptLength: prompt.length,
       ...(agent !== undefined && { agent }),
       ...(model !== undefined && { model: `${model.providerID}/${model.modelID}` }),
@@ -634,18 +627,12 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   /**
    * Consume (retrieve and remove) a pending initial prompt.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns The pending prompt data, or undefined if none exists
    */
-  consumePendingPrompt(
-    workspacePath: string
-  ): { prompt: string; agent?: string; model?: PromptModel } | undefined {
-    const normalizedPath = new Path(workspacePath).toString();
-    const pending = this.pendingPrompts.get(normalizedPath);
+  private consumePendingPrompt(workspaceRef: WorkspaceRef): PendingPrompt | undefined {
+    const pending = this.pendingPrompts.get(workspaceRef);
     if (pending) {
-      this.pendingPrompts.delete(normalizedPath);
-      this.logger.scoped({ path: normalizedPath }).debug("Pending prompt consumed");
+      this.pendingPrompts.delete(workspaceRef);
+      this.logger.scoped({ workspace: workspaceRef }).debug("Pending prompt consumed");
     }
     return pending;
   }
@@ -655,7 +642,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    */
   async dispose(): Promise<void> {
     const workspaces = [...this.servers.keys()];
-    await Promise.all(workspaces.map((path) => this.stopServer(path)));
+    await Promise.all(workspaces.map((workspaceRef) => this.stopServer(workspaceRef)));
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
     this.markActiveHandler = null;

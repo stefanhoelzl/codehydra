@@ -17,9 +17,9 @@
  */
 
 import * as crypto from "node:crypto";
-import nodePath from "path";
+import { normalize } from "node:path";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { projectPathSchema } from "../intents/contract";
 import type { ProjectPath, ProjectRef } from "../intents/contract";
@@ -31,16 +31,15 @@ import {
   projectDirName,
 } from "../boundaries/platform/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { SupportedPlatform } from "../boundaries/platform/platform-info";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ProjectConfig } from "../shared/types/project";
 import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import {
   OPEN_PROJECT_OPERATION_ID,
-  type OpenProjectIntent,
   type PrepareHookResult,
   type ResolveHookResult,
-  type RegisterHookInput,
   type RegisterHookResult,
 } from "../intents/open-project";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -49,15 +48,12 @@ import { notify } from "./presentation/notification-card";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,
-  type CloseResolveHookInput,
   type CloseResolveHookResult,
-  type CloseHookInput,
   type CloseHookResult,
 } from "../intents/close-project";
 import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/app-ready";
 import {
   RESOLVE_PROJECT_OPERATION_ID,
-  type ResolveHookInput as ResolveProjectHookInput,
   type ResolveHookResult as ResolveProjectHookResult,
 } from "../intents/resolve-project";
 import {
@@ -65,6 +61,7 @@ import {
   type ListProjectsHookResult,
   type ListProjectsHookEntry,
 } from "../intents/list-projects";
+import { defineHooks } from "../intents/declarations";
 
 // =============================================================================
 // Types
@@ -99,6 +96,8 @@ export interface LocalProjectModuleDeps {
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
+  /** Host platform: project ids are case-folded on Windows. */
+  readonly platform: SupportedPlatform;
   readonly logger: Logger;
 }
 
@@ -106,21 +105,26 @@ export interface LocalProjectModuleDeps {
 // Private ID Generation
 // =============================================================================
 
-function normalizePathForId(absolutePath: string): string {
-  let normalized = nodePath.normalize(absolutePath);
+function normalizePathForId(absolutePath: string, platform: SupportedPlatform): string {
+  let normalized = normalize(absolutePath);
   normalized = normalized.replace(/\\/g, "/");
   normalized = normalized.replace(/\/+/g, "/");
   if (normalized.length > 1 && normalized.endsWith("/")) {
     normalized = normalized.slice(0, -1);
   }
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     normalized = normalized.toLowerCase();
   }
   return normalized;
 }
 
-export function generateProjectId(absolutePath: string): ProjectId {
-  const normalizedPath = normalizePathForId(absolutePath);
+/**
+ * A project's id: its sanitized basename plus a hash of its normalized path.
+ * Case-folded on Windows, whose paths are case-insensitive. Persisted (it names
+ * the project's screenshot directory), so the derivation must not change.
+ */
+export function generateProjectId(absolutePath: string, platform: SupportedPlatform): ProjectId {
+  const normalizedPath = normalizePathForId(absolutePath, platform);
   const basename = normalizedPath.split("/").pop() ?? "";
   const safeName =
     basename
@@ -213,11 +217,8 @@ export async function saveProject(
 ): Promise<void> {
   const normalizedPath = projectPathSchema.parse(new Path(projectPath).toString());
   const managed = remoteUrl !== undefined && isManaged(dirs, normalizedPath, remoteUrl);
-  const projectDir = nodePath.join(
-    dirs.projectsDir,
-    recordDirName(dirs, normalizedPath, remoteUrl)
-  );
-  const configPath = nodePath.join(projectDir, "config.json");
+  const projectDir = new Path(dirs.projectsDir, recordDirName(dirs, normalizedPath, remoteUrl));
+  const configPath = new Path(projectDir, "config.json");
 
   const record = managed
     ? { remoteUrl }
@@ -247,7 +248,7 @@ export async function loadAllProjects(
 
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
-    const configPath = nodePath.join(dirs.projectsDir, entry.name, "config.json");
+    const configPath = new Path(dirs.projectsDir, entry.name, "config.json");
     try {
       const stored = parseRecord(dirs, await fs.readFile(configPath));
       if (stored) results.push({ ...stored, dirName: entry.name });
@@ -275,7 +276,7 @@ async function getProjectConfig(
   const normalizedPath = new Path(projectPath).toString();
 
   // First, try the path-hashed location (every local project)
-  const configPath = nodePath.join(dirs.projectsDir, projectDirName(normalizedPath), "config.json");
+  const configPath = new Path(dirs.projectsDir, projectDirName(normalizedPath), "config.json");
   try {
     const stored = parseRecord(dirs, await fs.readFile(configPath));
     if (stored?.config.path === normalizedPath) return stored.config;
@@ -294,14 +295,14 @@ async function getProjectConfig(
  * itself — each only if empty. A workspaces directory still holding worktrees
  * is evidence of a failed deletion, worth keeping.
  */
-async function removeRecordDir(fs: ProjectFs, projectDir: string): Promise<void> {
+async function removeRecordDir(fs: ProjectFs, projectDir: Path): Promise<void> {
   try {
-    await fs.unlink(nodePath.join(projectDir, "config.json"));
+    await fs.unlink(new Path(projectDir, "config.json"));
   } catch {
     // Not there - the directory may still hold an empty workspaces dir
   }
   try {
-    await fs.rm(nodePath.join(projectDir, "workspaces"));
+    await fs.rm(new Path(projectDir, "workspaces"));
   } catch {
     // ENOTEMPTY (workspaces exist) or ENOENT (doesn't exist) - that's fine
   }
@@ -323,7 +324,7 @@ async function removeProject(
   const recordDir = recordDirName(dirs, projectPath, remoteUrl);
   const pathDir = projectDirName(projectPath);
   for (const dirName of new Set([recordDir, pathDir])) {
-    await removeRecordDir(fs, nodePath.join(dirs.projectsDir, dirName));
+    await removeRecordDir(fs, new Path(dirs.projectsDir, dirName));
   }
 }
 
@@ -345,13 +346,12 @@ async function migrateLegacyRecords(
       await saveProject(fs, dirs, config.path, config.remoteUrl);
       if (dirName !== managedProjectDirName(config.remoteUrl)) {
         // Only the record moves: the old directory still holds the worktrees.
-        await fs.unlink(nodePath.join(dirs.projectsDir, dirName, "config.json"));
+        await fs.unlink(new Path(dirs.projectsDir, dirName, "config.json"));
       }
     } catch (error: unknown) {
-      logger.warn("Failed to migrate project record", {
-        projectPath: config.path,
-        error: getErrorMessage(error),
-      });
+      logger
+        .scoped({ path: config.path })
+        .warn("Failed to migrate project record", { error: getErrorMessage(error) });
     }
   }
 }
@@ -398,7 +398,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
       await fs.rm(projectPath, { recursive: true, force: true });
     } catch (error: unknown) {
       const message = getErrorMessage(error);
-      logger.warn("Failed to remove project directory", { projectPath, error: message });
+      logger
+        .scoped({ path: projectPath })
+        .warn("Failed to remove project directory", { error: message });
       notify(dispatcher, {
         type: "error",
         title: "Could not remove the project directory",
@@ -419,12 +421,12 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
   return {
     name: "local-project",
     projectRefs,
-    hooks: {
+    hooks: defineHooks({
       // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
-            const { projectRef } = ctx as ResolveProjectHookInput;
+          handler: async (ctx): Promise<HookOutput<ResolveProjectHookResult>> => {
+            const { projectRef } = ctx;
             for (const [projectPath, project] of projects) {
               if (project.ref !== projectRef) continue;
               return { result: { projectId: project.id, projectPath, projectName: project.name } };
@@ -437,8 +439,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
       [OPEN_PROJECT_OPERATION_ID]: {
         // prepare: offer git init for non-git directories
         prepare: {
-          handler: async (ctx: HookContext): Promise<HookOutput<PrepareHookResult>> => {
-            const intent = ctx.intent as OpenProjectIntent;
+          handler: async (ctx): Promise<HookOutput<PrepareHookResult>> => {
+            const { intent } = ctx;
             const { path, git } = intent.payload;
 
             // Self-select: only handle local paths
@@ -496,8 +498,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
 
         // resolve: validate .git exists for local paths
         resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
-            const intent = ctx.intent as OpenProjectIntent;
+          handler: async (ctx): Promise<HookOutput<ResolveHookResult>> => {
+            const { intent } = ctx;
             const { path, git } = intent.payload;
 
             // Self-select: only handle local paths (not git URLs)
@@ -533,12 +535,12 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
 
         // register: generate ID, persist, add to internal state (all projects)
         register: {
-          handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
-            const { projectPath: projectPathStr, projectRef, remoteUrl } = ctx as RegisterHookInput;
+          handler: async (ctx): Promise<HookOutput<RegisterHookResult>> => {
+            const { projectPath: projectPathStr, projectRef, remoteUrl } = ctx;
 
             const projectPath = new Path(projectPathStr);
             const normalizedKey = projectPathSchema.parse(projectPath.toString());
-            const projectId = generateProjectId(projectPathStr);
+            const projectId = generateProjectId(projectPathStr, deps.platform);
 
             // Already in state — return alreadyOpen without re-persisting
             if (projects.has(normalizedKey)) {
@@ -567,8 +569,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
       [CLOSE_PROJECT_OPERATION_ID]: {
         // resolve: look up projectPath in config to get remoteUrl
         resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
-            const { projectPath } = ctx as CloseResolveHookInput;
+          handler: async (ctx): Promise<HookOutput<CloseResolveHookResult>> => {
+            const { projectPath } = ctx;
 
             // Look up config to get remoteUrl
             const config = await getProjectConfig(fs, dirs(), projectPath);
@@ -583,8 +585,8 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
 
         // close: remove from internal state and config (all projects)
         close: {
-          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
-            const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
+          handler: async (ctx): Promise<HookOutput<CloseHookResult>> => {
+            const { projectPath, removeLocalRepo, remoteUrl } = ctx;
 
             // Remove from internal state
             const normalizedKey = projectPathSchema.parse(new Path(projectPath).toString());
@@ -599,7 +601,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
               ]);
               for (const dirName of configDirs) {
                 try {
-                  await fs.rm(nodePath.join(projectsDir, dirName), {
+                  await fs.rm(new Path(projectsDir, dirName), {
                     recursive: true,
                     force: true,
                   });
@@ -660,6 +662,6 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
           },
         },
       },
-    },
+    }),
   };
 }

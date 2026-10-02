@@ -3,15 +3,14 @@
  *
  * Two modes:
  *
- * **Specific target** (workspacePath):
- * 1. Dispatch workspace:resolve — resolve workspacePath → projectPath + workspaceName
- * 2. Dispatch project:resolve — resolve projectPath → projectId + projectName
- * 3. "activate" hook — call viewManager.setActiveWorkspace()
+ * **Specific target** (workspaceRef):
+ * 1. resolveWorkspaceIdentity — the workspace and its project (id + name)
+ * 2. "activate" hook — call viewManager.setActiveWorkspace()
  *
- * `workspacePath: null` deselects: skips resolution, runs "activate" with a
+ * `workspaceRef: null` deselects: skips resolution, runs "activate" with a
  * null target (clears main-side bookkeeping), emits workspace:switched(null).
  *
- * **Auto-select** ({ auto: true, currentPath }):
+ * **Auto-select** ({ auto: true, currentRef }):
  * Used when the active workspace is being deleted. Runs a "find-candidates"
  * hook to gather all available workspaces, applies a selection algorithm
  * (preferring idle workspaces closest to the deleted one), then dispatches
@@ -28,15 +27,13 @@ import type { Operation, OperationContext, OperationSchemas, HookContext } from 
 import { type IntentOf } from "./lib/operation";
 import {
   hookCtxSchema,
-  projectIdSchema,
   projectRefSchema,
-  workspaceNameSchema,
+  workspaceIdentityPayloadSchema,
   workspacePathSchema,
   workspaceRefSchema,
 } from "./contract";
 import type { WorkspaceRef } from "./contract";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
 
 export const INTENT_SWITCH_WORKSPACE = "workspace:switch" as const;
@@ -93,11 +90,8 @@ export const workspaceCandidateSchema = z
 
 export const workspaceSwitchedPayloadSchema = z
   .object({
-    projectId: projectIdSchema,
+    ...workspaceIdentityPayloadSchema.shape,
     projectName: z.string(),
-    projectRef: projectRefSchema,
-    workspaceName: workspaceNameSchema,
-    workspaceRef: workspaceRefSchema,
     /** The workspace's raw domain metadata, as resolved at switch time. It is
      *  the baseline consumers can't reconstruct from workspace:metadata-changed
      *  alone: metadata persists across restarts, so a title set in
@@ -338,20 +332,11 @@ export class SwitchWorkspaceOperation implements Operation<typeof schemas> {
       return;
     }
 
-    // 1. Dispatch shared workspace resolution
-    const { workspacePath, projectRef, workspaceName, active, metadata } =
-      await ctx.dispatch<ResolveWorkspaceIntent>({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspaceRef: payload.workspaceRef },
-      });
+    // 1. Resolve the workspace and its project
+    const { workspacePath, projectRef, workspaceName, active, metadata, projectId, projectName } =
+      await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef);
 
-    // 2. Dispatch shared project resolution
-    const { projectId, projectName } = await ctx.dispatch<ResolveProjectIntent>({
-      type: INTENT_RESOLVE_PROJECT,
-      payload: { projectRef },
-    });
-
-    // 3. Activate: call setActiveWorkspace
+    // 2. Activate: call setActiveWorkspace
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
       workspaceRef: payload.workspaceRef,

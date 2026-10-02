@@ -22,7 +22,14 @@
 
 import { z } from "zod/v4";
 import type { Intent } from "./types";
-import type { Operation, OperationContext, HookContext, OperationSchemas } from "./operation";
+import type {
+  Operation,
+  OperationContext,
+  HookContext,
+  HookPointSchemas,
+  HookResult,
+  OperationSchemas,
+} from "./operation";
 import { DELETE_WORKSPACE_OPERATION_ID, INTENT_DELETE_WORKSPACE } from "../delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../delete-workspace";
 import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
@@ -31,13 +38,26 @@ import { projectPathSchema } from "../contract";
 import { projectRefFor } from "../../utils/ref";
 
 /** Options for `createMinimalOperation`. */
-export interface MinimalOperationOptions<TResult = void> {
+export interface MinimalOperationOptions<TResult = void, THookResult = unknown, TFrame = unknown> {
   /** Whether to throw `errors[0]` when the hook returns errors. Default: `true`. */
   throwOnError?: boolean;
   /** Custom hook context builder. Default: `{ intent: ctx.intent }`. */
   hookContext?: (ctx: OperationContext<Intent>) => HookContext;
   /** Fallback returned when the hook produced no result (`results[0] ?? defaultResult`). */
   defaultResult?: TResult;
+  /**
+   * Schemas declared for the hook point, as the real operation declares them — so the
+   * dispatcher validates each handler's result (and frames) exactly as in production.
+   */
+  hookSchemas?: HookPointSchemas;
+  /**
+   * Derive the operation's result from what the hook point collected (all results,
+   * capabilities). Replaces the default `results[0] ?? defaultResult`. Typed by the
+   * caller: the dispatcher has already validated each result against `hookSchemas`.
+   */
+  select?: (collected: HookResult<THookResult>) => TResult;
+  /** Receives each frame a streaming handler yields (validated against `hookSchemas.frames`). */
+  onYield?: (frame: TFrame) => void;
 }
 
 /** The permissive schema shape a minimal test operation carries. */
@@ -45,6 +65,7 @@ type MinimalSchemas = {
   readonly type: string;
   readonly payload: z.ZodUnknown;
   readonly result: z.ZodUnknown;
+  readonly hooks?: Readonly<Record<string, HookPointSchemas>>;
 };
 
 /**
@@ -66,33 +87,60 @@ type MinimalSchemas = {
  *   { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) },
  * );
  */
-export function createMinimalOperation<TResult = void>(
+export function createMinimalOperation<TResult = void, THookResult = unknown, TFrame = unknown>(
   operationId: string,
   intentType: string,
   hookPoint: string,
-  options?: MinimalOperationOptions<TResult>
+  options?: MinimalOperationOptions<TResult, THookResult, TFrame>
 ): Operation<MinimalSchemas> {
-  const schemas = {
+  const schemas: MinimalSchemas = {
     type: intentType,
     payload: z.unknown(),
     result: z.unknown(),
+    ...(options?.hookSchemas !== undefined && { hooks: { [hookPoint]: options.hookSchemas } }),
   } satisfies OperationSchemas;
   const throwOnError = options?.throwOnError !== false;
   const buildHookContext = options?.hookContext;
+  const onYield = options?.onYield;
 
-  const op: Operation<typeof schemas> = {
+  const op: Operation<MinimalSchemas> = {
     id: operationId,
     schemas,
     async execute(ctx) {
       const hookCtx = buildHookContext
         ? buildHookContext(ctx)
         : { intent: ctx.intent, capabilities: {} };
-      const { results, errors } = await ctx.hooks.collect(hookPoint, hookCtx);
-      if (throwOnError && errors.length > 0) throw errors[0]!;
-      return (results[0] ?? options?.defaultResult) as TResult;
+      const collected = await ctx.hooks.collect(
+        hookPoint,
+        hookCtx,
+        onYield && { onYield: (frame) => onYield(frame as TFrame) }
+      );
+      if (throwOnError && collected.errors.length > 0) throw collected.errors[0]!;
+      if (options?.select) return options.select(collected as HookResult<THookResult>);
+      return (collected.results[0] ?? options?.defaultResult) as TResult;
     },
   };
   return op;
+}
+
+/**
+ * A minimal operation that keeps every frame its hook point's streaming handlers
+ * yield, in `frames`, for assertions on progress reporting.
+ */
+export function createStreamingMinimalOperation<TFrame>(
+  operationId: string,
+  intentType: string,
+  hookPoint: string,
+  options?: Omit<MinimalOperationOptions<void, unknown, TFrame>, "onYield">
+): Operation<MinimalSchemas> & { readonly frames: TFrame[] } {
+  const frames: TFrame[] = [];
+  const op = createMinimalOperation<void, unknown, TFrame>(operationId, intentType, hookPoint, {
+    ...options,
+    onYield: (frame) => {
+      frames.push(frame);
+    },
+  });
+  return Object.assign(op, { frames });
 }
 
 /** Canned event fields for `createDeleteEventOperation`. */

@@ -365,34 +365,6 @@ export function storeString(options?: { nullable: true }): PersistedTypeBuilder<
 }
 
 /**
- * Builder for nullable multi-line text config values, edited inline in the
- * settings dialog as a textarea (see the `text` settings control). Accepts any
- * string (empty text → null, i.e. "unset"); pass `rows` to seed the editor
- * height and `helpPanel` for reference text rendered beside the editor. Callers
- * that need extra validation (e.g. a Liquid parse check) compose their own
- * `validate` on top of the returned one.
- */
-export function storeText(options: {
-  nullable: true;
-  rows?: number;
-  helpPanel?: string;
-  helpLabel?: string;
-}): PersistedTypeBuilder<string | null> {
-  return {
-    parse: (s: string): string | null | undefined => (s === "" ? null : s),
-    validate: (v: unknown): string | null | undefined =>
-      v === null ? null : typeof v === "string" ? v : undefined,
-    validValues: "<text>",
-    settingsControl: {
-      kind: "text",
-      ...(options.rows !== undefined && { rows: options.rows }),
-      ...(options.helpPanel !== undefined && { helpPanel: options.helpPanel }),
-      ...(options.helpLabel !== undefined && { helpLabel: options.helpLabel }),
-    },
-  };
-}
-
-/**
  * Builder for nullable absolute folder paths, edited in the settings dialog as a
  * text field plus a native "Browse…" folder picker (the `folder` control). Empty
  * → null ("unset"); anything else must be an absolute path (`Path` rejects a

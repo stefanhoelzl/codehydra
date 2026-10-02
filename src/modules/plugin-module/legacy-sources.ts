@@ -27,6 +27,7 @@
 import { parseAllDocuments, stringify } from "yaml";
 import { isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
 import type { TemplateObject, TemplateValue } from "./template-render";
+import { isPlainObject } from "./util";
 
 /**
  * What a source's cmd emits, which decides how the module treats each object.
@@ -37,8 +38,6 @@ import type { TemplateObject, TemplateValue } from "./template-render";
  *   tracked; the cmd owns dedup (it acks, pops, or keeps its own cursor).
  */
 export type SourceMode = "workspaces" | "events";
-
-export const SOURCE_MODES: readonly SourceMode[] = ["workspaces", "events"];
 
 export interface ParsedSource {
   readonly name: string;
@@ -70,10 +69,6 @@ function collectStringLeaves(value: TemplateValue, out: string[]): void {
   } else if (value !== null && typeof value === "object") {
     for (const item of Object.values(value)) collectStringLeaves(item, out);
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

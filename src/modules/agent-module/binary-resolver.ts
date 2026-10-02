@@ -39,6 +39,7 @@ import {
   getErrorMessage,
 } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
+import { cmdCommandLine, needsCmdShell } from "./cmd-quote";
 
 // =============================================================================
 // Types
@@ -174,7 +175,8 @@ export function pathEntries(
 
 /**
  * Spawn an agent executable. A Windows `.cmd` shim (what npm installs) needs a
- * shell: Node refuses to spawn one directly.
+ * shell: Node refuses to spawn one directly, and the shell needs every part of
+ * the command line quoted (see cmd-quote.ts).
  */
 export function runAgentBinary(
   processRunner: Pick<ProcessRunner, "run">,
@@ -183,8 +185,8 @@ export function runAgentBinary(
   platform: SupportedPlatform,
   options?: Omit<ProcessOptions, "shell">
 ): SpawnedProcess {
-  if (platform === "win32" && executable.toLowerCase().endsWith(".cmd")) {
-    return processRunner.run([`"${executable}"`, ...args].join(" "), [], {
+  if (needsCmdShell(executable, platform)) {
+    return processRunner.run(cmdCommandLine(executable, args), [], {
       ...options,
       shell: true,
     });

@@ -16,11 +16,7 @@ import { io, type Socket } from "socket.io-client";
 import { EVENT_CHANNEL, type ClientEvent } from "../api/events";
 import { API_ERROR_CATEGORIES, type ApiErrorCategory } from "../api/errors";
 import type { Connection } from "./discovery";
-
-/** Result wrapper every command is acknowledged with. */
-export type ApiResult<T> =
-  | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string; readonly category?: unknown };
+import type { ApiResult } from "../shared/api-protocol";
 
 export class UnreachableError extends Error {
   constructor(message: string) {

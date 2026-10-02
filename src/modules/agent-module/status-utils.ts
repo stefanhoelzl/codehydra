@@ -3,7 +3,7 @@
  */
 
 import type { AggregatedAgentStatus } from "../../shared/ipc";
-import type { AgentStatus } from "./types";
+import type { AgentActivity } from "./types";
 
 /**
  * The "no agent" aggregated status.
@@ -15,7 +15,7 @@ export function createNoneStatus(): AggregatedAgentStatus {
 /**
  * Convert a single-workspace agent status to its aggregated representation.
  */
-export function convertToAggregatedStatus(status: AgentStatus): AggregatedAgentStatus {
+export function convertToAggregatedStatus(status: AgentActivity): AggregatedAgentStatus {
   switch (status) {
     case "none":
       return { status: "none", counts: { idle: 0, busy: 0 } };
@@ -29,7 +29,7 @@ export function convertToAggregatedStatus(status: AgentStatus): AggregatedAgentS
 /**
  * Derive an agent status from idle/busy counts.
  */
-export function countsToStatus(counts: { idle: number; busy: number }): AgentStatus {
+export function countsToStatus(counts: { idle: number; busy: number }): AgentActivity {
   if (counts.idle === 0 && counts.busy === 0) {
     return "none";
   }

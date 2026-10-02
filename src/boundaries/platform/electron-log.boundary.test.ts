@@ -10,7 +10,6 @@ import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockPathProvider } from "./path-provider.test-utils";
-import type { PathProvider } from "./path-provider";
 import type { LoggingConfigureOptions, LogLine } from "./logging-types";
 import { ElectronLog } from "./electron-log";
 
@@ -24,16 +23,6 @@ const DEFAULT_OPTIONS: LoggingConfigureOptions = {
   allowedLoggers: undefined,
   logFormat: "text",
 };
-
-/**
- * Create a minimal PathProvider for boundary tests.
- * Uses createMockPathProvider with the temp directory as dataRootDir.
- */
-function createTestPathProvider(dataRootDir: string): PathProvider {
-  return createMockPathProvider({
-    dataRootDir,
-  });
-}
 
 /**
  * Wait for electron-log to flush to file.
@@ -65,7 +54,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("creates log directory if not exists", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -79,7 +68,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("writes to log file with session-based filename", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -97,7 +86,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("log format matches specification", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -118,7 +107,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("filters by level - DEBUG not written when level is WARN", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure({ ...DEFAULT_OPTIONS, logLevel: "warn" });
@@ -139,7 +128,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("writes all levels when level is DEBUG", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -162,7 +151,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("includes Error stack in error logs", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -181,7 +170,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("uses configured path for log files", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
@@ -197,7 +186,7 @@ describe("ElectronLog boundary tests", () => {
   });
 
   it("flushes buffered entries to file after configure()", async () => {
-    const pathProvider = createTestPathProvider(tempDir);
+    const pathProvider = createMockPathProvider({ dataRootDir: tempDir });
 
     const service = new ElectronLog(pathProvider);
     const logger = service.createLogger("app");
@@ -225,7 +214,7 @@ describe("ElectronLog boundary tests", () => {
 
   describe("logger filtering", () => {
     it("writes from every logger when allowedLoggers is undefined", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, allowedLoggers: undefined });
 
       service.createLogger("git").info("from git");
@@ -238,7 +227,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("writes only from loggers in allowedLoggers", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, allowedLoggers: new Set(["git"]) });
 
       service.createLogger("git").info("from git");
@@ -253,7 +242,7 @@ describe("ElectronLog boundary tests", () => {
 
   describe("JSON format mode", () => {
     it("writes one JSON object per line with the logger name and message", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
 
       service.createLogger("git").info("Services started");
@@ -270,7 +259,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("keeps context as a structured field rather than appending it to the message", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
 
       service.createLogger("git").info("Clone complete", { repo: "myrepo", branch: "main" });
@@ -283,7 +272,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("records context and error separately for error level", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
 
       service.createLogger("git").error("Failed", { op: "test" }, new Error("boom"));
@@ -297,7 +286,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("appends context to the message in text mode", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "text" });
 
       service.createLogger("git").info("Clone complete", { repo: "myrepo" });
@@ -309,7 +298,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("carries the ambient scope in the scope object, beside the logger name", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logFormat: "json" });
 
       service.scope.run(
@@ -332,7 +321,7 @@ describe("ElectronLog boundary tests", () => {
 
   describe("ambient scope", () => {
     it("writes the scope as a block between the logger name and the message", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure(DEFAULT_OPTIONS);
 
       service.scope.run(
@@ -355,7 +344,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("writes a line scoped to a named workspace's path under its name", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure(DEFAULT_OPTIONS);
       const ws = join(tempDir, "ws", "feat");
       service.scope.nameWorkspace(ws, { project: "proj", ws: "feat" });
@@ -371,7 +360,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("tells line listeners of every line, whatever the level and logger filter", () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       service.configure({ ...DEFAULT_OPTIONS, logLevel: "warn", allowedLoggers: new Set(["app"]) });
       const lines: LogLine[] = [];
       const unsubscribe = service.onLine((line) => lines.push(line));
@@ -396,7 +385,7 @@ describe("ElectronLog boundary tests", () => {
     });
 
     it("keeps the scope a buffered line was written in, not the one it is flushed in", async () => {
-      const service = new ElectronLog(createTestPathProvider(tempDir));
+      const service = new ElectronLog(createMockPathProvider({ dataRootDir: tempDir }));
       const logger = service.createLogger("app");
 
       service.scope.run(

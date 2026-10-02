@@ -47,6 +47,28 @@ describe("DialogView component (modal surface)", () => {
     expect(heading).toHaveTextContent("My Heading");
   });
 
+  it("contains a form render error inside the modal card", () => {
+    // Fake timers: the boundary's deferred telemetry re-throw must not fire.
+    vi.useFakeTimers();
+    try {
+      // A radio without options: the form's reconcile throws on it.
+      const broken = {
+        sections: [
+          { type: "text", content: "Broken", style: "heading" },
+          { type: "radio", id: "r" },
+        ],
+      } as unknown as DialogConfig;
+
+      expect(() => renderDialog(broken)).not.toThrow();
+
+      const dialog = screen.getByRole("dialog", { name: "Broken" });
+      expect(dialog.querySelector(".card [role='alert']")).not.toBeNull();
+      vi.clearAllTimers();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("accessibility", () => {
     it("dialog has role='dialog'", () => {
       const config: DialogConfig = {

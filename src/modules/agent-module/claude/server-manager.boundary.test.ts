@@ -10,7 +10,7 @@
  * release can invalidate without a single test going red.
  *
  * So these tests spawn the real binary against a mock model and assert the
- * `AgentStatus` that comes out the far end of the shipped chain. They are
+ * `AgentActivity` that comes out the far end of the shipped chain. They are
  * additive: nothing in the synthetic suite is retired, because a synthetic
  * failure says *our logic* broke while a failure here says *Claude* changed.
  *

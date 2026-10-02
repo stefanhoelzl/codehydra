@@ -32,7 +32,7 @@ import {
   discoveredWorkspaceSchema,
   hookCtxSchema,
 } from "./contract";
-import type { DiscoveredWorkspace, WorkspaceRef } from "./contract";
+import type { WorkspaceRef } from "./contract";
 import { INTENT_OPEN_PROJECT } from "./contract";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -40,13 +40,14 @@ import {
   type ExistingWorkspaceData,
 } from "./open-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { activeWorkspaceRef } from "./lib/active-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { projectRefFor } from "../utils/ref";
 import { Path } from "../utils/path/path";
 import { compareDisplayNames } from "../shared/ui-state";
 import { throwHookErrors, onlyDefined } from "./lib/hook-helpers";
+import { getErrorMessage } from "../shared/error-utils";
 
 // Defined in ./contract so open-workspace can import it without a module cycle;
 // re-exported here so this stays the obvious place to find it.
@@ -195,6 +196,20 @@ export const cloneProgressPayloadSchema = z
   })
   .readonly();
 
+/**
+ * Progress frame the "resolve" hook yields while cloning (data only, no closure) —
+ * its `frames` schema, validated by the dispatcher. The operation adds the `url` it
+ * knows and emits `clone:progress`.
+ */
+export const cloneProgressFrameSchema = z
+  .object({
+    stage: z.string(),
+    progress: z.number(),
+    name: z.string(),
+  })
+  .readonly();
+export type CloneProgressFrame = z.infer<typeof cloneProgressFrameSchema>;
+
 /** These hook points receive the bare (possibly folder-resolved) intent. */
 const bareOpenHookInputSchema = hookCtxSchema(openProjectPayloadSchema, {});
 
@@ -209,7 +224,11 @@ export const schemas = {
   hooks: {
     "select-folder": { input: bareOpenHookInputSchema, result: selectFolderHookResultSchema },
     prepare: { input: bareOpenHookInputSchema, result: prepareHookResultSchema },
-    resolve: { input: bareOpenHookInputSchema, result: resolveHookResultSchema },
+    resolve: {
+      input: bareOpenHookInputSchema,
+      result: resolveHookResultSchema,
+      frames: cloneProgressFrameSchema,
+    },
     register: { input: registerHookInputSchema, result: registerHookResultSchema },
     discover: { input: discoverHookInputSchema, result: discoverHookResultSchema },
   },
@@ -259,52 +278,12 @@ export interface CloneProgressEvent extends DomainEvent {
 }
 
 // =============================================================================
-// Clone progress streaming frame (yielded by the "resolve" hook; not schematized —
-// yield frames are pure data forwarded to onYield, not validated at the boundary).
-// =============================================================================
-
-/**
- * Progress frame yielded by the "resolve" hook while cloning (data only, no closure).
- * The operation adds the `url` it knows and emits `clone:progress`.
- */
-export interface CloneProgressFrame {
-  readonly stage: string;
-  readonly progress: number;
-  readonly name: string;
-}
-
-/** Narrow an onYield frame to a CloneProgressFrame (plain-typed fields → cast-free). */
-export function isCloneProgressFrame(frame: unknown): frame is CloneProgressFrame {
-  return (
-    typeof frame === "object" &&
-    frame !== null &&
-    "stage" in frame &&
-    typeof frame.stage === "string" &&
-    "progress" in frame &&
-    typeof frame.progress === "number" &&
-    "name" in frame &&
-    typeof frame.name === "string"
-  );
-}
-
-// =============================================================================
 // Operation
 // =============================================================================
 
 export class OpenProjectOperation implements Operation<typeof schemas> {
   readonly id = OPEN_PROJECT_OPERATION_ID;
   readonly schemas = schemas;
-
-  /** The active workspace's path, or null when none is active. */
-  private async activeRef(
-    ctx: OperationContext<OpenProjectIntent, typeof schemas>
-  ): Promise<WorkspaceRef | null> {
-    const active = await ctx.dispatch<GetActiveWorkspaceIntent>({
-      type: INTENT_GET_ACTIVE_WORKSPACE,
-      payload: {},
-    });
-    return active === null ? null : active.ref;
-  }
 
   async execute(ctx: OperationContext<OpenProjectIntent, typeof schemas>): Promise<Project | null> {
     const { intent } = ctx;
@@ -333,7 +312,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         type: EVENT_PROJECT_OPEN_FAILED,
         payload: {
           ...origin,
-          reason: e instanceof Error ? e.message : String(e),
+          reason: getErrorMessage(e),
         },
       } satisfies ProjectOpenFailedEvent);
       throw e;
@@ -375,26 +354,17 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
         prepareCtx
       );
       throwHookErrors(prepareErrors, "project:open prepare hooks failed");
-      for (const r of prepareResults) {
-        if (r.canceled) return null;
-      }
+      if (prepareResults.some((r) => r.canceled)) return null;
     }
 
     // The resolve hook streams clone progress by yielding CloneProgressFrame data;
     // the operation adds the url it knows and emits clone:progress (operation owns emits).
     const gitUrl = effectiveIntent.payload.git ?? "";
-    const emitCloneProgress = (frame: unknown): void => {
-      if (isCloneProgressFrame(frame)) {
-        void ctx.emit({
-          type: EVENT_CLONE_PROGRESS,
-          payload: {
-            stage: frame.stage,
-            progress: frame.progress,
-            name: frame.name,
-            url: gitUrl,
-          },
-        } satisfies CloneProgressEvent);
-      }
+    const emitCloneProgress = (frame: CloneProgressFrame): void => {
+      void ctx.emit({
+        type: EVENT_CLONE_PROGRESS,
+        payload: { ...frame, url: gitUrl },
+      } satisfies CloneProgressEvent);
     };
 
     // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
@@ -443,10 +413,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       discoverCtx
     );
     throwHookErrors(discoverErrors, "project:open discover hooks failed");
-    const workspaces: DiscoveredWorkspace[] = [];
-    for (const r of discoverResults) {
-      if (r.workspaces) workspaces.push(...r.workspaces);
-    }
+    const workspaces = discoverResults.flatMap((r) => r.workspaces);
     const defaultBaseBranch = onlyDefined(
       discoverResults,
       "defaultBaseBranch",
@@ -476,64 +443,7 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
       };
       ctx.emit(event);
 
-      // Hibernated workspaces stay inert — no view + agent init runs; they
-      // appear in the sidebar with the hibernation indicator. The rest open
-      // in sidebar order, so the rows fill in top to bottom.
-      const pending = project.workspaces
-        .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
-        .sort((a, b) => compareDisplayNames(a.name, b.name));
-
-      // Land on the first of them when nothing is active, so the user sees
-      // this project's workspace loading rather than an empty view.
-      const first = pending[0];
-      if (first !== undefined && (await this.activeRef(ctx)) === null) {
-        try {
-          await ctx.dispatch<SwitchWorkspaceIntent>({
-            type: INTENT_SWITCH_WORKSPACE,
-            payload: { workspaceRef: first.ref },
-          });
-        } catch {
-          // Best-effort: switch failure doesn't fail the project open
-        }
-      }
-
-      // Open one at a time (best-effort), the active workspace first: asked
-      // before each open, so switching to a row still loading moves it to
-      // the front of the queue.
-      const urlByRef = new Map<WorkspaceRef, string>();
-      while (pending.length > 0) {
-        const activeRef = await this.activeRef(ctx);
-        const activeIndex = activeRef === null ? -1 : pending.findIndex((w) => w.ref === activeRef);
-        const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
-        if (workspace === undefined) break;
-        try {
-          const existingWorkspace: ExistingWorkspaceData = {
-            path: workspace.path,
-            name: workspace.name,
-            branch: workspace.branch,
-            metadata: workspace.metadata,
-          };
-
-          const openWsIntent: OpenWorkspaceIntent = {
-            type: INTENT_OPEN_WORKSPACE,
-            payload: {
-              workspaceName: workspace.name,
-              existingWorkspace,
-              projectRef,
-              stealFocus: false,
-              source: "open-project",
-            },
-          };
-
-          const opened = await ctx.dispatch(openWsIntent);
-          if (opened?.url !== undefined) {
-            urlByRef.set(opened.ref, opened.url);
-          }
-        } catch {
-          // Best-effort: individual workspace:open failures don't fail the
-          // project open (workspace:create-failed marks the row)
-        }
-      }
+      const urlByRef = await this.openDiscoveredWorkspaces(ctx, project);
 
       // The caller gets each opened workspace's IDE server URL.
       // Hibernated workspaces stay URL-less.
@@ -553,5 +463,75 @@ export class OpenProjectOperation implements Operation<typeof schemas> {
     }
 
     return project;
+  }
+
+  /**
+   * Open a just-announced project's awake workspaces, best-effort, and return
+   * each opened workspace's IDE server URL by ref.
+   */
+  private async openDiscoveredWorkspaces(
+    ctx: OperationContext<OpenProjectIntent, typeof schemas>,
+    project: Project
+  ): Promise<Map<WorkspaceRef, string>> {
+    // Hibernated workspaces stay inert — no view + agent init runs; they
+    // appear in the sidebar with the hibernation indicator. The rest open
+    // in sidebar order, so the rows fill in top to bottom.
+    const pending = project.workspaces
+      .filter((w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true")
+      .sort((a, b) => compareDisplayNames(a.name, b.name));
+
+    // Land on the first of them when nothing is active, so the user sees
+    // this project's workspace loading rather than an empty view.
+    const first = pending[0];
+    if (first !== undefined && (await activeWorkspaceRef(ctx.dispatch)) === null) {
+      try {
+        await ctx.dispatch<SwitchWorkspaceIntent>({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { workspaceRef: first.ref },
+        });
+      } catch {
+        // Best-effort: switch failure doesn't fail the project open
+      }
+    }
+
+    // Open one at a time (best-effort), the active workspace first: asked
+    // before each open, so switching to a row still loading moves it to
+    // the front of the queue.
+    const urlByRef = new Map<WorkspaceRef, string>();
+    while (pending.length > 0) {
+      const activeRef = await activeWorkspaceRef(ctx.dispatch);
+      const activeIndex = activeRef === null ? -1 : pending.findIndex((w) => w.ref === activeRef);
+      const [workspace] = pending.splice(Math.max(activeIndex, 0), 1);
+      if (workspace === undefined) break;
+      try {
+        const existingWorkspace: ExistingWorkspaceData = {
+          path: workspace.path,
+          name: workspace.name,
+          branch: workspace.branch,
+          metadata: workspace.metadata,
+        };
+
+        const openWsIntent: OpenWorkspaceIntent = {
+          type: INTENT_OPEN_WORKSPACE,
+          payload: {
+            workspaceName: workspace.name,
+            existingWorkspace,
+            projectRef: project.ref,
+            stealFocus: false,
+            source: "open-project",
+          },
+        };
+
+        const opened = await ctx.dispatch(openWsIntent);
+        if (opened?.url !== undefined) {
+          urlByRef.set(opened.ref, opened.url);
+        }
+      } catch {
+        // Best-effort: individual workspace:open failures don't fail the
+        // project open (workspace:create-failed marks the row)
+      }
+    }
+
+    return urlByRef;
   }
 }

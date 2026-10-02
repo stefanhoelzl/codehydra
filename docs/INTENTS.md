@@ -139,6 +139,8 @@ export interface ResolvedHooks {
 
 `DispatchFn` is the type signature for nested dispatch, available in `OperationContext`. `ANY_VALUE` is a sentinel symbol used in `requires` to mean "this capability must exist, but any value is accepted." `HookContext` is the base context passed to hook handlers -- operations extend it with additional readonly fields. `HookHandler<T>` declares a handler function plus optional capability requirements (`requires`); the handler returns a `HookOutput<T>` carrying its `result` and/or the capabilities it `provides` as plain data (the dispatcher merges them after the handler completes -- no closure). `HookResult<T>` collects all handler results, errors, and accumulated capabilities from a single `collect()` call. `ResolvedHooks` is the interface operations use to run hook points.
 
+**Streaming handlers.** A handler may be an `async function*`: it yields progress frames (plain data) and returns its `HookOutput`. The dispatcher drains it and hands each frame to the `onYield` callback the operation passed to `collect(hookPoint, ctx, { onYield })` — host-side, never on the context. A hook point whose handlers stream declares the frame shape as `frames` in its `HookPointSchemas` (beside `input`, `result`, `provides`); the dispatcher validates every yielded frame against it before `onYield` sees it, and `onYield`'s parameter is typed from it (`FrameOf<S, K>`), so an operation never narrows a frame itself. A frame that fails the schema becomes that handler's collected error and stops draining it. Today: `app:setup` `binary`/`extensions` (`setup:progress` payloads), `project:open` `resolve` (`cloneProgressFrameSchema`), `workspace:delete` `pre-delete` (`preDeleteStartedFrameSchema`).
+
 ### OperationContext and Operation
 
 Source: `src/intents/lib/operation.ts`
@@ -182,10 +184,14 @@ Source: `src/intents/lib/module.ts`
 export type HookDeclarations = Readonly<Record<string, Readonly<Record<string, HookHandler>>>>;
 
 /**
- * Event declarations: eventType -> handler function.
+ * Event declarations: eventType -> { handler, requires? }.
  * Each module subscribes to domain events by type.
  */
-export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => void>>;
+export interface EventHandler {
+  readonly handler: (event: DomainEvent) => Promise<void>;
+  readonly requires?: Readonly<Record<string, unknown>>;
+}
+export type EventDeclarations = Readonly<Record<string, EventHandler>>;
 
 /**
  * A module that contributes hooks and/or event subscriptions to the intent system.
@@ -194,6 +200,8 @@ export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => 
 export interface IntentModule {
   /** Human-readable module name for logging and diagnostics. */
   readonly name: string;
+  /** Capabilities every handler in this module requires (merged into each handler's). */
+  readonly requires?: Readonly<Record<string, unknown>>;
   /** Hook contributions: operationId -> hookPointId -> HookHandler */
   readonly hooks?: HookDeclarations;
   /** Event subscriptions: eventType -> handler */
@@ -204,6 +212,54 @@ export interface IntentModule {
 ```
 
 `HookDeclarations` maps `operationId -> hookPointId -> HookHandler`, declaring which hook points a module contributes to. `EventDeclarations` maps `eventType -> handler`, declaring which domain events a module subscribes to. `IntentModule` is the primary registration unit -- modules declare their hooks, events, and interceptors declaratively, and the dispatcher wires everything at bootstrap.
+
+These are the **erased** shapes the dispatcher holds (one registry serves every operation, so a handler takes a bare `HookContext` / `DomainEvent`). A module never writes them directly — it declares its handlers through the typed helpers below.
+
+### Writing a module: defineHooks and defineEvents
+
+Source: `src/intents/declarations.ts` (app-specific maps and helpers), `src/intents/lib/module.ts` (the generic typed views)
+
+`declarations.ts` lists every operation the app registers (`Operations`: operation id + its `schemas` bundle) and derives three maps from it: `OperationSchemaMap` (operation id → schemas), `DomainEventMap` (event type → event, from every bundle's `events`) and `IntentMap` (intent type → intent). The helpers are identities at runtime; they exist so the compiler reads the schemas:
+
+```typescript
+return {
+  name: "workspace-lifecycle",
+  hooks: defineHooks({
+    [DELETE_WORKSPACE_OPERATION_ID]: {
+      shutdown: {
+        // ctx: the hook point's `input` enrichment + the operation's own intent
+        handler: async (ctx): Promise<HookOutput<ShutdownHookResult>> => {
+          claim(ctx.workspaceRef, ctx.intent.payload.removeWorktree ? "delete" : "close");
+          return { result: {} };
+        },
+      },
+    },
+  }),
+  events: defineEvents({
+    [EVENT_WORKSPACE_DELETED]: {
+      handler: async (event) => release(event.payload.workspaceRef), // event: WorkspaceDeletedEvent
+    },
+  }),
+};
+```
+
+- **Hook handlers** receive `HandlerInputOf<S, K>`: `InputOf<S, K>` (what the operation adds at that hook point) with `intent` narrowed to `IntentOf<S>` — sound because every hook point's `input` schema re-affirms the operation's payload (`hookCtxSchema`) and the dispatcher validates each context against it. They must return that hook point's `HookResultOf<S, K>` and yield its `FrameOf<S, K>`. `requires` is declared beside the handler as before.
+- **Event handlers** receive `DomainEventMap[type]`.
+- An unknown operation id, hook point or event type, a handler written against another hook point's context, or a wrong result fails to compile (`src/intents/declarations.test.ts`). No `ctx as XHookInput`, `ctx.intent as XIntent` or `(event as XEvent).payload` casts.
+
+For a handler or a group of handlers built apart from the module's `defineHooks` / `defineEvents` call (a named function, a shared factory, a part spread in later), name its type instead:
+
+| Type / helper                                  | For                                                                                                        |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `HookInput<typeof X_OPERATION_ID, "hp">`       | The `ctx` parameter of a named handler function                                                            |
+| `HookHandlerOf<typeof X_OPERATION_ID, "hp">`   | A `{ handler, requires }` built by a factory (`createCwdReleaseHandlers`)                                  |
+| `HooksOf<typeof X_OPERATION_ID>`               | One operation's hook points (`startup.appStartHooks`, `bindHookPoints`)                                    |
+| `AppHookDeclarations` / `AppEventDeclarations` | A part spread into a module's `defineHooks` / `defineEvents` (`createNotificationHooks`, `startup.events`) |
+| `EventFor<typeof EVENT_X>`                     | The `event` parameter of a named event handler                                                             |
+| `subscribe(dispatcher, EVENT_X, handler)`      | `dispatcher.subscribe` with the handler typed by its event                                                 |
+| `isIntent(intent, INTENT_X)`                   | Narrowing in an interceptor, which sees every dispatch                                                     |
+
+`hooksFor(schemas, hooks)` in `lib/module.ts` does the same for an operation outside the map (a test operation). **A new operation** gets an entry in `Operations`; until it has one, a module cannot declare a handler on it.
 
 ### IntentHandle, IntentInterceptor, and IDispatcher
 
@@ -321,19 +377,22 @@ Operations apply a small set of shared policies to `collect()` results. `results
 
 Best-effort hook points (app-shutdown `stop`/`handoff`/`quit`, app-resume `resume`, hibernate/wake teardown, switch-workspace auto-select) intentionally ignore or collect errors — that is documented in each operation header, not a missing guard.
 
+### Resolving a workspace
+
+Every operation that acts on a workspace turns its ref into the workspace through `resolveWorkspaceIdentity(dispatch, workspaceRef, options?)` (`src/intents/lib/workspace-identity.ts`), never by dispatching `workspace:resolve` / `project:resolve` by hand. It dispatches `workspace:resolve` (path, project ref/path, name, branch, metadata, `active`, `closing`) and then `project:resolve` for the project's `projectId` and `projectName`; `{ withProject: false }` skips the second dispatch for an operation that needs only the workspace (agent-lifecycle, vscode-modal-changed, send-agent-message, show-notification, get-workspace-status). A ref no open workspace has makes it throw.
+
 ### WorkspaceHookOperation
 
-Workspace-scoped operations that run a single hook point share one skeleton: resolve workspace → optionally resolve project → collect hook → `throwHookErrors` → extract result → optionally emit a domain event. `WorkspaceHookOperation` (in `src/intents/lib/workspace-operation.ts`) implements it; concrete operations subclass with a spec:
+Workspace-scoped operations that run a single hook point share one skeleton, built on `resolveWorkspaceIdentity`: resolve the workspace → collect hook → `throwHookErrors` → extract result → optionally emit a domain event. `WorkspaceHookOperation` (in `src/intents/lib/workspace-operation.ts`) implements it; concrete operations subclass with a spec:
 
 ```typescript
-export class GetMetadataOperation extends WorkspaceHookOperation<
-  GetMetadataIntent,
-  GetMetadataHookResult,
-  Readonly<Record<string, string>>
-> {
+export class GetMetadataOperation extends WorkspaceHookOperation<typeof schemas> {
+  readonly schemas = schemas;
+
   constructor() {
     super(GET_METADATA_OPERATION_ID, {
       hookPoint: "get",
+      buildInput: (intent, target) => ({ intent, ...target }),
       errorLabel: "get-metadata get hooks failed",
       extract: (results) =>
         requireResult(
@@ -345,7 +404,7 @@ export class GetMetadataOperation extends WorkspaceHookOperation<
 }
 ```
 
-Spec options: `resolveProject` (dispatch `project:resolve` — only needed when the event payload wants `projectId`) and `onSuccess` (build a domain event from `{ intent, resolved, project, result }`). Subclasses: get-agent-session, get-metadata, restart-agent, set-metadata, vscode-command, vscode-show-message.
+Spec option `onSuccess` builds a domain event from `{ intent, identity, result }`; an operation that declares it resolves the workspace together with its project (every workspace event carries the project's id), one that does not resolves it with `withProject: false`. Subclasses: get-agent-session, get-metadata, restart-agent, set-metadata, vscode-command, vscode-show-message.
 
 ---
 
@@ -514,8 +573,10 @@ The `show-notification` / `close-notification` operations are the only way anyth
 
 The `open-workspace` operation uses these hook modules:
 
+Every `workspace:open` hook context carries `fresh` and `workspaceName`, decided once by the operation before the first hook point: `fresh` is true for a new worktree and false for a reopen (a wake, or a workspace discovered at project open — the payload carries `existingWorkspace`), and `workspaceName` is the name the workspace is opened under (the existing one's, else the requested one). Handlers branch on these rather than re-deriving them from the payload; `workspace:created` carries `fresh` as well.
+
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces). Reports `branch` as `null` on a detached HEAD and `resolvedBase` only when a base is known (the one a new worktree was created from, or the one an existing workspace's metadata records) -- never a stand-in. Every later hook point receives both as optional `branch`/`base`, absent when unknown
-- **provision**: PluginModule -- the plugins' `after-worktree-created` hooks, for a genuinely new worktree only (no `existingWorkspace`). Contributes `title`/`tags` as `metadata` (also written to the workspace's metadata file). Best-effort with internal try/catch
+- **provision**: PluginModule -- the plugins' `after-worktree-created` hooks, for a genuinely new worktree only (`fresh`). Contributes `title`/`tags` as `metadata` (also written to the workspace's metadata file). Best-effort with internal try/catch
 - **prepare**: PluginModule -- the plugins' `before-workspace-opened` hooks, on **every** open (new, app start, project open, wake). Contributes `env`, with any `_CH_*` key dropped. Best-effort with internal try/catch. The merged result becomes the setup and finalize enrichment `workspaceEnv`
 - **setup**: AgentModule (starts agent server, fatal) -- passed `workspaceEnv`, which OpenCode's server manager spawns `opencode serve` with (kept in memory for restarts, forgotten on stop). Both repository hook points precede this one, so the agent never starts against a tree a setup script is still preparing, nor without its environment
 - **finalize**: IdeServerModule (creates .code-workspace file -- no environment in it), ApiServerModule (stores the sidekick config: `envVars` = `workspaceEnv` overlaid with the agent's own variables for the agent terminal, `workspaceEnv` alone for every other terminal), WorktreeModule (re-reads the workspace's metadata)
@@ -528,7 +589,7 @@ The `delete-workspace` operation uses these hook modules:
 - **preflight**: WorktreeModule -- vetoes on workspace state (`{ blocked, reason }`). The handler owns both halves of the policy: whether the check applies (only a `removeWorktree` delete can lose work; `force` is an explicit teardown and `ignoreWarnings` the caller's opt-out) and what its findings mean -- uncommitted changes always block, unmerged commits only when `keepBranch` is false, since a kept branch keeps them reachable. A handler that cannot read the state throws, failing the gate closed. The operation only sequences the gate and joins the reasons into the caller's error
 - **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
 - **pre-delete**: PluginModule -- the plugins' gates (`before-worktree-deleted` hooks). Runs on a quiesced workspace but _before_ `release`, so the CWD scan and kill still cleans up after anything the hook leaves holding the worktree. Skipped in force mode, which is how the progress panel's Dismiss escapes a gate that refuses (a gate that hangs never completes, so the panel never offers Dismiss — hooks have no timeout), and skipped for a runtime-only teardown (it sits after the `removeWorktree` gate). Same two-signal split as `preflight`: a returned `{ blocked, reason }` is a policy decision, a throwing handler could not tell and fails the gate closed. Unlike `preflight` it owns a progress row (`repo-hook`). HooksModule claims that row from its own `preflight` handler — the last hook point before the first progress event, and so the only place it can be claimed in time to be listed with the other steps rather than appearing halfway down a list the user is already reading — by providing the `repo-hook` capability. A project with no hook provides nothing and never sees a step that does nothing; a streaming `{ started: true }` yield then moves the row to in-progress when the script actually starts
-- **release**: WindowsFileLockModule (Windows) / PosixProcessCleanupModule (POSIX) -- scan for processes whose CWD is under the workspace and kill them. Runs in force mode too: Dismiss follows an attempt that a refusing `pre-delete` stopped before this point, so anything the shutdown could not stop is still in the worktree, and on Windows it would lock the directory against the force removal. Skipped when `removeWorktree` is false.
+- **release**: WindowsFileLockModule (Windows) / PosixProcessCleanupModule (POSIX) -- scan for processes whose CWD is under the workspace and kill them. Both run the shared flow and error policy in `cwd-release-kill.ts` (also used by hibernate's release); only detection and termination are per platform. Runs in force mode too: Dismiss follows an attempt that a refusing `pre-delete` stopped before this point, so anything the shutdown could not stop is still in the worktree, and on Windows it would lock the directory against the force removal. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
 Both gates run before any teardown or progress emission, so a refusal leaves the workspace untouched and the UI never sees a deletion panel. The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), the presenter (drops the row from the next `UiState` snapshot), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
@@ -562,7 +623,7 @@ The multi-phase design ensures config is loaded before Electron ready, servers a
 
 The `app-shutdown` operation runs three hook points in sequence:
 
-- **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across the `window-all-closed` and `before-quit` entry points, both registered by `electron-lifecycle-module`. Electron does not wait for async `before-quit` listeners, so that module holds every quit (`preventDefault`) until app:shutdown reaches its `quit` hook, which releases it.
+- **stop**: All lifecycle modules dispose their resources independently (best-effort). The dispatcher's `collect()` isolates each handler: a throwing one is logged (`hook error` warning) and the rest still run, so a handler wraps nothing in try/catch except steps that must not stop the rest of its own disposal. A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across the `window-all-closed` and `before-quit` entry points, both registered by `electron-lifecycle-module`. Electron does not wait for async `before-quit` listeners, so that module holds every quit (`preventDefault`) until app:shutdown reaches its `quit` hook, which releases it.
 - **handoff**: Starts what outlives the process, once everything is released: the auto-updater's `quitAndInstall()` when `installUpdate` is set. It must not run in `stop` -- it spawns the installer (Windows) or swaps and relaunches the AppImage (Linux) on the spot, which would race the teardown -- nor after electron's own `app.quit()`, whose on-quit install skips the relaunch. Its own `app.quit()` is held by the `before-quit` gate like any other.
 - **quit**: `electron-lifecycle-module` releases the gate and calls `app.quit()`.
 
@@ -597,18 +658,30 @@ The `workspace:switched` event is emitted through the intent dispatcher via `Swi
 
 ### Domain Events Table
 
-| Event                        | Payload                                                    | Description                                                                                                        |
-| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `project:opened`             | `{ project: Project }`                                     | Project was opened                                                                                                 |
-| `project:closed`             | `{ projectId: ProjectId }`                                 | Project was closed                                                                                                 |
-| `project:bases-updated`      | `{ projectId, bases }`                                     | Branch list refreshed                                                                                              |
-| `workspace:created`          | `{ projectId, workspace }`                                 | Workspace was created                                                                                              |
-| `workspace:removed`          | `WorkspaceLocator`                                         | Workspace was removed                                                                                              |
-| `workspace:switched`         | `WorkspaceLocator \| null`                                 | Active workspace changed                                                                                           |
-| `workspace:status-changed`   | `WorkspaceLocator & { status }`                            | Dirty/agent status changed                                                                                         |
-| `workspace:metadata-changed` | `{ projectId, workspaceName, key, value: string \| null }` | Metadata key set or deleted                                                                                        |
-| `shortcut:key-pressed`       | `ShortcutKey`                                              | Shortcut action key pressed (presenter interprets it; mode is recomputed and shipped in the snapshot, not emitted) |
-| `setup:progress`             | `{ step, message }`                                        | Setup progress update                                                                                              |
+**Workspace identity.** Every workspace event payload carries the same identity, spread in from `workspaceIdentityPayloadSchema` (`src/intents/contract.ts`): `workspaceRef`, `projectRef`, `workspaceName`, `projectId` — written once, so the events cannot drift apart, and every consumer (and `eventWorkspaceRef` in `src/api/events.ts`) finds the workspace at the top-level `workspaceRef`. Operations build it with `workspaceIdentityPayload(identity)` from what `resolveWorkspaceIdentity` returned. The exceptions say so in their schema:
+
+- The failure events (`workspace:hibernate-failed`, `workspace:wake-failed`, `workspace:delete-failed`) carry `workspaceRefIdentitySchema` — `workspaceRef`, `projectRef`, `workspaceName`, all read from the ref by `workspaceRefIdentity(ref)` — and no `projectId`: they are also emitted for a ref that never resolved (the idempotency guard resets on them), when there is no project to name.
+- `workspace:loading` and `workspace:create-failed` concern a workspace that does not exist yet and carry `{ projectRef, workspaceName }`, no ref: a creation refused because the name is taken would otherwise name the workspace that already has it.
+
+| Event                         | Payload (beyond the identity)                                                                | Description                                                                                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `workspace:loading`           | `{ projectRef, workspaceName, base?, stealFocus? }` (no identity)                            | A fresh creation started                                                                                           |
+| `workspace:created`           | `{ fresh, branch?, base?, tracking?, metadata, workspaceUrl, agent?, stealFocus?, source? }` | A workspace finished opening (fresh creation or reopen)                                                            |
+| `workspace:create-failed`     | `{ projectRef, workspaceName, error, source? }` (no identity)                                | An open failed                                                                                                     |
+| `workspace:switched`          | `{ projectName, metadata }`, or `null` for a deselect                                        | Active workspace changed                                                                                           |
+| `workspace:metadata-changed`  | `{ key, value: string \| null }`                                                             | Metadata key set or deleted                                                                                        |
+| `workspace:hibernated`        | —                                                                                            | Hibernation teardown finished                                                                                      |
+| `workspace:woken`             | —                                                                                            | A hibernated workspace is back online                                                                              |
+| `workspace:deleted`           | `{ worktreeRemoved }`                                                                        | Deleted (or torn down at project close)                                                                            |
+| `workspace:deletion-progress` | `{ keepBranch, operations, completed, hasErrors, blockingProcesses? }`                       | Full deletion state on every step                                                                                  |
+| `workspace:*-failed`          | `{ error }` (hibernate, wake); nothing more (delete) — ref identity only                     | The dispatch ended without its effect                                                                              |
+| `agent:status-updated`        | `{ active, status }`                                                                         | A workspace's aggregated agent status changed                                                                      |
+| `agent:restarted`             | `{ port }`                                                                                   | The workspace's agent server restarted                                                                             |
+| `project:opened`              | `{ project: Project, path?, git? }`                                                          | Project was opened                                                                                                 |
+| `project:closed`              | `{ projectId, projectRef }`                                                                  | Project was closed                                                                                                 |
+| `bases:updated`               | `{ projectId, projectRef, bases, defaultBaseBranch? }`                                       | Branch list refreshed                                                                                              |
+| `shortcut:key-pressed`        | `ShortcutKey`                                                                                | Shortcut action key pressed (presenter interprets it; mode is recomputed and shipped in the snapshot, not emitted) |
+| `setup:progress`              | `{ step, message }`                                                                          | Setup progress update                                                                                              |
 
 ---
 
@@ -1091,7 +1164,7 @@ Electron APIs are abstracted behind testable interfaces in two domains:
 
 | Domain   | Location             | Purpose                       | Examples                                            |
 | -------- | -------------------- | ----------------------------- | --------------------------------------------------- |
-| Platform | `services/platform/` | OS/runtime abstractions       | `IpcBoundary`, `DialogBoundary`, `ImageBoundary`    |
+| Platform | `services/platform/` | OS/runtime abstractions       | `AppBoundary`, `DialogBoundary`, `ImageBoundary`    |
 | Shell    | `services/shell/`    | Visual container abstractions | `WindowBoundary`, `ViewBoundary`, `SessionBoundary` |
 
 **Dependency Rule**: Shell layers may depend on Platform layers, but not vice versa.
@@ -1114,7 +1187,6 @@ Electron APIs are abstracted behind testable interfaces in two domains:
 |  |          Shell Layers           |  |         Platform Layers           | |
 |  |         (services/shell/)       |  |       (services/platform/)        | |
 |  |  WindowBoundary ---> ImageBoundary ---+--+-> ImageBoundary                      | |
-|  |       |                         |  |   IpcBoundary                        | |
 |  |       v                         |  |   DialogBoundary                     | |
 |  |  ViewBoundary ---> SessionBoundary    |  |   AppBoundary                        | |
 |  |                                 |  |   MenuBoundary                       | |
@@ -1201,7 +1273,7 @@ Each domain has its own error class with typed codes:
 
 ```typescript
 // Platform errors
-throw new PlatformError("IPC_HANDLER_EXISTS", `Handler already exists for channel: ${channel}`);
+throw new PlatformError("IMAGE_NOT_FOUND", `No image at path: ${path}`);
 
 // Shell errors include handle context
 throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id);
@@ -1209,25 +1281,18 @@ throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id)
 
 **Error codes:**
 
-| Domain   | Error Codes                                                                 |
-| -------- | --------------------------------------------------------------------------- |
-| Platform | `IPC_HANDLER_EXISTS`, `IPC_HANDLER_NOT_FOUND`, `DIALOG_CANCELLED`, etc.     |
-| Shell    | `WINDOW_NOT_FOUND`, `VIEW_NOT_FOUND`, `VIEW_DESTROYED`, `SESSION_NOT_FOUND` |
+| Domain   | Error Codes                                                                       |
+| -------- | --------------------------------------------------------------------------------- |
+| Platform | `DIALOG_CANCELLED`, `IMAGE_NOT_FOUND`, `IMAGE_LOAD_FAILED`, `APP_NOT_READY`       |
+| Shell    | `WINDOW_NOT_FOUND`, `VIEW_NOT_FOUND`, `VIEW_DESTROYED`, `SESSION_NOT_FOUND`, etc. |
 
 **Boundary Tests:**
 
-Each layer has boundary tests that verify behavior against real Electron APIs:
-
-| Layer             | Boundary Test              |
-| ----------------- | -------------------------- |
-| `IpcBoundary`     | `ipc.boundary.test.ts`     |
-| `DialogBoundary`  | `dialog.boundary.test.ts`  |
-| `ImageBoundary`   | `image.boundary.test.ts`   |
-| `AppBoundary`     | `app.boundary.test.ts`     |
-| `MenuBoundary`    | `menu.boundary.test.ts`    |
-| `WindowBoundary`  | `window.boundary.test.ts`  |
-| `ViewBoundary`    | `view.boundary.test.ts`    |
-| `SessionBoundary` | `session.boundary.test.ts` |
+Shell layers are tested against real Electron APIs in `src/boundaries/shell/`: boundary tests
+for `DialogBoundary` (`dialog.boundary.test.ts`) and `OsNotificationBoundary`
+(`os-notification.boundary.test.ts`), integration tests for the rest (`window`, `view`,
+`session`, `image`, `dialog`, `window-manager`, `ui-view-manager` `*.integration.test.ts`).
+IPC has no layer of its own: it is `ViewBoundary.send` / `onIpc`, scoped to a view's webContents.
 
 ---
 
@@ -1486,28 +1551,26 @@ All paths below are relative to `src/boundaries/`.
 
 ### Platform Layer Mocks
 
-| Interface              | Mock Factory                       | Location                                          |
-| ---------------------- | ---------------------------------- | ------------------------------------------------- |
-| `ArchiveExtractor`     | `createArchiveExtractorMock()`     | `binary-download/archive-extractor.state-mock.ts` |
-| `FileSystemBoundary`   | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`               |
-| `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                  |
-| `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`             |
-| `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.state-mock.ts`                  |
-| `PathProvider`         | `createMockPathProvider()`         | `platform/path-provider.test-utils.ts`            |
-| `WorkspaceLockHandler` | `createMockWorkspaceLockHandler()` | `platform/workspace-lock-handler.test-utils.ts`   |
+| Interface            | Mock Factory                   | Location                                   |
+| -------------------- | ------------------------------ | ------------------------------------------ |
+| `ArchiveExtractor`   | `createArchiveExtractorMock()` | `platform/archive-extractor.state-mock.ts` |
+| `FileSystemBoundary` | `createFileSystemMock()`       | `platform/filesystem.state-mock.ts`        |
+| `HttpClient`         | `createMockHttpClient()`       | `platform/http-client.state-mock.ts`       |
+| `PortManager`        | `createPortManagerMock()`      | `platform/port-manager.state-mock.ts`      |
+| `ProcessRunner`      | `createMockProcessRunner()`    | `platform/process.state-mock.ts`           |
+| `PathProvider`       | `createMockPathProvider()`     | `platform/path-provider.test-utils.ts`     |
 
 ### Shell Layer Mocks
 
-| Interface         | Mock Factory                       | Location                        |
-| ----------------- | ---------------------------------- | ------------------------------- |
-| `IpcBoundary`     | `createBehavioralIpcBoundary()`    | `platform/ipc.test-utils.ts`    |
-| `DialogBoundary`  | `createBehavioralDialogBoundary()` | `platform/dialog.test-utils.ts` |
-| `ImageBoundary`   | `createImageBoundaryMock()`        | `platform/image.state-mock.ts`  |
-| `AppBoundary`     | `createAppBoundaryMock()`          | `platform/app.state-mock.ts`    |
-| `MenuBoundary`    | `createBehavioralMenuBoundary()`   | `platform/menu.test-utils.ts`   |
-| `WindowBoundary`  | `createWindowBoundaryMock()`       | `shell/window.state-mock.ts`    |
-| `ViewBoundary`    | `createViewBoundaryMock()`         | `shell/view.state-mock.ts`      |
-| `SessionBoundary` | `createSessionBoundaryMock()`      | `shell/session.state-mock.ts`   |
+| Interface                | Mock Factory                         | Location                              |
+| ------------------------ | ------------------------------------ | ------------------------------------- |
+| `DialogBoundary`         | `createBehavioralDialogBoundary()`   | `shell/dialog.test-utils.ts`          |
+| `ImageBoundary`          | `createImageBoundaryMock()`          | `shell/image.state-mock.ts`           |
+| `AppBoundary`            | `createAppBoundaryMock()`            | `shell/app.state-mock.ts`             |
+| `WindowBoundary`         | `createWindowBoundaryMock()`         | `shell/window.state-mock.ts`          |
+| `ViewBoundary`           | `createViewBoundaryMock()`           | `shell/view.state-mock.ts`            |
+| `SessionBoundary`        | `createSessionBoundaryMock()`        | `shell/session.state-mock.ts`         |
+| `OsNotificationBoundary` | `createOsNotificationBoundaryMock()` | `shell/os-notification.state-mock.ts` |
 
 ### Domain Mocks
 

@@ -22,7 +22,7 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import type { IntentModule } from "../intents/lib/module";
 import { ANY_VALUE, type HookContext, type HookOutput } from "../intents/lib/operation";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { projPath, wsPath } from "../shared/test-fixtures";
+import { projPath, wsPath, workspaceRefIn } from "../shared/test-fixtures";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import {
   DeleteWorkspaceOperation,
@@ -56,7 +56,6 @@ import {
   WORKSPACE_CLAIMED_CAPABILITY,
 } from "./workspace-lifecycle-module";
 import type { WorkspaceClosing } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Fixtures
@@ -65,7 +64,7 @@ import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
 const PROJECT_PATH = projPath("/test/project");
 const WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-1");
 const OTHER_WORKSPACE_PATH = wsPath("/test/project/.worktrees/feature-2");
-const WORKSPACE_REF = makeWorkspaceRef(projectRefFor(PROJECT_PATH), "feature-1");
+const WORKSPACE_REF = workspaceRefIn(PROJECT_PATH, "feature-1");
 const CLAIMED = { [WORKSPACE_CLAIMED_CAPABILITY]: ANY_VALUE };
 
 /**

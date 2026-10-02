@@ -460,6 +460,7 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload.base).toBe("main");
       expect(event.payload.metadata).toEqual(WORKSPACE_METADATA);
       expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
+      expect(event.payload.fresh).toBe(true);
     });
 
     it("includes tracking in event when provided", async () => {
@@ -925,6 +926,65 @@ describe("OpenWorkspace Operation", () => {
 
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
       expect(event.payload.workspaceName).toBe("SDK-214");
+      expect(event.payload.fresh).toBe(false);
+    });
+  });
+
+  describe("fresh and workspaceName are decided once, for every hook point", () => {
+    const HOOK_POINTS = ["create", "provision", "prepare", "setup", "finalize"] as const;
+
+    function recordContexts(dispatcher: TestSetup["dispatcher"]): Map<string, HookContext> {
+      const seen = new Map<string, HookContext>();
+      dispatcher.registerModule({
+        name: "context-recorder",
+        hooks: {
+          [OPEN_WORKSPACE_OPERATION_ID]: Object.fromEntries(
+            HOOK_POINTS.map((point) => [
+              point,
+              {
+                handler: async (ctx: HookContext): Promise<void> => {
+                  seen.set(point, ctx);
+                },
+              },
+            ])
+          ),
+        },
+      });
+      return seen;
+    }
+
+    it("hands a fresh creation fresh: true and the requested name", async () => {
+      const setup = createTestSetup();
+      const seen = recordContexts(setup.dispatcher);
+
+      await setup.dispatcher.dispatch(createIntent({ workspaceName: "SDK-214" }));
+
+      for (const point of HOOK_POINTS) {
+        expect(seen.get(point), point).toMatchObject({ fresh: true, workspaceName: "SDK-214" });
+      }
+    });
+
+    it("hands a reopen fresh: false and the existing workspace's name", async () => {
+      const setup = createTestSetup();
+      const seen = recordContexts(setup.dispatcher);
+
+      await setup.dispatcher.dispatch({
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          workspaceName: "ignored",
+          existingWorkspace: {
+            path: wsPath("/existing/workspace/sdk-214"),
+            name: "SDK-214",
+            branch: "SDK-214",
+            metadata: {},
+          },
+          projectRef: PROJECT_REF,
+        },
+      } satisfies OpenWorkspaceIntent);
+
+      for (const point of HOOK_POINTS) {
+        expect(seen.get(point), point).toMatchObject({ fresh: false, workspaceName: "SDK-214" });
+      }
     });
   });
 

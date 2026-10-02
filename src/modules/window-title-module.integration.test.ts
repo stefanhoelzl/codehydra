@@ -20,7 +20,7 @@ import type { MetadataChangedEvent } from "../intents/set-metadata";
 import type { Operation, OperationSchemas } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { Intent } from "../intents/lib/types";
-import { projPath, testPath } from "../shared/test-fixtures";
+import { projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -30,7 +30,7 @@ import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { projectRefFor } from "../utils/ref";
 
 // =============================================================================
 // Minimal switch operation that emits workspace:switched
@@ -70,10 +70,7 @@ const minimalSwitchOperation: Operation<typeof minimalSwitchSchemas> = {
             projectName: payload.projectName,
             projectRef: projectRefFor(projPath("/projects/test")),
             workspaceName: payload.workspaceName,
-            workspaceRef: makeWorkspaceRef(
-              projectRefFor(projPath("/projects/test")),
-              payload.workspaceName
-            ),
+            workspaceRef: workspaceRefIn(projPath("/projects/test"), payload.workspaceName),
             metadata: payload.metadata ?? {},
           }
         : null,
@@ -116,11 +113,9 @@ const minimalSetMetadataOperation: Operation<typeof minimalSetMetadataSchemas> =
       type: EVENT_METADATA_CHANGED,
       payload: {
         projectId: payload.projectId,
+        projectRef: projectRefFor(projPath("/projects/test")),
         workspaceName: payload.workspaceName,
-        workspaceRef: makeWorkspaceRef(
-          projectRefFor(projPath("/projects/test")),
-          payload.workspaceName
-        ),
+        workspaceRef: workspaceRefIn(projPath("/projects/test"), payload.workspaceName),
         key: payload.key,
         value: payload.value,
       },

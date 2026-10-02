@@ -22,15 +22,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("./bundle-patches", () => ({ applyBundlePatches: vi.fn(async () => false) }));
 import { delimiter, join } from "node:path";
 
-import { z } from "zod/v4";
-import type {
-  Operation,
-  OperationContext,
-  OperationSchemas,
-  IntentOf,
-} from "../../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { IntentModule } from "../../intents/lib/module";
-import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
+import {
+  createMinimalOperation,
+  createStreamingMinimalOperation,
+} from "../../intents/lib/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -63,7 +60,11 @@ import {
   INTENT_OPEN_WORKSPACE,
   finalizeResultSchema,
 } from "../../intents/open-workspace";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
+import type {
+  FinalizeHookInput,
+  FinalizeHookResult,
+  OpenWorkspaceIntent,
+} from "../../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -98,199 +99,115 @@ import {
 } from "../../boundaries/platform/filesystem.state-mock";
 import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
 import type { WorkspaceName } from "../../shared/api/types";
-import { wsPath, projPath, testPath } from "../../shared/test-fixtures";
-import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
+import { wsPath, projPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
+import { projectRefFor } from "../../utils/ref";
 
-const FEATURE_REF = makeWorkspaceRef(projectRefFor(projPath("/test/project")), "feature-1");
+const FEATURE_REF = workspaceRefIn(projPath("/test/project"), "feature-1");
 
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
 
-const beforeReadySchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<readonly ConfigureResult[]>(),
-  hooks: { "before-ready": { result: configureResultSchema } },
-} satisfies OperationSchemas;
-
-class MinimalBeforeReadyOperation implements Operation<typeof beforeReadySchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = beforeReadySchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof beforeReadySchemas>, typeof beforeReadySchemas>
-  ): Promise<readonly ConfigureResult[]> {
-    const { results, errors } = await ctx.hooks.collect("before-ready", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results;
-  }
+/** The app:start "before-ready" hook point, returning every handler's result. */
+function minimalBeforeReady(): Operation<OperationSchemas> {
+  return createMinimalOperation<readonly ConfigureResult[], ConfigureResult>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "before-ready",
+    { hookSchemas: { result: configureResultSchema }, select: ({ results }) => results }
+  );
 }
 
-const checkDepsSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<CheckDepsResult>(),
-  hooks: { "check-deps": { result: checkDepsResultSchema } },
-} satisfies OperationSchemas;
-
-class MinimalCheckDepsOperation implements Operation<typeof checkDepsSchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = checkDepsSchemas;
-  private readonly extensionRequirements: readonly ExtensionRequirement[];
-
-  constructor(extensionRequirements: readonly ExtensionRequirement[] = []) {
-    this.extensionRequirements = extensionRequirements;
-  }
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof checkDepsSchemas>, typeof checkDepsSchemas>
-  ): Promise<CheckDepsResult> {
-    const hookCtx: CheckDepsHookContext = {
-      intent: ctx.intent,
-      configuredAgent: "claude",
-      extensionRequirements: this.extensionRequirements,
-    };
-    const { results } = await ctx.hooks.collect("check-deps", hookCtx);
-    // Merge all results
-    const merged: CheckDepsResult = {};
-    for (const r of results) {
-      if (r.missingBinaries) {
-        (merged as Record<string, unknown>).missingBinaries = [
-          ...((merged.missingBinaries as string[]) ?? []),
-          ...r.missingBinaries,
-        ];
-      }
-      if (r.extensionInstallPlan) {
-        (merged as Record<string, unknown>).extensionInstallPlan = [
-          ...((merged.extensionInstallPlan as ExtensionInstallEntry[]) ?? []),
-          ...r.extensionInstallPlan,
-        ];
-      }
+/** The app:start "check-deps" hook point, merging every handler's result. */
+function minimalCheckDeps(
+  extensionRequirements: readonly ExtensionRequirement[] = []
+): Operation<OperationSchemas> {
+  return createMinimalOperation<CheckDepsResult, CheckDepsResult>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "check-deps",
+    {
+      throwOnError: false,
+      hookSchemas: { result: checkDepsResultSchema },
+      hookContext: (ctx): CheckDepsHookContext => ({
+        intent: ctx.intent,
+        configuredAgent: "claude",
+        extensionRequirements,
+      }),
+      select: ({ results }) => {
+        const merged: CheckDepsResult = {};
+        for (const r of results) {
+          if (r.missingBinaries) {
+            (merged as Record<string, unknown>).missingBinaries = [
+              ...((merged.missingBinaries as string[]) ?? []),
+              ...r.missingBinaries,
+            ];
+          }
+          if (r.extensionInstallPlan) {
+            (merged as Record<string, unknown>).extensionInstallPlan = [
+              ...((merged.extensionInstallPlan as ExtensionInstallEntry[]) ?? []),
+              ...r.extensionInstallPlan,
+            ];
+          }
+        }
+        return merged;
+      },
     }
-    return merged;
-  }
+  );
 }
 
-const startSchemas = {
-  type: INTENT_APP_START,
-  payload: z.unknown(),
-  result: z.custom<number | undefined>(),
-} satisfies OperationSchemas;
-
-class MinimalStartOperation implements Operation<typeof startSchemas> {
-  readonly id = APP_START_OPERATION_ID;
-  readonly schemas = startSchemas;
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof startSchemas>, typeof startSchemas>
-  ): Promise<number | undefined> {
-    const { errors, capabilities } = await ctx.hooks.collect("start", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return capabilities.ideServerPort as number | undefined;
-  }
+/** The app:start "start" hook point, returning the `ideServerPort` capability. */
+function minimalStart(): Operation<OperationSchemas> {
+  return createMinimalOperation<number | undefined>(
+    APP_START_OPERATION_ID,
+    INTENT_APP_START,
+    "start",
+    {
+      hookContext: (ctx) => ({ intent: ctx.intent }),
+      select: ({ capabilities }) => capabilities.ideServerPort as number | undefined,
+    }
+  );
 }
 
-const binarySchemas = {
-  type: INTENT_SETUP,
-  payload: z.unknown(),
-  result: z.custom<void>(),
-} satisfies OperationSchemas;
-
-class MinimalBinaryOperation implements Operation<typeof binarySchemas> {
-  readonly id = SETUP_OPERATION_ID;
-  readonly schemas = binarySchemas;
-  private readonly hookInput: Partial<BinaryHookInput>;
-  /** Progress frames yielded by the streaming binary handler. */
-  readonly frames: SetupProgressPayload[] = [];
-
-  constructor(hookInput: Partial<BinaryHookInput> = {}) {
-    this.hookInput = hookInput;
-  }
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof binarySchemas>, typeof binarySchemas>
-  ): Promise<void> {
-    const { errors } = await ctx.hooks.collect(
-      "binary",
-      { intent: ctx.intent, ...this.hookInput },
-      {
-        onYield: (frame) => {
-          this.frames.push(frame as SetupProgressPayload);
-        },
-      }
-    );
-    if (errors.length > 0) throw errors[0]!;
-  }
+/** The setup "binary" hook point, exposing the streamed progress `frames` for assertions. */
+function minimalBinary(hookInput: Partial<BinaryHookInput> = {}) {
+  return createStreamingMinimalOperation<SetupProgressPayload>(
+    SETUP_OPERATION_ID,
+    INTENT_SETUP,
+    "binary",
+    { hookContext: (ctx) => ({ intent: ctx.intent, ...hookInput }) }
+  );
 }
 
-const extensionsSchemas = {
-  type: INTENT_SETUP,
-  payload: z.unknown(),
-  result: z.custom<void>(),
-} satisfies OperationSchemas;
-
-class MinimalExtensionsOperation implements Operation<typeof extensionsSchemas> {
-  readonly id = SETUP_OPERATION_ID;
-  readonly schemas = extensionsSchemas;
-  private readonly hookInput: Partial<ExtensionsHookInput>;
-  /** Progress frames yielded by the streaming extensions handler. */
-  readonly frames: SetupProgressPayload[] = [];
-
-  constructor(hookInput: Partial<ExtensionsHookInput> = {}) {
-    this.hookInput = hookInput;
-  }
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof extensionsSchemas>, typeof extensionsSchemas>
-  ): Promise<void> {
-    const { errors } = await ctx.hooks.collect(
-      "extensions",
-      { intent: ctx.intent, ...this.hookInput },
-      {
-        onYield: (frame) => {
-          this.frames.push(frame as SetupProgressPayload);
-        },
-      }
-    );
-    if (errors.length > 0) throw errors[0]!;
-  }
+/** The setup "extensions" hook point, exposing the streamed progress `frames` for assertions. */
+function minimalExtensions(hookInput: Partial<ExtensionsHookInput> = {}) {
+  return createStreamingMinimalOperation<SetupProgressPayload>(
+    SETUP_OPERATION_ID,
+    INTENT_SETUP,
+    "extensions",
+    { hookContext: (ctx) => ({ intent: ctx.intent, ...hookInput }) }
+  );
 }
 
-const finalizeSchemas = {
-  type: INTENT_OPEN_WORKSPACE,
-  payload: z.unknown(),
-  result: z.custom<string | undefined>(),
-  hooks: { finalize: { result: finalizeResultSchema } },
-} satisfies OperationSchemas;
-
-class MinimalFinalizeOperation implements Operation<typeof finalizeSchemas> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-  readonly schemas = finalizeSchemas;
-  private readonly hookInput: Partial<FinalizeHookInput>;
-
-  constructor(hookInput: Partial<FinalizeHookInput> = {}) {
-    this.hookInput = hookInput;
-  }
-
-  async execute(
-    ctx: OperationContext<IntentOf<typeof finalizeSchemas>, typeof finalizeSchemas>
-  ): Promise<string | undefined> {
-    const { errors, results } = await ctx.hooks.collect("finalize", {
-      intent: ctx.intent,
-      workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
-      envVars: { OPENCODE_PORT: "8080" },
-      workspaceEnv: {},
-      agentType: "opencode" as const,
-      ...this.hookInput,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    return results[0]?.workspaceUrl;
-  }
+/** The open-workspace "finalize" hook point, returning the first handler's `workspaceUrl`. */
+function minimalFinalize(hookInput: Partial<FinalizeHookInput> = {}): Operation<OperationSchemas> {
+  return createMinimalOperation<string | undefined, FinalizeHookResult>(
+    OPEN_WORKSPACE_OPERATION_ID,
+    INTENT_OPEN_WORKSPACE,
+    "finalize",
+    {
+      hookSchemas: { result: finalizeResultSchema },
+      hookContext: (ctx) => ({
+        intent: ctx.intent,
+        workspacePath: testPath("/test/project/.worktrees/feature-1").toNative(),
+        envVars: { OPENCODE_PORT: "8080" },
+        workspaceEnv: {},
+        agentType: "opencode" as const,
+        ...hookInput,
+      }),
+      select: ({ results }) => results[0]?.workspaceUrl,
+    }
+  );
 }
 
 /** Runs the "delete" hook point with a canned delete-pipeline context. */
@@ -425,7 +342,7 @@ describe("IdeServerModule", () => {
     it("declares IDE server wrapper scripts", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalBeforeReadyOperation());
+      dispatcher.registerOperation(minimalBeforeReady());
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
@@ -449,7 +366,7 @@ describe("IdeServerModule", () => {
         new FileSystemError("ENOENT", testPath("/bundles/vscodium").toNative(), "not found")
       );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(minimalCheckDeps());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -462,7 +379,7 @@ describe("IdeServerModule", () => {
     it("returns empty missingBinaries when up-to-date", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(minimalCheckDeps());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -477,7 +394,7 @@ describe("IdeServerModule", () => {
       delete (allDeps as unknown as Record<string, unknown>).archiveExtractor;
       const deps = allDeps;
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalCheckDepsOperation());
+      dispatcher.registerOperation(minimalCheckDeps());
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -497,7 +414,7 @@ describe("IdeServerModule", () => {
         { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
         { id: "ext.two", version: "2.0.0", vsixPath: testPath("/path/ext-two.vsix").toNative() },
       ];
-      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(minimalCheckDeps(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -523,7 +440,7 @@ describe("IdeServerModule", () => {
       const requirements: ExtensionRequirement[] = [
         { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(minimalCheckDeps(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -548,7 +465,7 @@ describe("IdeServerModule", () => {
       const requirements: ExtensionRequirement[] = [
         { id: "ext.one", version: "1.0.0", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      dispatcher.registerOperation(new MinimalCheckDepsOperation(requirements));
+      dispatcher.registerOperation(minimalCheckDeps(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -561,7 +478,7 @@ describe("IdeServerModule", () => {
     it("returns empty install plan when no requirements provided", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalCheckDepsOperation([]));
+      dispatcher.registerOperation(minimalCheckDeps([]));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
@@ -580,7 +497,7 @@ describe("IdeServerModule", () => {
     /** Drive the `start` hook, then hand back the https interceptor it registered. */
     async function startAndGetInterceptor(deps: IdeServerModuleDeps) {
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const sessions = (deps.sessionLayer as ReturnType<typeof createSessionBoundaryMock>).$
@@ -743,7 +660,7 @@ describe("IdeServerModule", () => {
     it("starts the IDE server and returns port", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       const ideServerPort = (await dispatcher.dispatch({
         type: "app:start",
@@ -758,7 +675,7 @@ describe("IdeServerModule", () => {
     it("ensures required directories exist", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -769,7 +686,7 @@ describe("IdeServerModule", () => {
       vi.mocked(applyBundlePatches).mockClear();
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -795,7 +712,7 @@ describe("IdeServerModule", () => {
       vi.mocked(applyBundlePatches).mockResolvedValue(true);
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -808,7 +725,7 @@ describe("IdeServerModule", () => {
     it("leaves the caches alone when every patch was already applied", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -823,7 +740,7 @@ describe("IdeServerModule", () => {
       const sessionLayer = deps.sessionLayer as MockSessionBoundary;
       vi.spyOn(sessionLayer, "clearCache").mockRejectedValue(new Error("cache locked"));
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       const ideServerPort = (await dispatcher.dispatch({
         type: "app:start",
@@ -837,7 +754,7 @@ describe("IdeServerModule", () => {
     it("checks port availability before spawning", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -847,7 +764,7 @@ describe("IdeServerModule", () => {
     it("spawns the IDE server with reh-web arguments on the IDE server port", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -879,7 +796,7 @@ describe("IdeServerModule", () => {
     it("points the wrappers at the vscodium remote-cli and root-level node", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -902,7 +819,7 @@ describe("IdeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
 
       // Start first
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Then stop
@@ -928,7 +845,7 @@ describe("IdeServerModule", () => {
           httpClient: { fetch: vi.fn().mockResolvedValue({ status: 503 }) },
         });
         const { dispatcher } = createTestSetup(deps);
-        dispatcher.registerOperation(new MinimalStartOperation());
+        dispatcher.registerOperation(minimalStart());
         dispatcher.registerOperation(
           createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
             throwOnError: false,
@@ -951,7 +868,7 @@ describe("IdeServerModule", () => {
       const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
       const deps = createMockDeps({ processRunner });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       dispatcher.registerOperation(
         createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
           throwOnError: false,
@@ -1020,7 +937,7 @@ describe("IdeServerModule", () => {
       const archiveExtractor = createArchiveExtractorMock();
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
+      const op = minimalBinary({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1033,7 +950,7 @@ describe("IdeServerModule", () => {
       const archiveExtractor = createArchiveExtractorMock();
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: [] });
+      const op = minimalBinary({ missingBinaries: [] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1052,7 +969,7 @@ describe("IdeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
+      const op = minimalBinary({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1081,7 +998,7 @@ describe("IdeServerModule", () => {
       });
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
+      const op = minimalBinary({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1106,7 +1023,7 @@ describe("IdeServerModule", () => {
       });
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
+      const op = minimalBinary({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
@@ -1133,7 +1050,7 @@ describe("IdeServerModule", () => {
       const installPlan: ExtensionInstallEntry[] = [
         { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
+      const op = minimalExtensions({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1166,7 +1083,7 @@ describe("IdeServerModule", () => {
       const installPlan: ExtensionInstallEntry[] = [
         { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
+      const op = minimalExtensions({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1181,7 +1098,7 @@ describe("IdeServerModule", () => {
     it("skips when no extensions need install", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalExtensionsOperation();
+      const op = minimalExtensions();
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -1207,7 +1124,7 @@ describe("IdeServerModule", () => {
       const installPlan: ExtensionInstallEntry[] = [
         { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
+      const op = minimalExtensions({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
@@ -1237,7 +1154,7 @@ describe("IdeServerModule", () => {
       const installPlan: ExtensionInstallEntry[] = [
         { id: "ext.one", vsixPath: testPath("/path/ext-one.vsix").toNative() },
       ];
-      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
+      const op = minimalExtensions({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
@@ -1268,12 +1185,12 @@ describe("IdeServerModule", () => {
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Now register finalize operation and test it
       dispatcher.registerOperation(
-        new MinimalFinalizeOperation({
+        minimalFinalize({
           workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { OPENCODE_PORT: "8080" },
         })
@@ -1312,11 +1229,11 @@ describe("IdeServerModule", () => {
       dispatcher.registerModule(createApiPortProvider());
       const { module } = createIdeServerModule(deps);
       dispatcher.registerModule(module);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
-        new MinimalFinalizeOperation({
+        minimalFinalize({
           workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: { _CH_API_TOKEN: "secret", DATABASE_URL: "postgres://x" },
           workspaceEnv: { DATABASE_URL: "postgres://x" },
@@ -1364,12 +1281,12 @@ describe("IdeServerModule", () => {
       dispatcher.registerModule(module);
 
       // Start to set port
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       // Finalize
       dispatcher.registerOperation(
-        new MinimalFinalizeOperation({
+        minimalFinalize({
           workspacePath: wsPath("/test/project/.worktrees/feature-1"),
           envVars: {},
         })
@@ -1488,7 +1405,7 @@ describe("IdeServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps, 9876);
 
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
@@ -1525,7 +1442,7 @@ describe("IdeServerModule", () => {
 
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1538,7 +1455,7 @@ describe("IdeServerModule", () => {
     it("includes EDITOR with absolute path and flags", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1555,7 +1472,7 @@ describe("IdeServerModule", () => {
     it("includes GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1572,7 +1489,7 @@ describe("IdeServerModule", () => {
 
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1586,7 +1503,7 @@ describe("IdeServerModule", () => {
     it("strips VSCODE_* variables from the child environment", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1599,7 +1516,7 @@ describe("IdeServerModule", () => {
     it("omits _CH_API_PORT when API server port not set", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1611,7 +1528,7 @@ describe("IdeServerModule", () => {
     it("points the wrappers at the vscodium remote-cli/node, plus opencode dir", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1728,7 +1645,7 @@ describe("IdeServerModule", () => {
     it("offers to terminate the holder, then starts once the port is free", async () => {
       const { deps, processRunner, dialogUi } = createConflictDeps({ answers: ["terminate"] });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).resolves.not.toThrow();
 
@@ -1739,7 +1656,7 @@ describe("IdeServerModule", () => {
     it("shows the pid, name and command line so the user can judge what it is", async () => {
       const { deps, dialogUi } = createConflictDeps({ answers: ["terminate"] });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1754,7 +1671,7 @@ describe("IdeServerModule", () => {
     it("fails with the ordinary busy-port error when the user quits", async () => {
       const { deps, processRunner } = createConflictDeps({ answers: ["quit"] });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1765,7 +1682,7 @@ describe("IdeServerModule", () => {
     it("treats Escape as quitting", async () => {
       const { deps } = createConflictDeps({ answers: ["dismiss"] });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1779,7 +1696,7 @@ describe("IdeServerModule", () => {
         onKill: () => (attempts++ === 0 ? { success: false } : undefined),
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).resolves.not.toThrow();
 
@@ -1799,7 +1716,7 @@ describe("IdeServerModule", () => {
       // offer, so this must not become a dialog with an empty table.
       const { deps, dialogUi } = createConflictDeps({ answers: [], listeners: {} });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1810,7 +1727,7 @@ describe("IdeServerModule", () => {
     it("keeps the plain error when there is no presenter to ask with", async () => {
       const { deps } = createConflictDeps({ answers: [], withUi: false });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1830,7 +1747,7 @@ describe("IdeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
         "already in use"
@@ -1849,7 +1766,7 @@ describe("IdeServerModule", () => {
           },
         });
         const { dispatcher } = createTestSetup(deps);
-        dispatcher.registerOperation(new MinimalStartOperation());
+        dispatcher.registerOperation(minimalStart());
 
         let caughtError: unknown;
         const startPromise = dispatcher
@@ -1887,7 +1804,7 @@ describe("IdeServerModule", () => {
         httpClient: { fetch },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       // No timers advanced: a dead server must not wait out the 30s timeout.
       await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
@@ -1908,7 +1825,7 @@ describe("IdeServerModule", () => {
         }),
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
 
       const error = await dispatcher.dispatch({ type: "app:start", payload: {} }).then(
         () => null,
@@ -1930,7 +1847,7 @@ describe("IdeServerModule", () => {
       deps: IdeServerModuleDeps
     ): Promise<{ dispatcher: ReturnType<typeof createTestSetup>["dispatcher"] }> {
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(minimalStart());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
       dispatcher.registerOperation(new AppResumeOperation());
       return { dispatcher };

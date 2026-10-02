@@ -4,15 +4,14 @@
  * Six operations (get-agent-session, get-metadata, restart-agent,
  * set-metadata, vscode-command, vscode-show-message) follow the same shape:
  *
- * 1. Dispatch workspace:resolve to turn the workspaceRef into the workspace
- *    (its path for the handlers, its name for event payloads)
- * 2. Optionally dispatch project:resolve (only needed when a post-hook
- *    domain event wants projectId)
- * 3. Run a single hook point with `{ intent, workspaceRef, workspacePath }` input
- * 4. Throw hook errors via the standard guard (lone error raw, multiple
+ * 1. Resolve the workspaceRef through `resolveWorkspaceIdentity` — with the
+ *    project when the operation emits an event (its payload carries the
+ *    project's id), without it otherwise
+ * 2. Run a single hook point with `{ intent, workspaceRef, workspacePath }` input
+ * 3. Throw hook errors via the standard guard (lone error raw, multiple
  *    aggregated)
- * 5. Extract the operation result from the hook results
- * 6. Optionally emit a domain event built from the resolved identity
+ * 4. Extract the operation result from the hook results
+ * 5. Optionally emit a domain event built from the resolved identity
  *
  * Concrete operations subclass this with a spec — they keep their exported
  * class names so registration in main.ts and tests is unchanged.
@@ -29,15 +28,10 @@ import type {
 } from "./operation";
 import { throwHookErrors } from "./hook-helpers";
 import {
-  INTENT_RESOLVE_WORKSPACE,
-  type ResolveWorkspaceIntent,
-  type ResolveWorkspaceResult,
-} from "../resolve-workspace";
-import {
-  INTENT_RESOLVE_PROJECT,
-  type ResolveProjectIntent,
-  type ResolveProjectResult,
-} from "../resolve-project";
+  resolveWorkspaceIdentity,
+  type ResolvedWorkspace,
+  type ResolvedWorkspaceIdentity,
+} from "./workspace-identity";
 import type { WorkspacePath, WorkspaceRef } from "../contract";
 import type { HookPointOf, HookResultOf, InputOf, EventOf } from "./operation";
 
@@ -86,17 +80,17 @@ export interface WorkspaceHookSpec<
     intent: IntentOf<S>,
     target: WorkspaceTarget
   ) => InputOf<S, HookPointOf<S> & string>;
-  /** Also dispatch project:resolve — needed only when onSuccess wants projectId. */
-  readonly resolveProject?: boolean;
   /** AggregateError message when multiple handlers fail. */
   readonly errorLabel: string;
   /** Merge hook results into the operation result. May throw (missing required result). */
   readonly extract: (results: readonly WorkspaceHookResult<S>[]) => R;
-  /** Optional post-hook domain event. `project` is set iff `resolveProject` is true. */
+  /**
+   * Optional post-hook domain event. An operation that declares one resolves the
+   * workspace together with its project, so `identity` carries the project's id.
+   */
   readonly onSuccess?: (args: {
     readonly intent: I;
-    readonly resolved: ResolveWorkspaceResult;
-    readonly project: ResolveProjectResult | undefined;
+    readonly identity: ResolvedWorkspaceIdentity;
     readonly result: R;
   }) => EventOf<S>;
 }
@@ -113,34 +107,33 @@ export abstract class WorkspaceHookOperation<
 
   async execute(ctx: OperationContext<IntentOf<S>, S>): Promise<ResultOf<S>> {
     const { workspaceRef } = ctx.intent.payload;
+    const { onSuccess } = this.spec;
 
-    // 1. Dispatch shared workspace resolution
-    const resolved = await ctx.dispatch<ResolveWorkspaceIntent>({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspaceRef },
+    // Resolve the workspace — together with its project only when an event
+    // needs it — then run the hook point and emit the optional domain event.
+    if (onSuccess) {
+      const identity = await resolveWorkspaceIdentity(ctx.dispatch, workspaceRef);
+      const result = await this.run(ctx, identity);
+      ctx.emit(onSuccess({ intent: ctx.intent, identity, result }));
+      return result;
+    }
+    const resolved = await resolveWorkspaceIdentity(ctx.dispatch, workspaceRef, {
+      withProject: false,
     });
+    return this.run(ctx, resolved);
+  }
 
-    // 2. Dispatch shared project resolution (event payloads only)
-    const project = this.spec.resolveProject
-      ? await ctx.dispatch<ResolveProjectIntent>({
-          type: INTENT_RESOLVE_PROJECT,
-          payload: { projectRef: resolved.projectRef },
-        })
-      : undefined;
-
-    // 3. Run the hook point — handlers do the actual work
+  /** Run the hook point — handlers do the actual work — and extract the result. */
+  private async run(
+    ctx: OperationContext<IntentOf<S>, S>,
+    resolved: ResolvedWorkspace
+  ): Promise<ResultOf<S>> {
     const hookCtx = this.spec.buildInput(ctx.intent, {
       workspaceRef: resolved.workspaceRef,
       workspacePath: resolved.workspacePath,
     });
     const { results, errors } = await ctx.hooks.collect(this.spec.hookPoint, hookCtx);
     throwHookErrors(errors, this.spec.errorLabel);
-
-    // 4. Extract result and emit optional domain event
-    const result = this.spec.extract(results);
-    if (this.spec.onSuccess) {
-      ctx.emit(this.spec.onSuccess({ intent: ctx.intent, resolved, project, result }));
-    }
-    return result;
+    return this.spec.extract(results);
   }
 }

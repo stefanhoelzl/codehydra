@@ -97,7 +97,10 @@ export function createTargetResolver(
   };
 }
 
-/** The name of a workspace, for showing to a person: the name its ref carries. */
-export function workspaceNameOf(workspaceRef: WorkspaceRef): string {
+/**
+ * The name of a workspace, for showing to a person: the name its ref carries,
+ * else the raw string (unlike `workspaceNameOf` in utils/ref.ts, never throws).
+ */
+export function workspaceDisplayName(workspaceRef: WorkspaceRef): string {
   return parseWorkspaceRef(workspaceRef)?.name ?? workspaceRef;
 }

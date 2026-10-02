@@ -22,10 +22,10 @@
  * can never strand a tag the user has no way to clear.
  */
 
+import { getErrorMessage } from "../shared/error-utils";
 import type { WorkspaceRef } from "../intents/contract";
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Config } from "../boundaries/platform/config";
 import { storeBoolean } from "../boundaries/platform/store-definition";
@@ -33,24 +33,21 @@ import type { Logger } from "../boundaries/platform/logging";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_CREATED,
-  type OpenWorkspaceIntent,
-  type SetupHookInput,
   type SetupHookResult,
-  type WorkspaceCreatedEvent,
 } from "../intents/open-workspace";
 import {
   INTENT_SET_METADATA,
   EVENT_METADATA_CHANGED,
   type SetMetadataIntent,
-  type MetadataChangedEvent,
 } from "../intents/set-metadata";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "../intents/switch-workspace";
-import { TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
+import { encodeTag, tagKey } from "../shared/api/types";
+import { defineEvents, defineHooks } from "../intents/declarations";
 
 /** Metadata key holding the tag. `tags.`-prefixed keys are what the UI renders as tags. */
-const NEW_TAG_KEY = `${TAGS_METADATA_KEY_PREFIX}new`;
+const NEW_TAG_KEY = tagKey("new");
 /** Blue reads as informational/unseen, leaving red (deletion-failed) the only alarm color. */
-const NEW_TAG_VALUE = JSON.stringify({ color: "#3498db" });
+const NEW_TAG_VALUE = encodeTag({ color: "#3498db" });
 
 export interface AutoTaggingModuleDeps {
   readonly dispatcher: Dispatcher;
@@ -73,15 +70,13 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
 
   return {
     name: "auto-tagging",
-    hooks: {
+    hooks: defineHooks({
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
-            const { payload } = ctx.intent as OpenWorkspaceIntent;
-            const isFreshCreate = payload.existingWorkspace === undefined;
-            if (!isFreshCreate || !newTagConfig.get()) return {};
+          handler: async (ctx): Promise<HookOutput<SetupHookResult>> => {
+            const { workspaceRef, fresh } = ctx;
+            if (!fresh || !newTagConfig.get()) return {};
 
-            const { workspaceRef } = ctx as SetupHookInput;
             try {
               await deps.dispatcher.dispatch<SetMetadataIntent>({
                 type: INTENT_SET_METADATA,
@@ -92,7 +87,7 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
               deps.logger
                 .scoped({ workspace: workspaceRef })
                 .warn("Failed to tag background workspace", {
-                  error: error instanceof Error ? error.message : String(error),
+                  error: getErrorMessage(error),
                 });
               return {};
             }
@@ -102,31 +97,30 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
           },
         },
       },
-    },
-    events: {
+    }),
+    events: defineEvents({
       // Re-seeds the set from stored metadata on startup, so a tag written in an earlier
       // run still clears on the next switch rather than sticking forever.
       [EVENT_WORKSPACE_CREATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef, metadata } = (event as WorkspaceCreatedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, metadata } = event.payload;
           if (metadata[NEW_TAG_KEY] !== undefined) tagged.add(workspaceRef);
         },
       },
       // Keeps the set honest when the tag is added or removed out from under us
       // (sidekick, MCP, or our own writes below).
       [EVENT_METADATA_CHANGED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspaceRef, key, value } = (event as MetadataChangedEvent).payload;
+        handler: async (event): Promise<void> => {
+          const { workspaceRef, key, value } = event.payload;
           if (key !== NEW_TAG_KEY) return;
           if (value === null) tagged.delete(workspaceRef);
           else tagged.add(workspaceRef);
         },
       },
       [EVENT_WORKSPACE_SWITCHED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
+        handler: async (event): Promise<void> => {
           // Payload is null when the user deselects (creation panel becomes the view).
-          const payload = (event as WorkspaceSwitchedEvent).payload as
-            WorkspaceSwitchedEvent["payload"] | null;
+          const payload = event.payload as WorkspaceSwitchedEvent["payload"] | null;
           if (payload === null) return;
           if (!tagged.has(payload.workspaceRef)) return;
 
@@ -140,11 +134,11 @@ export function createAutoTaggingModule(deps: AutoTaggingModuleDeps): IntentModu
             deps.logger
               .scoped({ workspace: payload.workspaceRef })
               .warn("Failed to clear new tag", {
-                error: error instanceof Error ? error.message : String(error),
+                error: getErrorMessage(error),
               });
           }
         },
       },
-    },
+    }),
   };
 }

@@ -109,13 +109,12 @@ export interface HookResult<T = unknown> {
  *
  * `onYield` receives each progress frame yielded by a streaming (`async function*`) handler
  * on this hook point. It runs host-side (operation ↔ dispatcher) — the operation typically
- * narrows the frame and maps it to a domain event, then emits it. The frame is typed
- * `unknown` because the dispatcher stores handlers without their yield type; a hook point
- * carries a single progress semantic, so the operation knows how to narrow it (and a remote
- * proxy will validate it against the wire schema before it reaches here).
+ * maps the frame to a domain event and emits it. `F` is the hook point's declared `frames`
+ * schema ({@link FrameOf}); the dispatcher validates every frame against that schema before
+ * it reaches `onYield`, so the operation receives it typed, with no narrowing of its own.
  */
-export interface CollectOptions {
-  readonly onYield?: (frame: unknown) => void | Promise<void>;
+export interface CollectOptions<F = unknown> {
+  readonly onYield?: (frame: F) => void | Promise<void>;
 }
 
 /**
@@ -171,6 +170,22 @@ export type HookResultOf<S extends OperationSchemas, K extends HookPointOf<S>> =
   : unknown;
 
 /**
+ * The progress-frame type for hook point `K`, derived from its declared `frames` schema.
+ *
+ * `unknown` for a hook point that declares none — it has no streaming handlers, or none
+ * whose frames the operation reads.
+ */
+export type FrameOf<S extends OperationSchemas, K extends HookPointOf<S>> = S extends {
+  readonly hooks: infer H;
+}
+  ? K extends keyof H
+    ? H[K] extends { readonly frames: infer F extends z.ZodType }
+      ? z.infer<F>
+      : unknown
+    : unknown
+  : unknown;
+
+/**
  * Resolved hooks for a specific operation.
  *
  * `collect()` provides isolated-context execution: each handler receives a frozen
@@ -189,7 +204,7 @@ export interface ResolvedHooks<S extends OperationSchemas = OperationSchemas> {
   collect<K extends HookPointOf<S>>(
     hookPointId: K,
     ctx: InputOf<S, K>,
-    options?: CollectOptions
+    options?: CollectOptions<FrameOf<S, K>>
   ): Promise<HookResult<HookResultOf<S, K>>>;
 }
 
@@ -278,6 +293,13 @@ export interface HookPointSchemas {
   readonly result?: z.ZodType;
   /** Provided capability data (scalar bag). Fail → collected error. */
   readonly provides?: z.ZodType<Readonly<Record<string, unknown>>>;
+  /**
+   * Each progress frame a streaming (`async function*`) handler yields, validated by the
+   * dispatcher before it reaches the operation's `onYield` (whose parameter type
+   * {@link FrameOf} derives from it). Fail → collected error for that handler, which stops
+   * draining it: a malformed frame is a bug in its handler, reported like a bad result.
+   */
+  readonly frames?: z.ZodType;
 }
 
 /**

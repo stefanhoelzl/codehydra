@@ -8,19 +8,43 @@
 import { z } from "zod/v4";
 import type { WorkspaceStatus, Workspace, AgentSpec, AgentSession } from "./api/types";
 import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
-import { agentSpecSchema } from "../intents/contract";
+import { agentSpecSchema, type AgentType } from "../intents/contract";
 
 // ============================================================================
 // Result Types
 // ============================================================================
 
 /**
- * Result wrapper for all acknowledgment responses.
- * Provides a discriminated union for success/failure handling.
+ * - `usage` — the call was malformed: unknown operation, or input that failed
+ *   validation. CLI exit code 2.
+ * - `no-workspace` — the operation needs a workspace and the caller supplied
+ *   none. CLI exit code 4. Distinct from `usage` because it is the expected
+ *   outcome of running a workspace command outside a worktree, not a mistake in
+ *   how the command was written.
+ * - `conflict` — the operation was refused because something it needs is held by
+ *   someone else, and the caller asked not to wait (`ch lock take --no-wait`).
+ *   CLI exit code 5.
+ * - `not-found` — the thing the caller named is not there, or is not theirs to
+ *   act on (`ch lock release` of a lock this workspace does not hold). CLI exit
+ *   code 6.
+ * - `failed` — the operation ran and did not succeed. CLI exit code 1.
+ *
+ * `conflict` and `not-found` are named for the condition rather than for locks,
+ * so a later operation with the same failure shape reports it the same way.
+ */
+export type ApiErrorCategory = "usage" | "no-workspace" | "conflict" | "not-found" | "failed";
+
+/**
+ * Result wrapper the API protocol acknowledges every command with.
+ *
+ * `category` rides along on a failure so the CLI can pick an exit code from what
+ * went wrong rather than from the wording of the message. Additive: a client that
+ * does not know it reads `error` exactly as before. Optional because not every
+ * failure carries one; a receiver must still validate it (it arrives over the wire).
  */
 export type ApiResult<T> =
   | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string };
+  | { readonly success: false; readonly error: string; readonly category?: ApiErrorCategory };
 
 // ============================================================================
 // Validation Infrastructure
@@ -108,10 +132,8 @@ export interface CommandRequest {
 // Configuration Types
 // ============================================================================
 
-/**
- * Agent type for terminal launching.
- */
-export type AgentType = "opencode" | "claude";
+/** Agent type for terminal launching (single source: the intent contract). */
+export type { AgentType };
 
 /**
  * Configuration sent from server to client on connection.

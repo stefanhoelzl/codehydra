@@ -29,6 +29,7 @@ import mime from "mime";
 
 import type { DirEntry } from "../../boundaries/platform/filesystem";
 import type { SupportedPlatform } from "../../boundaries/platform/platform-info";
+import { escapeHtml } from "../../shared/html";
 
 /** The synthetic host the patched Simple Browser rewrites `file://` URLs to. */
 export const LOCAL_FILE_HOST = "file.codehydra.invalid";
@@ -123,12 +124,4 @@ export function directoryListing(displayPath: string, entries: readonly DirEntry
 
 function isRoot(path: string): boolean {
   return /^(\/|[A-Za-z]:\/?)$/.test(path);
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

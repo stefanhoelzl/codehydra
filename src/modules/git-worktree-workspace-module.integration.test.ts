@@ -20,6 +20,7 @@ import type {
   OperationSchemas,
   HookContext,
   HookOutput,
+  DispatchFn,
 } from "../intents/lib/operation";
 import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
@@ -79,7 +80,7 @@ import type { MockNotificationManager } from "./presentation/notification-manage
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { makeWorkspaceRef, parseProjectRef, projectRefFor, projectRefOf } from "../utils/ref";
-import { wsPath, projPath, testPath } from "../shared/test-fixtures";
+import { wsPath, projPath, testPath, workspaceRefIn } from "../shared/test-fixtures";
 import type {
   WorkspacePath,
   ProjectPath,
@@ -198,35 +199,48 @@ const preflightSchemas = {
   hooks: { preflight: { result: preflightResultSchema } },
 } satisfies OperationSchemas;
 
+/**
+ * Dispatch workspace:resolve for the intent's workspace (matching the real operation)
+ * and build the delete-pipeline hook input from it. `resolved` is false when the
+ * workspace is not found; the input then carries an empty project path.
+ */
+async function resolveDeletePipelineInput(
+  dispatch: DispatchFn,
+  intent: Intent & { readonly payload: DeleteWorkspaceIntent["payload"] }
+): Promise<{ input: DeletePipelineHookInput; resolved: boolean }> {
+  const { workspaceRef } = intent.payload;
+  let resolvedProjectPath = "";
+  let resolvedWorkspacePath = wsPath("/unresolved");
+  try {
+    const resolved = (await dispatch({
+      type: "workspace:resolve",
+      payload: { workspaceRef },
+    } as Intent)) as ResolveResult;
+    resolvedProjectPath = resolved.projectPath ?? "";
+    resolvedWorkspacePath = resolved.workspacePath ?? resolvedWorkspacePath;
+  } catch {
+    // Workspace not found — continue with empty projectPath
+  }
+  return {
+    input: {
+      intent,
+      projectRef: projectRefOf(workspaceRef),
+      projectPath: projPath(resolvedProjectPath),
+      workspaceRef,
+      workspacePath: resolvedWorkspacePath,
+      workspaceName: "test-workspace" as WorkspaceName,
+      active: false,
+    },
+    resolved: resolvedProjectPath !== "",
+  };
+}
+
 const minimalPreflightOperation: Operation<typeof preflightSchemas> = {
   id: DELETE_WORKSPACE_OPERATION_ID,
   schemas: preflightSchemas,
   async execute(ctx): Promise<PreflightResult> {
-    const { payload } = ctx.intent;
-
-    let resolvedProjectPath = "";
-    let resolvedWorkspacePath = wsPath("/unresolved");
-    try {
-      const resolved = (await ctx.dispatch({
-        type: "workspace:resolve",
-        payload: { workspaceRef: payload.workspaceRef },
-      } as Intent)) as ResolveResult;
-      resolvedProjectPath = resolved.projectPath ?? "";
-      resolvedWorkspacePath = resolved.workspacePath ?? resolvedWorkspacePath;
-    } catch {
-      // Workspace not found
-    }
-
-    const preflightInput: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectRef: projectRefOf(payload.workspaceRef),
-      projectPath: projPath(resolvedProjectPath),
-      workspaceRef: payload.workspaceRef,
-      workspacePath: resolvedWorkspacePath,
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: false,
-    };
-    const { results, errors } = await ctx.hooks.collect("preflight", preflightInput);
+    const { input } = await resolveDeletePipelineInput(ctx.dispatch, ctx.intent);
+    const { results, errors } = await ctx.hooks.collect("preflight", input);
     // Mirrors the real operation's throwHookErrors: a handler that cannot
     // determine the state fails the gate closed instead of reporting "clean".
     if (errors.length > 0) throw errors[0]!;
@@ -253,41 +267,17 @@ const minimalDeleteWorkspaceOperation: Operation<typeof deleteWorkspaceSchemas> 
   id: DELETE_WORKSPACE_OPERATION_ID,
   schemas: deleteWorkspaceSchemas,
   async execute(ctx): Promise<DeleteResult> {
-    const { payload } = ctx.intent;
-
-    // Dispatch workspace:resolve (matching real operation)
-    let resolvedProjectPath = "";
-    let resolvedWorkspacePath = wsPath("/unresolved");
-    try {
-      const resolved = (await ctx.dispatch({
-        type: "workspace:resolve",
-        payload: { workspaceRef: payload.workspaceRef },
-      } as Intent)) as ResolveResult;
-      resolvedProjectPath = resolved.projectPath ?? "";
-      resolvedWorkspacePath = resolved.workspacePath ?? resolvedWorkspacePath;
-    } catch {
-      // Workspace not found — continue with empty projectPath
-    }
-
     // delete (enriched with both paths, matching real operation's DeletePipelineHookInput)
-    const deleteInput: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectRef: projectRefOf(payload.workspaceRef),
-      projectPath: projPath(resolvedProjectPath),
-      workspaceRef: payload.workspaceRef,
-      workspacePath: resolvedWorkspacePath,
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: false,
-    };
+    const { input, resolved } = await resolveDeletePipelineInput(ctx.dispatch, ctx.intent);
     const { results: deleteResults, errors: deleteErrors } = await ctx.hooks.collect(
       "delete",
-      deleteInput
+      input
     );
-    if (deleteErrors.length > 0 && !payload.force) throw deleteErrors[0]!;
+    if (deleteErrors.length > 0 && !ctx.intent.payload.force) throw deleteErrors[0]!;
 
     return {
       ...deleteResults[0],
-      ...(resolvedProjectPath !== "" && { resolvedPath: resolvedWorkspacePath }),
+      ...(resolved && { resolvedPath: input.workspacePath }),
     };
   },
 };
@@ -566,7 +556,7 @@ function makeWorkspace(name: string, projectPath: ProjectPath): Workspace {
 /** The ref of a workspace made by {@link makeWorkspace}, from its path (`<project>/.worktrees/<name>`). */
 function wsRefAt(workspacePath: string): WorkspaceRef {
   const path = new Path(workspacePath);
-  return makeWorkspaceRef(projectRefFor(path.dirname.dirname.toString()), path.basename);
+  return workspaceRefIn(path.dirname.dirname.toString(), path.basename);
 }
 
 // Typed dispatch helpers to avoid casting at every call site
@@ -651,6 +641,19 @@ async function dispatchDeleteWorkspace(
 ): Promise<DeleteResult> {
   // Cast through Intent to bypass phantom type inference (test operation returns DeleteResult)
   return (await dispatcher.dispatch(intent as unknown as Intent)) as DeleteResult;
+}
+
+/** Fully delete `ws` (keeping no branch); non-forced unless asked. */
+function deleteIntentFor(ws: Workspace, options?: { force?: boolean }): DeleteWorkspaceIntent {
+  return {
+    type: "workspace:delete",
+    payload: {
+      workspaceRef: wsRefAt(ws.path.toString()),
+      keepBranch: false,
+      force: options?.force ?? false,
+      removeWorktree: true,
+    },
+  };
 }
 
 async function dispatchFindCandidates(dispatcher: Dispatcher): Promise<FindCandidatesHookResult> {
@@ -1173,7 +1176,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       it("resolves a workspace by its ref, to its path", async () => {
         const { dispatcher, provider } = setup;
         const { projectPath } = await setupWithWorkspace(dispatcher, provider);
-        const workspaceRef = makeWorkspaceRef(projectRefFor(projectPath), "feature-1");
+        const workspaceRef = workspaceRefIn(projectPath, "feature-1");
 
         const result = (await dispatcher.dispatch({
           type: "workspace:resolve",
@@ -1278,17 +1281,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const { dispatcher, provider } = setup;
         const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
 
-        const deleteIntent: DeleteWorkspaceIntent = {
-          type: "workspace:delete",
-          payload: {
-            workspaceRef: wsRefAt(ws.path.toString()),
-            keepBranch: false,
-            force: false,
-            removeWorktree: true,
-          },
-        };
-
-        await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+        await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
         expect(provider.removeWorkspace).toHaveBeenCalledWith(new Path(projectPath), ws.path, true);
       });
@@ -1316,17 +1309,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         const { dispatcher, provider } = setup;
         const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
 
-        const deleteIntent: DeleteWorkspaceIntent = {
-          type: "workspace:delete",
-          payload: {
-            workspaceRef: wsRefAt(ws.path.toString()),
-            keepBranch: false,
-            force: false,
-            removeWorktree: true,
-          },
-        };
-
-        await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+        await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
         // Workspace should no longer be resolvable
         const resolveResult = await dispatchResolveWorkspace(
@@ -1344,17 +1327,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
         provider.removeWorkspace.mockRejectedValue(new Error("git error"));
 
-        const deleteIntent: DeleteWorkspaceIntent = {
-          type: "workspace:delete",
-          payload: {
-            workspaceRef: wsRefAt(ws.path.toString()),
-            keepBranch: false,
-            force: true,
-            removeWorktree: true,
-          },
-        };
-
-        const result = await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+        const result = await dispatchDeleteWorkspace(
+          dispatcher,
+          deleteIntentFor(ws, { force: true })
+        );
 
         expect(result.error).toBe("git error");
 
@@ -1726,16 +1702,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete fails (non-force) — workspace enters deletionPending
       provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      const deleteResult = await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      const deleteResult = await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
       expect(deleteResult.error).toBe("EBUSY");
 
       // Re-discover project — git no longer lists the workspace
@@ -1753,16 +1720,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete succeeds
       provider.removeWorkspace.mockResolvedValue(undefined);
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
       // Workspace should not be resolvable
       const resolveResult = await dispatchResolveWorkspace(dispatcher, wsPath(ws.path.toString()));
@@ -1775,16 +1733,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete fails but force=true — dismissed from both maps
       provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: true,
-          removeWorktree: true,
-        },
-      };
-      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws, { force: true }));
 
       // Re-discover with empty list
       provider.discover.mockResolvedValue([]);
@@ -1801,16 +1750,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete fails (non-force) — workspace enters deletionPending
       provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
       // A second workspace opens meanwhile
       const ws2 = makeWorkspace("feature-2", projPath(projectPath));
@@ -1842,16 +1782,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete fails (non-force)
       provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
       // Re-discover without the deleted workspace
       provider.discover.mockResolvedValue([]);
@@ -1869,16 +1800,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // Delete fails (non-force) — workspace enters deletionPending
       provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
-      const deleteIntent: DeleteWorkspaceIntent = {
-        type: "workspace:delete",
-        payload: {
-          workspaceRef: wsRefAt(ws.path.toString()),
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-        },
-      };
-      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      await dispatchDeleteWorkspace(dispatcher, deleteIntentFor(ws));
 
       // Close project — should clear deletionPending too
       await dispatchCloseProject(dispatcher, projPath(projectPath));
@@ -1931,6 +1853,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           projectId: "test-project" as ProjectId,
           workspaceName: "feature-1" as WorkspaceName,
           workspaceRef: wsRefAt(ws.path.toString()),
+          projectRef: projectRefOf(wsRefAt(ws.path.toString())),
           key: "auto-workspace.tracked",
           value: "true",
         },
@@ -1965,6 +1888,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
           projectId: "test-project" as ProjectId,
           workspaceName: "feature-1" as WorkspaceName,
           workspaceRef: wsRefAt(ws.path.toString()),
+          projectRef: projectRefOf(wsRefAt(ws.path.toString())),
           key: "auto-workspace.tracked",
           value: null,
         },
@@ -1990,7 +1914,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         payload: {
           projectId: "test-project" as ProjectId,
           workspaceName: "unknown" as WorkspaceName,
-          workspaceRef: makeWorkspaceRef(projectRefFor("/nonexistent"), "workspace"),
+          workspaceRef: workspaceRefIn("/nonexistent", "workspace"),
+          projectRef: projectRefFor("/nonexistent"),
           key: "auto-workspace.tracked",
           value: "true",
         },

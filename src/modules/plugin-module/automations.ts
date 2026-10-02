@@ -76,17 +76,14 @@ import {
 } from "../../boundaries/platform/store-definition";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
-import {
-  TAGS_METADATA_KEY_PREFIX,
-  TITLE_METADATA_KEY,
-  type AgentSpec,
-} from "../../shared/api/types";
+import { encodeTag, tagKey, TITLE_METADATA_KEY, type AgentSpec } from "../../shared/api/types";
 import type { OperationName } from "../../api/names";
 import { buildAgentSpec } from "../../api/entries/workspace";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import { looksLikeGitUrl, matchOpenProject } from "../../utils/project-reference";
 import { CREATE_ACTION, type AutomationItem, type CreateItem } from "./items";
+import { safeJsonParse } from "./util";
 import { projectPathSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
 
 // =============================================================================
@@ -141,14 +138,6 @@ function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
   return out;
 }
 
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -156,6 +145,15 @@ function safeJsonParse(raw: string): unknown {
 /** Default gap between the end of one reconcile-and-poll cycle and the next. */
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const METADATA_SOURCE_KEY = "source";
+
+/**
+ * The exit an automation uses to say "temporary, try again next poll" —
+ * `EX_TEMPFAIL` from sysexits.h, as mail servers use it.
+ */
+export const TEMPORARY_FAILURE_EXIT = 75;
+
+/** How long temporary failures may go on before they are worth a card. */
+const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
 
 // =============================================================================
 // Dependencies
@@ -169,6 +167,33 @@ export interface AutomationSource {
   readonly plugin: string;
   /** The automation's name within its plugin. */
   readonly name: string;
+}
+
+/** How one run of an automation's script went. */
+export type AutomationRun =
+  | { readonly ok: true; readonly items: readonly unknown[] }
+  | {
+      readonly ok: false;
+      /** Why, in the words `ch plugin errors` uses. */
+      readonly failure: string;
+      /** It exited {@link TEMPORARY_FAILURE_EXIT}: retry next poll, quietly at first. */
+      readonly temporary: boolean;
+      /** The run's log file (native path), when there is one. */
+      readonly logPath?: string;
+    };
+
+/**
+ * Where an automation's failures are recorded (`ch plugin errors`, and a card
+ * unless `quiet`), and cleared once it runs a cycle without one.
+ */
+export interface AutomationErrors {
+  failure(
+    source: AutomationSource,
+    message: string,
+    logPath?: string,
+    options?: { readonly quiet?: boolean }
+  ): void;
+  success(source: AutomationSource): void;
 }
 
 /** A create item, turned into what creating or matching a workspace needs. */
@@ -187,7 +212,7 @@ interface WorkspaceDefinition {
   readonly metadata: Readonly<Record<string, string>>;
 }
 
-export interface AutomationsDeps {
+export interface AutomationsDeps<S extends AutomationSource> {
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
   readonly configService: Config;
@@ -199,18 +224,18 @@ export interface AutomationsDeps {
    */
   readonly enabled: () => boolean;
   /** Every automation that may run now; read at the start of each cycle. */
-  readonly sources: () => Promise<readonly AutomationSource[]>;
-  /** Run a source's script: its items, or null when it failed (already reported). */
-  readonly runScript: (source: AutomationSource) => Promise<unknown[] | null>;
+  readonly sources: () => Promise<readonly S[]>;
+  /** Run a source's script and read its items. Reports nothing itself. */
+  readonly runScript: (source: S) => Promise<AutomationRun>;
   /** Validate one printed item. Throws a message naming the action and field. */
   readonly parseItem: (raw: unknown) => AutomationItem;
   /** Run a non-create action with a rendered input. Throws on failure. */
   readonly invokeAction: (action: OperationName, input: Record<string, unknown>) => Promise<void>;
   /**
-   * An item of a source failed in a way the user must hear about (an invalid
-   * item, an action that was refused). Repeats of the same text collapse.
+   * Where a failure the user must hear about goes: a script that failed, an
+   * invalid item, an action that was refused. Repeats of the same text collapse.
    */
-  readonly reportError: (source: AutomationSource, message: string) => void;
+  readonly errors: AutomationErrors;
 }
 
 // =============================================================================
@@ -232,8 +257,8 @@ function flattenMetadata(metadata: CreateItem["metadata"]): Record<string, strin
     if (key === "title") {
       if (typeof value === "string") flat[TITLE_METADATA_KEY] = value;
     } else if (key === "tags") {
-      for (const [name, tag] of Object.entries(value as Record<string, unknown>)) {
-        flat[`${TAGS_METADATA_KEY_PREFIX}${name}`] = JSON.stringify(tag);
+      for (const [name, tag] of Object.entries(metadata?.tags ?? {})) {
+        flat[tagKey(name)] = encodeTag(tag);
       }
     } else if (typeof value === "string") {
       flat[key] = value;
@@ -289,7 +314,9 @@ export interface Automations {
 /** The pre-plugin name of the poll interval, still honored. */
 const LEGACY_INTERVAL_KEY = "auto-workspace.poll-interval";
 
-export function createAutomations(deps: AutomationsDeps): Automations {
+export function createAutomations<S extends AutomationSource>(
+  deps: AutomationsDeps<S>
+): Automations {
   const intervalAccessor: PersistedAccessor<number> = deps.configService.register(
     "automations.poll-interval",
     {
@@ -321,6 +348,81 @@ export function createAutomations(deps: AutomationsDeps): Automations {
   /** Interval the last wait was armed with, so a live change can be logged once. */
   let armedIntervalSeconds: number | null = null;
 
+  // ------ Error bookkeeping ------
+
+  /** Automations that failed in the current cycle, and the ones run in the last. */
+  let failedThisCycle = new Set<string>();
+  let ranLastCycle: readonly S[] = [];
+  /**
+   * When each automation's current run of temporary failures began. Any other
+   * outcome — a success or a real failure — ends it.
+   */
+  const temporarySince = new Map<string, number>();
+
+  /**
+   * Start a cycle by settling the last one: an automation that ran then
+   * without failing is no longer failing. (Settling here, rather than the
+   * moment its script succeeds, keeps an item error found after a good run
+   * from being cleared and re-notified every cycle.)
+   */
+  function settleLastCycle(): void {
+    for (const source of ranLastCycle) {
+      if (!failedThisCycle.has(source.id)) deps.errors.success(source);
+    }
+    failedThisCycle = new Set();
+  }
+
+  function failed(source: S, message: string, logPath?: string): void {
+    failedThisCycle.add(source.id);
+    deps.errors.failure(source, message, logPath);
+  }
+
+  /**
+   * An automation exited 75: skip it this poll and try again next. Listed in
+   * `ch plugin errors` straight away, but raised as a card only once the
+   * failures have gone on for the grace period — then as an ordinary `exit 75`,
+   * whose new message is what raises the card.
+   */
+  function failedTemporarily(source: S, logPath?: string): void {
+    const now = Date.now();
+    const since = temporarySince.get(source.id) ?? now;
+    temporarySince.set(source.id, since);
+    failedThisCycle.add(source.id);
+    deps.logger.debug("Automation failed temporarily, retrying next cycle", {
+      automation: source.id,
+    });
+    if (now - since >= TEMPORARY_FAILURE_GRACE_MS) {
+      deps.errors.failure(source, `exit ${TEMPORARY_FAILURE_EXIT}`, logPath);
+    } else {
+      deps.errors.failure(
+        source,
+        `temporary failure (exit ${TEMPORARY_FAILURE_EXIT}), retrying`,
+        logPath,
+        { quiet: true }
+      );
+    }
+  }
+
+  /** Run a source's script: its items, or null when it failed (and was reported). */
+  async function runSource(source: S): Promise<readonly unknown[] | null> {
+    const run = await deps.runScript(source);
+    if (run.ok) {
+      temporarySince.delete(source.id);
+      return run.items;
+    }
+    if (run.temporary) {
+      failedTemporarily(source, run.logPath);
+      return null;
+    }
+    temporarySince.delete(source.id);
+    deps.logger.warn("Automation script failed, skipping its items this cycle", {
+      automation: source.id,
+      reason: run.failure,
+    });
+    failed(source, run.failure, run.logPath);
+    return null;
+  }
+
   // ------ State persistence ------
 
   async function persist(): Promise<void> {
@@ -350,7 +452,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * "Clone failed".
    */
   async function resolveProject(
-    source: AutomationSource,
+    source: S,
     definition: WorkspaceDefinition,
     key: string
   ): Promise<ProjectRef | null> {
@@ -371,7 +473,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
         key,
         error: getErrorMessage(error),
       });
-      deps.reportError(source, `project ${reference}: ${getErrorMessage(error)}`);
+      failed(source, `project ${reference}: ${getErrorMessage(error)}`);
       return null;
     }
 
@@ -385,7 +487,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       } catch {
         // The value itself stays out of the log: a URL put here may carry a token.
         deps.logger.warn("Skipping automation item (project is not a path, name or URL)", { key });
-        deps.reportError(
+        failed(
           source,
           `project must be an open project's name, an absolute path or a git URL (got "${reference}")`
         );
@@ -410,7 +512,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
       });
       // A failed clone already turns its own card into "Clone failed".
       if (projectPayload.path !== undefined) {
-        deps.reportError(source, `cannot open its project: ${getErrorMessage(error)}`);
+        failed(source, `cannot open its project: ${getErrorMessage(error)}`);
       }
       return null;
     }
@@ -427,7 +529,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * name.
    */
   async function applyMetadata(
-    source: AutomationSource,
+    source: S,
     workspaceRef: WorkspaceRef,
     definition: WorkspaceDefinition,
     key: string
@@ -458,7 +560,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * record the item, so it is retried next tick.
    */
   async function createWorkspace(
-    source: AutomationSource,
+    source: S,
     key: string,
     definition: WorkspaceDefinition,
     projectRef: ProjectRef
@@ -568,10 +670,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * Nothing here writes state — an event fires once and is then gone, so a
    * failure is logged rather than retried (the cmd has already consumed it).
    */
-  async function applyEvent(
-    source: AutomationSource,
-    definition: WorkspaceDefinition
-  ): Promise<void> {
+  async function applyEvent(source: S, definition: WorkspaceDefinition): Promise<void> {
     const key = stateKey(source.id, definition.name);
     try {
       const projectRef = await resolveProject(source, definition, key);
@@ -666,8 +765,8 @@ export function createAutomations(deps: AutomationsDeps): Automations {
    * once the list is complete; everything else acts as it is read. An invalid
    * item — or one its action refuses — is reported, and the next one still runs.
    */
-  async function pollSource(source: AutomationSource): Promise<boolean> {
-    const raws = await deps.runScript(source);
+  async function pollSource(source: S): Promise<boolean> {
+    const raws = await runSource(source);
     if (raws === null) return false;
 
     const prefix = `${source.id}/`;
@@ -675,7 +774,7 @@ export function createAutomations(deps: AutomationsDeps): Automations {
     const newItems: { key: string; definition: WorkspaceDefinition }[] = [];
     const report = (index: number, message: string): void => {
       deps.logger.warn("Automation item refused", { source: source.id, index, error: message });
-      deps.reportError(source, `item ${index}: ${message}`);
+      failed(source, `item ${index}: ${message}`);
     };
 
     for (const [index, raw] of raws.entries()) {
@@ -778,7 +877,9 @@ export function createAutomations(deps: AutomationsDeps): Automations {
 
   async function reconcileSources(): Promise<void> {
     if (!deps.enabled()) return;
+    settleLastCycle();
     const sources = await deps.sources();
+    ranLastCycle = sources;
 
     let changed = false;
 

@@ -13,7 +13,7 @@ import { ApiError } from "../errors";
 import { defineEntry } from "../types";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type { EntryDeps } from "./deps";
-import { createTargetResolver, targetFields, workspaceNameOf } from "./target";
+import { createTargetResolver, targetFields, workspaceDisplayName } from "./target";
 import type { WorkspaceRef } from "../../intents/contract";
 
 import { INTENT_GET_AGENT_SESSION } from "../../intents/get-agent-session";
@@ -42,7 +42,7 @@ export function agentEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
   const messageSender = (ctx: OperationContext): string =>
     ctx.workspaceRef === null
       ? "CodeHydra · ch"
-      : `CodeHydra · workspace ${workspaceNameOf(ctx.workspaceRef)}`;
+      : `CodeHydra · workspace ${workspaceDisplayName(ctx.workspaceRef)}`;
 
   const runVscodeCommand = (workspaceRef: WorkspaceRef, command: string) =>
     dispatcher.dispatch<VscodeCommandIntent>({

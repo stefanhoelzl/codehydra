@@ -6,7 +6,8 @@
  * via the `overrides` argument.
  */
 import { vi } from "vitest";
-import type { IViewManager, Unsubscribe } from "./view-manager.interface";
+import type { IViewManager } from "./view-manager.interface";
+import type { Unsubscribe } from "../../shared/types";
 
 export interface CreateMockViewManagerOptions {
   /** Override any subset of the IViewManager API. */

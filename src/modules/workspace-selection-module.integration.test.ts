@@ -36,7 +36,7 @@ import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { projPath, wsPath } from "../shared/test-fixtures";
 import type { WorkspacePath, WorkspaceRef } from "../intents/contract";
-import { makeWorkspaceRef, projectRefFor } from "../utils/ref";
+import { makeWorkspaceRef, projectRefFor, projectRefOf } from "../utils/ref";
 
 // =============================================================================
 // Test Constants
@@ -180,12 +180,11 @@ describe("WorkspaceSelectionModule", () => {
         const event: AgentStatusUpdatedEvent = {
           type: EVENT_AGENT_STATUS_UPDATED,
           payload: {
-            workspace: {
-              ref: refOf(path),
-              projectId,
-              name: nameOf(path) as WorkspaceName,
-              active: false,
-            },
+            workspaceRef: refOf(path),
+            projectRef: projectRefOf(refOf(path)),
+            projectId,
+            workspaceName: nameOf(path) as WorkspaceName,
+            active: false,
             status,
           },
         };

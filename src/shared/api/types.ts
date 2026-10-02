@@ -115,6 +115,21 @@ export interface WorkspaceTag {
   readonly description?: string;
 }
 
+/** The metadata key a tag is stored under: `tags.<name>`. */
+export function tagKey(name: string): string {
+  return `${TAGS_METADATA_KEY_PREFIX}${name}`;
+}
+
+/**
+ * A tag's stored value: its presentation fields as JSON, the form `extractTags`
+ * reads back. Fields are written in the order given; undefined ones are left out.
+ */
+export function encodeTag(tag: {
+  readonly [K in Exclude<keyof WorkspaceTag, "name">]?: WorkspaceTag[K] | undefined;
+}): string {
+  return JSON.stringify(tag);
+}
+
 /**
  * Read one string field out of a parsed tag object.
  *

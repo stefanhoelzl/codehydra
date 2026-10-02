@@ -18,7 +18,7 @@ export const INTENT_SHORTCUT_KEY = "shortcut:key" as const;
 
 export const EVENT_SHORTCUT_KEY_PRESSED = "shortcut:key-pressed" as const;
 
-const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
+export const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
 
 // =============================================================================
 // Contract schemas (single source of truth)

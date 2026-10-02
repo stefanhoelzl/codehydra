@@ -6,24 +6,22 @@
  * here keeps track of what it raised.
  */
 
-import type { IntentModule, EventDeclarations } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
+import type { IntentModule } from "../intents/lib/module";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
-import type { AppResumeFailedEvent } from "../intents/app-resume";
 import { EVENT_APP_RESUME_FAILED } from "../intents/app-resume";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { notify } from "./presentation/notification-card";
+import { defineEvents } from "../intents/declarations";
 
 export interface ErrorNotificationModuleDeps {
   readonly dispatcher: Pick<Dispatcher, "dispatch">;
 }
 
 export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps): IntentModule {
-  const events: EventDeclarations = {
+  const events = defineEvents({
     [EVENT_WORKSPACE_CREATE_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { workspaceName, error, source } = (event as WorkspaceCreateFailedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const { workspaceName, error, source } = event.payload;
         if (source === "mcp") return;
         notify(deps.dispatcher, {
           type: "error",
@@ -34,8 +32,8 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
       },
     },
     [EVENT_APP_RESUME_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { error } = (event as AppResumeFailedEvent).payload;
+      handler: async (event): Promise<void> => {
+        const { error } = event.payload;
         notify(deps.dispatcher, {
           type: "error",
           title: "Failed to recover after system resume",
@@ -44,7 +42,7 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
         });
       },
     },
-  };
+  });
 
   return {
     name: "error-notification",

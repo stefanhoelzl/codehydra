@@ -7,6 +7,7 @@
   toggles report the new checked state via onToggle.
 -->
 <script lang="ts">
+  import FieldShell, { fieldErrorId } from "./FieldShell.svelte";
   import type { CheckboxSectionConfig } from "./types";
 
   interface Props {
@@ -24,34 +25,14 @@
   }
 </script>
 
-<div class="form-field">
+<FieldShell fieldId={section.id} error={section.error} alignLeft>
   <vscode-checkbox
     id={section.id}
     label={section.label ?? ""}
     checked={value === "true"}
     disabled={section.disabled || undefined}
     data-autofocus={section.autofocus || undefined}
-    aria-describedby={section.error ? `${section.id}-error` : undefined}
+    aria-describedby={section.error ? fieldErrorId(section.id) : undefined}
     onchange={handleChange}
   ></vscode-checkbox>
-  {#if section.error}
-    <vscode-form-helper id="{section.id}-error">
-      <span class="field-error">{section.error}</span>
-    </vscode-form-helper>
-  {/if}
-</div>
-
-<style>
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    width: 100%;
-    text-align: left;
-  }
-
-  .field-error {
-    color: var(--ch-danger, #f14c4c);
-    font-size: 0.75rem;
-  }
-</style>
+</FieldShell>

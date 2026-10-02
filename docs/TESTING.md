@@ -40,7 +40,7 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 - Git: `IGitClient`
 - OpenCode: `SdkClientFactory`
 - Electron Shell: `WindowBoundary`, `ViewBoundary`, `SessionBoundary`
-- Electron Platform: `IpcBoundary`, `DialogBoundary`, `ImageBoundary`, `AppBoundary`, `MenuBoundary`
+- Electron Platform: `DialogBoundary`, `ImageBoundary`, `AppBoundary`, `MenuBoundary`, `OsNotificationBoundary` (IPC is `ViewBoundary.send` / `onIpc`)
 
 **Key characteristics**:
 
@@ -334,7 +334,7 @@ the shipped chain into a real `ClaudeCodeServerManager`.
   hook payloads — with payloads we write ourselves. The premise underneath them (that Claude
   still emits those hooks, with those shapes) was a pile of empirical findings that no test
   touched, so a Claude release could invalidate it with the suite green.
-- **It asserts `AgentStatus`, never hook names or payload fields.** That is enough: rename
+- **It asserts `AgentActivity`, never hook names or payload fields.** That is enough: rename
   `background_tasks` and the running-shell `Stop` stops being suppressed, so "stays busy"
   fails. The status is the drift detector, and a hook Claude adds that changes nothing
   passes silently, as it should.
@@ -1439,39 +1439,24 @@ Renderer tests are co-located with their components under `src/renderer/`, run i
 
 ## Renderer Testing Strategy
 
-### Stores: Test Through Components
+### No Stores: Test Through Components
 
-Stores exist to serve components. Testing stores in isolation often leads to "tests mirror implementation". Instead, test the **behavior the user sees** through component integration tests.
-
-| Store               | Test Through     | Rationale                             |
-| ------------------- | ---------------- | ------------------------------------- |
-| `projects`          | Sidebar          | Sidebar displays projects/workspaces  |
-| `agent-status`      | Sidebar          | Sidebar shows agent status indicators |
-| `shortcuts`         | App              | App handles shortcut mode             |
-| `dialogs`           | Dialog tests     | Each dialog manages its own state     |
-| `setup`             | Setup components | Setup screen shows progress           |
-| `deletion`          | MainView         | MainView handles deletion flow        |
-| `ui-mode`           | App              | App switches between setup/normal     |
-| `workspace-loading` | MainView         | MainView shows loading overlay        |
+The renderer has no stores: `App.svelte` holds the `UiState` snapshot and passes it down as
+props. Test the **behavior the user sees** by rendering a component with a snapshot (or
+pushing one through a mocked `onState`) and asserting on the DOM, not on intermediate state.
 
 ### Utils: Split by Purity
 
-| Category                 | Test Type                  | Examples                                                     |
-| ------------------------ | -------------------------- | ------------------------------------------------------------ |
-| **Pure utils** (no deps) | Focused test (`*.test.ts`) | focus-trap, sidebar-utils                                    |
-| **Utils that wire API**  | Component integration test | initialize-app → App, setup-domain-event-bindings → MainView |
+| Category                 | Test Type                  | Examples                                   |
+| ------------------------ | -------------------------- | ------------------------------------------ |
+| **Pure utils** (no deps) | Focused test (`*.test.ts`) | focus-owner, sidebar-utils, dialog-heading |
+| **Utils that wire API**  | Injected `onState` mock    | setup-domain-event-bindings                |
 
-### Component Grouping
+### Component Tests
 
-Group related components into single integration test files to reduce boilerplate:
-
-| Test File                        | Components                                                               |
-| -------------------------------- | ------------------------------------------------------------------------ |
-| `dialogs.integration.test.ts`    | CreateWorkspaceDialog, CloseProjectDialog, RemoveWorkspaceDialog, Dialog |
-| `dropdowns.integration.test.ts`  | BranchDropdown, ProjectDropdown, FilterableDropdown                      |
-| `setup.integration.test.ts`      | SetupScreen, SetupComplete, SetupError                                   |
-| `indicators.integration.test.ts` | AgentStatusIndicator, WorkspaceLoadingOverlay, ShortcutOverlay           |
-| `primitives.integration.test.ts` | Icon, Logo, EmptyState, DeletionProgressView                             |
+Each component has its own `*.test.ts` beside it (`src/renderer/lib/components/`, form
+sections in `components/form/`); `MainView.integration.test.ts` and
+`src/renderer/lib/integration.test.ts` cover flows across components.
 
 ---
 
