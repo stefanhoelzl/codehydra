@@ -7,7 +7,7 @@
     mode: SidebarLabelScroll;
     /** True while the owning row is hovered (drives `hover` mode). */
     hovered: boolean;
-    /** The line content (text, and for line 2 the branch + tag pills). */
+    /** The line content (the title or the branch). */
     children: Snippet;
   }
 

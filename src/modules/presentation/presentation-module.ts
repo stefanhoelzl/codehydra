@@ -557,7 +557,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   const logger = deps.loggingService.createLogger("presenter");
 
   // Sidebar row labels can overflow the narrow rail; this key picks how the
-  // custom-title / branch / tags lines scroll when they do. Read (via the
+  // custom-title / branch lines scroll when they do (tags wrap instead). Read (via the
   // accessor) at snapshot-build time and shipped in every ui:state push.
   const labelScrollConfig = deps.configService.register<SidebarLabelScroll>(
     "sidebar.label-scroll",
