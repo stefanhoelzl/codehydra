@@ -2405,6 +2405,37 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
+    it("the main agent's Stop lifts a dropped AskUserQuestion park while sub-agents run", async () => {
+      // Real trace: a message arriving mid-tool started a second turn branch that
+      // asked a question; the first branch then ended the turn and the question
+      // vanished with no PostToolUse. The Stop must unpark, and the still-running
+      // sub-agents keep the workspace busy instead of their activity being
+      // suppressed to idle.
+      const { port, statusChanges } = await start();
+      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      await sendHook(port, "Stop", stopWith([subagentTask()]));
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // The idle_prompt echo stays suppressed; the sub-agents' end still goes idle.
+      await sendHook(port, "Notification", { workspacePath: WS, notification_type: "idle_prompt" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WS });
+      await sendHook(port, "Stop", stopWith([]));
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
+    });
+
+    it("the main agent's Stop lifts a dropped park with nothing running (stays idle)", async () => {
+      const { port, statusChanges } = await start();
+      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "AskUserQuestion" });
+      await sendHook(port, "Stop", stopWith([]));
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // No park is left behind: a later sub-agent-free tool call is not suppressed.
+      await sendHook(port, "PreToolUse", { workspacePath: WS, tool_name: "Bash" });
+      expect(lastStatus(statusChanges)).toBe("busy");
+    });
+
     it("Stop without sub-agents still transitions to idle normally", async () => {
       const port = await serverManager.startServer(testPath("/workspace/feature-a").toNative(), {
         workspaceRef: refOf(testPath("/workspace/feature-a").toNative()),
