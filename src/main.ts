@@ -868,6 +868,7 @@ const powerModule = createPowerModule({
 const frameWatchdogModule = createFrameWatchdogModule({
   transport: apiServerModule,
   frames: presentationModule,
+  renderer: viewManager,
   logger: loggingService.createLogger("view"),
 });
 const deletionDialogModule = createDeletionDialogModule({

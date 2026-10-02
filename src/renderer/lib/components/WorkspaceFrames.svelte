@@ -41,38 +41,26 @@
   prevents what it sees; the repair still covers the move it cannot see (a
   hidden workspace's webview host focusing its cross-origin content).
 
-  Liveness: showing a frame pings it, and it answers via the probe responder
-  the UiViewManager injects alongside the focus tracker. All workspace iframes
-  are same-origin, so Chromium hosts them in one shared renderer process; when
-  it dies every workbench blanks at once and no main-process event reports it.
-  A frame that does not answer is logged, and reloaded if it had answered
-  before (the workbench session lives on the IDE server, so a reload is cheap).
+  Recovery is main's: frame-watchdog-module notices a workspace renderer
+  process dying and reloads every frame through __chReloadFrames.
 
   Exposes window hooks for the main process (UiViewManager):
   - __chFocusActiveFrame(): focus the active frame (window-focus handler,
     post-terminal-focus refresh)
   - __chActiveFrameRect(): bounding rect of the active frame (hibernation
     screenshot capture clipping)
-  - __chReloadFrames(): reload every mounted frame (IDE server restart)
+  - __chReloadFrames(): reload every mounted frame (IDE server restart, the
+    workspace renderer process died; see frame-watchdog-module)
   - __chReloadFrame(key): reload one mounted frame (its IDE went away on its
     own; see frame-watchdog-module)
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import { SvelteMap } from "svelte/reactivity";
   import type { UIMode } from "@shared/ipc";
   import { createLogger } from "$lib/logging";
 
   const logger = createLogger("ui");
-
-  /**
-   * How long a frame gets to answer the probe sent when it is shown. Generous
-   * on purpose: a wrong verdict reloads a workbench the user is looking at, so
-   * a main thread that is merely blocked must not be read as a dead renderer.
-   * The user is staring at a blank frame either way — waiting costs them
-   * nothing, guessing early costs them their editor state.
-   */
-  const PROBE_TIMEOUT_MS = 10_000;
 
   interface FrameHooks {
     __chFocusActiveFrame?: () => void;
@@ -122,87 +110,8 @@
     return {
       destroy() {
         frameEls.delete(key);
-        forgetFrame(key);
       },
     };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Liveness
-  //
-  // A dead frame is indistinguishable from a live one out here, so the frame
-  // has to answer for itself: showing one sends it a ping, and a frame that
-  // stays silent is logged and reloaded. The frames are the only witnesses to
-  // their own renderer process dying — Electron surfaces no event for a
-  // subframe process (PostHog issue 019fb265).
-  //
-  // A frame also announces itself unprompted once its injected script installs
-  // (ui-view-manager's CHILD_FRAME_PROBE), which is how a frame mounted after
-  // the probe was sent still gets to answer it: the probe fires at mount, but
-  // the script only arrives on load-finish. Both paths land in
-  // `handleFrameMessage`, so a probe is settled by whichever comes first.
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Keys whose *currently mounted* frame has answered at least once —
-   * separates dead from never-loaded. Scoped to the frame element, not the
-   * workspace: hibernating unmounts the frame, and the one a wake mounts is a
-   * new document that has proven nothing yet. Letting the key outlive its
-   * frame is what turned a woken workspace's unanswerable probe into a reload
-   * (PostHog issue 019fc47c), so `forgetFrame` clears it on unmount.
-   */
-  const everAnswered = new SvelteSet<string>();
-
-  /** The frame currently being probed, and its pending verdict. */
-  let probeKey: string | null = null;
-  let probeTimer: ReturnType<typeof setTimeout> | undefined = undefined;
-
-  function cancelProbe(): void {
-    if (probeTimer !== undefined) clearTimeout(probeTimer);
-    probeTimer = undefined;
-    probeKey = null;
-  }
-
-  /** Drop the liveness record of a frame that is going away. */
-  function forgetFrame(key: string): void {
-    everAnswered.delete(key);
-    if (key === probeKey) cancelProbe();
-  }
-
-  function probeFrame(key: string, el: HTMLIFrameElement): void {
-    cancelProbe();
-    probeKey = key;
-    try {
-      el.contentWindow?.postMessage({ __chPing: true }, "*");
-    } catch {
-      // Cross-origin frame may reject; the timeout reports it anyway
-    }
-    probeTimer = setTimeout(() => {
-      probeTimer = undefined;
-      probeKey = null;
-
-      // Recover only a frame that had answered before. Reloading is safe —
-      // the workbench session lives on the IDE server, which is why a server
-      // restart already reloads every frame — but it is only useful for a
-      // frame that was alive and stopped. One that has never answered is
-      // either still loading (a reload would restart that from scratch) or
-      // pointed at a server that is not serving (a reload changes nothing).
-      const recover = everAnswered.has(key);
-      const target = recover ? frameEls.get(key) : undefined;
-      if (target) {
-        // Re-assigning src (via a local, to dodge no-self-assign) forces a
-        // fresh navigation even though the resolved URL is identical.
-        const url = target.src;
-        target.src = url;
-      }
-
-      logger.warn(
-        recover
-          ? "Workspace frame stopped responding (renderer may have died)"
-          : "Workspace frame never responded (may never have finished loading)",
-        { key, reloaded: target !== undefined }
-      );
-    }, PROBE_TIMEOUT_MS);
   }
 
   /** The mounted frame that sent a message, by window identity. */
@@ -265,12 +174,6 @@
       if (key !== undefined && el) postFocusPolicy(key, el);
       return;
     }
-
-    if ((data as { __chAlive?: unknown }).__chAlive !== true) return;
-    const key = keyForSource(event.source);
-    if (key === undefined) return;
-    everAnswered.add(key);
-    if (key === probeKey) cancelProbe();
   }
 
   function activeFrame(): HTMLIFrameElement | undefined {
@@ -338,12 +241,10 @@
   // even though the URL is unchanged — the prod IDE server port is stable
   // across a restart). Invoked by the main process via __chReloadFrames after
   // the IDE server restarts on resume, so the frames reconnect to the fresh
-  // server instead of showing the IDE server's own "Reload" dialog. frameEls
-  // holds exactly the mounted (non-hibernated) frames.
+  // server instead of showing the IDE server's own "Reload" dialog, and after
+  // the frames' shared renderer process died. frameEls holds exactly the
+  // mounted (non-hibernated) frames.
   function reloadFrames(): void {
-    // A reloading frame is legitimately silent until its script is re-injected;
-    // drop any probe in flight rather than read the navigation as a death.
-    cancelProbe();
     for (const el of frameEls.values()) {
       // Re-assigning src (via a local, to dodge no-self-assign) forces a fresh
       // navigation even though the resolved URL is identical.
@@ -356,13 +257,11 @@
   // Reload one mounted frame. Invoked by the main process via __chReloadFrame
   // when that workspace's IDE went away on its own — the workbench shut down or
   // navigated off while its iframe stayed mounted, which leaves a blank frame
-  // that still answers the liveness probe. An unknown key is a no-op: the frame
+  // in a live renderer process. An unknown key is a no-op: the frame
   // may have been unmounted (hibernated, deleted) since main decided.
   function reloadFrame(key: string): void {
     const el = frameEls.get(key);
     if (!el) return;
-    // A reloading frame is legitimately silent until its script is re-injected.
-    if (key === probeKey) cancelProbe();
     // Re-assigning src (via a local, to dodge no-self-assign) forces a fresh
     // navigation even though the resolved URL is identical.
     const url = el.src;
@@ -391,31 +290,6 @@
     if (mode === "workspace") {
       focusFrame(el);
     }
-  });
-
-  // Probe the frame being shown, exactly once per switch.
-  //
-  // Separate from the show flow above, which also tracks `mode` — that flips on
-  // every sidebar hover and shortcut toggle. This effect still reruns whenever
-  // the mounted set changes (frameEls is reactive), so `probedKey` is what
-  // pins it to one check per switch: a workspace being created or hibernated
-  // elsewhere must not re-open a verdict on the frame already on screen.
-  // Leaving it unset while the element is missing is deliberate — the frame of
-  // a just-created workspace registers after the switch lands, and the rerun
-  // that brings it is the run that gets to probe it.
-  let probedKey: string | null = null;
-  $effect(() => {
-    const key = activeKey;
-    if (key === null) {
-      cancelProbe();
-      probedKey = null;
-      return;
-    }
-    if (key === probedKey) return;
-    const el = frameEls.get(key);
-    if (!el) return;
-    probedKey = key;
-    probeFrame(key, el);
   });
 
   // Mode routing: returning to workspace mode focuses the active frame
@@ -466,7 +340,6 @@
       window.removeEventListener("message", handleFrameMessage);
       document.removeEventListener("focusin", updateUiFocus, true);
       document.removeEventListener("focusout", handleFocusOut, true);
-      cancelProbe();
     };
   });
 </script>

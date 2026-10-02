@@ -1,11 +1,24 @@
 /**
- * FrameWatchdogModule - Reloads a workspace frame whose IDE went away on its own.
+ * FrameWatchdogModule - Reloads workspace frames that stopped showing a workbench.
  *
- * A workspace's IDE can shut down while its iframe stays mounted: the workbench
- * ends its own lifecycle, or the frame navigates off the workbench. The frame
- * then shows a blank page that still answers the renderer's liveness probe, so
- * nothing else notices (PostHog issue 01a08399). What does notice is the
- * sidekick: the workbench's extension host goes with it, and its socket drops.
+ * Two ways a mounted frame goes blank, each with its own witness.
+ *
+ * **Its renderer process died.** All workspace iframes are same-site (the one
+ * IDE server port), so Chromium hosts them in one shared renderer process,
+ * separate from the UI page's. When it dies every workbench blanks at once, and
+ * Electron emits nothing for a subframe process (PostHog issue 019fb265). The
+ * frames' main-process objects do report themselves destroyed, so this module
+ * polls for that (`getDeadFrameIds`) and, on any dead frame, reloads every
+ * frame: they shared the process, so one dead frame means all of them, and a
+ * reload is cheap because the workbench session lives on the IDE server. Each
+ * dead frame is reloaded once; one still dead a grace period later is logged,
+ * not retried, so a reload that cannot help never loops.
+ *
+ * **Its IDE went away on its own.** The workbench ends its own lifecycle, or
+ * the frame navigates off the workbench. The frame then shows a blank page in a
+ * live process, so the poll above cannot see it (PostHog issue 01a08399). What
+ * does notice is the sidekick: the workbench's extension host goes with it, and
+ * its socket drops.
  *
  * So the signal is a sidekick disconnect that we did not cause and that is not
  * followed by a reconnect. A reload-window or an extension-host restart
@@ -21,16 +34,19 @@
  *   every frame, so pending verdicts are dropped rather than reloading twice
  *
  * Hooks:
- * - app-shutdown/stop: unsubscribes and clears timers
+ * - app-start/start: starts the renderer poll
+ * - app-shutdown/stop: unsubscribes, stops the poll and clears timers
  */
 
 import type { WorkspaceRef } from "../intents/contract";
 import type { IntentModule } from "../intents/lib/module";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { EVENT_IDE_SERVER_RESTARTED, EVENT_IDE_SERVER_SESSIONS_STALE } from "../intents/app-resume";
 import type { Logger } from "../boundaries/platform/logging";
 import type { WorkspaceDisconnect } from "./api-server-module";
 import type { UiPresenter } from "./presentation/presentation-module";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 
 /**
  * How long a sidekick gets to reconnect before its frame is judged dead, and
@@ -40,6 +56,12 @@ import type { UiPresenter } from "./presentation/presentation-module";
  */
 export const RECONNECT_GRACE_MS = 15_000;
 
+/**
+ * How often the workspace frames' renderer process is checked. The read is a
+ * main-process property access per frame, with no round trip to any renderer.
+ */
+export const RENDERER_POLL_MS = 2_000;
+
 interface WatchdogTransport {
   onWorkspaceConnected(listener: (workspaceRef: WorkspaceRef) => void): () => void;
   onWorkspaceDisconnected(listener: (disconnect: WorkspaceDisconnect) => void): () => void;
@@ -48,6 +70,7 @@ interface WatchdogTransport {
 export interface FrameWatchdogModuleDeps {
   readonly transport: WatchdogTransport;
   readonly frames: Pick<UiPresenter, "reloadFrame">;
+  readonly renderer: Pick<IViewManager, "getDeadFrameIds" | "reloadFrames">;
   readonly logger: Logger;
 }
 
@@ -59,8 +82,47 @@ interface Watch {
 }
 
 export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): IntentModule {
-  const { transport, frames, logger } = deps;
+  const { transport, frames, renderer, logger } = deps;
   const watches = new Map<WorkspaceRef, Watch>();
+
+  /**
+   * Dead frames already reloaded, by frame id. A reloaded frame keeps reading
+   * dead until its new page commits, so one is only reported once it has
+   * stayed dead past the grace period, and then only once. An id leaves when
+   * its frame is alive again or gone (hibernated, deleted).
+   */
+  const revived = new Map<number, { readonly reloadedAt: number; reported: boolean }>();
+
+  function pollRenderer(): void {
+    const dead = new Set(renderer.getDeadFrameIds());
+    for (const id of [...revived.keys()]) {
+      if (!dead.has(id)) revived.delete(id);
+    }
+
+    const now = Date.now();
+    const stuck = [...revived.values()].filter(
+      (entry) => !entry.reported && now - entry.reloadedAt >= RECONNECT_GRACE_MS
+    );
+    for (const entry of stuck) entry.reported = true;
+    if (stuck.length > 0) {
+      logger.warn("Workspace frames still dead after reloading them; leaving them", {
+        frames: stuck.length,
+        graceMs: RECONNECT_GRACE_MS,
+      });
+    }
+
+    const newlyDead = [...dead].filter((id) => !revived.has(id));
+    if (newlyDead.length === 0) return;
+    for (const id of newlyDead) revived.set(id, { reloadedAt: now, reported: false });
+    logger.warn("Workspace renderer process died; reloading every workspace frame", {
+      deadFrames: dead.size,
+    });
+    renderer.reloadFrames();
+  }
+
+  // Armed at app:start → start: no timer may run during the synchronous
+  // startup phases (AsyncWatcher), and there are no frames before then anyway.
+  let rendererPoll: ReturnType<typeof setInterval> | undefined = undefined;
 
   function forget(workspaceRef: WorkspaceRef): Watch | undefined {
     const watch = watches.get(workspaceRef);
@@ -145,10 +207,19 @@ export function createFrameWatchdogModule(deps: FrameWatchdogModuleDeps): Intent
       },
     },
     hooks: {
+      [APP_START_OPERATION_ID]: {
+        start: {
+          handler: async (): Promise<void> => {
+            rendererPoll ??= setInterval(pollRenderer, RENDERER_POLL_MS);
+          },
+        },
+      },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {
             for (const unsubscribe of unsubscribes) unsubscribe();
+            clearInterval(rendererPoll);
+            rendererPoll = undefined;
             forgetAll();
           },
         },

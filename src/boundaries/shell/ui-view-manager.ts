@@ -9,6 +9,8 @@
  * - window.open interception → system browser
  * - Child-frame focus tracker injection (cross-origin iframes can't be
  *   scripted from the host document)
+ * - Child-frame witnesses: navigation and load-failure logging, and the
+ *   dead-renderer read frame-watchdog-module polls
  * - Keyboard + devtools capability targets (webContents-level, so they cover
  *   input typed inside workspace iframes)
  * - Mode state (pure bookkeeping — the keyboard interceptor consumes it
@@ -87,53 +89,8 @@ const CHILD_FRAME_FOCUS_TRACKER = `
   })();
 `;
 
-/**
- * Script injected into every workspace iframe so it can prove its renderer
- * process is still running. Announces `__chAlive` as soon as it is installed
- * and answers a later `__chPing` with the same; WorkspaceFrames probes a frame
- * when it shows it and logs one that stays silent.
- *
- * The unprompted announcement is what makes a freshly mounted frame provable.
- * This script arrives on `did-frame-finish-load`, but WorkspaceFrames probes a
- * frame the moment its element mounts — so on a create or a wake the ping is
- * delivered to a document with no listener yet and is simply ignored, and the
- * probe is one-shot. Announcing on install reports liveness at the instant the
- * frame becomes able to report it, whichever side wins the race: it cancels a
- * probe already waiting, or is recorded ahead of one still to come (PostHog
- * issue 019fc47c: a woken workspace was reloaded ten seconds in, after it had
- * fully come up, because its probe could never have been answered).
- *
- * Why the frames have to answer for themselves: all workspace iframes are
- * same-origin (the one IDE server port), so Chromium hosts them in a single
- * shared renderer process — separate from the UI page's. When that process
- * dies every workbench blanks at once, and nothing in the main process sees
- * it: `app.on('child-process-gone')` excludes renderers by contract, and
- * `render-process-gone` only fires for a webContents' *primary* frame, never a
- * subframe. The frames are the only witnesses (PostHog issue 019fb265: five
- * workbenches went blank simultaneously, the IDE server logged five client
- * disconnects, and CodeHydra's own log had nothing at all).
- *
- * Only direct children of the UI page answer. VSCodium's own nested webview
- * iframes receive this script too — their `parent` is the workspace frame
- * rather than the UI page, so they would answer a probe the UI cannot
- * attribute to any frame it mounted.
- */
-const CHILD_FRAME_PROBE = `
-  (function(){
-    if (window.__chProbe) return;
-    if (window.parent === window || window.parent !== window.top) return;
-    window.__chProbe = true;
-    window.addEventListener('message', function(e){
-      if (e.source !== window.parent) return;
-      if (!e.data || e.data.__chPing !== true) return;
-      try { window.parent.postMessage({ __chAlive: true }, '*'); } catch(err) {}
-    });
-    try { window.parent.postMessage({ __chAlive: true }, '*'); } catch(err) {}
-  })();
-`;
-
-/** Everything injected into a workspace iframe once it finishes loading. */
-const CHILD_FRAME_SCRIPT = `${CHILD_FRAME_FOCUS_TRACKER}${CHILD_FRAME_PROBE}`;
+/** Chromium's net::ERR_ABORTED: a navigation cancelled, typically by another. */
+const NET_ERR_ABORTED = -3;
 
 /**
  * Renderer hooks installed by the WorkspaceFrames component on `window`.
@@ -274,13 +231,21 @@ export class UiViewManager implements IViewManager {
       return { action: "deny" };
     });
 
-    this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_SCRIPT);
+    this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_FOCUS_TRACKER);
 
     // Every workspace frame navigates once when it mounts or reloads; any other
     // navigation means the workbench left its own page. Logged so a blank frame
     // in a bug report says where it went (PostHog issue 01a08399).
     this.viewLayer.onChildFrameNavigate(uiViewHandle, ({ url, httpResponseCode }) => {
       this.logger.info("Workspace frame navigated", { url, httpResponseCode });
+    });
+
+    // A frame that cannot reach the IDE server shows an error page and never
+    // becomes a workbench. ERR_ABORTED is a navigation replaced by another
+    // (a reload re-assigning src mid-load), not a failure.
+    this.viewLayer.onChildFrameLoadFailed(uiViewHandle, ({ url, errorCode, errorDescription }) => {
+      if (errorCode === NET_ERR_ABORTED) return;
+      this.logger.warn("Workspace frame failed to load", { url, errorCode, errorDescription });
     });
 
     this.uiViewHandle = uiViewHandle;
@@ -419,6 +384,11 @@ export class UiViewManager implements IViewManager {
     this.viewLayer.executeJavaScript(this.uiViewHandle, RELOAD_FRAMES).catch(() => {
       // UI may be mid-load
     });
+  }
+
+  getDeadFrameIds(): readonly number[] {
+    if (!this.uiViewHandle) return [];
+    return this.viewLayer.getDeadChildFrameIds(this.uiViewHandle);
   }
 
   reloadFrame(frameKey: string): void {
