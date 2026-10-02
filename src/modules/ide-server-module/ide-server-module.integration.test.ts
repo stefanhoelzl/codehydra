@@ -915,6 +915,56 @@ describe("IdeServerModule", () => {
 
       expect(processRunner.$.spawned(0)).toHaveBeenKilled();
     });
+
+    it("cancels a start still waiting on the health check instead of failing it", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const processRunner = createMockProcessRunner({
+          onSpawn: () => ({ ...defaultSpawnConfig(), untilKilled: true }),
+        });
+        const deps = createMockDeps({
+          processRunner,
+          httpClient: { fetch: vi.fn().mockResolvedValue({ status: 503 }) },
+        });
+        const { dispatcher } = createTestSetup(deps);
+        dispatcher.registerOperation(new MinimalStartOperation());
+        dispatcher.registerOperation(
+          createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+            throwOnError: false,
+          })
+        );
+
+        const start = dispatcher.dispatch({ type: "app:start", payload: {} });
+        await vi.advanceTimersByTimeAsync(0);
+        await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
+        await vi.advanceTimersByTimeAsync(200);
+
+        await expect(start).resolves.toBeUndefined();
+        expect(processRunner.$.spawned(0)).toHaveBeenKilled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("never spawns the server once shutdown has run", async () => {
+      const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
+      const deps = createMockDeps({ processRunner });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(new MinimalStartOperation());
+      dispatcher.registerOperation(
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN, "stop", {
+          throwOnError: false,
+        })
+      );
+
+      await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
+
+      await expect(
+        dispatcher.dispatch({ type: "app:start", payload: {} })
+      ).resolves.toBeUndefined();
+      expect(() => processRunner.$.spawned(0)).toThrow();
+    });
   });
 
   // ---------------------------------------------------------------------------
