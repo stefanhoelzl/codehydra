@@ -150,15 +150,21 @@ component), derived declaratively from the renderer's projects store:
   `project:opened` or `project:open-failed` (the presenter tracks them with an
   interceptor; `app:started` ends it at the latest), then lands on the topmost
   awake row. No view-level load tracking exists.
-- **Recovery**: two witnesses catch a frame that stays mounted but no longer
-  shows a workbench. Showing a frame pings it, and a frame that stops
-  answering is reloaded (renderer process died). A workbench that shuts down
-  or navigates away on its own keeps answering, so the second witness is its
-  sidekick: `frame-watchdog-module` watches `onWorkspaceDisconnected`, and a
+- **Recovery**: `frame-watchdog-module` has two witnesses for a frame that
+  stays mounted but no longer shows a workbench. All workspace iframes share
+  one renderer process, and Electron emits no event when a subframe's process
+  dies — but the frame's `WebFrameMain` reports `isDestroyed()`. The module
+  polls that every 2 s (`getDeadFrameIds` → `ViewBoundary.getDeadChildFrameIds`)
+  and on any dead frame reloads every frame (`reloadFrames` →
+  `__chReloadFrames`), since they all shared the process; each dead frame is
+  reloaded once. A workbench that shuts down or navigates away on its own
+  lives in a live process, so the second witness is its sidekick: a
   disconnect we did not cause (not hibernate/delete/quit) that is not followed
   by a reconnect within 15 s reloads that one frame (`reloadFrame` →
   `__chReloadFrame`), once. Every committed navigation of a workspace frame is
-  logged (`Workspace frame navigated`) so a report shows where a frame went.
+  logged (`Workspace frame navigated`), and every failed load other than an
+  abort (`Workspace frame failed to load`), so a report shows where a frame
+  went.
 
 The main process side is a slim `UiViewManager`: UI view lifecycle
 (create/load/bounds-on-resize/destroy), the shared session's

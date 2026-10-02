@@ -115,6 +115,13 @@ export interface IViewManager {
   reloadFrame(frameKey: string): void;
 
   /**
+   * Ids of the workspace iframes whose renderer process is gone (see
+   * ViewBoundary.getDeadChildFrameIds). Empty before the UI view exists.
+   * Ids are stable across a frame's reloads, so successive reads compare.
+   */
+  getDeadFrameIds(): readonly number[];
+
+  /**
    * Resolve after the UI renderer has committed a paint for the current
    * UiState (waits two animation frames). Used to sequence a screenshot after
    * a state-driven layout change — collapsing the sidebar before a hibernation

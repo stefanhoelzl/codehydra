@@ -183,6 +183,54 @@ describe("UiViewManager", () => {
     });
   });
 
+  describe("workspace frame load failures", () => {
+    it("logs a workspace frame that failed to load", () => {
+      const { manager, viewLayer, logger } = createManager();
+
+      viewLayer.$.triggerChildFrameLoadFailed(manager.getUIViewHandle(), {
+        url: "http://127.0.0.1:25448/?folder=/ws/ios",
+        errorCode: -102,
+        errorDescription: "ERR_CONNECTION_REFUSED",
+      });
+
+      expect(logger.warn).toHaveBeenCalledWith("Workspace frame failed to load", {
+        url: "http://127.0.0.1:25448/?folder=/ws/ios",
+        errorCode: -102,
+        errorDescription: "ERR_CONNECTION_REFUSED",
+      });
+    });
+
+    it("stays quiet about a load replaced by another navigation", () => {
+      // A reload re-assigns src mid-load; Chromium aborts the first navigation.
+      const { manager, viewLayer, logger } = createManager();
+
+      viewLayer.$.triggerChildFrameLoadFailed(manager.getUIViewHandle(), {
+        url: "http://127.0.0.1:25448/?folder=/ws/ios",
+        errorCode: -3,
+        errorDescription: "ERR_ABORTED",
+      });
+
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getDeadFrameIds", () => {
+    it("reports the workspace frames whose renderer process is gone", () => {
+      const { manager, viewLayer } = createManager();
+
+      viewLayer.$.setDeadChildFrameIds(manager.getUIViewHandle(), [2, 3]);
+
+      expect(manager.getDeadFrameIds()).toEqual([2, 3]);
+    });
+
+    it("reports none before the UI view exists", () => {
+      const ctx = createDeps();
+      const manager = new UiViewManager(ctx.deps);
+
+      expect(manager.getDeadFrameIds()).toEqual([]);
+    });
+  });
+
   describe("reloadFrame", () => {
     it("asks the renderer to reload the one frame, key passed as a string literal", () => {
       const { manager, viewLayer } = createManager();
@@ -336,174 +384,6 @@ describe("UiViewManager", () => {
       manager.destroy();
       expect(manager.isUIAvailable()).toBe(false);
       expect(() => manager.destroy()).not.toThrow();
-    });
-  });
-
-  // ===========================================================================
-  // Child frame script
-  //
-  // The script is injected into every workspace iframe. Its probe responder is
-  // the only witness to that shared renderer process dying — Electron reports
-  // no event for a subframe process — so these run the real injected source
-  // against a fake frame window rather than asserting on its text.
-  // ===========================================================================
-
-  describe("child frame script", () => {
-    interface FakeWindow {
-      parent: FakeWindow;
-      top: FakeWindow;
-      posted: unknown[];
-      listeners: ((event: { source: unknown; data: unknown }) => void)[];
-      __chProbe?: boolean;
-      __chFocusTracker?: boolean;
-      postMessage(message: unknown): void;
-      addEventListener(
-        type: string,
-        listener: (event: { source: unknown; data: unknown }) => void
-      ): void;
-    }
-
-    /** A frame window whose parent is the UI page (`parent === top`). */
-    function createFrameWindow(): { win: FakeWindow; uiPage: FakeWindow } {
-      const uiPage = { posted: [] as unknown[] } as unknown as FakeWindow;
-      uiPage.postMessage = (message: unknown): void => {
-        uiPage.posted.push(message);
-      };
-      const win: FakeWindow = {
-        parent: uiPage,
-        top: uiPage,
-        posted: [],
-        listeners: [],
-        postMessage: () => {},
-        addEventListener: (type, listener) => {
-          if (type === "message") win.listeners.push(listener);
-        },
-      };
-      return { win, uiPage };
-    }
-
-    /** The script the manager actually installs into workspace iframes. */
-    function installedScript(): string {
-      const ctx = createDeps();
-      const install = vi.spyOn(ctx.viewLayer, "installChildFrameScript");
-      new UiViewManager(ctx.deps).create();
-      const call = install.mock.calls[0];
-      if (!call) throw new Error("no child frame script was installed");
-      return call[1];
-    }
-
-    /** Run the injected source against a fake frame window. */
-    function run(script: string, win: FakeWindow): void {
-      const document = { addEventListener: (): void => {}, contains: (): boolean => false };
-      new Function("window", "document", script)(win, document);
-    }
-
-    /** Deliver a message to the frame, as the UI page by default. */
-    function send(win: FakeWindow, data: unknown, source: unknown = win.parent): void {
-      for (const listener of win.listeners) listener({ source, data });
-    }
-
-    /**
-     * Install the script and discard the announcement it makes on install, so
-     * a test about ping handling starts from a settled page.
-     */
-    function installAndSettle(win: FakeWindow, uiPage: FakeWindow): void {
-      run(installedScript(), win);
-      uiPage.posted.length = 0;
-    }
-
-    it("announces itself as soon as it is installed", () => {
-      // The renderer probes a frame when its element mounts, which is before
-      // this script arrives on load-finish — so a ping alone can never prove a
-      // freshly mounted frame alive (PostHog issue 019fc47c).
-      const { win, uiPage } = createFrameWindow();
-
-      run(installedScript(), win);
-
-      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
-    });
-
-    it("answers a ping from the UI page", () => {
-      const { win, uiPage } = createFrameWindow();
-      installAndSettle(win, uiPage);
-
-      send(win, { __chPing: true });
-
-      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
-    });
-
-    it("ignores messages that are not pings", () => {
-      const { win, uiPage } = createFrameWindow();
-      installAndSettle(win, uiPage);
-
-      send(win, { __chPing: false });
-      send(win, "hello");
-      send(win, null);
-
-      expect(uiPage.posted).toEqual([]);
-    });
-
-    it("ignores a ping that did not come from the UI page", () => {
-      const { win, uiPage } = createFrameWindow();
-      installAndSettle(win, uiPage);
-
-      send(win, { __chPing: true }, { spoofed: true });
-
-      expect(uiPage.posted).toEqual([]);
-    });
-
-    it("stays silent in VSCodium's nested webview frames", () => {
-      // A webview nested inside a workspace frame: its parent is that frame,
-      // not the UI page, so the UI could not attribute its announcement or its
-      // answer to any frame it mounted.
-      const { win, uiPage } = createFrameWindow();
-      const workspaceFrame = { ...win };
-      win.parent = workspaceFrame as FakeWindow;
-      run(installedScript(), win);
-
-      send(win, { __chPing: true });
-
-      expect(win.listeners).toHaveLength(0);
-      expect(uiPage.posted).toEqual([]);
-    });
-
-    it("does not register a second responder or re-announce when injected again", () => {
-      const { win, uiPage } = createFrameWindow();
-      const script = installedScript();
-
-      installAndSettle(win, uiPage);
-      run(script, win);
-
-      expect(uiPage.posted).toEqual([]);
-
-      send(win, { __chPing: true });
-
-      expect(win.listeners).toHaveLength(1);
-      expect(uiPage.posted).toEqual([{ __chAlive: true }]);
-    });
-
-    it("survives a parent that rejects postMessage", () => {
-      const { win } = createFrameWindow();
-      run(installedScript(), win);
-      win.parent.postMessage = (): never => {
-        throw new Error("cross-origin");
-      };
-
-      expect(() => send(win, { __chPing: true })).not.toThrow();
-    });
-
-    it("installs even when the announcement is rejected", () => {
-      // A parent that rejects postMessage must not abort installation — the
-      // responder still has to be registered for the probe that follows.
-      const { win, uiPage } = createFrameWindow();
-      uiPage.postMessage = (): never => {
-        throw new Error("cross-origin");
-      };
-
-      expect(() => {
-        run(installedScript(), win);
-      }).not.toThrow();
-      expect(win.listeners).toHaveLength(1);
     });
   });
 });

@@ -22,6 +22,7 @@ import type {
   RenderProcessGoneDetails,
   UncaughtExceptionDetails,
   ChildFrameNavigation,
+  ChildFrameLoadFailure,
 } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
@@ -103,6 +104,18 @@ export interface ViewBoundaryMockState extends MockState {
   triggerChildFrameNavigate(handle: ViewHandle, details: ChildFrameNavigation): void;
 
   /**
+   * Simulates Electron's 'did-fail-load' for a top-level child frame.
+   * Invokes all onChildFrameLoadFailed handlers for the specified view.
+   */
+  triggerChildFrameLoadFailed(handle: ViewHandle, details: ChildFrameLoadFailure): void;
+
+  /**
+   * Sets the child frame ids getDeadChildFrameIds reports for the view, as if
+   * their renderer process had died. Pass `[]` once they are reloaded.
+   */
+  setDeadChildFrameIds(handle: ViewHandle, ids: readonly number[]): void;
+
+  /**
    * Simulates a fire-and-forget IPC message from the view's renderer
    * (`webContents.ipc`). Invokes all onIpc listeners for the view + channel.
    */
@@ -149,6 +162,8 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   readonly uncaughtExceptionCallbacks = new CallbackRegistry<[UncaughtExceptionDetails]>();
   readonly renderProcessGoneCallbacks = new CallbackRegistry<[RenderProcessGoneDetails]>();
   readonly childFrameNavigateCallbacks = new CallbackRegistry<[ChildFrameNavigation]>();
+  readonly childFrameLoadFailedCallbacks = new CallbackRegistry<[ChildFrameLoadFailure]>();
+  readonly deadChildFrameIds = new Map<string, readonly number[]>();
   /** Keyed by `${handle.id}::${channel}`. */
   readonly ipcCallbacks = new CallbackRegistry<unknown[]>();
 
@@ -197,6 +212,14 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   triggerChildFrameNavigate(handle: ViewHandle, details: ChildFrameNavigation): void {
     this.childFrameNavigateCallbacks.trigger(handle.id, details);
+  }
+
+  triggerChildFrameLoadFailed(handle: ViewHandle, details: ChildFrameLoadFailure): void {
+    this.childFrameLoadFailedCallbacks.trigger(handle.id, details);
+  }
+
+  setDeadChildFrameIds(handle: ViewHandle, ids: readonly number[]): void {
+    this.deadChildFrameIds.set(handle.id, ids);
   }
 
   triggerIpc(handle: ViewHandle, channel: string, ...args: unknown[]): void {
@@ -277,6 +300,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
     state.uncaughtExceptionCallbacks,
     state.renderProcessGoneCallbacks,
     state.childFrameNavigateCallbacks,
+    state.childFrameLoadFailedCallbacks,
     state.ipcCallbacks,
   ];
   let nextId = 1;
@@ -310,6 +334,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
         throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id);
       }
       state.views.delete(handle.id);
+      state.deadChildFrameIds.delete(handle.id);
       for (const registry of registries) {
         registry.delete(handle.id);
       }
@@ -411,6 +436,18 @@ export function createViewBoundaryMock(): MockViewBoundary {
     ): Unsubscribe {
       getView(handle); // Validate handle exists
       return state.childFrameNavigateCallbacks.add(handle.id, callback);
+    },
+
+    onChildFrameLoadFailed(
+      handle: ViewHandle,
+      callback: (details: ChildFrameLoadFailure) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      return state.childFrameLoadFailedCallbacks.add(handle.id, callback);
+    },
+
+    getDeadChildFrameIds(handle: ViewHandle): readonly number[] {
+      return state.deadChildFrameIds.get(handle.id) ?? [];
     },
 
     onUnresponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {

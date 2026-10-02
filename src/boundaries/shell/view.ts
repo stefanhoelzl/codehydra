@@ -65,6 +65,19 @@ export interface ChildFrameNavigation {
 }
 
 /**
+ * A top-level child frame whose load failed — the counterpart of
+ * {@link ChildFrameNavigation} for a navigation that never committed.
+ */
+export interface ChildFrameLoadFailure {
+  /** The URL the frame tried to load. */
+  readonly url: string;
+  /** Chromium net error code (negative; -3 is ERR_ABORTED). */
+  readonly errorCode: number;
+  /** Chromium's description of the error, for display only. */
+  readonly errorDescription: string;
+}
+
+/**
  * Details about an uncaught JavaScript exception in a view's page.
  */
 export interface UncaughtExceptionDetails {
@@ -342,6 +355,38 @@ export interface ViewBoundary {
     handle: ViewHandle,
     callback: (details: ChildFrameNavigation) => void
   ): Unsubscribe;
+
+  /**
+   * Subscribe to failed loads of this view's top-level child frames. Nested
+   * frames are skipped, as in {@link onChildFrameNavigate}.
+   *
+   * @param handle - Handle to the host view
+   * @param callback - Called with the URL and Chromium's error
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onChildFrameLoadFailed(
+    handle: ViewHandle,
+    callback: (details: ChildFrameLoadFailure) => void
+  ): Unsubscribe;
+
+  /**
+   * Ids of this view's top-level child frames whose renderer process is gone.
+   *
+   * When a child frame's process dies, Electron emits nothing — not
+   * `render-process-gone` (primary frame only), not `child-process-gone`
+   * (renderers excluded). The frame stays in the page's frame tree, showing a
+   * blank "sad frame", and its main-process object reports itself destroyed.
+   * This reads that state; callers poll it. The ids are stable for the frame's
+   * lifetime (a reload keeps the id), so a caller can match one read to the
+   * next.
+   *
+   * Never throws: a frame list caught mid-teardown reads as no dead frames,
+   * and an unknown handle as none at all.
+   *
+   * @param handle - Handle to the host view
+   */
+  getDeadChildFrameIds(handle: ViewHandle): readonly number[];
 
   // Cleanup
   /**
@@ -775,6 +820,66 @@ export class DefaultViewBoundary implements ViewBoundary {
     return guardedUnsubscribe(state.webContents, () =>
       state.webContents.off("did-frame-navigate", handler)
     );
+  }
+
+  onChildFrameLoadFailed(
+    handle: ViewHandle,
+    callback: (details: ChildFrameLoadFailure) => void
+  ): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (
+      _event: Electron.Event,
+      errorCode: number,
+      errorDescription: string,
+      validatedURL: string,
+      isMainFrame: boolean,
+      frameProcessId: number,
+      frameRoutingId: number
+    ): void => {
+      if (isMainFrame) return;
+      // Same rules as onChildFrameNavigate: look the frame up by id, and let
+      // nothing escape a native emit.
+      try {
+        const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+        if (!frame?.parent || frame.parent.parent !== null) return;
+        callback({ url: validatedURL, errorCode, errorDescription });
+      } catch (error) {
+        this.logger.debug("Child frame load failure skipped", {
+          id: handle.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    state.webContents.on("did-fail-load", handler);
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("did-fail-load", handler)
+    );
+  }
+
+  getDeadChildFrameIds(handle: ViewHandle): readonly number[] {
+    const wc = this.views.get(handle.id)?.webContents;
+    if (!wc || wc.isDestroyed()) return [];
+    try {
+      // `frames` comes back `undefined` rather than throwing when a frame is
+      // mid-deletion (the same vector->JS conversion as framesInSubtree, see
+      // installChildFrameScript). That is a teardown, not a death: read none
+      // and let the next poll look again.
+      const frames: unknown = wc.mainFrame.frames;
+      if (!Array.isArray(frames)) return [];
+      const dead: number[] = [];
+      for (const frame of frames as Electron.WebFrameMain[]) {
+        // isDestroyed() and frameTreeNodeId stay readable on a frame whose
+        // process died; url, osProcessId and friends throw.
+        if (frame.isDestroyed()) dead.push(frame.frameTreeNodeId);
+      }
+      return dead;
+    } catch (error) {
+      this.logger.debug("Child frame liveness read skipped", {
+        id: handle.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
   }
 
   private getView(handle: ViewHandle): ViewState {

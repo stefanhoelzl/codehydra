@@ -11,7 +11,7 @@
  * error-report-module answers with exit(1). Most cases below are that guard.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../platform/logging";
 import { webFrameMain, webFrameMainState, resetElectronFake } from "../../test/mocks/electron";
 import type { MockLogger } from "../platform/logging.test-utils";
@@ -28,6 +28,12 @@ interface FakeFrame {
 
 const listeners = new Map<string, WebContentsListener[]>();
 
+/**
+ * The main frame getDeadChildFrameIds reads; `null` keeps the poisoned getter
+ * below for every other test.
+ */
+let mainFrameFake: unknown = null;
+
 const fakeWebContents = {
   isDestroyed: () => false,
   on: (event: string, listener: WebContentsListener) => {
@@ -39,7 +45,8 @@ const fakeWebContents = {
   // loaded frame is what crashed the app: that getter returns `undefined`
   // (silently, no throw) whenever any frame in the subtree is mid-deletion,
   // so `.find()` blew up on undefined. Reintroducing the scan must fail here.
-  get mainFrame(): never {
+  get mainFrame(): unknown {
+    if (mainFrameFake !== null) return mainFrameFake;
     throw new Error("mainFrame must not be touched by installChildFrameScript");
   },
 };
@@ -283,5 +290,130 @@ describe("DefaultViewBoundary onChildFrameNavigate", () => {
 
     expect(() => emitNavigate(false, 1, 7)).not.toThrow();
     expect(callback).not.toHaveBeenCalled();
+  });
+});
+
+describe("DefaultViewBoundary onChildFrameLoadFailed", () => {
+  let boundary: DefaultViewBoundary;
+
+  const mainFrame = { parent: null };
+  const workspaceFrame = { parent: mainFrame };
+  const nestedFrame = { parent: workspaceFrame };
+
+  function emitFailLoad(isMainFrame: boolean, errorCode = -102): void {
+    emit(
+      "did-fail-load",
+      undefined,
+      errorCode,
+      "ERR_CONNECTION_REFUSED",
+      "http://127.0.0.1:1/x",
+      isMainFrame,
+      1,
+      7
+    );
+  }
+
+  beforeEach(() => {
+    listeners.clear();
+    resetElectronFake();
+    boundary = new DefaultViewBoundary(windowLayer, createMockLogger());
+  });
+
+  it("reports a failed load of a frame directly in the view's page", () => {
+    webFrameMainState.lookup = () => workspaceFrame;
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameLoadFailed(handle, callback);
+    emitFailLoad(false);
+
+    expect(callback).toHaveBeenCalledWith({
+      url: "http://127.0.0.1:1/x",
+      errorCode: -102,
+      errorDescription: "ERR_CONNECTION_REFUSED",
+    });
+  });
+
+  it("skips frames nested inside a workspace frame, and the main frame", () => {
+    webFrameMainState.lookup = () => nestedFrame;
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameLoadFailed(handle, callback);
+    emitFailLoad(false);
+    emitFailLoad(true);
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("survives a frame lookup that throws", () => {
+    webFrameMainState.lookup = () => {
+      throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+    };
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+    const callback = vi.fn();
+
+    boundary.onChildFrameLoadFailed(handle, callback);
+
+    expect(() => emitFailLoad(false)).not.toThrow();
+    expect(callback).not.toHaveBeenCalled();
+  });
+});
+
+describe("DefaultViewBoundary getDeadChildFrameIds", () => {
+  let boundary: DefaultViewBoundary;
+
+  /** A child frame as Electron leaves it: a dead one throws on url, not on these. */
+  function frame(frameTreeNodeId: number, destroyed: boolean): object {
+    return {
+      frameTreeNodeId,
+      isDestroyed: () => destroyed,
+      get url(): never {
+        throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+      },
+    };
+  }
+
+  beforeEach(() => {
+    listeners.clear();
+    resetElectronFake();
+    boundary = new DefaultViewBoundary(windowLayer, createMockLogger());
+  });
+
+  afterEach(() => {
+    mainFrameFake = null;
+  });
+
+  it("returns the ids of child frames whose renderer process is gone", () => {
+    mainFrameFake = { frames: [frame(2, true), frame(3, false), frame(4, true)] };
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+
+    expect(boundary.getDeadChildFrameIds(handle)).toEqual([2, 4]);
+  });
+
+  it("reads none when the frame list comes back undefined mid-teardown", () => {
+    mainFrameFake = { frames: undefined };
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+
+    expect(boundary.getDeadChildFrameIds(handle)).toEqual([]);
+  });
+
+  it("reads none when a frame throws", () => {
+    mainFrameFake = {
+      frames: [
+        {
+          isDestroyed: (): never => {
+            throw new Error("gone");
+          },
+        },
+      ],
+    };
+    const handle = boundary.adoptWindowWebContents(windowHandle);
+
+    expect(boundary.getDeadChildFrameIds(handle)).toEqual([]);
+  });
+
+  it("reads none for an unknown view", () => {
+    expect(boundary.getDeadChildFrameIds({ id: "nope", __brand: "ViewHandle" })).toEqual([]);
   });
 });
