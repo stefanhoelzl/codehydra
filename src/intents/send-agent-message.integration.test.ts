@@ -67,6 +67,10 @@ function createSetup(opts: {
   sendError?: Error;
   /** The agent is unreachable: the hook answers "not sent" with this reason. */
   notSent?: string;
+  /** The workspace's editor is not connected (yet). Default: connected. */
+  editorDisconnected?: boolean;
+  /** Running a command in the editor fails. */
+  commandError?: Error;
 }): Setup {
   const delivered: Delivery[] = [];
   const woken: WorkspaceRef[] = [];
@@ -133,6 +137,7 @@ function createSetup(opts: {
         execute: {
           handler: async (ctx: HookContext) => {
             commands.push((ctx.intent as VscodeCommandIntent).payload.command);
+            if (opts.commandError) throw opts.commandError;
             return { result: {} };
           },
         },
@@ -140,6 +145,19 @@ function createSetup(opts: {
     },
   };
   dispatcher.registerModule(agentModule);
+
+  // The API server's answer: whether the workspace's editor is connected.
+  const editorModule: IntentModule = {
+    name: "test-editor",
+    hooks: {
+      [SEND_AGENT_MESSAGE_OPERATION_ID]: {
+        editor: {
+          handler: async () => ({ result: { connected: opts.editorDisconnected !== true } }),
+        },
+      },
+    },
+  };
+  dispatcher.registerModule(editorModule);
 
   return { dispatcher, delivered, woken, commands };
 }
@@ -209,6 +227,27 @@ describe("SendAgentMessage Operation", () => {
 
     await setup.dispatcher.dispatch(sendIntent(true));
 
+    expect(setup.commands).toEqual(["codehydra.openAgent"]);
+    expect(setup.delivered.map((d) => d.waitMs)).toEqual([AGENT_READY_TIMEOUT_MS]);
+  });
+
+  it("waits for the agent of an editor still connecting, without running a command", async () => {
+    // Just woken: the agent reports "none" and the editor is not connected yet.
+    const setup = createSetup({ agentStatus: "none", editorDisconnected: true });
+
+    const result = await setup.dispatcher.dispatch(sendIntent(true));
+
+    expect(result).toEqual({ sent: true });
+    expect(setup.commands).toEqual([]);
+    expect(setup.delivered.map((d) => d.waitMs)).toEqual([AGENT_READY_TIMEOUT_MS]);
+  });
+
+  it("still waits for the agent when reopening its terminal fails", async () => {
+    const setup = createSetup({ agentStatus: "none", commandError: new Error("gone") });
+
+    const result = await setup.dispatcher.dispatch(sendIntent(true));
+
+    expect(result).toEqual({ sent: true });
     expect(setup.commands).toEqual(["codehydra.openAgent"]);
     expect(setup.delivered.map((d) => d.waitMs)).toEqual([AGENT_READY_TIMEOUT_MS]);
   });

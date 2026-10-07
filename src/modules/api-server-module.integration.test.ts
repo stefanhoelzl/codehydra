@@ -9,6 +9,7 @@
  * api-server.boundary.test.ts.
  */
 
+import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
 import { describe, it, expect, vi } from "vitest";
@@ -177,6 +178,23 @@ describe("ApiServerModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       expect(apiServer.isReady()).toBe(false);
+    });
+  });
+
+  describe("send-message editor", () => {
+    it("answers that a workspace with no sidekick connected is not connected", async () => {
+      const { apiServer } = createTestSetup();
+
+      // The operation's "editor" context: the intent, plus the workspace it is for.
+      const ctx = {
+        intent: { type: "agent:send-message", payload: {} },
+        workspaceRef: FEATURE_REF,
+      };
+      const output =
+        await apiServer.module.hooks![SEND_AGENT_MESSAGE_OPERATION_ID]!["editor"]!.handler(ctx);
+
+      expect(output).toEqual({ result: { connected: false } });
+      expect(apiServer.isConnected(FEATURE_REF)).toBe(false);
     });
   });
 

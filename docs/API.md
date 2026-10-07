@@ -920,7 +920,10 @@ the message (sent, not read).
   Claude agent whose terminal is open but which has not announced its inbox yet is
   starting, not absent: the send waits up to 30 s for it even without `wake`. `wake` runs `workspace:wake` (in the background) or
   reopens the agent terminal, then lets the send wait up to 90 s for the agent to become
-  reachable.
+  reachable. The terminal is reopened only when the workspace's editor is connected (the
+  operation's `editor` hook, answered by the API server): a workspace still opening or
+  waking has none yet, and its sidekick starts the agent terminal once it connects, so
+  the send only waits.
 - **Claude Code.** The SessionStart hook forwards the session's inbox
   (`CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`) to the bridge. The
   message is written there as JSON lines, an auth line and then
