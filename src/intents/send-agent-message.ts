@@ -11,7 +11,10 @@
  * 2. With `wake`: bring the agent up first —
  *    - hibernated → dispatch workspace:wake (in the background, no switch)
  *    - awake, agent terminal closed (agent status "none") → run the sidekick's
- *      `codehydra.openAgent`
+ *      `codehydra.openAgent` if the "editor" hook says the workspace's editor
+ *      is connected. A workspace that was only just opened or woken reports
+ *      "none" too, before its editor connects; its sidekick starts the agent
+ *      terminal once it does, so there is nothing to run, only to wait for
  *    and let the send wait for the agent to become reachable. Without `wake`, a
  *    hibernated workspace fails fast and the send never waits.
  * 3. "send" hook — the workspace's agent module hands the message over
@@ -86,6 +89,20 @@ const sendEnrichmentSchema = z.object({
   waitMs: z.number().int().nonnegative(),
 });
 
+/** Per-handler result contract for the "editor" hook point. */
+export const editorHookResultSchema = z
+  .object({
+    /** Whether the workspace's editor (its sidekick) is connected right now. */
+    connected: z.boolean().optional(),
+  })
+  .readonly();
+
+/** Runtime whole-context validation schema for "editor". */
+export const editorHookInputSchema = hookCtxSchema(
+  sendAgentMessagePayloadSchema,
+  workspaceTargetShape
+);
+
 /** Runtime whole-context validation schema for "send". */
 export const sendHookInputSchema = hookCtxSchema(
   sendAgentMessagePayloadSchema,
@@ -101,6 +118,7 @@ export const schemas = {
   payload: sendAgentMessagePayloadSchema,
   result: sendAgentMessageResultSchema,
   hooks: {
+    editor: { input: editorHookInputSchema, result: editorHookResultSchema },
     send: { input: sendHookInputSchema, result: sendHookResultSchema },
   },
 } satisfies OperationSchemas;
@@ -161,12 +179,28 @@ export class SendAgentMessageOperation implements Operation<typeof schemas> {
         payload: { workspaceRef },
       });
       if (status.agent.type === "none") {
-        // The agent terminal is closed (or the agent is still starting, in
-        // which case this only focuses the terminal it is starting in).
-        await ctx.dispatch<VscodeCommandIntent>({
-          type: INTENT_VSCODE_COMMAND,
-          payload: { workspaceRef, command: "codehydra.openAgent", args: undefined },
+        // An editor that is not connected yet is still coming up (a workspace
+        // just woken or opened); its sidekick starts the agent terminal as it
+        // connects, so the command would only fail — just wait.
+        const editor = await ctx.hooks.collect("editor", {
+          intent: ctx.intent,
+          workspaceRef,
+          workspacePath: resolved.workspacePath,
         });
+        if (editor.results.some((result) => result.connected === true)) {
+          // The agent terminal is closed (or the agent is still starting, in
+          // which case this only focuses the terminal it is starting in).
+          try {
+            await ctx.dispatch<VscodeCommandIntent>({
+              type: INTENT_VSCODE_COMMAND,
+              payload: { workspaceRef, command: "codehydra.openAgent", args: undefined },
+            });
+          } catch {
+            // The editor went away in between, or the command failed: waiting
+            // is still the answer, and an agent that never shows up ends in
+            // the same "not sent" a closed terminal does.
+          }
+        }
         waitMs = AGENT_READY_TIMEOUT_MS;
       }
     }

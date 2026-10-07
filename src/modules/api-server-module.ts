@@ -106,6 +106,7 @@ import {
   type VscodeModalChangedIntent,
 } from "../intents/vscode-modal-changed";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
+import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
@@ -1651,6 +1652,12 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               },
             };
           },
+        },
+      },
+
+      [SEND_AGENT_MESSAGE_OPERATION_ID]: {
+        editor: {
+          handler: async (ctx) => ({ result: { connected: isConnected(ctx.workspaceRef) } }),
         },
       },
 
