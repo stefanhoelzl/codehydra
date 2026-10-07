@@ -1,5 +1,5 @@
 /**
- * One log file per plugin script run.
+ * One log file per script run — a plugin's hook or automation, a wakeup script.
  *
  * A script's output never reaches the app log: an automation's can carry the
  * credentials its script inlines (a 401 body, a usage line quoting argv), and a
@@ -29,8 +29,8 @@ export const KEEP_OK_RUNS = 1;
 export type RunOutcome = "ok" | "failed";
 
 export interface RunRecord {
-  /** The plugin's display id, e.g. `local:github`. */
-  readonly plugin: string;
+  /** Whose script it is, for people: a plugin's id (`local:github`), or `wakeup`. */
+  readonly source: string;
   readonly entry: string;
   readonly shell: ShellName;
   readonly cwd: string;
@@ -62,7 +62,7 @@ function section(title: string, body: string): string {
 
 export function formatRunLog(record: RunRecord): string {
   const header = [
-    `plugin:   ${record.plugin}`,
+    `source:   ${record.source}`,
     `entry:    ${record.entry}`,
     `shell:    ${record.shell}`,
     `cwd:      ${record.cwd}`,

@@ -22,7 +22,7 @@ const DIR = new Path("/logs/plugins/local/github/prs");
 
 function record(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
-    plugin: "local:github",
+    source: "local:github",
     entry: "prs",
     shell: "bash",
     cwd: "/home/user/.codehydra/plugins/github",
@@ -42,7 +42,7 @@ describe("formatRunLog", () => {
   it("holds the header, stdin, stderr and stdout", () => {
     const text = formatRunLog(record({ stdout: '{"ok":true}' }));
 
-    expect(text).toContain("plugin:   local:github");
+    expect(text).toContain("source:   local:github");
     expect(text).toContain("entry:    prs");
     expect(text).toContain("exit:     1");
     expect(text).toContain("outcome:  failed — exit 1");

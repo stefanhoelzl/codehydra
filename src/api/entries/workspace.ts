@@ -29,6 +29,7 @@ import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
 import { INTENT_SWITCH_WORKSPACE } from "../../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../../intents/switch-workspace";
 import { projectRefOf } from "../../utils/ref";
+import { WAKEUP_INSTRUCTIONS, toWakeupScript, wakeupOptionFields } from "./wakeup";
 
 /** The agent options `workspace.create` accepts, as the caller typed them. */
 export interface AgentInput {
@@ -147,7 +148,7 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
   const status = defineEntry({
     name: "workspace.status",
     kind: "command",
-    description: "Get workspace status, including the dirty flag and agent status.",
+    description: "Get workspace status, including the dirty flag, agent status and wakeup script.",
     input: z.object({
       ...targetFields,
       refresh: z
@@ -157,15 +158,16 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
+      const workspaceRef = await targetOf(ctx, input);
       const result = await dispatcher.dispatch<GetWorkspaceStatusIntent>({
         type: INTENT_GET_WORKSPACE_STATUS,
         payload: {
-          workspaceRef: await targetOf(ctx, input),
+          workspaceRef,
           ...(typeof input.refresh === "boolean" && { refresh: input.refresh }),
         },
       });
       if (!result) throw new Error("Get workspace status returned no result");
-      return result;
+      return { ...result, wakeup: await deps.wakeups.show(workspaceRef) };
     },
   });
 
@@ -176,13 +178,32 @@ export function workspaceEntries(deps: EntryDeps): readonly AnyOperationEntry[] 
     instructions:
       "Tears down the workspace's view and agent server to free resources while keeping the " +
       "git worktree on disk. The workspace stays listed and can be brought back with wake. " +
-      "Returns { started: true } once hibernation has begun; teardown completes in the background.",
-    input: z.object(targetFields),
+      "Returns { started: true } once hibernation has begun; teardown completes in the background. " +
+      "Pass wakeup to set the workspace's wakeup script first (without it, a script it already " +
+      "has stays). " +
+      WAKEUP_INSTRUCTIONS,
+    input: z.object({
+      ...targetFields,
+      wakeup: z
+        .string()
+        .optional()
+        .describe(
+          "Wakeup script, run every poll tick while hibernated, that decides when it wakes"
+        ),
+      ...wakeupOptionFields,
+    }),
     requiresWorkspace: true,
     handler: async (ctx, input) => {
+      const workspaceRef = await targetOf(ctx, input);
+      if (input.wakeup === undefined && (input.shell !== undefined || input.env !== undefined)) {
+        throw new ApiError("usage", "shell and env describe a wakeup script: pass wakeup too");
+      }
+      if (input.wakeup !== undefined) {
+        await deps.wakeups.set(workspaceRef, toWakeupScript({ ...input, script: input.wakeup }));
+      }
       const intent: HibernateWorkspaceIntent = {
         type: INTENT_HIBERNATE_WORKSPACE,
-        payload: { workspaceRef: await targetOf(ctx, input) },
+        payload: { workspaceRef },
       };
       const handle = dispatcher.dispatch(intent);
       if (!(await handle.accepted)) return { started: false };

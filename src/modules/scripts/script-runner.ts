@@ -1,7 +1,8 @@
 /**
- * Runs one plugin script: the single place a plugin's code meets a process.
+ * Runs one user script: the single place a plugin's or a wakeup script's code
+ * meets a process.
  *
- * Every contribution kind — a hook, an automation, whatever comes next — hands
+ * Every contribution kind — a hook, an automation, a wakeup script — hands
  * this a script body, the shell it is written for, the JSON to put on stdin and
  * where to run it. The body goes to a temp file with the shell's extension and
  * runs with GitHub-Actions-style flags (see shells.ts), with:
@@ -57,9 +58,9 @@ export interface ScriptRunnerDeps {
 }
 
 export interface ScriptRequest {
-  /** The plugin's display id (`local:github`), for the log and the log header. */
-  readonly plugin: string;
-  /** Hook entry or automation name. */
+  /** Whose script it is (`local:github`, `wakeup`), for the log and the log header. */
+  readonly source: string;
+  /** Hook entry, automation or workspace name. */
   readonly entry: string;
   readonly shell: ShellName;
   readonly script: string;
@@ -72,6 +73,8 @@ export interface ScriptRequest {
   readonly pluginDir?: Path;
   /** `CH_WORKSPACE_DIR`, when the script is about one worktree. */
   readonly workspaceDir?: Path;
+  /** Variables of the script's own, over CodeHydra's environment (never written to a log). */
+  readonly env?: Readonly<Record<string, string>>;
   /** Aborting it kills the script's process tree; the run counts as failed. */
   readonly signal?: AbortSignal;
   /** Kill the script after this long. Absent = no limit. */
@@ -128,6 +131,7 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
   function scriptEnv(request: ScriptRequest): NodeJS.ProcessEnv {
     return {
       ...prependPath(baseEnv, deps.binDir.toNative(), platform),
+      ...request.env,
       ...(request.pluginDir !== undefined && { CH_PLUGIN_DIR: request.pluginDir.toNative() }),
       ...(request.workspaceDir !== undefined && {
         CH_WORKSPACE_DIR: request.workspaceDir.toNative(),
@@ -155,8 +159,8 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
       let result: Omit<ScriptResult, "logPath">;
       try {
         const invocation = shell.invocation(scriptFile);
-        deps.logger.debug("Running plugin script", {
-          plugin: request.plugin,
+        deps.logger.debug("Running script", {
+          source: request.source,
           entry: request.entry,
           shell: shell.name,
         });
@@ -166,7 +170,7 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
           env: scriptEnv(request),
           input,
           // The output may carry whatever the script inlines; the run log has it.
-          redactBy: `plugin ${request.plugin} ${request.entry}`,
+          redactBy: `script ${request.source} ${request.entry}`,
         });
         result = await waitFor(proc, request.signal, request.timeoutMs);
       } finally {
@@ -178,7 +182,7 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
         finish: async (judgement) => {
           try {
             return await writeRunLog(deps.fileSystem, request.logDir, {
-              plugin: request.plugin,
+              source: request.source,
               entry: request.entry,
               shell: shell.name,
               cwd: request.cwd.toNative(),
@@ -192,8 +196,8 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
               stderr: result.stderr,
             });
           } catch (error) {
-            deps.logger.warn("Could not write a plugin run log", {
-              plugin: request.plugin,
+            deps.logger.warn("Could not write a script run log", {
+              source: request.source,
               entry: request.entry,
               error: getErrorMessage(error),
             });

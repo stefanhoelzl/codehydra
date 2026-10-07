@@ -21,7 +21,7 @@ import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import { Path } from "../../utils/path/path";
 import { ALL_ENTRIES } from "./hook-map";
 import type { PluginPlatform } from "./manifest";
-import type { ShellName } from "./shells";
+import type { ShellName } from "../scripts/shells";
 
 /** Where the old hooks live, relative to the worktree. */
 export const LEGACY_HOOKS_DIR = [".codehydra", "hooks"] as const;

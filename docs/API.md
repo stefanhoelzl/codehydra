@@ -498,8 +498,11 @@ All events use acknowledgment callbacks for request/response pattern.
 | `api:workspace:create`             | `WorkspaceCreateRequest`               | `ApiResult<Workspace>`                  |
 | `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                 |
 | `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                 |
-| `api:workspace:hibernate`          | None                                   | `ApiResult<{ started: boolean }>`       |
+| `api:workspace:hibernate`          | `{ wakeup?, shell?, env? }`            | `ApiResult<{ started: boolean }>`       |
 | `api:workspace:wake`               | None                                   | `ApiResult<Workspace>`                  |
+| `api:workspace:setWakeup`          | `{ script, shell?, env? }`             | `ApiResult<WakeupStatus>`               |
+| `api:workspace:clearWakeup`        | None                                   | `ApiResult<null>`                       |
+| `api:workspace:getWakeup`          | None                                   | `ApiResult<WakeupStatus \| null>`       |
 | `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                       |
 | `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`             |
 | `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                       |

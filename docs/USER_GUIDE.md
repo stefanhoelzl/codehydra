@@ -78,7 +78,8 @@ called that any more. Give it a different label with a title instead.
 A workspace you're not using can be put to sleep to free its editor and agent
 server. A hibernated workspace keeps its branch and files and shows a
 screenshot of where you left it — wake it any time to pick up where you left
-off.
+off, or give it a [wakeup script](#wakeup-scripts) that wakes it when
+something happens.
 
 ### Agent status
 
@@ -240,6 +241,54 @@ is easy to spot. Turn this off with `auto-tag.new`.
   keeps running throughout. If the reload does not help, hibernate and wake
   the workspace.
 
+### Wakeup scripts
+
+A workspace can carry one **wakeup script**: a script that runs every poll
+while the workspace is hibernated and decides when it wakes. It is usually
+set by the workspace's own agent before it goes to sleep — "wake me when CI on
+PR #12 finishes":
+
+```sh
+ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake\",\"message\":\"CI on #12 passed\"}" || true'
+```
+
+- **Setting it** — `ch ws hibernate --wakeup <script>` sets it and hibernates
+  in one call; `ch ws wakeup set <script>` sets it on its own (on an awake
+  workspace it arms the next hibernation; `-` reads the script from stdin).
+  Both take `--shell bash|powershell|cmd` (default `bash`, Git Bash on
+  Windows) and `--env KEY=VALUE`, repeated for several variables of the
+  script's own. A workspace has at most one; setting another replaces it, and
+  hibernating without `--wakeup` keeps the one it has. `ch ws wakeup clear`
+  removes it, `ch ws wakeup show` shows it with how it last ran (also in
+  `ch ws status`). From MCP: `workspace_hibernate` (`wakeup`),
+  `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`;
+  from an automation: `workspace.wakeup.set` / `workspace.wakeup.clear` items,
+  or `wakeup` on a `workspace.hibernate` item.
+- **When it runs** — on every poll (`poll.interval`, default 60 seconds) while
+  the workspace is hibernated, never while it is awake; the first run is on the
+  next poll after hibernating, and every hibernated workspace's script runs
+  once the app has opened its projects. It is killed after `poll.timeout`
+  (default 30 seconds). It runs in the worktree, with `ch` on `PATH` (so
+  `ch ws …` acts on that workspace), `CH_WORKSPACE_DIR` and its own variables
+  set, and `{"workspace": <ref>, "project": <ref>, "workspacePath": …}` on
+  stdin. `plugins.enabled` does not stop it.
+- **What it prints** — nothing, or `{"action":"keep"}`, keeps the workspace
+  asleep. `{"action":"wake","message":"…"}` wakes it in place (you stay where
+  you are) and sends the message, if any, to its agent as a
+  [message](#messages-to-a-running-agent) signed `CodeHydra · wakeup`. There is
+  no delete: to have a workspace deleted, wake it with a message asking its
+  agent to delete it.
+- **Any wake clears it** — the script's own, yours, an automation's. It is
+  one-shot, so a condition that is still true cannot wake the workspace again
+  the moment you hibernate it.
+- **Failures** — an exit other than 0 (or 75, a temporary failure) or output
+  that is not one of the above never wakes the workspace; it raises **Wakeup
+  script failed**, once per distinct message, and the script runs again next
+  poll. `ch ws wakeup show` lists the failure with its run log, kept under
+  `<data directory>/logs/wakeup/`.
+- A workspace with a wakeup script shows an alarm clock tag (⏰) in the
+  sidebar; hover it to see the script.
+
 ### Deleting a workspace
 
 Hover a ready row (or one that could not be opened) and click its trash icon
@@ -382,7 +431,8 @@ on the first start.
 What the app writes lives in the data directory: `state.json` (what the app
 itself remembers: which plugins are enabled (`plugins.state`), the hide-hibernated toggle, tracked
 automations, a dismissed update, the workspaces folder in use) and
-the `logs/` folder (plugin run logs are in `logs/plugins/`):
+the `logs/` folder (plugin run logs are in `logs/plugins/`, wakeup script run
+logs in `logs/wakeup/`):
 
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
@@ -552,13 +602,13 @@ the way GitHub Actions runs a `run:` step for its shell:
   plugins folder, for a one-file plugin) for an automation. From a worktree,
   `ch` acts on that workspace without being told which (`ch ws title`, …).
 - **Timeout**: none for a hook (see [Canceling a hook](#canceling-a-hook)); an
-  automation's script is killed after 30 seconds.
+  automation's script is killed after `poll.timeout` seconds (default 30).
 
 ### Run logs and errors
 
 Every run writes its own log file:
 `<data directory>/logs/plugins/<local|workspace/<project>>/<plugin>/<hooks|automations>/<entry>/<time>.<ok|failed>.log`.
-It holds the plugin, entry, shell, working directory, times and exit, then the
+It holds the source (the plugin), entry, shell, working directory, times and exit, then the
 JSON the script was handed, its stderr and its stdout. The environment is never
 written. Per entry the newest ten failed runs and the latest successful one are
 kept.
@@ -885,15 +935,19 @@ notification in the same poll:
 ]
 ```
 
-The first poll runs at startup; after that, `automations.poll-interval` is the
-number of seconds between the end of one poll and the start of the next
-(default 60, minimum 1; a change applies once the current wait ends; the old
-`auto-workspace.poll-interval` is still read). Every automation runs each
-poll. The script gets `{}` on stdin and is killed after 30 seconds. A failed or
-timed-out script, or output that is not a JSON array, skips that automation for
-the poll and raises **Plugin failed**. Exit 75 (`EX_TEMPFAIL`) marks a temporary
-failure: the poll is skipped, and **Plugin failed** is raised only once it has
-persisted for 10 minutes.
+The first poll runs at startup, once CodeHydra has opened your projects; after
+that, `poll.interval` is the number of seconds between the end of one poll and
+the start of the next (default 60, minimum 1; a change applies once the current
+wait ends; the old `automations.poll-interval` and
+`auto-workspace.poll-interval` are still read). The same poll runs
+[wakeup scripts](#wakeup-scripts). Every automation runs each poll, all at
+once, and each one's items are acted on as soon as its script ends. The script
+gets `{}` on stdin and is killed after `poll.timeout` seconds (default 30). A
+failed or timed-out script, or output that is not a JSON array, skips that
+automation for the poll and raises **Plugin failed**. Exit 75 (`EX_TEMPFAIL`)
+marks a temporary failure: the poll is skipped, and **Plugin failed** is raised
+only once it has persisted for 10 minutes. A failure is forgotten once the
+automation runs cleanly again, or is removed.
 
 `ch plugin schema --items` prints the item format as a JSON Schema, one branch
 per action; `ch <command> --help` (`ch ws create --help`, …) describes each
@@ -901,9 +955,10 @@ action's fields.
 
 Items are strict: an item with no `action`, an action no automation may run, a
 missing field, a value of the wrong type or a field the action does not know
-(a typo) is refused, and raises **Plugin failed** naming the automation, the
-item's position, the action and the field. The next item still runs; the run
-log holds the whole output.
+(a typo) is refused. The next item still runs; once the run is done, one
+**Plugin failed** names the automation and, for each refused item, its
+position, the action and the field. The run is then logged as failed, and the
+run log holds the whole output.
 
 #### Creating workspaces
 
@@ -1163,8 +1218,10 @@ ch ws agent message --wake "pick this back up"
 - A hibernated workspace, or one whose agent terminal is closed, has no agent
   to take it, and the command fails (exit 6). `--wake` wakes the workspace or
   reopens the agent terminal, then waits up to 90 seconds for the agent to
-  start. It does not switch to the workspace. An agent still starting in an
-  open terminal is waited for (up to 30 seconds) even without `--wake`.
+  start — also for a workspace that is still opening or waking, whose agent
+  terminal starts once its editor is up. It does not switch to the workspace.
+  An agent still starting in an open terminal is waited for (up to 30 seconds)
+  even without `--wake`.
 - **Claude Code** in bypass-permissions mode on macOS and Linux holds a
   message from outside until you approve it in its terminal. The dialog closes
   after five minutes and drops the message. In every other mode, and in every
@@ -1237,10 +1294,11 @@ running CodeHydra by itself; if none is running, it exits 3.
 
 | Command                                                            | Purpose                                                                                                          |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `ws status`                                                        | Dirty flag, unmerged commits and agent status (`--refresh` fetches first)                                        |
+| `ws status`                                                        | Dirty flag, unmerged commits, agent status and wakeup script (`--refresh` fetches first)                         |
 | `ws create <name> [base]`                                          | New workspace (`--project`, `--tracking`, `--prompt`, `--agent`, `--model`, `--permission-mode`, `--agent-name`) |
 | `ws delete`                                                        | Delete the workspace (`--keep-branch`, `--ignore-warnings`, `--no-wait`)                                         |
-| `ws hibernate`, `ws wake`                                          | Hibernate / wake                                                                                                 |
+| `ws hibernate`, `ws wake`                                          | Hibernate (`--wakeup <script>`, `--shell`, `--env`) / wake                                                       |
+| `ws wakeup set <script>\|clear\|show`                              | The [wakeup script](#wakeup-scripts) (`--shell`, `--env KEY=VALUE`; `-` reads stdin)                             |
 | `ws switch <workspace>`                                            | Make a workspace the active one                                                                                  |
 | `ws title [title]`                                                 | Sidebar title; with no title, clears it and the row shows the branch again                                       |
 | `ws tag ls`, `ws tag set <name>`, `ws tag rm <name>`               | Tags (`--color`, `--label`, `--description`; `set` replaces the whole tag)                                       |
@@ -1348,6 +1406,7 @@ Some keys are CodeHydra's own, and `ws metadata get` shows them read-only:
 | `agent`      | The agent the workspace runs (`claude` or `opencode`)       |
 | `hibernated` | `true` while the workspace is hibernated                    |
 | `source`     | The `<plugin>/<automation>` that created or last matched it |
+| `wakeup`     | The [wakeup script](#wakeup-scripts), as JSON               |
 
 Setting one of those — or a key CodeHydra keeps to itself and does not show —
 is refused, from `ch`, MCP, the extension API, plugin actions and automation
@@ -1439,15 +1498,15 @@ ch notification show "Deploy to staging?" --actions Deploy --actions Skip --wait
 The agents reach the same operations as MCP tools (`ch mcp` is the server both
 agents launch):
 
-| Area       | Tools                                                                                                                                                                                                                                                                      |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
-| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                             |
-| Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                        |
-| Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                            |
-| Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                      |
-| Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                  |
-| Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                    |
+| Area       | Tools                                                                                                                                                                                                                                                                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
+| Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                                                                                                       |
+| Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                                                                                                  |
+| Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                                                                                                      |
+| Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                                                                                                |
+| Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                                                                                            |
+| Other      | `config_get`, `config_list`, `config_set`, `config_reset`, `guide`, `log`, `report_bug`                                                                                                                                                                                                                                                              |
 
 Tools that can act on another workspace take `workspace` (a name,
 `<project>::<name>` or a ref, looked up like `--workspace`: the agent's own

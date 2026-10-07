@@ -42,6 +42,7 @@ function wire(): { client: Client; writes: SetMetadataPayload[] } {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config: createMockConfig(),
+      wakeups: { set: async () => {}, show: async () => null },
       readUserGuide: async () => "",
       plugins: () => {
         throw new Error("this test reaches no plugins");

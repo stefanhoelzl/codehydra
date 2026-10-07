@@ -7,7 +7,8 @@
  *
  * - `internal`: never shown outside (`metadata.get` omits it).
  * - `protected`: shown, but only CodeHydra's own operations change it —
- *   hibernate/wake flip `hibernated`, creation records `base`, `agent` and `name`.
+ *   hibernate/wake flip `hibernated`, creation records `base`, `agent` and `name`,
+ *   `ch ws wakeup` writes `wakeup`.
  * - `public`: read and written freely (`title`, `tags.*`, custom keys).
  *
  * The tier also picks the section of the workspace's metadata file the key is
@@ -23,6 +24,7 @@ const RESTRICTED_KEYS: Readonly<Record<string, Exclude<MetadataTier, "public">>>
   hibernated: "protected",
   name: "protected",
   source: "protected",
+  wakeup: "protected",
 };
 
 export function metadataTier(key: string): MetadataTier {

@@ -341,7 +341,7 @@ async function removeViaSidebar(ui: Page, name: string): Promise<void> {
 }
 
 function launchFlags(): string[] {
-  return [`--automations.poll-interval=${POLL_SECONDS}`];
+  return [`--poll.interval=${POLL_SECONDS}`];
 }
 
 // =============================================================================

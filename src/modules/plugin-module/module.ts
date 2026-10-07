@@ -25,9 +25,11 @@
  *   - `before-worktree-deleted` at `delete-workspace : pre-delete`, which can
  *     refuse. It fails closed: a script that breaks stops the deletion too.
  *   - `on-workspace-opened` observes `workspace:created` (every open).
- * - **automations** (automations.ts): a script run every poll cycle whose items
+ * - **automations** (automations.ts): a script run every poll tick whose items
  *   each run a registry operation. Local plugins only — a repository's
- *   automations would run from whichever worktree happened to be read.
+ *   automations would run from whichever worktree happened to be read. The
+ *   poll module (poll-module.ts) runs them and announces their failures; this
+ *   module says which there are and acts on what they print.
  *
  * Several plugins may define the same hook entry. They run one after another —
  * local plugins by name, then the workspace's by name, each plugin's documents
@@ -51,17 +53,11 @@ import type { HookOutput } from "../../intents/lib/operation";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { UiPresenter } from "../presentation/presentation-module";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
-import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
-import {
-  storeBoolean,
-  storeCustom,
-  storeFolder,
-  type PersistedAccessor,
-} from "../../boundaries/platform/store-definition";
+import { storeBoolean, storeCustom } from "../../boundaries/platform/store-definition";
 import { projectDirName } from "../../boundaries/platform/paths";
 import { Path } from "../../utils/path/path";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -93,7 +89,6 @@ import {
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
 } from "../../intents/vscode-show-message";
-import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
@@ -123,24 +118,20 @@ import {
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
 import { createPluginTrust, type PluginTrust, type TrustProject } from "./trust";
-import { createShellResolver, ShellUnavailableError, type ShellName } from "./shells";
+import { ShellUnavailableError, type ShellName } from "../scripts/shells";
 import {
-  createScriptRunner,
   describeStatus,
   type PendingRun,
   type ScriptRequest,
   type ScriptRunner,
-} from "./script-runner";
+} from "../scripts/script-runner";
 import type { HookOutputSink } from "./output-sink";
 import { createItemSchemas, type ItemSchemas } from "./items";
 import { parseTemplate, renderInput, type TemplateObject } from "./template-render";
 import { safeJsonParse } from "./util";
-import {
-  createAutomations,
-  TEMPORARY_FAILURE_EXIT,
-  type AutomationRun,
-  type AutomationSource,
-} from "./automations";
+import { createAutomations, type AutomationSource } from "./automations";
+import { POLL_TICK_OPERATION_ID, type PollJob } from "../../intents/poll-tick";
+import type { PollError } from "../poll-module";
 import {
   convertLegacySources,
   LEGACY_SOURCES_DIR,
@@ -167,15 +158,16 @@ import {
 
 export interface PluginModuleDeps {
   readonly fileSystem: FileSystemBoundary;
-  readonly processRunner: ProcessRunner;
+  /** Runs every hook script (scripts/scripts.ts, shared with the poll module). */
+  readonly runner: ScriptRunner;
+  /** The automations failing right now, as the poll module recorded them. */
+  readonly pollErrors: (owner: string) => readonly PollError[];
   readonly logger: Logger;
   readonly config: Config;
   readonly stateService: StateService;
   readonly dispatcher: Dispatcher;
   readonly ui: Pick<UiPresenter, "dialog" | "trackRunningHook">;
-  readonly pathProvider: Pick<PathProvider, "homePath" | "dataPath" | "tempPath">;
-  /** Directory holding the `ch` CLI, prepended to every script's PATH. */
-  readonly binDir: Path;
+  readonly pathProvider: Pick<PathProvider, "homePath" | "dataPath">;
   readonly sink: HookOutputSink;
   /**
    * Subscribe to a workspace's editor connecting (it does on every open). The
@@ -195,7 +187,7 @@ export interface PluginModuleDeps {
   readonly registry: () => OperationRegistry;
   /** Which documents apply. Default: this process's platform. */
   readonly platform?: NodeJS.Platform;
-  /** The environment scripts inherit and shells are searched in. Default: this process's. */
+  /** The environment legacy sources are converted against. Default: this process's. */
   readonly env?: NodeJS.ProcessEnv;
 }
 
@@ -275,9 +267,6 @@ const booleanMapStore = storeCustom<Record<string, boolean>>({
 /** The migration offer's button. */
 const ACTION_MIGRATE = "Migrate";
 
-/** How long an automation's script may run before it is killed. */
-const AUTOMATION_TIMEOUT_MS = 30_000;
-
 /** A hook script one plugin contributes to one entry. */
 interface HookScript {
   readonly plugin: LoadedPlugin;
@@ -319,10 +308,8 @@ type ScriptOutcome<T> =
       readonly logPath?: undefined;
     };
 
-/** An automation's exit 75: temporary, try again next poll. */
-function isTemporaryFailure(output: ScriptOutput): boolean {
-  return output.status === "exited" && output.exitCode === TEMPORARY_FAILURE_EXIT;
-}
+/** The poll jobs this module collects: one per automation. */
+export const AUTOMATIONS_OWNER = "automations";
 
 /** An automation's entry name: its run logs and its key in the error book. */
 function automationEntry(source: AutomationSource): string {
@@ -358,19 +345,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     legacyNames: { "hooks.enabled": (value) => (typeof value === "boolean" ? value : undefined) },
   });
 
-  const folder = storeFolder();
-  const bashPath: PersistedAccessor<string | null> = deps.config.register("paths.bash", {
-    default: null,
-    description:
-      "bash for plugin scripts on Windows (default: Git Bash, found next to git on PATH)",
-    applies: "live",
-    parse: folder.parse,
-    validate: folder.validate,
-    validValues: "<absolute path to bash.exe>",
-    // A file, not a folder: a plain text field rather than the folder picker.
-    settingsControl: { kind: "string" },
-  });
-
   const enabledState = deps.stateService.register<Record<string, boolean>>("plugins.state", {
     default: {},
     description: "Plugins enabled or disabled (unlisted: local enabled, workspace asked)",
@@ -391,21 +365,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   });
   const errors: PluginErrorBook = createPluginErrorBook({ dispatcher: deps.dispatcher });
 
-  const runner: ScriptRunner = createScriptRunner({
-    fileSystem: deps.fileSystem,
-    processRunner: deps.processRunner,
-    shells: createShellResolver({
-      fileSystem: deps.fileSystem,
-      platform,
-      env,
-      bashOverride: () => bashPath.get(),
-    }),
-    logger: deps.logger,
-    tempDir: deps.pathProvider.tempPath("plugins"),
-    binDir: deps.binDir,
-    env,
-    platform,
-  });
+  const runner = deps.runner;
 
   const localDir = deps.pathProvider.homePath("plugins");
   const logsRoot = deps.pathProvider.dataPath("logs/plugins");
@@ -664,7 +624,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
     const run = await runScript(
       {
-        plugin: script.plugin.id,
+        source: script.plugin.id,
         entry,
         shell: script.doc.shell,
         script: script.script,
@@ -1062,11 +1022,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Automations
   // ---------------------------------------------------------------------------
 
-  /** An automation's key in the error book. */
-  function automationKey(source: AutomationSource): { plugin: string; entry: string } {
-    return { plugin: source.plugin, entry: automationEntry(source) };
-  }
-
   /** The automations to run this cycle: every enabled local plugin's, for this platform. */
   async function automationSources(): Promise<readonly PluginAutomation[]> {
     const sources: PluginAutomation[] = [];
@@ -1098,36 +1053,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     return sources;
   }
 
-  /** Run an automation's script and read the array of items it prints. */
-  async function runAutomationScript(source: PluginAutomation): Promise<AutomationRun> {
-    const { owner } = source;
-    const run = await runScript(
-      {
-        plugin: owner.id,
-        entry: automationEntry(source),
-        shell: source.shell,
-        script: source.script,
-        cwd: owner.pluginDir ?? localDir,
-        input: {},
-        logDir: logDir(owner, "", "automations", source.name),
-        ...(owner.pluginDir !== undefined && { pluginDir: owner.pluginDir }),
-        timeoutMs: AUTOMATION_TIMEOUT_MS,
-      },
-      parseItems,
-      (output) =>
-        isTemporaryFailure(output)
-          ? `temporary failure (exit ${TEMPORARY_FAILURE_EXIT})`
-          : describeStatus(output)
-    );
-    if (run.ok) return { ok: true, items: run.value };
-    return {
-      ok: false,
-      failure: run.failure,
-      temporary: run.output !== undefined && isTemporaryFailure(run.output),
-      ...(run.logPath !== undefined && { logPath: run.logPath.toNative() }),
-    };
-  }
-
   /** Item schemas, built from the registry the first time they are needed. */
   let itemSchemas: ItemSchemas | undefined;
   function items(): ItemSchemas {
@@ -1138,21 +1063,69 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   const automations = createAutomations({
     logger: deps.logger,
     dispatcher: deps.dispatcher,
-    configService: deps.config,
     stateService: deps.stateService,
     enabled: allowed,
     sources: automationSources,
-    runScript: runAutomationScript,
     parseItem: (raw) => items().parse(raw),
     invokeAction: async (action, input) => {
       await invokePluginAction({ registry: deps.registry() }, action, input);
     },
-    errors: {
-      failure: (source, message, logPath, options) =>
-        errors.failure(automationKey(source), message, logPath, options),
-      success: (source) => errors.success(automationKey(source)),
-    },
   });
+
+  /** The automations of the tick in progress, by id, for their results. */
+  let collected = new Map<string, PluginAutomation>();
+
+  /** Read once, before the first tick reads them: legacy sources moved, tracking loaded. */
+  let prepared: Promise<void> | undefined;
+  function prepare(): Promise<void> {
+    prepared ??= (async () => {
+      await moveLegacySources();
+      automations.load();
+    })();
+    return prepared;
+  }
+
+  /** The poll job that runs an automation's script. */
+  function automationJob(source: PluginAutomation): PollJob {
+    const { owner } = source;
+    return {
+      owner: AUTOMATIONS_OWNER,
+      id: source.id,
+      source: owner.id,
+      entry: automationEntry(source),
+      shell: source.shell,
+      script: source.script,
+      cwd: (owner.pluginDir ?? localDir).toString(),
+      input: {},
+      logDir: logDir(owner, "", "automations", source.name).toString(),
+      ...(owner.pluginDir !== undefined && { pluginDir: owner.pluginDir.toString() }),
+      failure: { title: "Plugin failed", pointer: ERRORS_POINTER },
+    };
+  }
+
+  async function collectAutomations(): Promise<readonly PollJob[]> {
+    await prepare();
+    const sources = await automations.collect();
+    collected = new Map(sources.map((source) => [source.id, source]));
+    return sources.map(automationJob);
+  }
+
+  /** Act on what an automation printed; what went wrong is the poll module's to announce. */
+  async function automationResult(
+    job: PollJob,
+    run: { readonly stdout: string; readonly failure?: string | undefined }
+  ): Promise<readonly string[]> {
+    if (run.failure !== undefined) return [];
+    const source = collected.get(job.id);
+    if (source === undefined) return [];
+    let printed: readonly unknown[];
+    try {
+      printed = parseItems(run.stdout);
+    } catch (error) {
+      return [getErrorMessage(error)];
+    }
+    return automations.handle(source, printed);
+  }
 
   /**
    * Move the pre-plugin `auto-workspace.sources` setting into a local plugin,
@@ -1363,7 +1336,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       );
       return { ...found, state };
     },
-    errors: () => errors.list(),
+    errors: () => [
+      ...errors.list(),
+      // An automation's failures are the poll module's, which runs them.
+      ...deps.pollErrors(AUTOMATIONS_OWNER).map((failure) => ({
+        plugin: failure.source,
+        entry: failure.entry,
+        message: failure.message,
+        ...(failure.logPath !== undefined && { logPath: failure.logPath }),
+        at: failure.at,
+      })),
+    ],
     schema: (which) => (which === "items" ? items().jsonSchema() : manifestJsonSchema()),
     async render(templatePath, itemsJson) {
       let template: TemplateObject;
@@ -1414,10 +1397,14 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       migrations: { handler: migrateProjectKeys },
     },
     [APP_SHUTDOWN_OPERATION_ID]: {
-      stop: {
-        handler: async () => {
-          automations.stop();
-          await cancelAllHooks();
+      stop: { handler: cancelAllHooks },
+    },
+    [POLL_TICK_OPERATION_ID]: {
+      collect: { handler: async () => ({ result: { jobs: await collectAutomations() } }) },
+      result: {
+        handler: async (ctx) => {
+          if (ctx.job.owner !== AUTOMATIONS_OWNER) return;
+          return { result: { errors: await automationResult(ctx.job, ctx.run) } };
         },
       },
     },
@@ -1439,12 +1426,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   });
 
   const events = defineEvents({
-    [EVENT_APP_STARTED]: {
-      handler: async (): Promise<void> => {
-        await moveLegacySources();
-        await automations.start();
-      },
-    },
     [EVENT_WORKSPACE_CREATED]: {
       // Returns immediately: the emitter must never wait on a plugin's script,
       // least of all one that may park on a trust dialog.

@@ -21,7 +21,7 @@ import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { Path } from "../../utils/path/path";
 import { createShellResolver, type ShellName } from "./shells";
 import { createScriptRunner, type ScriptRequest, type ScriptRunner } from "./script-runner";
-import { convertLegacySources } from "./legacy-sources";
+import { convertLegacySources } from "../plugin-module/legacy-sources";
 
 const isWindows = process.platform === "win32";
 
@@ -71,7 +71,7 @@ function request(
   extra: Partial<ScriptRequest> = {}
 ): ScriptRequest {
   return {
-    plugin: "local:test",
+    source: "local:test",
     entry: "entry",
     shell,
     script,

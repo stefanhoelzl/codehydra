@@ -71,6 +71,7 @@ import type {
 } from "./hibernate-workspace";
 import type { LIST_PROJECTS_OPERATION_ID, schemas as listProjectsSchemas } from "./list-projects";
 import type { OPEN_PROJECT_OPERATION_ID, schemas as openProjectSchemas } from "./open-project";
+import type { POLL_TICK_OPERATION_ID, schemas as pollTickSchemas } from "./poll-tick";
 import type {
   OPEN_WORKSPACE_OPERATION_ID,
   schemas as openWorkspaceSchemas,
@@ -154,6 +155,7 @@ type Operations =
   | Entry<typeof LIST_PROJECTS_OPERATION_ID, typeof listProjectsSchemas>
   | Entry<typeof OPEN_PROJECT_OPERATION_ID, typeof openProjectSchemas>
   | Entry<typeof OPEN_WORKSPACE_OPERATION_ID, typeof openWorkspaceSchemas>
+  | Entry<typeof POLL_TICK_OPERATION_ID, typeof pollTickSchemas>
   | Entry<typeof RESOLVE_PROJECT_OPERATION_ID, typeof resolveProjectSchemas>
   | Entry<typeof RESOLVE_WORKSPACE_OPERATION_ID, typeof resolveWorkspaceSchemas>
   | Entry<typeof RESTART_AGENT_OPERATION_ID, typeof restartAgentSchemas>
