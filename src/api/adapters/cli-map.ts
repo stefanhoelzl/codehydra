@@ -40,6 +40,13 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "workspace.status": { path: ["ws", "status"] },
   "workspace.hibernate": { path: ["ws", "hibernate"] },
   "workspace.wake": { path: ["ws", "wake"] },
+  "workspace.wakeup.set": {
+    path: ["ws", "wakeup", "set"],
+    positionals: ["script"],
+    stdin: "script",
+  },
+  "workspace.wakeup.clear": { path: ["ws", "wakeup", "clear"] },
+  "workspace.wakeup.show": { path: ["ws", "wakeup", "show"] },
   "workspace.create": { path: ["ws", "create"], positionals: ["name", "base"] },
   "workspace.delete": { path: ["ws", "delete"] },
   "workspace.switch": { path: ["ws", "switch"], positionals: ["workspace"] },

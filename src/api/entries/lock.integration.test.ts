@@ -48,6 +48,7 @@ function setup() {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks,
       config: createMockConfig(),
+      wakeups: { set: async () => {}, show: async () => null },
       readUserGuide: async () => "",
       plugins: () => {
         throw new Error("this test reaches no plugins");

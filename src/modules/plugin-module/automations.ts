@@ -39,10 +39,11 @@
  * Any other action runs once per item, invoked through the registry like `ch`.
  * A refused item is reported and the next one still runs.
  *
- * `automations.poll-interval` (seconds, default 60) is the *gap between runs*:
- * the next wait is armed only once a cycle has settled, so a slow poll never
- * stacks. The value is re-read when each wait is armed, so a change made in the
- * settings dialog applies once the current wait elapses.
+ * The poll module (poll-module.ts) drives it: each tick the plugin module
+ * collects the automations to run (`collect`), the poll module runs their
+ * scripts, and each one's items come back here (`handle`) as its run finishes —
+ * the automations of one tick are handled concurrently. What `handle` returns is
+ * what went wrong with the items; the poll module announces it.
  */
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
@@ -68,12 +69,7 @@ import {
   type SendAgentMessageIntent,
 } from "../../intents/send-agent-message";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import type { Config } from "../../boundaries/platform/config";
-import {
-  storeCustom,
-  storeNumber,
-  type PersistedAccessor,
-} from "../../boundaries/platform/store-definition";
+import { storeCustom } from "../../boundaries/platform/store-definition";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import { encodeTag, tagKey, TITLE_METADATA_KEY, type AgentSpec } from "../../shared/api/types";
@@ -142,18 +138,7 @@ function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
 // Constants
 // =============================================================================
 
-/** Default gap between the end of one reconcile-and-poll cycle and the next. */
-const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const METADATA_SOURCE_KEY = "source";
-
-/**
- * The exit an automation uses to say "temporary, try again next poll" —
- * `EX_TEMPFAIL` from sysexits.h, as mail servers use it.
- */
-export const TEMPORARY_FAILURE_EXIT = 75;
-
-/** How long temporary failures may go on before they are worth a card. */
-const TEMPORARY_FAILURE_GRACE_MS = 10 * 60_000;
 
 // =============================================================================
 // Dependencies
@@ -167,33 +152,6 @@ export interface AutomationSource {
   readonly plugin: string;
   /** The automation's name within its plugin. */
   readonly name: string;
-}
-
-/** How one run of an automation's script went. */
-export type AutomationRun =
-  | { readonly ok: true; readonly items: readonly unknown[] }
-  | {
-      readonly ok: false;
-      /** Why, in the words `ch plugin errors` uses. */
-      readonly failure: string;
-      /** It exited {@link TEMPORARY_FAILURE_EXIT}: retry next poll, quietly at first. */
-      readonly temporary: boolean;
-      /** The run's log file (native path), when there is one. */
-      readonly logPath?: string;
-    };
-
-/**
- * Where an automation's failures are recorded (`ch plugin errors`, and a card
- * unless `quiet`), and cleared once it runs a cycle without one.
- */
-export interface AutomationErrors {
-  failure(
-    source: AutomationSource,
-    message: string,
-    logPath?: string,
-    options?: { readonly quiet?: boolean }
-  ): void;
-  success(source: AutomationSource): void;
 }
 
 /** A create item, turned into what creating or matching a workspace needs. */
@@ -215,7 +173,6 @@ interface WorkspaceDefinition {
 export interface AutomationsDeps<S extends AutomationSource> {
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
-  readonly configService: Config;
   readonly stateService: StateService;
   /**
    * Whether automations run at all (`plugins.enabled`). Read at the start of
@@ -225,18 +182,14 @@ export interface AutomationsDeps<S extends AutomationSource> {
   readonly enabled: () => boolean;
   /** Every automation that may run now; read at the start of each cycle. */
   readonly sources: () => Promise<readonly S[]>;
-  /** Run a source's script and read its items. Reports nothing itself. */
-  readonly runScript: (source: S) => Promise<AutomationRun>;
   /** Validate one printed item. Throws a message naming the action and field. */
   readonly parseItem: (raw: unknown) => AutomationItem;
   /** Run a non-create action with a rendered input. Throws on failure. */
   readonly invokeAction: (action: OperationName, input: Record<string, unknown>) => Promise<void>;
-  /**
-   * Where a failure the user must hear about goes: a script that failed, an
-   * invalid item, an action that was refused. Repeats of the same text collapse.
-   */
-  readonly errors: AutomationErrors;
 }
+
+/** Where a failure the user must hear about goes: an invalid item, a refused action. */
+type Report = (message: string) => void;
 
 // =============================================================================
 // Helpers
@@ -294,11 +247,19 @@ function definitionOf(item: CreateItem): WorkspaceDefinition {
 // Factory
 // =============================================================================
 
-export interface Automations {
-  /** Load state, run the first cycle, start polling. */
-  start(): Promise<void>;
-  /** Stop polling. */
-  stop(): void;
+export interface Automations<S extends AutomationSource = AutomationSource> {
+  /** Load the tracking state. Before the first `collect`. */
+  load(): void;
+  /**
+   * Start a cycle: the automations to run now — none while plugins are off —
+   * after forgetting the entries of any that are gone.
+   */
+  collect(): Promise<readonly S[]>;
+  /**
+   * Act on the items one automation's script printed. Returns what went wrong
+   * with them, for the poll module to announce; an empty list is a clean run.
+   */
+  handle(source: S, items: readonly unknown[]): Promise<readonly string[]>;
   /**
    * Turn the projects tracking entries recorded by path, as versions before
    * refs did, into refs. Before `start`.
@@ -311,28 +272,9 @@ export interface Automations {
   renameTracking(rename: (key: string) => string | undefined): Promise<void>;
 }
 
-/** The pre-plugin name of the poll interval, still honored. */
-const LEGACY_INTERVAL_KEY = "auto-workspace.poll-interval";
-
 export function createAutomations<S extends AutomationSource>(
   deps: AutomationsDeps<S>
-): Automations {
-  const intervalAccessor: PersistedAccessor<number> = deps.configService.register(
-    "automations.poll-interval",
-    {
-      default: DEFAULT_POLL_INTERVAL_SECONDS,
-      description:
-        "Seconds to wait between the end of one automations poll and the start of the next " +
-        "(a change applies after the current wait elapses)",
-      applies: "live",
-      ...storeNumber({ min: 1 }),
-      legacyNames: {
-        [LEGACY_INTERVAL_KEY]: (value) =>
-          typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : undefined,
-      },
-    }
-  );
-
+): Automations<S> {
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
     description: "Automation tracking entries for workspace.create (app-managed)",
@@ -343,85 +285,6 @@ export function createAutomations<S extends AutomationSource>(
   });
 
   let entries: AutoWorkspaceEntries = {};
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let stopped = false;
-  /** Interval the last wait was armed with, so a live change can be logged once. */
-  let armedIntervalSeconds: number | null = null;
-
-  // ------ Error bookkeeping ------
-
-  /** Automations that failed in the current cycle, and the ones run in the last. */
-  let failedThisCycle = new Set<string>();
-  let ranLastCycle: readonly S[] = [];
-  /**
-   * When each automation's current run of temporary failures began. Any other
-   * outcome — a success or a real failure — ends it.
-   */
-  const temporarySince = new Map<string, number>();
-
-  /**
-   * Start a cycle by settling the last one: an automation that ran then
-   * without failing is no longer failing. (Settling here, rather than the
-   * moment its script succeeds, keeps an item error found after a good run
-   * from being cleared and re-notified every cycle.)
-   */
-  function settleLastCycle(): void {
-    for (const source of ranLastCycle) {
-      if (!failedThisCycle.has(source.id)) deps.errors.success(source);
-    }
-    failedThisCycle = new Set();
-  }
-
-  function failed(source: S, message: string, logPath?: string): void {
-    failedThisCycle.add(source.id);
-    deps.errors.failure(source, message, logPath);
-  }
-
-  /**
-   * An automation exited 75: skip it this poll and try again next. Listed in
-   * `ch plugin errors` straight away, but raised as a card only once the
-   * failures have gone on for the grace period — then as an ordinary `exit 75`,
-   * whose new message is what raises the card.
-   */
-  function failedTemporarily(source: S, logPath?: string): void {
-    const now = Date.now();
-    const since = temporarySince.get(source.id) ?? now;
-    temporarySince.set(source.id, since);
-    failedThisCycle.add(source.id);
-    deps.logger.debug("Automation failed temporarily, retrying next cycle", {
-      automation: source.id,
-    });
-    if (now - since >= TEMPORARY_FAILURE_GRACE_MS) {
-      deps.errors.failure(source, `exit ${TEMPORARY_FAILURE_EXIT}`, logPath);
-    } else {
-      deps.errors.failure(
-        source,
-        `temporary failure (exit ${TEMPORARY_FAILURE_EXIT}), retrying`,
-        logPath,
-        { quiet: true }
-      );
-    }
-  }
-
-  /** Run a source's script: its items, or null when it failed (and was reported). */
-  async function runSource(source: S): Promise<readonly unknown[] | null> {
-    const run = await deps.runScript(source);
-    if (run.ok) {
-      temporarySince.delete(source.id);
-      return run.items;
-    }
-    if (run.temporary) {
-      failedTemporarily(source, run.logPath);
-      return null;
-    }
-    temporarySince.delete(source.id);
-    deps.logger.warn("Automation script failed, skipping its items this cycle", {
-      automation: source.id,
-      reason: run.failure,
-    });
-    failed(source, run.failure, run.logPath);
-    return null;
-  }
 
   // ------ State persistence ------
 
@@ -452,9 +315,9 @@ export function createAutomations<S extends AutomationSource>(
    * "Clone failed".
    */
   async function resolveProject(
-    source: S,
     definition: WorkspaceDefinition,
-    key: string
+    key: string,
+    report: Report
   ): Promise<ProjectRef | null> {
     const reference = definition.project;
     try {
@@ -473,7 +336,7 @@ export function createAutomations<S extends AutomationSource>(
         key,
         error: getErrorMessage(error),
       });
-      failed(source, `project ${reference}: ${getErrorMessage(error)}`);
+      report(`project ${reference}: ${getErrorMessage(error)}`);
       return null;
     }
 
@@ -487,8 +350,7 @@ export function createAutomations<S extends AutomationSource>(
       } catch {
         // The value itself stays out of the log: a URL put here may carry a token.
         deps.logger.warn("Skipping automation item (project is not a path, name or URL)", { key });
-        failed(
-          source,
+        report(
           `project must be an open project's name, an absolute path or a git URL (got "${reference}")`
         );
         return null;
@@ -512,7 +374,7 @@ export function createAutomations<S extends AutomationSource>(
       });
       // A failed clone already turns its own card into "Clone failed".
       if (projectPayload.path !== undefined) {
-        failed(source, `cannot open its project: ${getErrorMessage(error)}`);
+        report(`cannot open its project: ${getErrorMessage(error)}`);
       }
       return null;
     }
@@ -670,10 +532,14 @@ export function createAutomations<S extends AutomationSource>(
    * Nothing here writes state — an event fires once and is then gone, so a
    * failure is logged rather than retried (the cmd has already consumed it).
    */
-  async function applyEvent(source: S, definition: WorkspaceDefinition): Promise<void> {
+  async function applyEvent(
+    source: S,
+    definition: WorkspaceDefinition,
+    report: Report
+  ): Promise<void> {
     const key = stateKey(source.id, definition.name);
     try {
-      const projectRef = await resolveProject(source, definition, key);
+      const projectRef = await resolveProject(definition, key, report);
       if (!projectRef) return;
 
       const workspaceRef = await findWorkspaceByName(projectRef, definition.name);
@@ -758,23 +624,24 @@ export function createAutomations<S extends AutomationSource>(
   // ------ Poll cycle ------
 
   /**
-   * Run one automation's script and act on every item it printed, in order.
-   * Returns whether tracking state changed.
+   * Act on every item one automation's script printed, in order. Returns
+   * whether tracking state changed.
    *
    * Non-event create items are collected into this poll's list and reconciled
    * once the list is complete; everything else acts as it is read. An invalid
    * item — or one its action refuses — is reported, and the next one still runs.
    */
-  async function pollSource(source: S): Promise<boolean> {
-    const raws = await runSource(source);
-    if (raws === null) return false;
-
+  async function handleItems(
+    source: S,
+    raws: readonly unknown[],
+    reportError: Report
+  ): Promise<boolean> {
     const prefix = `${source.id}/`;
     const activeStateKeys = new Set<string>();
     const newItems: { key: string; definition: WorkspaceDefinition }[] = [];
     const report = (index: number, message: string): void => {
       deps.logger.warn("Automation item refused", { source: source.id, index, error: message });
-      failed(source, `item ${index}: ${message}`);
+      reportError(`item ${index}: ${message}`);
     };
 
     for (const [index, raw] of raws.entries()) {
@@ -805,7 +672,7 @@ export function createAutomations<S extends AutomationSource>(
       }
 
       if (create.event) {
-        await applyEvent(source, definition);
+        await applyEvent(source, definition, reportError);
         continue;
       }
       const fullKey = stateKey(source.id, definition.key);
@@ -839,7 +706,7 @@ export function createAutomations<S extends AutomationSource>(
 
     // Create workspaces for new items — or adopt, when the name is already taken.
     for (const { key, definition } of newItems) {
-      const projectRef = await resolveProject(source, definition, key);
+      const projectRef = await resolveProject(definition, key, reportError);
       if (!projectRef) continue;
 
       // An entry can go missing while its workspace stays: a legacy entry the
@@ -870,21 +737,13 @@ export function createAutomations<S extends AutomationSource>(
     return changed;
   }
 
-  /** One poll cycle; everything it dispatches has origin "auto-workspace". */
-  function reconcile(): Promise<void> {
-    return deps.dispatcher.withOrigin({ origin: "auto-workspace" }, reconcileSources);
-  }
-
-  async function reconcileSources(): Promise<void> {
-    if (!deps.enabled()) return;
-    settleLastCycle();
+  async function collect(): Promise<readonly S[]> {
+    if (!deps.enabled()) return [];
     const sources = await deps.sources();
-    ranLastCycle = sources;
-
-    let changed = false;
 
     // Orphan cleanup: drop entries whose automation no longer exists (removed,
     // or its plugin disabled or broken).
+    let changed = false;
     for (const key of Object.keys(entries)) {
       if (!sources.some((source) => key.startsWith(`${source.id}/`))) {
         delete entries[key];
@@ -892,54 +751,18 @@ export function createAutomations<S extends AutomationSource>(
         deps.logger.info("Forgot automation entry (automation removed)", { key });
       }
     }
-
-    for (const source of sources) {
-      if (await pollSource(source)) changed = true;
-    }
-
     if (changed) await persist();
+    return sources;
   }
 
-  /**
-   * Arm the next wait. Chained rather than periodic: the wait is the gap between
-   * the end of one cycle and the start of the next, so a slow poll never stacks.
-   * The interval is re-read here, so a live change applies from the next wait on.
-   */
-  function scheduleNext(): void {
-    if (stopped || timer) return;
-    const intervalSeconds = intervalAccessor.get();
-    if (armedIntervalSeconds !== null && armedIntervalSeconds !== intervalSeconds) {
-      deps.logger.info("Automations poll interval changed", {
-        from: armedIntervalSeconds,
-        to: intervalSeconds,
-      });
-    }
-    armedIntervalSeconds = intervalSeconds;
-    timer = setTimeout(() => {
-      timer = null;
-      void reconcile()
-        .catch((error: unknown) => {
-          deps.logger.warn("Automations poll failed", { error: getErrorMessage(error) });
-        })
-        .finally(scheduleNext);
-    }, intervalSeconds * 1000);
-  }
-
-  function startPolling(): void {
-    if (stopped || timer) return;
-    deps.logger.info("Automations polling started", {
-      intervalSeconds: intervalAccessor.get(),
-    });
-    scheduleNext();
-  }
-
-  function stopPolling(): void {
-    stopped = true;
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-      deps.logger.info("Automations polling stopped");
-    }
+  /** Everything one automation's items dispatch has origin "auto-workspace". */
+  async function handle(source: S, items: readonly unknown[]): Promise<readonly string[]> {
+    const errors: string[] = [];
+    const changed = await deps.dispatcher.withOrigin({ origin: "auto-workspace" }, () =>
+      handleItems(source, items, (message) => errors.push(message))
+    );
+    if (changed) await persist();
+    return errors;
   }
 
   // ------ Module definition ------
@@ -989,11 +812,10 @@ export function createAutomations<S extends AutomationSource>(
       entries = next;
       await stateAccessor.set(next);
     },
-    async start(): Promise<void> {
+    load(): void {
       entries = stateAccessor.get();
-      await reconcile();
-      startPolling();
     },
-    stop: stopPolling,
+    collect,
+    handle,
   };
 }

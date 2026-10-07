@@ -68,6 +68,9 @@ import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import type { RunningHook } from "../presentation/presentation-module";
 import { createPluginModule, type PluginModule } from "./module";
+import { createScripts } from "../scripts/scripts";
+import { createPollModule } from "../poll-module";
+import { PollTickOperation } from "../../intents/poll-tick";
 import { z } from "zod/v4";
 import { OperationRegistry } from "../../api/registry";
 import { defineEntry } from "../../api/types";
@@ -413,16 +416,31 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       }),
     },
   });
-  const module = createPluginModule({
+  const pathProvider = createMockPathProvider({ homeRootDir: HOME });
+  const runner = createScripts({
+    config,
     fileSystem,
     processRunner,
+    logger: createBehavioralLogger(),
+    tempDir: pathProvider.tempPath("plugins"),
+    binDir: new Path(testPath("/data/bin")),
+    platform: options?.platform ?? "linux",
+    env: { PATH: "/usr/bin" },
+  });
+  // Automations run through the poll, as in the app.
+  const poll = createPollModule({ dispatcher, config, logger: createBehavioralLogger(), runner });
+  dispatcher.registerOperation(new PollTickOperation());
+  dispatcher.registerModule(poll);
+  const module = createPluginModule({
+    fileSystem,
+    runner,
+    pollErrors: (owner) => poll.errors(owner),
     logger: createBehavioralLogger(),
     config,
     stateService,
     dispatcher,
     ui,
-    pathProvider: createMockPathProvider({ homeRootDir: HOME }),
-    binDir: new Path(testPath("/data/bin")),
+    pathProvider,
     sink,
     workspaceConnected: (listener) => {
       connected.push(listener);
@@ -462,9 +480,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     logged,
     config,
     startApp: async () => {
-      await module.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
+      await poll.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
       stoppers.push(() =>
-        module.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({
+        poll.hooks![APP_SHUTDOWN_OPERATION_ID]!["stop"]!.handler({
           intent: { type: "app:shutdown", payload: {} },
         })
       );

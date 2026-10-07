@@ -85,6 +85,7 @@ function setup(options: { env?: Record<string, string> } = {}): Setup {
       awaitDeletion: () => ({ outcome: new Promise(() => {}), release: () => {} }),
       locks: createLockModule({ dispatcher: createMockDispatcher(), logger: SILENT_LOGGER }).locks,
       config,
+      wakeups: { set: async () => {}, show: async () => null },
       readUserGuide: async () => "",
       plugins: () => {
         throw new Error("this test reaches no plugins");

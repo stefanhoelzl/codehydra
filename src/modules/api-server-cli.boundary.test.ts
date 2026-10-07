@@ -640,6 +640,7 @@ describe("locks tied to a CLI connection", () => {
         registry: () => registry,
         locks,
         config: createMockConfig(),
+        wakeups: { set: async () => {}, show: async () => null },
         readUserGuide: async () => "",
         plugins: () => {
           throw new Error("this test reaches no plugins");

@@ -142,6 +142,39 @@ export interface Plugins {
   render(templatePath: string, itemsJson: string): Promise<unknown[]>;
 }
 
+/** The shells a script can be written for. */
+export type ScriptShell = "bash" | "powershell" | "cmd";
+
+/** A workspace's wakeup script: run every poll tick while it is hibernated. */
+export interface WakeupScript {
+  readonly script: string;
+  readonly shell: ScriptShell;
+  /** Variables of the script's own. */
+  readonly env: Readonly<Record<string, string>>;
+}
+
+/** A wakeup script, with how it last went. */
+export interface WakeupStatus extends WakeupScript {
+  /** The last run since it was set, if it has run (one that woke it cleared the script). */
+  readonly lastRun?: {
+    /** ISO time it finished. */
+    readonly at: string;
+    readonly outcome: "keep" | "failed";
+    /** Why it failed. */
+    readonly message?: string;
+  };
+  /** Its current failure, as announced: the message and the failed run's log file. */
+  readonly error?: { readonly message: string; readonly logPath?: string };
+}
+
+/** The wakeup scripts, owned by the wakeup module. */
+export interface Wakeups {
+  /** Set a workspace's script, replacing any it had; null clears it. */
+  set(workspace: WorkspaceRef, script: WakeupScript | null): Promise<void>;
+  /** A workspace's script and how it last went; null when it has none. */
+  show(workspace: WorkspaceRef): Promise<WakeupStatus | null>;
+}
+
 export interface EntryDeps {
   readonly dispatcher: Dispatcher;
   /**
@@ -188,4 +221,6 @@ export interface EntryDeps {
    * automations through this registry, so it is built after it.
    */
   readonly plugins: () => Plugins;
+  /** The wakeup scripts, owned by the wakeup module. */
+  readonly wakeups: Wakeups;
 }

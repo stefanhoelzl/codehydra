@@ -80,6 +80,7 @@ import { createIdempotencyModule } from "./intents/lib/idempotency-module";
 import { AppStartOperation, INTENT_APP_START } from "./intents/app-start";
 import type { AppStartIntent } from "./intents/app-start";
 import { AppReadyOperation, INTENT_APP_READY } from "./intents/app-ready";
+import { PollTickOperation } from "./intents/poll-tick";
 // ConfigSetValuesOperation removed — config is now a plain service
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
@@ -156,6 +157,9 @@ import type { McpConfig } from "./modules/agent-module/types";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
 import { createPluginModule } from "./modules/plugin-module/module";
+import { createScripts } from "./modules/scripts/scripts";
+import { createPollModule } from "./modules/poll-module";
+import { createWakeupModule } from "./modules/wakeup-module";
 import { createHookOutputSink } from "./modules/plugin-module/output-sink";
 import { createWorkspaceLogModule } from "./modules/workspace-log-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
@@ -664,6 +668,15 @@ const lockModule = createLockModule({
   logger: loggingService.createLogger("lock"),
 });
 
+// Built before the registry because the `workspace.wakeup.*` entries reach it.
+// The poll module, whose failures it reads, is built further down.
+const wakeupModule = createWakeupModule({
+  dispatcher,
+  logger: loggingService.createLogger("plugins"),
+  pathProvider,
+  pollErrors: (owner) => pollModule.errors(owner),
+});
+
 const operationRegistry = createRegistry(
   {
     dispatcher,
@@ -673,6 +686,7 @@ const operationRegistry = createRegistry(
     config: configService,
     readUserGuide: () => helpModule.readUserGuide(),
     plugins: () => pluginModule.api,
+    wakeups: wakeupModule.api,
   },
   apiLogger
 );
@@ -754,18 +768,33 @@ const workspaceLogModule = createWorkspaceLogModule({
   transport: apiServerModule,
   logger: loggingService.createLogger("workspace-log"),
 });
-const pluginModule = createPluginModule({
+// One runner for every user script: plugin hooks, and what the poll module runs.
+const scriptRunner = createScripts({
+  config: configService,
   fileSystem: fileSystemLayer,
   processRunner,
+  logger: loggingService.createLogger("plugins"),
+  tempDir: pathProvider.tempPath("plugins"),
+  // `ch` lives here, so a script can call back into CodeHydra (set a title, tag
+  // a workspace) without its author having to locate the binary.
+  binDir: pathProvider.dataPath("bin"),
+});
+const pollModule = createPollModule({
+  dispatcher,
+  config: configService,
+  logger: loggingService.createLogger("plugins"),
+  runner: scriptRunner,
+});
+const pluginModule = createPluginModule({
+  fileSystem: fileSystemLayer,
+  runner: scriptRunner,
+  pollErrors: (owner) => pollModule.errors(owner),
   logger: loggingService.createLogger("plugins"),
   config: configService,
   stateService,
   dispatcher,
   ui: presentationModule,
   pathProvider,
-  // `ch` lives here, so a plugin script can call back into CodeHydra (set a
-  // title, tag a workspace) without its author having to locate the binary.
-  binDir: pathProvider.dataPath("bin"),
   sink: createHookOutputSink({
     transport: apiServerModule,
     logger: loggingService.createLogger("plugins"),
@@ -955,8 +984,9 @@ const cleanupModule = createCleanupModule({
     { kind: "retire", path: "opencode/opencode.codehydra.json" },
     // One log file per launch, and electron-log only ever rotates the current
     // one, so nothing bounded the directory's growth.
-    // Plugin run logs prune themselves per entry (plugin-module/run-log.ts).
-    { kind: "keepRecent", path: "logs", keep: 20, exclude: ["plugins"] },
+    // Script run logs (plugins, wakeup scripts) prune themselves per entry
+    // (scripts/run-log.ts).
+    { kind: "keepRecent", path: "logs", keep: 20, exclude: ["plugins", "wakeup"] },
     // Hibernation screenshots are deleted on wake and on workspace delete; the
     // per-project directory is what outlives the project.
     { kind: "pruneEmpty", path: "screenshots" },
@@ -1020,6 +1050,7 @@ dispatcher.registerOperation(
   new AppStartOperation(agentConfig, () => configService.wasConfigured())
 );
 dispatcher.registerOperation(new AppReadyOperation(agentConfig));
+dispatcher.registerOperation(new PollTickOperation());
 // config:set-values operation removed — config is now a plain service
 dispatcher.registerOperation(new ResolveWorkspaceOperation());
 dispatcher.registerOperation(new ResolveProjectOperation());
@@ -1082,6 +1113,8 @@ dispatcher.registerModule(terminalFocusModule);
 // "prepare"), which precede the agents' "setup" — so the tree is set up and its
 // environment known before an agent server starts, whatever the order here.
 dispatcher.registerModule(pluginModule);
+dispatcher.registerModule(pollModule);
+dispatcher.registerModule(wakeupModule);
 dispatcher.registerModule(workspaceLogModule.module);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

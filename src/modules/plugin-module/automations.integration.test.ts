@@ -6,9 +6,11 @@
  * module; here a test adapter stands in for both. Sources are written in the
  * compact one-document-per-source YAML of the pre-plugin setting (parsed by
  * legacy-sources.ts) and each becomes an automation whose id is its name, so
- * the tracking keys read `<name>/<key>`. A chained timer polls, waiting
- * `automations.poll-interval` seconds (default 60) between the end of one cycle
- * and the start of the next; tests drive it with fake timers.
+ * the tracking keys read `<name>/<key>`. The poll module drives the cycles in
+ * the app (poll-module.integration.test.ts covers its timer); here `tick()` runs
+ * one the way the plugin module does — collect, then handle what each script
+ * printed — and raises a card for the errors a cycle returns, as the poll
+ * module would.
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
@@ -30,11 +32,7 @@ import {
   type AppStartIntent,
 } from "../../intents/app-start";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
-import {
-  AppShutdownOperation,
-  INTENT_APP_SHUTDOWN,
-  type AppShutdownIntent,
-} from "../../intents/app-shutdown";
+import { AppShutdownOperation } from "../../intents/app-shutdown";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
@@ -66,14 +64,11 @@ import { convertLegacyTemplate, parseSources } from "./legacy-sources";
 import { renderInput } from "./template-render";
 import { notify } from "../presentation/notification-card";
 import type { IntentModule } from "../../intents/lib/module";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationName } from "../../api/names";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 import { projPath, wsPath, testPath, workspaceRefIn } from "../../shared/test-fixtures";
 import { projectRefFor, workspaceNameOf } from "../../utils/ref";
-
-const DEFAULT_INTERVAL_MS = 60 * 1000;
 
 type StateEntry = {
   workspaceName: string;
@@ -420,7 +415,6 @@ function createSetup(options?: {
   const automations = createAutomations({
     logger,
     dispatcher,
-    configService: mockConfig,
     stateService: state,
     enabled: () => enabled,
     sources: async () =>
@@ -429,20 +423,6 @@ function createSetup(options?: {
         plugin: "local:test",
         name: source.name,
       })),
-    // Each source's script prints its items as a migrated source does: the raw
-    // data rendered through its template, rewritten to the create-item shape. A
-    // template that names another action is rendered as it is.
-    runScript: async (source) => {
-      if (cmd.exitCode !== 0) {
-        return { ok: false, failure: `exit ${cmd.exitCode}`, temporary: false };
-      }
-      const legacy = parseSources(sourcesYaml).sources.find((s) => s.name === source.name)!;
-      const template =
-        legacy.template["action"] === undefined
-          ? convertLegacyTemplate(legacy.template, legacy.mode, () => {})
-          : legacy.template;
-      return { ok: true, items: cmd.items.map((data) => renderInput(template, data)) };
-    },
     // The engine's side of the item contract; the schemas themselves are items.ts's.
     parseItem: (raw) => {
       const { action, ...input } = raw as Record<string, unknown>;
@@ -457,26 +437,44 @@ function createSetup(options?: {
       if (failingActions.has(action)) throw new Error(`${action} refused`);
       invoked.push({ action, input });
     },
-    errors: {
-      failure: (source, message) =>
+  });
+
+  // Each source's script prints its items as a migrated source does: the raw
+  // data rendered through its template, rewritten to the create-item shape. A
+  // template that names another action is rendered as it is.
+  const printed = (name: string): unknown[] => {
+    const legacy = parseSources(sourcesYaml).sources.find((s) => s.name === name)!;
+    const template =
+      legacy.template["action"] === undefined
+        ? convertLegacyTemplate(legacy.template, legacy.mode, () => {})
+        : legacy.template;
+    return cmd.items.map((data) => renderInput(template, data));
+  };
+
+  /** One poll tick, as the plugin module drives it. A failed script has nothing to handle. */
+  currentCycle = async (): Promise<void> => {
+    for (const source of await automations.collect()) {
+      if (cmd.exitCode !== 0) continue;
+      const errors = await automations.handle(source, printed(source.name));
+      if (errors.length > 0) {
         notify(dispatcher, {
           type: "error",
           title: "Plugin failed",
-          message: `${source.id}: ${message}`,
+          message: `${source.id}: ${errors.join("; ")}`,
           dismissible: true,
-        }),
-      success: () => {},
-    },
-  });
+        });
+      }
+    }
+  };
   const module: IntentModule = {
     name: "automations",
-    hooks: {
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        stop: { handler: async () => automations.stop() },
-      },
-    },
     events: {
-      [EVENT_APP_STARTED]: { handler: () => automations.start() },
+      [EVENT_APP_STARTED]: {
+        handler: async () => {
+          automations.load();
+          await currentCycle();
+        },
+      },
     },
   };
   dispatcher.registerModule(module);
@@ -515,16 +513,9 @@ const startIntent = (): AppStartIntent => ({
   type: INTENT_APP_START,
   payload: {} as AppStartIntent["payload"],
 });
-const shutdownIntent = (): AppShutdownIntent => ({
-  type: INTENT_APP_SHUTDOWN,
-  payload: {} as AppShutdownIntent["payload"],
-});
-const advance = async (ms: number): Promise<void> => {
-  await vi.advanceTimersByTimeAsync(ms);
-};
-const tick = async (): Promise<void> => {
-  await advance(DEFAULT_INTERVAL_MS);
-};
+/** The cycle of the setup made last. */
+let currentCycle: () => Promise<void> = async () => {};
+const tick = (): Promise<void> => currentCycle();
 
 afterEach(() => {
   vi.useRealTimers();
@@ -847,90 +838,6 @@ template:
     );
   });
 
-  describe("poll interval", () => {
-    it("honors a configured interval instead of the 60s default", async () => {
-      vi.useFakeTimers();
-      const { dispatcher, cmd, openWorkspaceOp } = createSetup({
-        sources: sourceYaml(),
-        configDefaults: { "automations.poll-interval": 10 },
-      });
-      cmd.items = [{ id: "1" }];
-      await dispatcher.dispatch(startIntent());
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-
-      cmd.items = [{ id: "1" }, { id: "2" }];
-      await advance(9_000);
-      expect(openWorkspaceOp.dispatched).toHaveLength(1); // not due yet
-      await advance(1_000);
-      expect(openWorkspaceOp.dispatched).toHaveLength(2);
-    });
-
-    it("picks up a changed interval on the next cycle (applies: live)", async () => {
-      vi.useFakeTimers();
-      const { dispatcher, cmd, mockConfig, openWorkspaceOp } = createSetup({
-        sources: sourceYaml(),
-      });
-      cmd.items = [{ id: "1" }];
-      await dispatcher.dispatch(startIntent());
-
-      // User edits the setting; the current 60s wait still has to elapse.
-      await mockConfig.set("automations.poll-interval", 10);
-      cmd.items = [{ id: "1" }, { id: "2" }];
-      await advance(10_000);
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      await tick();
-      expect(openWorkspaceOp.dispatched).toHaveLength(2);
-
-      // From here on the new value paces the loop.
-      cmd.items = [{ id: "1" }, { id: "2" }, { id: "3" }];
-      await advance(10_000);
-      expect(openWorkspaceOp.dispatched).toHaveLength(3);
-    });
-
-    it("waits a full interval after a slow cycle ends, without stacking polls", async () => {
-      vi.useFakeTimers();
-      const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
-      cmd.items = [{ id: "1" }];
-      await dispatcher.dispatch(startIntent());
-      expect(openWorkspaceOp.dispatched).toHaveLength(1);
-
-      let release = (): void => {};
-      openWorkspaceOp.gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      cmd.items = [{ id: "1" }, { id: "2" }];
-      await tick(); // cycle 2 starts and blocks mid-creation
-      expect(openWorkspaceOp.dispatched).toHaveLength(2);
-
-      cmd.items = [{ id: "1" }, { id: "2" }, { id: "3" }];
-      await tick();
-      await tick();
-      expect(openWorkspaceOp.dispatched).toHaveLength(2); // no cycle stacked up behind it
-
-      openWorkspaceOp.gate = null;
-      release();
-      await advance(0); // cycle 2 settles; only now is the next wait armed
-
-      await advance(DEFAULT_INTERVAL_MS - 1);
-      expect(openWorkspaceOp.dispatched).toHaveLength(2);
-      await advance(1);
-      expect(openWorkspaceOp.dispatched).toHaveLength(3);
-    });
-  });
-
-  it("stops polling on shutdown", async () => {
-    vi.useFakeTimers();
-    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
-    cmd.items = [{ id: "1" }];
-    await dispatcher.dispatch(startIntent());
-    await dispatcher.dispatch(shutdownIntent());
-
-    cmd.items = [{ id: "2" }];
-    await tick();
-    // No further work after shutdown: only the original item was created.
-    expect(openWorkspaceOp.dispatched).toHaveLength(1);
-  });
-
   describe("mode: events", () => {
     it("creates a workspace when nothing matches the rendered name", async () => {
       vi.useFakeTimers();
@@ -1233,10 +1140,10 @@ template:
     await notificationManager.settle();
 
     expect(invoked).toEqual([]);
-    // One card per item: each names its index, so the second is not a repeat.
+    // One card for the run, naming every refused item by its index.
     expect(notificationManager.notifications.map((n) => n.opened.message)).toEqual([
-      "stale: item 0: workspace.hibernate: workspace.hibernate refused",
-      "stale: item 1: workspace.hibernate: workspace.hibernate refused",
+      "stale: item 0: workspace.hibernate: workspace.hibernate refused; " +
+        "item 1: workspace.hibernate: workspace.hibernate refused",
     ]);
   });
 });

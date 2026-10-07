@@ -26,7 +26,7 @@
 import { z } from "zod/v4";
 import { parseAllDocuments } from "yaml";
 import { ALL_ENTRIES } from "./hook-map";
-import { SHELL_NAMES, type ShellName } from "./shells";
+import { SHELL_NAMES, type ShellName } from "../scripts/shells";
 import { describeIssue } from "./util";
 
 // =============================================================================
