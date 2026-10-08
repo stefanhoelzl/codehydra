@@ -1218,7 +1218,7 @@ async function hideSidebar(ui: Page): Promise<void> {
   while (Date.now() < deadline) {
     // The mouseleave must carry a positive clientX: under Xvfb the window sits at
     // the screen's left edge, and Sidebar.svelte treats a clientX<=0 leave as an
-    // "edge pin" and re-expands (fixtures.collapseSidebar dispatches clientX=0).
+    // "edge pin" and re-expands.
     await nav.dispatchEvent("mouseleave", { clientX: 600, clientY: 400 });
     // Read the class main actually applied, not a proxy control's visibility.
     if (!(await nav.evaluate((el) => el.classList.contains("expanded")))) return;
