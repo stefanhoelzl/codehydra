@@ -54,6 +54,16 @@ export interface IGitClient {
   addWorktree(repoPath: Path, worktreePath: Path, branch: string): Promise<void>;
 
   /**
+   * Add a worktree with a detached HEAD at a commit (`git worktree add --detach`).
+   * Works on a bare repository: it is how a plugin source's checkout is made.
+   * @param repoPath Absolute path to the git repository
+   * @param worktreePath Absolute path where the worktree will be created
+   * @param commit The commit to check out (a full hash)
+   * @throws GitError if the commit is unknown, the path exists, or not a git repository
+   */
+  addDetachedWorktree(repoPath: Path, worktreePath: Path, commit: string): Promise<void>;
+
+  /**
    * Remove a worktree from the repository.
    * @param repoPath Absolute path to the git repository
    * @param worktreePath Absolute path to the worktree to remove
@@ -219,6 +229,14 @@ export interface IGitClient {
    * @throws GitError if the section does not exist or not a git repository
    */
   removeConfigSection(repoPath: Path, section: string): Promise<void>;
+
+  /**
+   * The commit a revision names (`git rev-parse --verify <rev>^{commit}`).
+   * @param repoPath Absolute path to the git repository
+   * @param rev A branch, tag, remote-tracking ref (`origin/main`) or commit hash
+   * @returns The full commit hash, or null when the revision names no commit
+   */
+  resolveCommit(repoPath: Path, rev: string): Promise<string | null>;
 
   /**
    * Clone a repository in bare mode.

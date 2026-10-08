@@ -936,6 +936,49 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("resolveCommit and addDetachedWorktree", () => {
+    it("resolves branches, tags and hashes in a bare clone, and checks a commit out", async () => {
+      const head = (await simpleGit(repoPath.toNative()).revparse(["HEAD"])).trim();
+      await simpleGit(repoPath.toNative()).addTag("v1");
+      const targetDir = await createTempDir();
+      const bare = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await client.clone(repoPath.toString(), bare);
+
+        expect(await client.resolveCommit(bare, "origin/HEAD")).toBe(head);
+        expect(await client.resolveCommit(bare, "origin/main")).toBe(head);
+        expect(await client.resolveCommit(bare, "v1")).toBe(head);
+        expect(await client.resolveCommit(bare, head)).toBe(head);
+        expect(await client.resolveCommit(bare, "origin/nope")).toBeNull();
+        expect(await client.resolveCommit(bare, "--version")).toBeNull();
+
+        const tree = new Path(targetDir.path, "trees", head);
+        await client.addDetachedWorktree(bare, tree, head);
+
+        expect(await client.getCurrentBranch(tree)).toBeNull();
+        expect((await simpleGit(tree.toNative()).revparse(["HEAD"])).trim()).toBe(head);
+      } finally {
+        await targetDir.cleanup();
+      }
+    });
+
+    it("throws GitError for a commit the repository does not have", async () => {
+      const targetDir = await createTempDir();
+      try {
+        await expect(
+          client.addDetachedWorktree(
+            repoPath,
+            new Path(targetDir.path, "tree"),
+            "0123456789012345678901234567890123456789"
+          )
+        ).rejects.toThrow(GitError);
+      } finally {
+        await targetDir.cleanup();
+      }
+    });
+  });
+
   describe("clone", () => {
     it("clones a bare repository from local path", async () => {
       // Create a temp dir with a source repo

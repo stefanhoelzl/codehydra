@@ -148,7 +148,7 @@ const METADATA_SOURCE_KEY = "source";
 export interface AutomationSource {
   /** `<plugin>/<name>` — the identity, the tracking-key prefix and the `source` metadata. */
   readonly id: string;
-  /** The plugin's id (`local:<name>`), for error reporting. */
+  /** The plugin's id (`local:default:<name>`), for error reporting. */
   readonly plugin: string;
   /** The automation's name within its plugin. */
   readonly name: string;

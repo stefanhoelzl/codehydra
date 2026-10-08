@@ -28,6 +28,13 @@ import {
 import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
 import { createMockPathProvider } from "../../boundaries/platform/path-provider.test-utils";
 import {
+  createMockGitClient,
+  fakeCommit,
+  type MockGitClient,
+} from "../../boundaries/platform/git-client.state-mock";
+import { INTENT_LIST_PROJECTS } from "../../intents/list-projects";
+import { remoteDirName } from "./remotes";
+import {
   registerTestInfrastructure,
   createTestViewManager,
 } from "../../intents/operations.test-utils";
@@ -137,6 +144,10 @@ interface SetupOptions {
   readonly legacyHooks?: readonly string[];
   /** What the editor's notification answers (a button, or null for dismissed). */
   readonly editorAnswer?: string | null;
+  /** Seeds `plugins.config`. */
+  readonly sources?: string;
+  /** Other folders' plugins: folder → file name → manifest text. */
+  readonly folders?: Record<string, Record<string, string>>;
 }
 
 interface TestSetup {
@@ -163,6 +174,7 @@ interface TestSetup {
   /** Inputs the registry's `log` entry was invoked with, by automations. */
   readonly logged: unknown[];
   readonly config: Config;
+  readonly git: MockGitClient;
   killedCount(): number;
   /** Start the app's automations (and stop them again when the test ends). */
   startApp(): Promise<void>;
@@ -229,6 +241,12 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       [HOME.toString()]: directory(),
       ...manifestEntries(LOCAL_PLUGINS, options?.local),
       ...manifestEntries(WORKSPACE_PLUGINS, options?.workspace),
+      ...Object.assign(
+        {},
+        ...Object.entries(options?.folders ?? {}).map(([dir, manifests]) =>
+          manifestEntries(new Path(dir), manifests)
+        )
+      ),
       ...manifestEntries(
         new Path(WORKSPACE_PATH, ".codehydra", "hooks"),
         options?.legacyHooks === undefined
@@ -381,6 +399,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     },
   });
   const logged: unknown[] = [];
+  const git = createMockGitClient({ fileSystem });
   const registry = new OperationRegistry([
     // The fields an automation's create item takes here; the real ones are
     // workspace.create's (items.integration.test.ts).
@@ -411,6 +430,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     defaults: {
       "plugins.enabled": options?.enabled ?? true,
       "paths.bash": null,
+      "plugins.config": options?.sources ?? "",
       ...(options?.legacySources !== undefined && {
         "auto-workspace.sources": options.legacySources,
       }),
@@ -440,7 +460,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     stateService,
     dispatcher,
     ui,
-    pathProvider,
+    pathProvider: createMockPathProvider({ homeRootDir: HOME }),
+    git,
     sink,
     workspaceConnected: (listener) => {
       connected.push(listener);
@@ -479,6 +500,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     runningHooks,
     logged,
     config,
+    git,
     startApp: async () => {
       await poll.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
       stoppers.push(() =>
@@ -611,7 +633,7 @@ describe("after-worktree-created", () => {
     const setup = createTestSetup({
       local: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
       workspace: { "b.yaml": hooksManifest({ "after-worktree-created": "echo b" }) },
-      pluginsEnabled: { [`workspace:${PROJECT_ROOT}:b`]: true },
+      pluginsEnabled: { [`project:${PROJECT_REF}:b`]: true },
       outcomes: {
         "echo a": {
           stdout: JSON.stringify({ title: "From A", tags: { a: {}, both: { label: "a" } } }),
@@ -647,12 +669,14 @@ describe("after-worktree-created", () => {
     const card = setup.notifications.find((n) => n.title === "Plugin failed");
     // No log path: each run has its own, and a card naming it would never join
     // the identical one already open.
-    expect(card?.message).toBe("local:a after-worktree-created: exit 3 — see ch plugin errors");
+    expect(card?.message).toBe(
+      "local:default:a after-worktree-created: exit 3 — see ch plugin errors"
+    );
     // What the script printed stays in its log, never in the card.
     expect(card?.message).not.toContain("secret");
 
     const [error] = setup.module.api.errors();
-    expect(error).toMatchObject({ plugin: "local:a", entry: "after-worktree-created" });
+    expect(error).toMatchObject({ plugin: "local:default:a", entry: "after-worktree-created" });
     const log = await setup.fileSystem.readFile(new Path(error!.logPath!));
     expect(log).toContain("token=secret boom");
   });
@@ -665,7 +689,7 @@ describe("after-worktree-created", () => {
     await openWorkspace(setup);
 
     expect(setup.notifications.find((n) => n.title === "Plugin failed")?.message).toBe(
-      "local:a after-worktree-created: exit 75 — see ch plugin errors"
+      "local:default:a after-worktree-created: exit 75 — see ch plugin errors"
     );
   });
 
@@ -698,7 +722,7 @@ describe("after-worktree-created", () => {
     await openWorkspace(setup);
 
     expect(setup.sinkLines).toEqual([
-      { source: "local:a after-worktree-created stderr", line: "installing" },
+      { source: "local:default:a after-worktree-created stderr", line: "installing" },
     ]);
   });
 });
@@ -708,7 +732,7 @@ describe("before-workspace-opened", () => {
     const setup = createTestSetup({
       local: { "a.yaml": hooksManifest({ "before-workspace-opened": "echo a" }) },
       workspace: { "b.yaml": hooksManifest({ "before-workspace-opened": "echo b" }) },
-      pluginsEnabled: { [`workspace:${PROJECT_ROOT}:b`]: true },
+      pluginsEnabled: { [`project:${PROJECT_REF}:b`]: true },
       outcomes: {
         "echo a": { stdout: JSON.stringify({ env: { A: "1", SHARED: "a" } }) },
         "echo b": { stdout: JSON.stringify({ env: { SHARED: "b", _CH_X: "no" } }) },
@@ -792,7 +816,7 @@ describe("cancel", () => {
     });
     const opening = openWorkspace(setup);
     const hook = await untilHookRunning(setup);
-    expect(hook.entry).toBe("after-worktree-created (local:a)");
+    expect(hook.entry).toBe("after-worktree-created (local:default:a)");
     hook.cancel();
     await opening;
 
@@ -872,7 +896,7 @@ describe("documents and platforms", () => {
     const cards = setup.notifications.filter((n) => n.title === "Plugin cannot run");
     expect(cards).toHaveLength(1);
     expect(cards[0]!.message).toMatch(
-      /local:broken: document 1: hooks: unknown key after-worktree-craeted/
+      /local:default:broken: document 1: hooks: unknown key after-worktree-craeted/
     );
   });
 });
@@ -897,8 +921,8 @@ describe("trust", () => {
     ]);
     expect(setup.ran).toEqual(["echo a"]);
     expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
-      [`workspace:${PROJECT_REF}:a`]: true,
-      [`workspace:${PROJECT_REF}:b`]: false,
+      [`project:${PROJECT_REF}:a`]: true,
+      [`project:${PROJECT_REF}:b`]: false,
     });
 
     await reopenWorkspace(setup);
@@ -932,20 +956,23 @@ describe("trust", () => {
   it("never runs a disabled local plugin", async () => {
     const setup = createTestSetup({
       local: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
-      pluginsEnabled: { "local:a": false },
+      pluginsEnabled: { "local:default:a": false },
     });
     await openWorkspace(setup);
 
     expect(setup.ran).toEqual([]);
   });
 
-  it("moves answers stored by project path to the project's ref at app start", async () => {
+  it("moves answers older versions stored to today's keys at app start", async () => {
     const gone = new Path(testPath("/gone")).toString();
     const setup = createTestSetup({
       pluginsEnabled: {
         [`workspace:${new Path(PROJECT_ROOT).toString()}:a`]: true,
         [`workspace:${gone}:b`]: false,
+        [`workspace:${PROJECT_REF}:d`]: true,
         "local:c": false,
+        // Already current: left alone.
+        "remote:acme:e": false,
       },
       projectRefs: new Map([[new Path(PROJECT_ROOT).toString(), PROJECT_REF]]),
     });
@@ -955,10 +982,13 @@ describe("trust", () => {
     });
 
     expect(setup.stateService.getEffective()["plugins.state"]).toEqual({
-      [`workspace:${PROJECT_REF}:a`]: true,
-      // An answer whose project has no record keeps its key; the project asks afresh.
-      [`workspace:${gone}:b`]: false,
-      "local:c": false,
+      [`project:${PROJECT_REF}:a`]: true,
+      // An answer whose project has no record keeps its path; the project asks afresh.
+      [`project:${gone}:b`]: false,
+      [`project:${PROJECT_REF}:d`]: true,
+      // Before sources, a local plugin was the default folder's.
+      "local:default:c": false,
+      "remote:acme:e": false,
     });
   });
 });
@@ -998,7 +1028,7 @@ describe("ch plugin", () => {
     },
   };
 
-  it("lists local and workspace plugins with their state and platforms", async () => {
+  it("lists local and repository plugins with their state and platforms", async () => {
     const setup = createTestSetup({
       local: { "a/plugin.yaml": "platform: [linux, macos]\nhooks: {}\n" },
       workspace: { "b.yaml": "hooks: {}\n" },
@@ -1007,8 +1037,8 @@ describe("ch plugin", () => {
     const list = await setup.module.api.list(scope);
 
     expect(list.map((p) => [p.id, p.state, p.platforms])).toEqual([
-      ["local:a", "enabled", ["linux", "macos"]],
-      ["workspace:b", "ask", ["linux", "windows", "macos"]],
+      ["local:default:a", "enabled", ["linux", "macos"]],
+      ["project:project:b", "ask", ["linux", "windows", "macos"]],
     ]);
     expect(new Path(list[0]!.path).equals(new Path(LOCAL_PLUGINS, "a"))).toBe(true);
   });
@@ -1016,17 +1046,17 @@ describe("ch plugin", () => {
   it("disables and re-enables a plugin", async () => {
     const setup = createTestSetup({ workspace: { "b.yaml": "hooks: {}\n" } });
 
-    await setup.module.api.setState(scope, "workspace:b", "enabled");
+    await setup.module.api.setState(scope, "project:project:b", "enabled");
     expect((await setup.module.api.list(scope))[0]?.state).toBe("enabled");
-    await setup.module.api.setState(scope, "workspace:b", "disabled");
+    await setup.module.api.setState(scope, "project:project:b", "disabled");
     expect((await setup.module.api.list(scope))[0]?.state).toBe("disabled");
   });
 
   it("refuses a plugin that does not exist", async () => {
     const setup = createTestSetup();
 
-    await expect(setup.module.api.setState(scope, "local:nope", "enabled")).rejects.toThrow(
-      /No plugin local:nope/
+    await expect(setup.module.api.setState(scope, "local:default:nope", "enabled")).rejects.toThrow(
+      /No plugin local:default:nope/
     );
   });
 
@@ -1095,6 +1125,25 @@ describe("automations", () => {
     );
   });
 
+  it("gives an automation the values of its plugin's settings", async () => {
+    const setup = createTestSetup({
+      sources: "default:\n  config:\n    notes: {token: t1}\n",
+      local: {
+        "notes.yaml": [
+          "config:",
+          "  token: {type: string, required: true}",
+          "automations:",
+          "  hello: list-notes",
+        ].join("\n"),
+      },
+      outcomes: { "list-notes": { stdout: "[]" } },
+    });
+
+    await setup.startApp();
+
+    expect(setup.envs[0]).toMatchObject({ CH_CONFIG_TOKEN: "t1" });
+  });
+
   it("reports a script that does not print an array, pointing at its log", async () => {
     const setup = createTestSetup({
       local: {
@@ -1107,7 +1156,7 @@ describe("automations", () => {
 
     expect(setup.module.api.errors()).toMatchObject([
       {
-        plugin: "local:notes",
+        plugin: "local:default:notes",
         entry: "automations.hello",
         message: "printed JSON that is not an array",
       },
@@ -1148,7 +1197,7 @@ describe("automations", () => {
       await setup.startApp();
 
       expect(setup.module.api.errors()).toMatchObject([
-        { plugin: "local:notes", entry: "automations.hello", message: RETRYING },
+        { plugin: "local:default:notes", entry: "automations.hello", message: RETRYING },
       ]);
       expect(failedCards(setup)).toEqual([]);
 
@@ -1158,7 +1207,7 @@ describe("automations", () => {
       await vi.advanceTimersByTimeAsync(POLL_MS);
       expect(setup.module.api.errors()[0]?.message).toBe("exit 75");
       expect(failedCards(setup).map((card) => card.message)).toEqual([
-        "local:notes automations.hello: exit 75 — see ch plugin errors",
+        "local:default:notes automations.hello: exit 75 — see ch plugin errors",
       ]);
 
       await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -1187,7 +1236,7 @@ describe("automations", () => {
       outcomes["list-notes"] = { exitCode: 1 };
       await vi.advanceTimersByTimeAsync(POLL_MS);
       expect(failedCards(setup).map((card) => card.message)).toEqual([
-        "local:notes automations.hello: exit 1 — see ch plugin errors",
+        "local:default:notes automations.hello: exit 1 — see ch plugin errors",
       ]);
 
       outcomes["list-notes"] = { exitCode: 75 };
@@ -1236,7 +1285,7 @@ describe("automations", () => {
       )
     ).toContain("action: workspace.create");
     expect(Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object)).toEqual([
-      "auto-workspaces/gh/1",
+      "local:default:auto-workspaces/gh/1",
     ]);
     // The migrated automation ran, and found its item already handled.
     expect(setup.ran).toEqual([MIGRATED_SCRIPT]);
@@ -1315,3 +1364,261 @@ describe("repository hooks from before plugins", () => {
     expect(setup.editorMessages).toEqual([]);
   });
 });
+
+describe("sources", () => {
+  const WORK = new Path(testPath("/work-plugins"));
+  const REMOTE_URL = "https://example.com/acme/ch-plugins.git";
+  const REMOTES = createMockPathProvider({ homeRootDir: HOME }).dataPath("plugins/remotes");
+  const scope = {
+    workspace: {
+      workspacePath: WORKSPACE_PATH,
+      projectRef: PROJECT_REF,
+      projectPath: PROJECT_ROOT,
+    },
+  };
+
+  /** Put a remote's plugins where its first checkout lands. */
+  async function seedRemote(
+    setup: TestSetup,
+    manifests: Record<string, string>,
+    key = "acme"
+  ): Promise<void> {
+    const tree = new Path(
+      REMOTES,
+      remoteDirName({ key, url: REMOTE_URL }),
+      "trees",
+      fakeCommit(REMOTE_URL, "main")
+    );
+    for (const [name, text] of Object.entries(manifests)) {
+      const path = new Path(tree, name);
+      await setup.fileSystem.mkdir(path.dirname);
+      await setup.fileSystem.writeFile(path, text);
+    }
+  }
+
+  it("runs another folder's plugins after the default folder's, named by its entry", async () => {
+    const setup = createTestSetup({
+      sources: `work:\n  path: ${JSON.stringify(WORK.toString())}\n`,
+      local: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
+      folders: {
+        [WORK.toString()]: { "x.yaml": hooksManifest({ "after-worktree-created": "echo x" }) },
+      },
+      outcomes: { "echo a": {}, "echo x": {} },
+    });
+
+    await openWorkspace(setup);
+
+    expect(setup.ran).toEqual(["echo a", "echo x"]);
+    expect((await setup.module.api.list({ workspace: null })).map((p) => p.id)).toEqual([
+      "local:default:a",
+      "local:work:x",
+    ]);
+  });
+
+  it("gives a plugin's scripts the values of its settings, and no one else's", async () => {
+    const setup = createTestSetup({
+      sources: "default:\n  config:\n    a: {token: t1}\n",
+      local: {
+        "a.yaml": hooksManifest(
+          { "after-worktree-created": "echo a" },
+          "config:\n  token: {type: string, required: true}\n  region: {type: enum, values: [eu, us], default: eu}\n"
+        ),
+        "b.yaml": hooksManifest({ "after-worktree-created": "echo b" }),
+      },
+      outcomes: { "echo a": {}, "echo b": {} },
+    });
+    // One inherited from CodeHydra's own environment never reaches a script.
+    vi.stubEnv("CH_CONFIG_TOKEN", "leaked");
+
+    await openWorkspace(setup);
+
+    expect(setup.envs[0]).toMatchObject({ CH_CONFIG_TOKEN: "t1", CH_CONFIG_REGION: "eu" });
+    expect(setup.envs[1]).not.toHaveProperty("CH_CONFIG_TOKEN");
+    // Settings reach the script's environment, never its logged stdin.
+    expect(JSON.stringify(setup.stdin[0])).not.toContain("t1");
+  });
+
+  it("does not run a plugin whose values do not fit its settings, and says why", async () => {
+    const setup = createTestSetup({
+      sources: "default:\n  config:\n    b: {x: 1}\n    ghost: {y: 2}\n",
+      local: {
+        "a.yaml": hooksManifest(
+          { "after-worktree-created": "echo a" },
+          "config:\n  token: {type: string, required: true}\n"
+        ),
+        "b.yaml": hooksManifest({ "after-worktree-created": "echo b" }),
+      },
+    });
+
+    await openWorkspace(setup);
+
+    expect(setup.ran).toEqual([]);
+    expect(setup.module.api.errors().map((error) => [error.plugin, error.message])).toEqual([
+      ["local:default:a", "config.token is required: set it in plugins.config"],
+      ["local:default:b", "plugins.config sets x, which the plugin does not declare"],
+      [
+        "local:default:ghost",
+        "plugins.config sets values for ghost, which local:default does not have",
+      ],
+    ]);
+    expect(setup.notifications.map((card) => card.title)).toContain("Plugin cannot run");
+  });
+
+  it("gives a repository's plugins the values of the project entry naming it", async () => {
+    const setup = createTestSetup({
+      sources: `mine:\n  type: project\n  project: project\n  config:\n    b: {k: v}\n`,
+      workspace: {
+        "b.yaml": hooksManifest(
+          { "after-worktree-created": "echo b" },
+          "config:\n  k: {type: string}\n"
+        ),
+      },
+      pluginsEnabled: { [`project:${PROJECT_REF}:b`]: true },
+      outcomes: { "echo b": {} },
+    });
+    registerListProjects(setup);
+
+    await openWorkspace(setup);
+
+    expect(setup.envs[0]).toMatchObject({ CH_CONFIG_K: "v" });
+    expect((await setup.module.api.list(scope)).map((p) => p.id)).toEqual(["project:project:b"]);
+  });
+
+  it("reports two project entries naming one project, using neither", async () => {
+    const setup = createTestSetup({
+      sources:
+        "one:\n  type: project\n  project: project\n  config:\n    b: {k: v}\n" +
+        `two:\n  type: project\n  project: ${JSON.stringify(PROJECT_ROOT)}\n`,
+      workspace: {
+        "b.yaml": hooksManifest(
+          { "after-worktree-created": "echo b" },
+          "config:\n  k: {type: string}\n"
+        ),
+      },
+      pluginsEnabled: { [`project:${PROJECT_REF}:b`]: true },
+      outcomes: { "echo b": {} },
+    });
+    registerListProjects(setup);
+
+    await openWorkspace(setup);
+
+    expect(setup.envs[0]).not.toHaveProperty("CH_CONFIG_K");
+    expect(setup.module.api.errors()).toContainEqual(
+      expect.objectContaining({ message: "one and two name the same project; keep one" })
+    );
+  });
+
+  it("adds a repository, runs its plugins, and removes it with its clone", async () => {
+    const setup = createTestSetup({
+      outcomes: { "echo deploy": {} },
+    });
+    await seedRemote(setup, {
+      "plugins/deploy.yaml": hooksManifest({ "after-worktree-created": "echo deploy" }),
+    });
+
+    const added = await setup.module.api.add({
+      source: REMOTE_URL,
+      name: "acme",
+      path: "plugins",
+      cwd: null,
+    });
+
+    expect(added).toMatchObject({
+      id: "remote:acme",
+      type: "remote",
+      location: REMOTE_URL,
+      status: `${fakeCommit(REMOTE_URL, "main").slice(0, 7)}, fetched just now`,
+    });
+    expect(String(setup.config.getEffective()["plugins.config"])).toContain("type: remote");
+
+    await openWorkspace(setup);
+    expect(setup.ran).toEqual(["echo deploy"]);
+    const [deploy] = await setup.module.api.list({ workspace: null });
+    expect(deploy).toMatchObject({ id: "remote:acme:deploy", source: "acme", state: "enabled" });
+
+    await setup.module.api.remove("acme");
+
+    expect(setup.config.getEffective()["plugins.config"]).toBe("");
+    expect(
+      setup.fileSystem.$.entries.has(
+        new Path(REMOTES, remoteDirName({ key: "acme", url: REMOTE_URL })).toString()
+      )
+    ).toBe(false);
+  });
+
+  it("adds a folder by name, refusing a name already taken", async () => {
+    const setup = createTestSetup({ folders: { [WORK.toString()]: { "x.yaml": "hooks: {}\n" } } });
+
+    expect(await setup.module.api.add({ source: WORK.toString(), cwd: null })).toMatchObject({
+      id: "local:work-plugins",
+      type: "local",
+    });
+    expect((await setup.module.api.list({ workspace: null })).map((p) => p.id)).toEqual([
+      "local:work-plugins:x",
+    ]);
+    await expect(
+      setup.module.api.add({ source: WORK.toString(), cwd: null })
+    ).rejects.toMatchObject({ category: "conflict" });
+    await expect(
+      setup.module.api.add({ source: WORK.toString(), ref: "main", cwd: null })
+    ).rejects.toMatchObject({ category: "usage" });
+  });
+
+  it("updates remotes only, and never removes the default folder", async () => {
+    const setup = createTestSetup({
+      sources: `work:\n  path: ${JSON.stringify(WORK.toString())}\n`,
+    });
+
+    await expect(setup.module.api.update("work")).rejects.toMatchObject({ category: "usage" });
+    await expect(setup.module.api.update("nope")).rejects.toMatchObject({
+      category: "not-found",
+    });
+    await expect(setup.module.api.remove("default")).rejects.toMatchObject({ category: "usage" });
+    expect(await setup.module.api.update()).toEqual([]);
+  });
+
+  it("lists a remote not checked out yet, saying so", async () => {
+    const setup = createTestSetup({
+      sources: `acme:\n  type: remote\n  url: ${REMOTE_URL}\n`,
+    });
+
+    const list = await setup.module.api.list({ workspace: null });
+
+    expect(list).toEqual([expect.objectContaining({ id: "remote:acme:*", status: "cloning" })]);
+  });
+
+  it("names the default folder's automations by their source in tracking entries from before", async () => {
+    const setup = createTestSetup({
+      tracking: {
+        "notes/hello/1": { workspaceName: "ws-1", createdAt: "2026-01-01T00:00:00.000Z" },
+        "local:work:x/hello/2": { workspaceName: "ws-2", createdAt: "2026-01-01T00:00:00.000Z" },
+      },
+    });
+
+    await setup.module.hooks![APP_START_OPERATION_ID]!["migrations"]!.handler({
+      intent: { type: "app:start", payload: {} },
+    });
+
+    expect(Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object)).toEqual([
+      "local:default:notes/hello/1",
+      "local:work:x/hello/2",
+    ]);
+  });
+});
+
+/** The open projects, as `project:list` answers: just this test's. */
+function registerListProjects(setup: TestSetup): void {
+  const schemas = {
+    type: INTENT_LIST_PROJECTS,
+    payload: z.unknown(),
+    result: z.unknown(),
+  } satisfies OperationSchemas;
+  class ListProjectsOp implements Operation<typeof schemas> {
+    readonly id = "list-projects";
+    readonly schemas = schemas;
+    async execute(): Promise<unknown> {
+      return [{ ref: PROJECT_REF, name: "project", path: PROJECT_ROOT, workspaces: [] }];
+    }
+  }
+  setup.dispatcher.registerOperation(new ListProjectsOp());
+}

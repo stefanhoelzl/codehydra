@@ -25,7 +25,7 @@ export const ERRORS_POINTER = "see ch plugin errors";
 import { notify } from "../presentation/notification-card";
 
 export interface PluginErrorEntry {
-  /** `local:<name>` or `workspace:<name>`. */
+  /** `<type>:<entry>:<name>` — or `<type>:<entry>` for something wrong with a source itself. */
   readonly plugin: string;
   /** The project a workspace plugin belongs to. */
   readonly project?: string;
@@ -46,7 +46,8 @@ export interface ErrorKey {
 
 /** Which plugins one read of a plugins directory speaks for. */
 export interface ProblemScope {
-  readonly origin: "local" | "workspace";
+  /** `<type>:<entry>`: the source its plugin names start with. */
+  readonly source: string;
   /** The project, for a repository's plugins. */
   readonly project?: string;
 }
@@ -115,7 +116,7 @@ export function createPluginErrorBook(deps: {
   function inScope(entry: PluginErrorEntry, scope: ProblemScope): boolean {
     return (
       entry.entry === undefined &&
-      entry.plugin.startsWith(`${scope.origin}:`) &&
+      entry.plugin.startsWith(`${scope.source}:`) &&
       entry.project === scope.project
     );
   }

@@ -13,6 +13,8 @@
  *       echo '{"env":{"FOO":"1"}}'
  *   automations:
  *     prs: ./prs.sh        # prints the items to act on, see items.ts
+ *   config:                # settings its user gives values (plugin-config.ts)
+ *     token: {type: string, required: true, secret: true}
  *
  * Every document that matches the platform applies, in file order, so the
  * usual split is one document per platform where scripts differ.
@@ -27,6 +29,7 @@ import { z } from "zod/v4";
 import { parseAllDocuments } from "yaml";
 import { ALL_ENTRIES } from "./hook-map";
 import { SHELL_NAMES, type ShellName } from "../scripts/shells";
+import { settingsSchema, type Setting } from "./plugin-config";
 import { describeIssue } from "./util";
 
 // =============================================================================
@@ -104,6 +107,7 @@ export const manifestDocumentSchema = z
       .describe("The platforms this document applies on (default: all)."),
     hooks: hooksSchema.optional(),
     automations: automationsSchema.optional(),
+    config: settingsSchema.optional(),
   })
   .strict();
 
@@ -126,6 +130,8 @@ export interface PluginDocument {
   readonly platforms: readonly PluginPlatform[];
   readonly hooks: Readonly<Partial<Record<string, string>>>;
   readonly automations: readonly AutomationSpec[];
+  /** The settings this document declares, by name. */
+  readonly settings: Readonly<Record<string, Setting>>;
 }
 
 /** A manifest that could not be read, with the first thing wrong in it. */
@@ -184,6 +190,7 @@ export function parseManifest(text: string): PluginDocument[] {
         name,
         script,
       })),
+      settings: value.config ?? {},
     });
   }
   return documents;

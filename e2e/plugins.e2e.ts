@@ -36,7 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { simpleGit } from "simple-git";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
 import type { Agent } from "./env";
@@ -273,6 +273,13 @@ function trackedEntries(): Record<string, { workspaceName: string }> {
   return (parsed["auto-workspaces"] ?? {}) as Record<string, { workspaceName: string }>;
 }
 
+/** A plugin of the test repository, as `ch plugin` names it: by its project's name. */
+function repoPlugin(name: string): string {
+  // The project's name is its folder's, which Path lowercases on Windows.
+  const project = basename(repo.path);
+  return `project:${isWindows ? project.toLowerCase() : project}:${name}`;
+}
+
 function marker(workspace: string, name: string): boolean {
   return existsSync(join(workspacesDir(), workspace, name));
 }
@@ -453,22 +460,22 @@ test("ch plugin lists, disables and reports", async () => {
 
   const rows = json(ch(["plugin", "list"], worktree)) as { name: string; state: string }[];
   expect(rows.map((row) => [row.name, row.state])).toEqual([
-    ["local:automations", "enabled"],
-    ["local:broken", "enabled"],
-    ["local:shells", "enabled"],
-    ["workspace:extra", "enabled"],
-    ["workspace:setup", "enabled"],
+    ["local:default:automations", "enabled"],
+    ["local:default:broken", "enabled"],
+    ["local:default:shells", "enabled"],
+    [repoPlugin("extra"), "enabled"],
+    [repoPlugin("setup"), "enabled"],
   ]);
   // Outside every workspace, only the user's own.
   const outside = json(ch(["plugin", "list"])) as { name: string }[];
-  expect(outside.map((row) => row.name)).not.toContain("workspace:setup");
+  expect(outside.map((row) => row.name)).not.toContain(repoPlugin("setup"));
 
-  expect(json(ch(["plugin", "disable", "workspace:extra"], worktree))).toMatchObject({
+  expect(json(ch(["plugin", "disable", repoPlugin("extra")], worktree))).toMatchObject({
     state: "disabled",
   });
 
   const errors = json(ch(["plugin", "errors"])) as { plugin: string; message: string }[];
-  expect(errors.find((row) => row.plugin === "local:broken")?.message).toMatch(
+  expect(errors.find((row) => row.plugin === "local:default:broken")?.message).toMatch(
     /unknown key after-open/
   );
 
@@ -520,7 +527,7 @@ test("Cancel on the loading panel stops a setup hook that never finishes", async
   await commitRepoPlugins({ "setup.yaml": setupManifest({ hangSetup: true }) }, "Hang setup");
 
   const creating = createWorkspace(app(), "gamma");
-  const running = ui.getByText("Running after-worktree-created (workspace:setup)", {
+  const running = ui.getByText(`Running after-worktree-created (${repoPlugin("setup")})`, {
     exact: true,
   });
   await running.waitFor({ timeout: 120_000 });
@@ -531,7 +538,9 @@ test("Cancel on the loading panel stops a setup hook that never finishes", async
   // A canceled setup hook is a failed one: loud, but the workspace still opens.
   await creating;
   await expandSidebar(ui);
-  await expect(ui.getByText(/workspace:setup after-worktree-created: canceled/)).toBeVisible();
+  await expect(
+    ui.getByText(`${repoPlugin("setup")} after-worktree-created: canceled`, { exact: false })
+  ).toBeVisible();
   await collapseSidebar(ui);
 
   // Every later workspace of this project would otherwise hang the same way.
@@ -564,7 +573,9 @@ test("Cancel on the deletion panel stops a gate that never finishes, and fails i
   );
 
   await expect(
-    panel.getByText(/before-worktree-deleted \(workspace:setup\) failed: canceled/)
+    panel.getByText(`before-worktree-deleted (${repoPlugin("setup")}) failed: canceled`, {
+      exact: false,
+    })
   ).toBeVisible();
   expect(existsSync(worktree)).toBe(true);
 
@@ -591,7 +602,7 @@ test("a workspaces automation creates a worktree and records it", async () => {
     .toBe(true);
   await expect
     .poll(() => Object.keys(trackedEntries()), { intervals: POLL_INTERVALS, timeout: 30_000 })
-    .toContain("automations/tracked/1");
+    .toContain("local:default:automations/tracked/1");
 });
 
 test("the tracked item disappearing keeps the entry while the workspace is there", async () => {
@@ -603,12 +614,12 @@ test("the tracked item disappearing keeps the entry while the workspace is there
         appLogEntries().filter(
           (entry) =>
             entry.message === "Keeping automation entry (workspace still exists)" &&
-            entry.context?.["key"] === "automations/tracked/1"
+            entry.context?.["key"] === "local:default:automations/tracked/1"
         ).length,
       { intervals: POLL_INTERVALS, timeout: 30_000 }
     )
     .toBeGreaterThan(0);
-  expect(Object.keys(trackedEntries())).toContain("automations/tracked/1");
+  expect(Object.keys(trackedEntries())).toContain("local:default:automations/tracked/1");
   expect(existsSync(join(workspacesDir(), "tracked-1"))).toBe(true);
 });
 
@@ -630,7 +641,9 @@ test("an events automation creates on the first event, and a repeat refreshes it
   await collapseSidebar(ui);
 
   expect(
-    Object.keys(trackedEntries()).filter((key) => key.startsWith("automations/events/"))
+    Object.keys(trackedEntries()).filter((key) =>
+      key.startsWith("local:default:automations/events/")
+    )
   ).toEqual([]);
 });
 

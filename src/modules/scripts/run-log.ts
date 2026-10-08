@@ -29,7 +29,7 @@ export const KEEP_OK_RUNS = 1;
 export type RunOutcome = "ok" | "failed";
 
 export interface RunRecord {
-  /** Whose script it is, for people: a plugin's id (`local:github`), or `wakeup`. */
+  /** Whose script it is, for people: a plugin's id (`local:default:github`), or `wakeup`. */
   readonly source: string;
   readonly entry: string;
   readonly shell: ShellName;
