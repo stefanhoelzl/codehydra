@@ -444,7 +444,13 @@ export async function expandSidebarOn(ui: Page): Promise<void> {
   const deadline = Date.now() + 15_000;
   for (;;) {
     try {
-      await nav.dispatchEvent("mouseenter", undefined, { timeout: 1_000 });
+      // A real MouseEvent, at the window's left edge: the sidebar reads
+      // clientX, and a bare event's would be undefined.
+      await nav.evaluate(
+        (el) => el.dispatchEvent(new MouseEvent("mouseenter", { clientX: 0, clientY: 100 })),
+        undefined,
+        { timeout: 1_000 }
+      );
       await settings.waitFor({ state: "visible", timeout: 1_000 });
       break;
     } catch (error) {

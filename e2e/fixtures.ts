@@ -534,7 +534,15 @@ export async function expandSidebar(ui: Page): Promise<void> {
 }
 
 export async function collapseSidebar(ui: Page): Promise<void> {
-  await ui.locator("nav.sidebar").dispatchEvent("mouseleave");
+  // Out through the right edge, as a pointer leaving for the workspace would.
+  await ui.locator("nav.sidebar").evaluate((el) =>
+    el.dispatchEvent(
+      new MouseEvent("mouseleave", {
+        clientX: el.getBoundingClientRect().right + 1,
+        clientY: 100,
+      })
+    )
+  );
 }
 
 /** The workspace-name field. Its placeholder also contains "select branch", so match exactly. */
