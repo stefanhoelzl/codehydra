@@ -58,9 +58,9 @@ describe("remote checkouts, for real", () => {
 
     expect(await checkouts.update(spec)).toMatchObject({ state: "ready", commit: first });
     const tree = (await checkouts.tree(spec))!;
-    expect(await readFile(new Path(tree, "plugins", "deploy.yaml").toNative(), "utf-8")).toBe(
-      "hooks: {}\n"
-    );
+    // Git may check text out with CRLF (Windows), so compare the lines.
+    const text = await readFile(new Path(tree, "plugins", "deploy.yaml").toNative(), "utf-8");
+    expect(text.replace(/\r\n/g, "\n")).toBe("hooks: {}\n");
 
     const release = checkouts.acquire(tree);
     const second = await commit(source.path, "plugins/deploy.yaml", "hooks: {}\n# v2\n");
