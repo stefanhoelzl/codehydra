@@ -154,9 +154,11 @@ test.describe("ch CLI", () => {
     // Every spec starts with an empty ~/.codehydra/plugins (resetDataState).
     expect(json(ch(["plugin", "list"]))).toEqual([]);
 
-    const run = ch(["plugin", "enable", "local:nope"]);
+    const run = ch(["plugin", "enable", "local:default:nope"]);
     expect(run.status).toBe(6);
-    expect((JSON.parse(run.stderr) as { error: string }).error).toContain("No plugin local:nope");
+    expect((JSON.parse(run.stderr) as { error: string }).error).toContain(
+      "No plugin local:default:nope"
+    );
 
     const usage = ch(["plugin", "disable", "nope"]);
     expect(usage.status).toBe(2);
