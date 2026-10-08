@@ -1,12 +1,14 @@
 /**
  * PluginModule — the one place user-provided scripts attach to CodeHydra.
  *
- * A plugin is a YAML manifest (manifest.ts) found in one of two places
- * (discovery.ts): the user's own in `~/.codehydra/plugins`, which apply to every
- * project and run without asking, and a repository's in the worktree's
- * `.codehydra/plugins`, which apply to that worktree and run once trusted
- * (trust.ts). Every script a plugin contributes runs through one runner
- * (script-runner.ts) in the shell its document names.
+ * A plugin is a YAML manifest (manifest.ts) found in a source (discovery.ts):
+ * the user's own — `~/.codehydra/plugins`, and the folders and git
+ * repositories `plugins.config` lists (sources.ts, remotes.ts) — which apply
+ * to every project and run without asking, and a repository's in the
+ * worktree's `.codehydra/plugins`, which apply to that worktree and run once
+ * trusted (trust.ts). Every script a plugin contributes runs through one
+ * runner (script-runner.ts) in the shell its document names, with the values
+ * `plugins.config` gives its settings (plugin-config.ts) in its environment.
  *
  * What a plugin can contribute:
  *
@@ -26,14 +28,15 @@
  *     refuse. It fails closed: a script that breaks stops the deletion too.
  *   - `on-workspace-opened` observes `workspace:created` (every open).
  * - **automations** (automations.ts): a script run every poll tick whose items
- *   each run a registry operation. Local plugins only — a repository's
- *   automations would run from whichever worktree happened to be read. The
- *   poll module (poll-module.ts) runs them and announces their failures; this
- *   module says which there are and acts on what they print.
+ *   each run a registry operation. Local and remote plugins only — a
+ *   repository's automations would run from whichever worktree happened to be
+ *   read. The poll module (poll-module.ts) runs them and announces their
+ *   failures; this module says which there are and acts on what they print.
  *
  * Several plugins may define the same hook entry. They run one after another —
- * local plugins by name, then the workspace's by name, each plugin's documents
- * in file order — and their results merge: `env` key by key and `tags` tag by
+ * the user's sources in `plugins.config` order (the default folder first),
+ * each by name, then the repository's by name, each plugin's documents in file
+ * order — and their results merge: `env` key by key and `tags` tag by
  * tag, later winning; the last `title` set wins; the first deletion refusal
  * stops the chain. While a blocking script runs it is registered with the
  * presenter, which offers a Cancel for it; Cancel kills its process tree and
@@ -57,6 +60,7 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import type { Config } from "../../boundaries/platform/config";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
+import type { IGitClient } from "../../boundaries/platform/git-client";
 import { storeBoolean, storeCustom } from "../../boundaries/platform/store-definition";
 import { projectDirName } from "../../boundaries/platform/paths";
 import { Path } from "../../utils/path/path";
@@ -85,14 +89,20 @@ import {
   type ResolveWorkspaceIntent,
 } from "../../intents/resolve-workspace";
 import { projectRefSchema, type ProjectRef, type WorkspaceRef } from "../../intents/contract";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
+import { resolveProjectReference, type ProjectLocation } from "../../api/workspace-lookup";
+import { projectNameOf } from "../../utils/ref";
+import { expandGitUrl, extractRepoName } from "../../utils/url-utils";
+import { looksLikeGitUrl, resolveLocalPath } from "../../utils/project-reference";
 import {
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
 } from "../../intents/vscode-show-message";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
-import type { PluginListing, Plugins } from "../../api/entries/deps";
+import type { PluginListing, PluginSourceListing, Plugins } from "../../api/entries/deps";
 import { ApiError } from "../../api/errors";
 import { invokePluginAction } from "../../api/adapters/plugin-actions";
 import { notify } from "../presentation/notification-card";
@@ -111,10 +121,33 @@ import {
 import { HookFailedError, parseHookOutput } from "./hook-output";
 import {
   loadPlugins,
+  sourceId,
+  pluginId,
   workspacePluginsDir,
   type DiscoveryProblem,
   type LoadedPlugin,
+  type PluginSource,
 } from "./discovery";
+import {
+  DEFAULT_SOURCE,
+  SOURCE_NAME,
+  SourcesConfigError,
+  addSourceEntry,
+  localSourcePath,
+  parseSourcesConfig,
+  removeSourceEntry,
+  type LocalSourceEntry,
+  type PluginValues,
+  type RemoteSourceEntry,
+  type SourceEntry,
+} from "./sources";
+import {
+  createRemoteCheckouts,
+  type RemoteCheckouts,
+  type RemoteSpec,
+  type RemoteStatus,
+} from "./remotes";
+import { settingsEnv } from "./plugin-config";
 import { manifestJsonSchema, type PluginDocument } from "./manifest";
 import { createPluginErrorBook, ERRORS_POINTER, type PluginErrorBook } from "./errors";
 import { createPluginTrust, type PluginTrust, type TrustProject } from "./trust";
@@ -168,6 +201,16 @@ export interface PluginModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly ui: Pick<UiPresenter, "dialog" | "trackRunningHook">;
   readonly pathProvider: Pick<PathProvider, "homePath" | "dataPath">;
+  /** Git, for the repositories `plugins.config` lists. */
+  readonly git: Pick<
+    IGitClient,
+    | "clone"
+    | "fetch"
+    | "resolveCommit"
+    | "addDetachedWorktree"
+    | "removeWorktree"
+    | "pruneWorktrees"
+  >;
   readonly sink: HookOutputSink;
   /**
    * Subscribe to a workspace's editor connecting (it does on every open). The
@@ -260,6 +303,37 @@ const booleanMapStore = storeCustom<Record<string, boolean>>({
   validValues: "<plugin → boolean>",
 });
 
+/** `plugins.config` text, when it parses; undefined refuses it. */
+function validSourcesConfig(text: string): string | undefined {
+  try {
+    parseSourcesConfig(text);
+    return text;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Shown beside the `plugins.config` editor. */
+const SOURCES_HELP = [
+  "default:                 # ~/.codehydra/plugins (listed only to configure it)",
+  "  config:",
+  "    github: {token: ghp_xxx}",
+  "work:                    # another folder of plugins",
+  "  path: ~/work/ch-plugins",
+  "acme:                    # a git repository of plugins",
+  "  type: remote",
+  "  url: git@github.com:acme/ch-plugins.git",
+  "  ref: main              # branch, tag or commit (default: default branch)",
+  "  path: plugins          # its folder of plugins (default: the root)",
+  "  config:",
+  "    deploy: {region: us} # values for remote:acme:deploy's settings",
+  "codehydra:               # a repository's own .codehydra/plugins",
+  "  type: project",
+  "  project: codehydra     # name, path or origin (default: the key)",
+  "  config:",
+  "    setup: {db-url: postgres://127.0.0.1/dev}",
+].join("\n");
+
 // =============================================================================
 // Module
 // =============================================================================
@@ -267,16 +341,24 @@ const booleanMapStore = storeCustom<Record<string, boolean>>({
 /** The migration offer's button. */
 const ACTION_MIGRATE = "Migrate";
 
+/** A plugin, with the environment its settings' values make. */
+interface ConfiguredPlugin extends LoadedPlugin {
+  /** `CH_CONFIG_*` for its scripts. */
+  readonly env: Readonly<Record<string, string>>;
+  /** The remote checkout it was read from, held while one of its scripts runs. */
+  readonly tree?: Path;
+}
+
 /** A hook script one plugin contributes to one entry. */
 interface HookScript {
-  readonly plugin: LoadedPlugin;
+  readonly plugin: ConfiguredPlugin;
   readonly doc: PluginDocument;
   readonly script: string;
 }
 
 /** An automation, with the plugin and the script that run it. */
 interface PluginAutomation extends AutomationSource {
-  readonly owner: LoadedPlugin;
+  readonly owner: ConfiguredPlugin;
   readonly shell: ShellName;
   readonly script: string;
 }
@@ -311,6 +393,24 @@ type ScriptOutcome<T> =
 /** The poll jobs this module collects: one per automation. */
 export const AUTOMATIONS_OWNER = "automations";
 
+/** An automation's identity: its tracking-key prefix and the `source` metadata it writes. */
+function automationId(pluginId: string, name: string): string {
+  return `${pluginId}/${name}`;
+}
+
+/** The default folder's plugins, as older versions named them in tracking keys (`<plugin>/…`). */
+const DEFAULT_PLUGIN_PREFIX = `local:${DEFAULT_SOURCE}:`;
+
+/**
+ * A tracking key an older version wrote, in today's form: it named a plugin of
+ * the default folder by its bare name. Undefined for one already current.
+ */
+function migratedTrackingKey(key: string): string | undefined {
+  const slash = key.indexOf("/");
+  if (slash <= 0 || key.slice(0, slash).includes(":")) return undefined;
+  return `${DEFAULT_PLUGIN_PREFIX}${key}`;
+}
+
 /** An automation's entry name: its run logs and its key in the error book. */
 function automationEntry(source: AutomationSource): string {
   return `automations.${source.name}`;
@@ -343,6 +443,26 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     applies: "live",
     ...storeBoolean(),
     legacyNames: { "hooks.enabled": (value) => (typeof value === "boolean" ? value : undefined) },
+  });
+
+  const sourcesConfig = deps.config.register("plugins.config", {
+    default: "",
+    description:
+      "Where plugins come from — more folders, git repositories — and the values of their settings (YAML)",
+    applies: "live",
+    // Edited in the clear, but it holds tokens: never in a bug report.
+    omit: true,
+    ...storeCustom<string>({
+      parse: (raw) => validSourcesConfig(raw),
+      validate: (value) => (typeof value === "string" ? validSourcesConfig(value) : undefined),
+      validValues: "<YAML: entry name → {type, path, url, ref, project, config}>",
+      settingsControl: {
+        kind: "text",
+        rows: 8,
+        helpLabel: "Format",
+        helpPanel: SOURCES_HELP,
+      },
+    }),
   });
 
   const enabledState = deps.stateService.register<Record<string, boolean>>("plugins.state", {
@@ -389,13 +509,60 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Loading
   // ---------------------------------------------------------------------------
 
+  const checkouts: RemoteCheckouts = createRemoteCheckouts({
+    git: deps.git,
+    fileSystem: deps.fileSystem,
+    logger: deps.logger,
+    root: deps.pathProvider.dataPath("plugins/remotes"),
+    onResult: (spec, status) => {
+      const key = { plugin: `remote:${spec.key}`, entry: "fetch" };
+      if (status.state === "failed") errors.failure(key, status.message);
+      else errors.success(key);
+    },
+  });
+
+  /** The entries of `plugins.config`; just the default folder when it cannot be read. */
+  function sourceEntries(): SourceEntry[] {
+    try {
+      const entries = parseSourcesConfig(sourcesConfig.get());
+      errors.setProblems({ source: "plugins.config" }, []);
+      return entries;
+    } catch (error) {
+      // Validated when set; this is a value that predates a stricter schema.
+      errors.setProblems({ source: "plugins.config" }, [
+        { plugin: "plugins.config", message: getErrorMessage(error) },
+      ]);
+      return [{ key: DEFAULT_SOURCE, type: "local", path: null, values: {} }];
+    }
+  }
+
+  function remoteSpec(entry: RemoteSourceEntry): RemoteSpec {
+    return { key: entry.key, url: entry.url, ...(entry.ref !== undefined && { ref: entry.ref }) };
+  }
+
+  function remoteSpecs(entries: readonly SourceEntry[]): RemoteSpec[] {
+    return entries.flatMap((entry) => (entry.type === "remote" ? [remoteSpec(entry)] : []));
+  }
+
+  /** Where a source's plugins are now; undefined for a remote not checked out yet. */
+  async function sourceDir(
+    entry: LocalSourceEntry | RemoteSourceEntry
+  ): Promise<{ dir: Path; tree?: Path } | undefined> {
+    if (entry.type === "local") {
+      return { dir: entry.path === null ? localDir : localSourcePath(entry.path) };
+    }
+    const tree = await checkouts.tree(remoteSpec(entry));
+    if (tree === undefined) return undefined;
+    return { dir: entry.path === undefined ? tree : new Path(tree, entry.path), tree };
+  }
+
   function problemsOf(
     plugins: readonly LoadedPlugin[],
     problems: readonly DiscoveryProblem[]
   ): { plugin: string; message: string }[] {
     return [
       ...problems.map((problem) => ({
-        plugin: `${problem.origin}:${problem.name}`,
+        plugin: pluginId(problem.source, problem.name),
         message: problem.message,
       })),
       ...plugins.flatMap((plugin) =>
@@ -404,26 +571,142 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     ];
   }
 
-  async function loadLocal(): Promise<LoadedPlugin[]> {
-    const { plugins, problems } = await loadPlugins(deps.fileSystem, localDir, "local", platform);
-    errors.setProblems({ origin: "local" }, problemsOf(plugins, problems));
+  /**
+   * Give each plugin the environment its settings' values make. A value that
+   * does not fit makes the plugin unable to run, as an invalid manifest does.
+   * Values for a plugin the source does not have are reported too: a typo in
+   * a plugin's name would otherwise leave it silently unconfigured.
+   */
+  function configure(
+    source: PluginSource,
+    plugins: readonly LoadedPlugin[],
+    problems: readonly DiscoveryProblem[],
+    values: PluginValues
+  ): { plugins: ConfiguredPlugin[]; problems: { plugin: string; message: string }[] } {
+    const configured = plugins.map((plugin): ConfiguredPlugin => {
+      if (plugin.error !== undefined) return { ...plugin, env: {} };
+      try {
+        return { ...plugin, env: settingsEnv(plugin.settings, values[plugin.name] ?? {}) };
+      } catch (error) {
+        return { ...plugin, env: {}, error: getErrorMessage(error) };
+      }
+    });
+    const known = new Set([
+      ...plugins.map((plugin) => plugin.name),
+      ...problems.map((problem) => problem.name),
+    ]);
+    const unknown = Object.keys(values)
+      .filter((name) => !known.has(name))
+      .map((name) => ({
+        plugin: pluginId(source, name),
+        message: `plugins.config sets values for ${name}, which ${sourceId(source)} does not have`,
+      }));
+    return { plugins: configured, problems: [...problemsOf(configured, problems), ...unknown] };
+  }
+
+  /** One of the user's sources: its plugins, configured, with its problems recorded. */
+  async function loadSource(
+    entry: LocalSourceEntry | RemoteSourceEntry
+  ): Promise<ConfiguredPlugin[]> {
+    const source: PluginSource = { type: entry.type, entry: entry.key };
+    const where = await sourceDir(entry);
+    if (where === undefined) {
+      errors.setProblems({ source: sourceId(source) }, []);
+      return [];
+    }
+    const loaded = await loadPlugins(deps.fileSystem, where.dir, source, platform);
+    const { plugins, problems } = configure(source, loaded.plugins, loaded.problems, entry.values);
+    errors.setProblems({ source: sourceId(source) }, problems);
+    const tree = where.tree;
+    return tree === undefined ? plugins : plugins.map((plugin) => ({ ...plugin, tree }));
+  }
+
+  /** Remotes `ch plugin add` is cloning, not yet in plugins.config. */
+  const adding = new Set<RemoteSpec>();
+
+  /** Delete the clones of remotes taken out of plugins.config. */
+  function forgetRemoved(entries: readonly SourceEntry[] = sourceEntries()): Promise<void> {
+    return checkouts.forgetOthers([...remoteSpecs(entries), ...adding]);
+  }
+
+  /** The user's plugins — every local and remote source's — in `plugins.config` order. */
+  async function loadSources(): Promise<ConfiguredPlugin[]> {
+    const entries = sourceEntries();
+    void forgetRemoved(entries);
+    const plugins: ConfiguredPlugin[] = [];
+    for (const entry of entries) {
+      if (entry.type === "project") continue;
+      plugins.push(...(await loadSource(entry)));
+    }
     return plugins;
   }
 
-  /** Workspace plugins already warned about for shipping automations. */
+  /**
+   * The values `plugins.config` gives a project's plugins: from the project
+   * entry that names it. An entry naming no open project is waiting for it to
+   * open; one naming several, or a project two entries name, is a problem.
+   */
+  async function projectValues(projectRef: ProjectRef): Promise<PluginValues> {
+    const entries = sourceEntries().filter((entry) => entry.type === "project");
+    if (entries.length === 0) {
+      errors.setProblems({ source: "project-entries" }, []);
+      return {};
+    }
+    let projects: readonly ProjectLocation[];
+    try {
+      projects = ((await deps.dispatcher.dispatch<ListProjectsIntent>({
+        type: INTENT_LIST_PROJECTS,
+        payload: {} as Record<string, never>,
+      })) ?? []) as readonly ProjectLocation[];
+    } catch (error) {
+      // Without the open projects no entry can be matched; the plugins run unconfigured.
+      deps.logger.warn("Could not list projects to match plugins.config entries", {
+        error: getErrorMessage(error),
+      });
+      return {};
+    }
+
+    const problems: { plugin: string; message: string }[] = [];
+    const matching: SourceEntry[] = [];
+    for (const entry of entries) {
+      if (entry.type !== "project") continue;
+      const resolved = resolveProjectReference(projects, entry.project);
+      if ("error" in resolved) {
+        if (resolved.category !== "not-found") {
+          problems.push({ plugin: `project-entries:${entry.key}`, message: resolved.error });
+        }
+        continue;
+      }
+      if (resolved.ref === projectRef) matching.push(entry);
+    }
+    if (matching.length > 1) {
+      problems.push({
+        plugin: `project-entries:${matching.map((entry) => entry.key).join(",")}`,
+        message: `${matching.map((entry) => entry.key).join(" and ")} name the same project; keep one`,
+      });
+    }
+    errors.setProblems({ source: "project-entries" }, problems);
+    return matching.length === 1 ? matching[0]!.values : {};
+  }
+
+  /** Repository plugins already warned about for shipping automations. */
   const warnedWorkspaceAutomations = new Set<string>();
 
-  async function loadWorkspace(worktree: Path, projectPath: string): Promise<LoadedPlugin[]> {
-    const { plugins, problems } = await loadPlugins(
+  /** A repository's plugins, as its worktree has them now, configured. */
+  async function loadWorkspace(
+    worktree: Path,
+    project: { readonly ref: ProjectRef; readonly path: string }
+  ): Promise<ConfiguredPlugin[]> {
+    const source: PluginSource = { type: "project", entry: projectNameOf(project.ref) };
+    const loaded = await loadPlugins(
       deps.fileSystem,
       workspacePluginsDir(worktree),
-      "workspace",
+      source,
       platform
     );
-    errors.setProblems(
-      { origin: "workspace", project: projectPath },
-      problemsOf(plugins, problems)
-    );
+    const values = loaded.plugins.length === 0 ? {} : await projectValues(project.ref);
+    const { plugins, problems } = configure(source, loaded.plugins, loaded.problems, values);
+    errors.setProblems({ source: sourceId(source), project: project.path }, problems);
     for (const plugin of plugins) {
       const key = plugin.manifestPath.toString();
       if (plugin.applied.some((doc) => doc.automations.length > 0)) {
@@ -441,12 +724,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   }
 
   function logDir(plugin: LoadedPlugin, projectPath: string, kind: string, entry: string): Path {
-    return plugin.origin === "local"
-      ? new Path(logsRoot, "local", plugin.name, kind, entry)
-      : new Path(logsRoot, "workspace", projectDirName(projectPath), plugin.name, kind, entry);
+    return plugin.source.type === "project"
+      ? new Path(logsRoot, "project", projectDirName(projectPath), plugin.name, kind, entry)
+      : new Path(logsRoot, plugin.source.type, plugin.source.entry, plugin.name, kind, entry);
   }
 
-  function scriptsFor(plugins: readonly LoadedPlugin[], entry: string): HookScript[] {
+  function scriptsFor(plugins: readonly ConfiguredPlugin[], entry: string): HookScript[] {
     const scripts: HookScript[] = [];
     for (const plugin of plugins) {
       if (plugin.error !== undefined) continue;
@@ -470,32 +753,36 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     target: HookTarget,
     options: { ask: boolean }
   ): Promise<HookScript[]> {
-    const local = scriptsFor(await loadLocal(), entry).filter(
-      (script) => trust.state("local", script.plugin.name) !== "disabled"
+    const own = scriptsFor(await loadSources(), entry).filter(
+      (script) => trust.state(script.plugin.source, script.plugin.name) !== "disabled"
     );
-    const workspace = scriptsFor(
-      await loadWorkspace(new Path(target.workspacePath), target.projectPath),
+    const repository = scriptsFor(
+      await loadWorkspace(new Path(target.workspacePath), {
+        ref: target.projectRef,
+        path: target.projectPath,
+      }),
       entry
     );
-    if (workspace.length === 0) return local;
+    if (repository.length === 0) return own;
 
     if (!options.ask) {
       return [
-        ...local,
-        ...workspace.filter(
+        ...own,
+        ...repository.filter(
           (script) =>
-            trust.state("workspace", script.plugin.name, trustProject(target)) !== "disabled"
+            trust.state(script.plugin.source, script.plugin.name, trustProject(target)) !==
+            "disabled"
         ),
       ];
     }
 
-    const names = [...new Set(workspace.map((script) => script.plugin.name))];
+    const names = [...new Set(repository.map((script) => script.plugin.name))];
     const allowed = await trust.check({
       project: trustProject(target),
       workspaceRef: target.workspaceRef,
       plugins: names,
     });
-    return [...local, ...workspace.filter((script) => allowed.has(script.plugin.name))];
+    return [...own, ...repository.filter((script) => allowed.has(script.plugin.name))];
   }
 
   // ---------------------------------------------------------------------------
@@ -514,9 +801,24 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
    * `parse` throws on are failures; the caller decides whom to tell.
    */
   async function runScript<T>(
+    plugin: ConfiguredPlugin,
     request: ScriptRequest,
     parse: (stdout: string) => T,
     describeExit: (output: ScriptOutput) => string = describeStatus
+  ): Promise<ScriptOutcome<T>> {
+    // A remote's tree stays while its script runs, whatever an update does meanwhile.
+    const release = plugin.tree === undefined ? undefined : checkouts.acquire(plugin.tree);
+    try {
+      return await runScriptNow({ ...request, env: plugin.env }, parse, describeExit);
+    } finally {
+      release?.();
+    }
+  }
+
+  async function runScriptNow<T>(
+    request: ScriptRequest,
+    parse: (stdout: string) => T,
+    describeExit: (output: ScriptOutput) => string
   ): Promise<ScriptOutcome<T>> {
     let pending: PendingRun;
     try {
@@ -617,12 +919,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   ): Promise<z.infer<S> | undefined> {
     const key = {
       plugin: script.plugin.id,
-      ...(script.plugin.origin === "workspace" && { project: target.projectPath }),
+      ...(script.plugin.source.type === "project" && { project: target.projectPath }),
       entry,
     };
     const worktree = new Path(target.workspacePath);
 
     const run = await runScript(
+      script.plugin,
       {
         source: script.plugin.id,
         entry,
@@ -1022,15 +1325,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // Automations
   // ---------------------------------------------------------------------------
 
-  /** The automations to run this cycle: every enabled local plugin's, for this platform. */
+  /** The automations to run this cycle: every enabled local and remote plugin's, for this platform. */
   async function automationSources(): Promise<readonly PluginAutomation[]> {
     const sources: PluginAutomation[] = [];
     const seen = new Set<string>();
-    for (const plugin of await loadLocal()) {
-      if (plugin.error !== undefined || trust.state("local", plugin.name) === "disabled") continue;
+    for (const plugin of await loadSources()) {
+      if (plugin.error !== undefined || trust.state(plugin.source, plugin.name) === "disabled") {
+        continue;
+      }
       for (const doc of plugin.applied) {
         for (const spec of doc.automations) {
-          const id = `${plugin.name}/${spec.name}`;
+          const id = automationId(plugin.id, spec.name);
           if (seen.has(id)) {
             deps.logger.warn("Automation defined twice for this platform; running the first", {
               plugin: plugin.id,
@@ -1075,6 +1380,17 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   /** The automations of the tick in progress, by id, for their results. */
   let collected = new Map<string, PluginAutomation>();
 
+  /**
+   * The remote checkouts the tick's scripts run in, by job id: held from
+   * collect until the job's result, so an update cannot remove one meanwhile.
+   */
+  const leases = new Map<string, () => void>();
+
+  function releaseLease(id: string): void {
+    leases.get(id)?.();
+    leases.delete(id);
+  }
+
   /** Read once, before the first tick reads them: legacy sources moved, tracking loaded. */
   let prepared: Promise<void> | undefined;
   function prepare(): Promise<void> {
@@ -1095,9 +1411,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       entry: automationEntry(source),
       shell: source.shell,
       script: source.script,
-      cwd: (owner.pluginDir ?? localDir).toString(),
+      // A one-file plugin runs in the folder that holds it.
+      cwd: (owner.pluginDir ?? owner.manifestPath.dirname).toString(),
       input: {},
       logDir: logDir(owner, "", "automations", source.name).toString(),
+      ...(Object.keys(owner.env).length > 0 && { env: { ...owner.env } }),
       ...(owner.pluginDir !== undefined && { pluginDir: owner.pluginDir.toString() }),
       failure: { title: "Plugin failed", pointer: ERRORS_POINTER },
     };
@@ -1107,6 +1425,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     await prepare();
     const sources = await automations.collect();
     collected = new Map(sources.map((source) => [source.id, source]));
+    // A tick that never reached a job's result holds nothing past the next.
+    for (const id of [...leases.keys()]) releaseLease(id);
+    for (const { id, owner } of sources) {
+      if (owner.tree !== undefined) leases.set(id, checkouts.acquire(owner.tree));
+    }
     return sources.map(automationJob);
   }
 
@@ -1169,7 +1492,7 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
           const name = converted.renames.get(key.slice(0, slash));
           return name === undefined
             ? undefined
-            : `${LEGACY_SOURCES_PLUGIN}/${name}/${key.slice(slash + 1)}`;
+            : `${automationId(`${DEFAULT_PLUGIN_PREFIX}${LEGACY_SOURCES_PLUGIN}`, name)}/${key.slice(slash + 1)}`;
         });
         for (const error of converted.errors) {
           deps.logger.warn("Auto-workspace source could not be moved (invalid)", {
@@ -1225,15 +1548,20 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     if (offering.has(workspaceRef)) return;
     offering.add(workspaceRef);
     try {
-      const { workspacePath } = await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspaceRef },
-      });
+      const { workspacePath, projectRef: resolvedProject } =
+        await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
+          type: INTENT_RESOLVE_WORKSPACE,
+          payload: { workspaceRef },
+        });
       const worktree = new Path(workspacePath);
       const files = await listLegacyHooks(deps.fileSystem, worktree);
       if (files.length === 0) return;
       const pluginsDir = workspacePluginsDir(worktree);
-      if ((await discoverPlugins(deps.fileSystem, pluginsDir, "workspace")).plugins.length > 0) {
+      const repository: PluginSource = {
+        type: "project",
+        entry: projectNameOf(resolvedProject),
+      };
+      if ((await discoverPlugins(deps.fileSystem, pluginsDir, repository)).plugins.length > 0) {
         return;
       }
 
@@ -1293,34 +1621,266 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // `ch plugin`
   // ---------------------------------------------------------------------------
 
-  function listing(plugin: LoadedPlugin, project?: TrustProject): PluginListing {
+  /** How long ago an ISO time was, the way a person says it. */
+  function ago(iso: string): string {
+    const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    if (seconds < 60) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
+  /** A remote's status, in a few words. */
+  function describeRemote(status: RemoteStatus | undefined): string {
+    if (status === undefined || status.state === "cloning") return "cloning";
+    if (status.state === "ready") {
+      return `${status.commit.slice(0, 7)}, fetched ${ago(status.fetchedAt)}`;
+    }
+    const kept =
+      status.commit === undefined
+        ? ""
+        : ` (running ${status.commit.slice(0, 7)}${status.fetchedAt === undefined ? "" : `, fetched ${ago(status.fetchedAt)}`})`;
+    return `fetch failed: ${status.message}${kept}`;
+  }
+
+  function sourceListing(entry: LocalSourceEntry | RemoteSourceEntry): PluginSourceListing {
+    const id = sourceId({ type: entry.type, entry: entry.key });
+    if (entry.type === "local") {
+      return {
+        id,
+        type: "local",
+        name: entry.key,
+        location: (entry.path === null ? localDir : localSourcePath(entry.path)).toNative(),
+        status: "",
+      };
+    }
+    return {
+      id,
+      type: "remote",
+      name: entry.key,
+      location: entry.url,
+      ...(entry.ref !== undefined && { ref: entry.ref }),
+      status: describeRemote(checkouts.status(remoteSpec(entry))),
+    };
+  }
+
+  function listing(plugin: ConfiguredPlugin, project?: TrustProject): PluginListing {
+    const remote =
+      plugin.source.type === "remote"
+        ? sourceEntries().find(
+            (entry): entry is RemoteSourceEntry =>
+              entry.type === "remote" && entry.key === plugin.source.entry
+          )
+        : undefined;
     return {
       id: plugin.id,
       name: plugin.name,
-      origin: plugin.origin,
-      state: trust.state(plugin.origin, plugin.name, project),
+      type: plugin.source.type,
+      source: plugin.source.entry,
+      state: trust.state(plugin.source, plugin.name, project),
       platforms: plugin.platforms,
       path: (plugin.pluginDir ?? plugin.manifestPath).toNative(),
-      ...(plugin.origin === "workspace" && project !== undefined && { project: project.ref }),
+      ...(plugin.source.type === "project" && project !== undefined && { project: project.ref }),
+      ...(remote !== undefined && {
+        status: describeRemote(checkouts.status(remoteSpec(remote))),
+      }),
     };
+  }
+
+  /** The user's sources: what `plugins.config` lists, the default folder first. */
+  function userSources(): (LocalSourceEntry | RemoteSourceEntry)[] {
+    return sourceEntries().filter(
+      (entry): entry is LocalSourceEntry | RemoteSourceEntry => entry.type !== "project"
+    );
+  }
+
+  /** Write `plugins.config`, turning a refusal into the caller's error. */
+  async function writeSources(text: string): Promise<void> {
+    try {
+      await sourcesConfig.set(text);
+    } catch (error) {
+      throw new ApiError("usage", `plugins.config: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /** A name made from a repository's or a folder's, usable as an entry name. */
+  function entryNameFrom(text: string): string {
+    return (
+      text
+        .replace(/[^A-Za-z0-9._-]/g, "-")
+        .replace(/^[^A-Za-z0-9]+/, "")
+        .replace(/-+/g, "-") || "plugins"
+    );
+  }
+
+  async function addSource(request: Parameters<Plugins["add"]>[0]): Promise<PluginSourceListing> {
+    const remote = looksLikeGitUrl(request.source);
+    if (!remote && request.ref !== undefined) {
+      throw new ApiError("usage", "--ref is for a git repository; a folder has no ref");
+    }
+    if (!remote && request.path !== undefined) {
+      throw new ApiError(
+        "usage",
+        "--path is for a git repository's folder; name the folder itself"
+      );
+    }
+
+    let entry: Record<string, unknown>;
+    let defaultName: string;
+    if (remote) {
+      entry = {
+        type: "remote",
+        url: request.source,
+        ...(request.ref !== undefined && { ref: request.ref }),
+        ...(request.path !== undefined && { path: request.path }),
+      };
+      defaultName = entryNameFrom(extractRepoName(expandGitUrl(request.source)));
+    } else {
+      const folder = resolveLocalPath(request.source, request.cwd);
+      if (!new Path(folder).toString().startsWith("/") && !/^[A-Za-z]:/.test(folder)) {
+        throw new ApiError("usage", `${request.source}: name the folder by an absolute path`);
+      }
+      try {
+        await deps.fileSystem.readdir(new Path(folder));
+      } catch {
+        throw new ApiError("not-found", `${request.source}: no such folder`);
+      }
+      entry = { path: new Path(folder).toNative() };
+      defaultName = entryNameFrom(new Path(folder).basename);
+    }
+
+    const name = request.name ?? defaultName;
+    if (!SOURCE_NAME.test(name)) {
+      throw new ApiError("usage", `"${name}" is not a usable name (letters, digits, ., - and _)`);
+    }
+    if (name === DEFAULT_SOURCE || sourceEntries().some((existing) => existing.key === name)) {
+      throw new ApiError(
+        "conflict",
+        `There is already a plugins.config entry named ${name}; pass --name to choose another`
+      );
+    }
+
+    let text: string;
+    try {
+      text = addSourceEntry(sourcesConfig.get(), name, entry);
+    } catch (error) {
+      throw new ApiError(
+        error instanceof SourcesConfigError ? "usage" : "failed",
+        `plugins.config: ${getErrorMessage(error)}`
+      );
+    }
+
+    if (remote) {
+      // Cloned before it is listed: a repository that cannot be reached is refused.
+      const spec: RemoteSpec = {
+        key: name,
+        url: request.source,
+        ...(request.ref !== undefined && { ref: request.ref }),
+      };
+      adding.add(spec);
+      try {
+        const status = await checkouts.update(spec);
+        if (status.state !== "ready") {
+          adding.delete(spec);
+          await forgetRemoved();
+          throw new ApiError(
+            "failed",
+            `Could not add ${request.source}: ${status.state === "failed" ? status.message : status.state}`
+          );
+        }
+        await writeSources(text);
+      } finally {
+        adding.delete(spec);
+      }
+    } else {
+      await writeSources(text);
+    }
+
+    const added = userSources().find((existing) => existing.key === name);
+    if (added === undefined) throw new ApiError("failed", `${name} was not added`);
+    return sourceListing(added);
+  }
+
+  async function removeSource(name: string): Promise<PluginSourceListing> {
+    if (name === DEFAULT_SOURCE) {
+      throw new ApiError("usage", "The default folder cannot be removed");
+    }
+    const entry = sourceEntries().find((existing) => existing.key === name);
+    if (entry === undefined || entry.type === "project") {
+      throw new ApiError(
+        "not-found",
+        `No plugins.config entry ${name}. \`ch plugin list\` shows them.`
+      );
+    }
+    const removed = sourceListing(entry);
+    const text = removeSourceEntry(sourcesConfig.get(), name);
+    if (text === undefined) throw new ApiError("not-found", `No plugins.config entry ${name}`);
+    await writeSources(text);
+    await forgetRemoved();
+    return removed;
+  }
+
+  async function updateSources(name?: string): Promise<PluginSourceListing[]> {
+    const remotes = userSources().filter(
+      (entry): entry is RemoteSourceEntry => entry.type === "remote"
+    );
+    let targets = remotes;
+    if (name !== undefined) {
+      targets = remotes.filter((entry) => entry.key === name);
+      if (targets.length === 0) {
+        throw new ApiError(
+          userSources().some((entry) => entry.key === name) ? "usage" : "not-found",
+          userSources().some((entry) => entry.key === name)
+            ? `${name} is a folder: there is nothing to fetch`
+            : `No remote plugins.config entry ${name}`
+        );
+      }
+    }
+    await Promise.all(targets.map((entry) => checkouts.update(remoteSpec(entry))));
+    return targets.map(sourceListing);
   }
 
   const api: Plugins = {
     async list(scope) {
-      const listings = (await loadLocal()).map((plugin) => listing(plugin));
+      const own = await loadSources();
+      const listings = own.map((plugin) => listing(plugin));
+      // A remote with nothing checked out yet still shows, saying why.
+      for (const entry of userSources()) {
+        if (entry.type !== "remote" || own.some((plugin) => plugin.source.entry === entry.key)) {
+          continue;
+        }
+        const source = sourceListing(entry);
+        listings.push({
+          id: `${source.id}:*`,
+          name: "*",
+          type: "remote",
+          source: entry.key,
+          state: "enabled",
+          platforms: [],
+          path: "",
+          status: source.status,
+        });
+      }
       if (scope.workspace !== null) {
         const { workspacePath, projectRef, projectPath } = scope.workspace;
-        const workspace = await loadWorkspace(new Path(workspacePath), projectPath);
+        const repository = await loadWorkspace(new Path(workspacePath), {
+          ref: projectRef,
+          path: projectPath,
+        });
         listings.push(
-          ...workspace.map((plugin) => listing(plugin, { ref: projectRef, path: projectPath }))
+          ...repository.map((plugin) => listing(plugin, { ref: projectRef, path: projectPath }))
         );
       }
       return listings;
     },
     async setState(scope, id, state) {
-      const found = (await api.list(scope)).find((plugin) => plugin.id === id);
+      const found = (await api.list(scope)).find(
+        (plugin) => plugin.id === id && plugin.name !== "*"
+      );
       if (found === undefined) {
-        if (id.startsWith("workspace:") && scope.workspace === null) {
+        if (id.startsWith("project:") && scope.workspace === null) {
           throw new ApiError(
             "no-workspace",
             `${id}: a repository's plugins are named from inside one of its workspaces (or with --workspace)`
@@ -1329,13 +1889,16 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         throw new ApiError("not-found", `No plugin ${id}. \`ch plugin list\` shows them.`);
       }
       await trust.set(
-        found.origin,
+        { type: found.type, entry: found.source },
         found.name,
         state,
         found.project === undefined ? undefined : projectRefSchema.parse(found.project)
       );
       return { ...found, state };
     },
+    add: addSource,
+    remove: removeSource,
+    update: updateSources,
     errors: () => [
       ...errors.list(),
       // An automation's failures are the poll module's, which runs them.
@@ -1375,16 +1938,19 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   // ---------------------------------------------------------------------------
 
   /**
-   * Turn what versions before refs stored by project path — trust answers and
-   * automation tracking entries — into project refs. Before anything reads
-   * them; best-effort, since an entry left behind only costs a question or a
-   * looser match, never the start.
+   * Bring what older versions stored to today's form before anything reads it:
+   * project paths become project refs (trust answers, automation tracking
+   * entries), and plugins named before sources existed (`local:<name>`,
+   * `workspace:…`, `<name>/<automation>`) get their source. Best-effort, since
+   * an entry left behind only costs a question or a looser match, never the
+   * start.
    */
   async function migrateProjectKeys(): Promise<void> {
     try {
       const refs = await deps.projectRefs();
       await trust.migrateKeys(refs);
       await automations.migrateEntries(refs);
+      await automations.renameTracking(migratedTrackingKey);
     } catch (error) {
       deps.logger.warn("Could not move plugin state from project paths to refs", {
         error: getErrorMessage(error),
@@ -1404,7 +1970,11 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
       result: {
         handler: async (ctx) => {
           if (ctx.job.owner !== AUTOMATIONS_OWNER) return;
-          return { result: { errors: await automationResult(ctx.job, ctx.run) } };
+          try {
+            return { result: { errors: await automationResult(ctx.job, ctx.run) } };
+          } finally {
+            releaseLease(ctx.job.id);
+          }
         },
       },
     },
@@ -1426,6 +1996,12 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   });
 
   const events = defineEvents({
+    [EVENT_APP_STARTED]: {
+      // The once-a-start fetch of every remote source, in the background.
+      handler: async (): Promise<void> => {
+        if (allowed()) checkouts.refresh(remoteSpecs(sourceEntries()));
+      },
+    },
     [EVENT_WORKSPACE_CREATED]: {
       // Returns immediately: the emitter must never wait on a plugin's script,
       // least of all one that may park on a trust dialog.

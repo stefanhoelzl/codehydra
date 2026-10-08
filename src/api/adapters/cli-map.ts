@@ -103,6 +103,9 @@ export const CLI_MAP: Readonly<Record<OperationName, CliMapping | null>> = {
   "plugin.list": { path: ["plugin", "list"] },
   "plugin.enable": { path: ["plugin", "enable"], positionals: ["id"] },
   "plugin.disable": { path: ["plugin", "disable"], positionals: ["id"] },
+  "plugin.add": { path: ["plugin", "add"], positionals: ["source"] },
+  "plugin.remove": { path: ["plugin", "remove"], positionals: ["name"] },
+  "plugin.update": { path: ["plugin", "update"], positionals: ["name"] },
   "plugin.errors": { path: ["plugin", "errors"] },
   "plugin.schema": { path: ["plugin", "schema"] },
   // A filter: with no items given, they are read from standard input.

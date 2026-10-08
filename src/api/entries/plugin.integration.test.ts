@@ -17,7 +17,14 @@ import { projectRefFor } from "../../utils/ref";
 import { createLockModule } from "../../modules/lock-module";
 import { ApiError } from "../errors";
 import type { OperationContext } from "../types";
-import type { PluginListing, PluginScope, Plugins, PluginState } from "./deps";
+import type {
+  PluginAddRequest,
+  PluginListing,
+  PluginScope,
+  PluginSourceListing,
+  Plugins,
+  PluginState,
+} from "./deps";
 import { createRegistry } from "./index";
 
 const APP = projPath("/projects/app");
@@ -71,36 +78,70 @@ function setup() {
   dispatcher.registerOperation(new ListNoProjectsOp());
   const scopes: PluginScope[] = [];
   const states: Array<[string, PluginState]> = [];
-  const listing = (id: string, state: PluginState, platforms: string[]): PluginListing => ({
-    id,
-    name: id.slice(id.indexOf(":") + 1),
-    origin: id.startsWith("local:") ? "local" : "workspace",
-    state,
-    platforms,
-    path: `/plugins/${id}`,
-  });
+  const added: PluginAddRequest[] = [];
+  const updated: Array<string | undefined> = [];
+  const listing = (id: string, state: PluginState, platforms: string[]): PluginListing => {
+    const [type, source] = id.split(":") as [PluginListing["type"], string];
+    return {
+      id,
+      name: id.slice(id.lastIndexOf(":") + 1),
+      type,
+      source,
+      state,
+      platforms,
+      path: `/plugins/${id}`,
+      ...(type === "remote" && { status: "9f1e2c3, fetched 2m ago" }),
+    };
+  };
+  const acme: PluginSourceListing = {
+    id: "remote:acme",
+    type: "remote",
+    name: "acme",
+    location: "git@github.com:acme/ch-plugins.git",
+    ref: "main",
+    status: "9f1e2c3, fetched just now",
+  };
   const plugins: Plugins = {
     list: async (scope) => {
       scopes.push(scope);
       return [
-        listing("local:github", "enabled", ["linux", "windows", "macos"]),
-        ...(scope.workspace === null ? [] : [listing("workspace:setup", "ask", ["linux"])]),
+        listing("local:default:github", "enabled", ["linux", "windows", "macos"]),
+        listing("remote:acme:deploy", "enabled", ["linux"]),
+        ...(scope.workspace === null ? [] : [listing("project:app:setup", "ask", ["linux"])]),
       ];
     },
     setState: async (_scope, id, state) => {
-      if (id === "local:nope") throw new ApiError("not-found", "No plugin local:nope");
+      if (id === "local:default:nope") {
+        throw new ApiError("not-found", "No plugin local:default:nope");
+      }
       states.push([id, state]);
       return listing(id, state, ["linux"]);
     },
+    add: async (request) => {
+      added.push(request);
+      return acme;
+    },
+    remove: async (name) => {
+      if (name !== "acme") throw new ApiError("not-found", `No plugins.config entry ${name}`);
+      return acme;
+    },
+    update: async (name) => {
+      updated.push(name);
+      return [acme];
+    },
     errors: () => [
       {
-        plugin: "local:github",
+        plugin: "local:default:github",
         entry: "automations.prs",
         message: "exit 1",
         logPath: "/logs/x.failed.log",
         at: "2026-09-26T10:00:00.000Z",
       },
-      { plugin: "local:broken", message: "document 1: unknown key x", at: "2026-09-26T10:00:00Z" },
+      {
+        plugin: "local:default:broken",
+        message: "document 1: unknown key x",
+        at: "2026-09-26T10:00:00Z",
+      },
     ],
     schema: (which) => ({ type: which === "items" ? "array" : "object" }),
     render: async (template, itemsJson) =>
@@ -121,7 +162,7 @@ function setup() {
   );
   const call = (name: Parameters<typeof registry.get>[0], ctx: OperationContext, input = {}) =>
     registry.invoke(registry.get(name), ctx, input);
-  return { call, scopes, states };
+  return { call, scopes, states, added, updated };
 }
 
 const inWorkspace: OperationContext = {
@@ -144,18 +185,25 @@ describe("plugin.list", () => {
     expect(scopes).toEqual([FEAT_SCOPE]);
     expect(rows).toEqual([
       {
-        name: "local:github",
-        origin: "local",
+        name: "local:default:github",
         state: "enabled",
         platforms: "all",
-        path: "/plugins/local:github",
+        status: "",
+        path: "/plugins/local:default:github",
       },
       {
-        name: "workspace:setup",
-        origin: "workspace",
+        name: "remote:acme:deploy",
+        state: "enabled",
+        platforms: "linux",
+        status: "9f1e2c3, fetched 2m ago",
+        path: "/plugins/remote:acme:deploy",
+      },
+      {
+        name: "project:app:setup",
         state: "ask",
         platforms: "linux",
-        path: "/plugins/workspace:setup",
+        status: "",
+        path: "/plugins/project:app:setup",
       },
     ]);
   });
@@ -165,7 +213,7 @@ describe("plugin.list", () => {
 
     const rows = (await call("plugin.list", outside)) as unknown[];
 
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(2);
   });
 
   it("reads the repository of the workspace the input names, from outside every workspace", async () => {
@@ -173,7 +221,7 @@ describe("plugin.list", () => {
 
     const rows = (await call("plugin.list", outside, { workspace: FEAT })) as unknown[];
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(scopes).toEqual([FEAT_SCOPE]);
   });
 });
@@ -182,28 +230,45 @@ describe("plugin.enable / plugin.disable", () => {
   it("sets the state and answers with the plugin's row", async () => {
     const { call, states } = setup();
 
-    await call("plugin.enable", inWorkspace, { id: "workspace:setup" });
-    const row = await call("plugin.disable", outside, { id: "local:github" });
+    await call("plugin.enable", inWorkspace, { id: "project:app:setup" });
+    const row = await call("plugin.disable", outside, { id: "local:default:github" });
 
     expect(states).toEqual([
-      ["workspace:setup", "enabled"],
-      ["local:github", "disabled"],
+      ["project:app:setup", "enabled"],
+      ["local:default:github", "disabled"],
     ]);
-    expect(row).toMatchObject({ name: "local:github", state: "disabled" });
+    expect(row).toMatchObject({ name: "local:default:github", state: "disabled" });
   });
 
   it("refuses an id that is not a plugin name", async () => {
     const { call } = setup();
 
     await expect(call("plugin.enable", outside, { id: "github" })).rejects.toThrow(
-      /local:<name> or workspace:<name>/
+      /<type>:<entry>:<name>/
     );
+    // The names before sources existed are no longer names.
+    await expect(call("plugin.enable", outside, { id: "local:github" })).rejects.toThrow(
+      /<type>:<entry>:<name>/
+    );
+    await expect(call("plugin.enable", inWorkspace, { id: "workspace:setup" })).rejects.toThrow(
+      /<type>:<entry>:<name>/
+    );
+  });
+
+  it("takes a project name that holds a colon", async () => {
+    const { call, states } = setup();
+
+    await call("plugin.enable", inWorkspace, { id: "project:my:app:setup" });
+
+    expect(states).toEqual([["project:my:app:setup", "enabled"]]);
   });
 
   it("passes a missing plugin's not-found through", async () => {
     const { call } = setup();
 
-    await expect(call("plugin.enable", outside, { id: "local:nope" })).rejects.toMatchObject({
+    await expect(
+      call("plugin.enable", outside, { id: "local:default:nope" })
+    ).rejects.toMatchObject({
       category: "not-found",
     });
   });
@@ -215,19 +280,71 @@ describe("plugin.errors", () => {
 
     expect(await call("plugin.errors", outside)).toEqual([
       {
-        plugin: "local:github",
+        plugin: "local:default:github",
         entry: "automations.prs",
         message: "exit 1",
         log: "/logs/x.failed.log",
         at: "2026-09-26T10:00:00.000Z",
       },
       {
-        plugin: "local:broken",
+        plugin: "local:default:broken",
         entry: "",
         message: "document 1: unknown key x",
         log: "",
         at: "2026-09-26T10:00:00Z",
       },
     ]);
+  });
+});
+
+describe("plugin.add / plugin.remove / plugin.update", () => {
+  const acmeRow = {
+    name: "acme",
+    type: "remote",
+    location: "git@github.com:acme/ch-plugins.git",
+    ref: "main",
+    status: "9f1e2c3, fetched just now",
+  };
+
+  it("adds with the caller's directory, for a relative folder", async () => {
+    const { call, added } = setup();
+    const ctx: OperationContext = { ...outside, cwd: "/home/me" };
+
+    const row = await call("plugin.add", ctx, {
+      source: "git@github.com:acme/ch-plugins.git",
+      name: "acme",
+      ref: "main",
+      path: "plugins",
+    });
+
+    expect(added).toEqual([
+      {
+        source: "git@github.com:acme/ch-plugins.git",
+        name: "acme",
+        ref: "main",
+        path: "plugins",
+        cwd: "/home/me",
+      },
+    ]);
+    expect(row).toEqual(acmeRow);
+  });
+
+  it("removes by name, passing a missing entry's not-found through", async () => {
+    const { call } = setup();
+
+    expect(await call("plugin.remove", outside, { name: "acme" })).toEqual(acmeRow);
+    await expect(call("plugin.remove", outside, { name: "nope" })).rejects.toMatchObject({
+      category: "not-found",
+    });
+  });
+
+  it("updates one remote, or every one", async () => {
+    const { call, updated } = setup();
+
+    await call("plugin.update", outside, { name: "acme" });
+    const rows = await call("plugin.update", outside);
+
+    expect(updated).toEqual(["acme", undefined]);
+    expect(rows).toEqual([acmeRow]);
   });
 });

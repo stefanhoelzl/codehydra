@@ -25,6 +25,7 @@
  * expect(mock).toHaveBranch("/project", "feature-y");
  */
 
+import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./git-types";
@@ -84,6 +85,8 @@ interface RepositoryState {
   isBare: boolean;
   /** Remote URL if cloned from remote */
   remoteUrl?: string;
+  /** What `resolveCommit` answers: revision -> commit hash */
+  revisions: Map<string, string>;
 }
 
 // =============================================================================
@@ -136,6 +139,8 @@ export interface RepositoryInit {
   readonly isBare?: boolean;
   /** Remote URL if cloned from remote */
   readonly remoteUrl?: string;
+  /** What `resolveCommit` answers: revision -> commit hash (a 40-hex revision always resolves to itself) */
+  readonly revisions?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -147,8 +152,9 @@ export interface MockGitClientOptions {
   /**
    * Filesystem holding each worktree's git directory, for code that stores files
    * there: `getWorktreeGitDir` creates the directory in it (as git has for a live
-   * worktree) and `removeWorktree` deletes it. Without one, git directories exist
-   * only as paths.
+   * worktree) and `removeWorktree` deletes it. `clone` and `addDetachedWorktree`
+   * create the directories they make, for code that looks for them. Without one,
+   * these exist only as paths.
    */
   readonly fileSystem?: MockFileSystemBoundary;
 }
@@ -192,6 +198,11 @@ export type MockGitClient = IGitClient & MockWithState<GitClientMockState>;
 /**
  * Normalize a path for use as a map key.
  */
+/** A stable stand-in for a commit hash: 40 hex digits derived from its inputs. */
+export function fakeCommit(...parts: readonly string[]): string {
+  return createHash("sha1").update(parts.join("\0")).digest("hex");
+}
+
 function normalizePath(path: Path | string): string {
   // Same funnel-rooting as the filesystem mock: repository keys and lookups
   // agree, and a fixture can be seeded with the plain path it means.
@@ -345,6 +356,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         mainIsDirty: init.mainIsDirty ?? false,
         currentBranch,
         isBare: init.isBare ?? false,
+        revisions: new Map(Object.entries(init.revisions ?? {})),
       };
       if (init.serverDefaultBranch !== undefined) {
         repoState.serverDefaultBranch = init.serverDefaultBranch;
@@ -464,6 +476,31 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         unmergedCommits: 0,
         prunable: false,
       });
+    },
+
+    async addDetachedWorktree(repoPath: Path, worktreePath: Path, commit: string): Promise<void> {
+      const repo = getRepoOrThrow(repoPath);
+      const normalizedWorktreePath = normalizePath(worktreePath);
+      if (repo.worktrees.has(normalizedWorktreePath)) {
+        throw new GitError(`Worktree already exists: ${normalizedWorktreePath}`);
+      }
+      if (!/^[0-9a-f]{40}$/.test(commit) && ![...repo.revisions.values()].includes(commit)) {
+        throw new GitError(`Unknown commit: ${commit}`);
+      }
+      repo.worktrees.set(normalizedWorktreePath, {
+        name: new Path(normalizedWorktreePath).basename,
+        path: normalizedWorktreePath,
+        branch: null,
+        isDirty: false,
+        unmergedCommits: 0,
+        prunable: false,
+      });
+      await options?.fileSystem?.mkdir(worktreePath);
+    },
+
+    async resolveCommit(repoPath: Path, rev: string): Promise<string | null> {
+      const repo = getRepoOrThrow(repoPath);
+      return repo.revisions.get(rev) ?? (/^[0-9a-f]{40}$/.test(rev) ? rev : null);
     },
 
     async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {
@@ -753,7 +790,13 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         currentBranch: null, // No current branch in bare repo with no local branches
         isBare: true,
         remoteUrl: url,
+        // The remote's default branch, at a commit derived from the URL.
+        revisions: new Map([
+          ["origin/HEAD", fakeCommit(url, "main")],
+          ["origin/main", fakeCommit(url, "main")],
+        ]),
       });
+      await options?.fileSystem?.mkdir(targetPath);
     },
 
     async countUnmergedCommits(repoPath: Path, branch: string, _base: string): Promise<number> {
@@ -783,6 +826,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         mainIsDirty: false,
         currentBranch: hasCommit ? "main" : null,
         isBare: false,
+        revisions: new Map(),
       });
     },
   };

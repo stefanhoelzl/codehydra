@@ -1,5 +1,5 @@
 /**
- * Plugin registry entries — `ch plugin list|enable|disable|errors|schema|render`.
+ * Plugin registry entries — `ch plugin list|enable|disable|add|remove|update|errors|schema|render`.
  *
  * The plugins themselves live in the plugin module and are reached through
  * `deps.plugins`; these entries turn a caller into the scope a list is read in
@@ -13,7 +13,13 @@ import { z } from "zod/v4";
 import { defineEntry } from "../types";
 import { Path } from "../../utils/path/path";
 import type { AnyOperationEntry, OperationContext } from "../types";
-import type { EntryDeps, PluginListing, PluginScope, PluginState } from "./deps";
+import type {
+  EntryDeps,
+  PluginListing,
+  PluginScope,
+  PluginSourceListing,
+  PluginState,
+} from "./deps";
 import { INTENT_RESOLVE_WORKSPACE } from "../../intents/resolve-workspace";
 import type { ResolveWorkspaceIntent } from "../../intents/resolve-workspace";
 import { createTargetResolver, targetFields, type TargetInput } from "./target";
@@ -21,19 +27,40 @@ import { createTargetResolver, targetFields, type TargetInput } from "./target";
 const idSchema = z
   .string()
   .regex(
-    /^(local|workspace):[A-Za-z0-9][A-Za-z0-9._-]*$/,
-    "a plugin is named local:<name> or workspace:<name>"
+    // Split at the first and last ":": a project's name may hold one, a plugin's never does.
+    /^(local|remote|project):.+:[A-Za-z0-9][A-Za-z0-9._-]*$/,
+    "a plugin is named <type>:<entry>:<name>, e.g. local:default:github or remote:acme:deploy"
   )
-  .describe("The plugin: local:<name> (yours) or workspace:<name> (this repository's)");
+  .describe(
+    "The plugin: local:<entry>:<name> (a folder of yours; local:default:<name> for " +
+      "~/.codehydra/plugins), remote:<entry>:<name> (a repository plugins.config lists) or " +
+      "project:<project>:<name> (this repository's)"
+  );
 
 /** A listing as a row: strings throughout, so the human table has no odd cells. */
 function row(plugin: PluginListing): Record<string, string> {
   return {
     name: plugin.id,
-    origin: plugin.origin,
     state: plugin.state,
-    platforms: plugin.platforms.length === 3 ? "all" : plugin.platforms.join(", "),
+    platforms:
+      plugin.platforms.length === 0
+        ? ""
+        : plugin.platforms.length === 3
+          ? "all"
+          : plugin.platforms.join(", "),
+    status: plugin.status ?? "",
     path: plugin.path,
+  };
+}
+
+/** A source as a row. */
+function sourceRow(source: PluginSourceListing): Record<string, string> {
+  return {
+    name: source.name,
+    type: source.type,
+    location: source.location,
+    ref: source.ref ?? "",
+    status: source.status,
   };
 }
 
@@ -64,10 +91,14 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     kind: "command",
     description: "List plugins: yours, and this repository's",
     instructions:
-      "One row per plugin: its name (local:<name> for yours in ~/.codehydra/plugins, " +
-      "workspace:<name> for this repository's in .codehydra/plugins), whether it is enabled, " +
-      "disabled or not asked about yet (ask), the platforms it has scripts for, and where it " +
-      "is. What a plugin contributes is in its manifest; `ch plugin errors` says what is wrong.",
+      "One row per plugin: its name (<type>:<entry>:<name> — local:default:<name> for yours " +
+      "in ~/.codehydra/plugins, local:<entry>:<name> and remote:<entry>:<name> for the folders " +
+      "and repositories plugins.config lists, project:<project>:<name> for this repository's " +
+      "in .codehydra/plugins), whether it is enabled, disabled or not asked about yet (ask), " +
+      "the platforms it has scripts for, a remote's checkout (commit, when fetched — or " +
+      "cloning, or why the fetch failed) and where it is. A remote not checked out yet shows " +
+      "as remote:<entry>:*. What a plugin contributes is in its manifest; `ch plugin errors` " +
+      "says what is wrong.",
     input: z.object({ ...targetFields }),
     requiresWorkspace: false,
     handler: async (ctx, input) => (await deps.plugins().list(await scopeOf(ctx, input))).map(row),
@@ -99,6 +130,78 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     input: z.object({ id: idSchema, ...targetFields }),
     requiresWorkspace: false,
     handler: async (ctx, input) => setState("disabled")(ctx, input),
+  });
+
+  const add = defineEntry({
+    name: "plugin.add",
+    kind: "command",
+    description: "Add a folder or a git repository of plugins",
+    instructions:
+      "Adds an entry to plugins.config. A git URL (https, ssh or org/repo) is a remote: it is " +
+      "cloned first — with the user's own git credentials — and refused if that fails; ref " +
+      "picks a branch, tag or commit (default: its default branch), path the folder inside it " +
+      "that holds the plugins. Anything else is a local folder. Either way the folder is laid " +
+      "out like ~/.codehydra/plugins, its plugins apply to every project and run without " +
+      "asking, named <type>:<name>:<plugin>. Values for their settings go in plugins.config " +
+      "(`ch config get plugins.config`).",
+    input: z.object({
+      source: z.string().min(1).describe("A git URL, or a folder (relative to the current one)"),
+      name: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("The entry's name (default: the repository's or folder's)"),
+      ref: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("A remote's branch, tag or commit (default: its default branch)"),
+      path: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("The folder inside the repository that holds the plugins (default: its root)"),
+    }),
+    requiresWorkspace: false,
+    handler: async (ctx, input) =>
+      sourceRow(
+        await deps.plugins().add({
+          source: input.source,
+          ...(input.name !== undefined && { name: input.name }),
+          ...(input.ref !== undefined && { ref: input.ref }),
+          ...(input.path !== undefined && { path: input.path }),
+          cwd: ctx.cwd,
+        })
+      ),
+  });
+
+  const remove = defineEntry({
+    name: "plugin.remove",
+    kind: "command",
+    description: "Remove a folder or a git repository of plugins",
+    instructions:
+      "Removes the entry from plugins.config, with the values it gave its plugins' settings: " +
+      "its plugins stop running at once, and a repository's clone is deleted. The folder " +
+      "itself is left alone. ~/.codehydra/plugins (default) cannot be removed.",
+    input: z.object({ name: z.string().min(1).describe("The entry's name") }),
+    requiresWorkspace: false,
+    handler: async (_ctx, input) => sourceRow(await deps.plugins().remove(input.name)),
+  });
+
+  const update = defineEntry({
+    name: "plugin.update",
+    kind: "command",
+    description: "Fetch remote plugin sources now",
+    instructions:
+      "Fetches one remote entry of plugins.config, or every one, and switches it to what its " +
+      "ref names now. Remotes are otherwise fetched only when CodeHydra starts. A script " +
+      "already running finishes in the checkout it started in. A fetch that fails leaves the " +
+      "last checkout running; the row says why.",
+    input: z.object({
+      name: z.string().min(1).optional().describe("The entry's name (default: every remote)"),
+    }),
+    requiresWorkspace: false,
+    handler: async (_ctx, input) => (await deps.plugins().update(input.name)).map(sourceRow),
   });
 
   const errors = defineEntry({
@@ -173,5 +276,5 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
     },
   });
 
-  return [list, enable, disable, errors, schema, render];
+  return [list, enable, disable, add, remove, update, errors, schema, render];
 }

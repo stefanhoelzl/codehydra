@@ -90,17 +90,47 @@ export type PluginState = "enabled" | "disabled" | "ask";
 
 /** One plugin, as `ch plugin list` shows it. */
 export interface PluginListing {
-  /** `local:<name>` or `workspace:<name>`. */
+  /** `<type>:<entry>:<name>`, e.g. `remote:acme:deploy`. */
   readonly id: string;
   readonly name: string;
-  readonly origin: "local" | "workspace";
+  readonly type: "local" | "remote" | "project";
+  /** The `plugins.config` entry it comes from, or its project's name. */
+  readonly source: string;
   readonly state: PluginState;
   /** Platforms any of its documents applies on (`linux`, `windows`, `macos`). */
   readonly platforms: readonly string[];
   /** The plugin's directory, or its manifest file. */
   readonly path: string;
-  /** The project a workspace plugin belongs to. */
+  /** The project a repository's plugin belongs to. */
   readonly project?: string;
+  /** For a remote's plugin: what is checked out, and when it was fetched. */
+  readonly status?: string;
+}
+
+/** One `plugins.config` entry that plugins come from. */
+export interface PluginSourceListing {
+  /** `<type>:<entry>`, e.g. `remote:acme`. */
+  readonly id: string;
+  readonly type: "local" | "remote";
+  readonly name: string;
+  /** The folder, or the repository's URL. */
+  readonly location: string;
+  /** A remote's ref, when it names one. */
+  readonly ref?: string;
+  /** A remote's checkout (`9f1e2c3, fetched 2m ago`), `cloning`, or why it failed; a folder's is empty. */
+  readonly status: string;
+}
+
+/** What `ch plugin add` was given. */
+export interface PluginAddRequest {
+  /** A git URL (a remote) or a folder (a local entry). */
+  readonly source: string;
+  readonly name?: string;
+  readonly ref?: string;
+  /** The folder inside a repository that holds its plugins. */
+  readonly path?: string;
+  /** The caller's directory, for a relative folder. */
+  readonly cwd: string | null;
 }
 
 /** Something wrong with a plugin: a problem, or its last failed run. */
@@ -131,6 +161,12 @@ export interface Plugins {
   list(scope: PluginScope): Promise<readonly PluginListing[]>;
   /** Set a plugin's state. Throws `not-found` when no such plugin exists. */
   setState(scope: PluginScope, id: string, state: PluginState): Promise<PluginListing>;
+  /** Add a source to `plugins.config`: a repository is cloned first, and refused if it cannot be. */
+  add(request: PluginAddRequest): Promise<PluginSourceListing>;
+  /** Remove a source from `plugins.config`; a repository's clone goes with it. */
+  remove(name: string): Promise<PluginSourceListing>;
+  /** Fetch one remote source, or every one, and switch to what its ref names now. */
+  update(name?: string): Promise<readonly PluginSourceListing[]>;
   errors(): readonly PluginError[];
   /** The JSON Schema of a plugin manifest, or of the items an automation prints. */
   schema(which: "manifest" | "items"): Record<string, unknown>;

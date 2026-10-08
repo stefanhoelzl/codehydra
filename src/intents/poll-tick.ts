@@ -46,7 +46,7 @@ export const pollJobSchema = z
     owner: z.string(),
     /** The job's identity within its owner, stable across ticks (failures are kept by it). */
     id: z.string(),
-    /** Whose script it is, for people: a plugin's id (`local:github`), or `wakeup`. */
+    /** Whose script it is, for people: a plugin's id (`local:default:github`), or `wakeup`. */
     source: z.string(),
     /** What it is within its source: `automations.reviews`, a workspace's name. */
     entry: z.string(),

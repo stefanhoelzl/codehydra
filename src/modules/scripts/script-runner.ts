@@ -11,6 +11,8 @@
  *   `ch` acts on that workspace without being told which);
  * - `CH_PLUGIN_DIR` for a plugin that is a directory, so it can reach the files
  *   it bundles, and `CH_WORKSPACE_DIR` wherever a worktree applies;
+ * - `CH_CONFIG_*`: the values of the plugin's settings — its own only, never
+ *   any inherited from CodeHydra's environment;
  * - the rest of CodeHydra's own environment, deliberately: a script wants the
  *   user's toolchain, proxy settings and credential helpers.
  *
@@ -34,6 +36,7 @@ import { getErrorMessage } from "../../shared/error-utils";
 import { prependPath } from "../../utils/env-path";
 import { writeRunLog, type RunOutcome } from "./run-log";
 import type { ShellName, ShellResolver } from "./shells";
+import { SETTING_ENV_PREFIX } from "../plugin-module/plugin-config";
 
 // =============================================================================
 // Types
@@ -58,7 +61,7 @@ export interface ScriptRunnerDeps {
 }
 
 export interface ScriptRequest {
-  /** Whose script it is (`local:github`, `wakeup`), for the log and the log header. */
+  /** Whose script it is (`local:default:github`, `wakeup`), for the log and the log header. */
   readonly source: string;
   /** Hook entry, automation or workspace name. */
   readonly entry: string;
@@ -129,8 +132,11 @@ export function createScriptRunner(deps: ScriptRunnerDeps): ScriptRunner {
   const baseEnv = deps.env ?? process.env;
 
   function scriptEnv(request: ScriptRequest): NodeJS.ProcessEnv {
+    const inherited = Object.fromEntries(
+      Object.entries(baseEnv).filter(([key]) => !key.startsWith(SETTING_ENV_PREFIX))
+    );
     return {
-      ...prependPath(baseEnv, deps.binDir.toNative(), platform),
+      ...prependPath(inherited, deps.binDir.toNative(), platform),
       ...request.env,
       ...(request.pluginDir !== undefined && { CH_PLUGIN_DIR: request.pluginDir.toNative() }),
       ...(request.workspaceDir !== undefined && {

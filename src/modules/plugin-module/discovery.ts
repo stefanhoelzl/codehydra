@@ -1,15 +1,21 @@
 /**
  * Finding plugins on disk.
  *
- * Two places hold plugins, with one layout:
+ * Every place that holds plugins has one layout, and is a **source**:
  *
- * - **local** — `~/.codehydra/plugins/`: what the user installed. Applies to
- *   every project and runs without asking.
- * - **workspace** — `.codehydra/plugins/` in a worktree: what a repository
+ * - **local** — `~/.codehydra/plugins/` (the `default` entry) and any other
+ *   folder `plugins.config` lists: what the user installed. Applies to every
+ *   project and runs without asking.
+ * - **remote** — a git repository `plugins.config` lists, read from its
+ *   current checkout (remotes.ts). Like local.
+ * - **project** — `.codehydra/plugins/` in a worktree: what a repository
  *   ships. Applies to that worktree only, contributes hooks only, and runs once
  *   trusted.
  *
- * In either, a plugin is `<name>.yaml` (a single manifest) or `<name>/plugin.yaml`
+ * A plugin is named `<type>:<entry>:<plugin>` — the entry being the
+ * `plugins.config` key, or the project's name for a repository's plugin.
+ *
+ * In each, a plugin is `<name>.yaml` (a single manifest) or `<name>/plugin.yaml`
  * (a manifest plus the files it bundles, reached through `CH_PLUGIN_DIR`). The
  * name is the file or directory name — there is no name key to disagree with it.
  *
@@ -29,8 +35,15 @@ import {
   type PluginDocument,
   type PluginPlatform,
 } from "./manifest";
+import { mergeSettings, type Setting } from "./plugin-config";
+import type { SourceType } from "./sources";
 
-export type PluginOrigin = "local" | "workspace";
+/** Where a plugin comes from: the kind of source, and which one. */
+export interface PluginSource {
+  readonly type: SourceType;
+  /** The `plugins.config` entry, or the project's name for a repository's plugins. */
+  readonly entry: string;
+}
 
 /** The manifest file a plugin directory holds. */
 export const MANIFEST_FILE = "plugin.yaml";
@@ -39,11 +52,11 @@ export const MANIFEST_FILE = "plugin.yaml";
 export const WORKSPACE_PLUGINS_DIR = [".codehydra", "plugins"] as const;
 
 /** Plugin names become log directories and state keys, so they stay plain. */
-const PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export const PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** A plugin on disk, before its manifest is read. */
 export interface PluginRef {
-  readonly origin: PluginOrigin;
+  readonly source: PluginSource;
   readonly name: string;
   readonly manifestPath: Path;
   /** The plugin's directory, for the directory form only. */
@@ -52,7 +65,7 @@ export interface PluginRef {
 
 /** A plugin with its manifest read. */
 export interface LoadedPlugin extends PluginRef {
-  /** `local:<name>` or `workspace:<name>` — how `ch plugin` addresses it. */
+  /** `<type>:<entry>:<name>` — how `ch plugin` addresses it. */
   readonly id: string;
   /** Every document in the manifest. Empty when it could not be read. */
   readonly documents: readonly PluginDocument[];
@@ -60,13 +73,15 @@ export interface LoadedPlugin extends PluginRef {
   readonly applied: readonly PluginDocument[];
   /** The platforms any document applies on, in manifest order. */
   readonly platforms: readonly PluginPlatform[];
+  /** The settings the applying documents declare, by name. */
+  readonly settings: Readonly<Record<string, Setting>>;
   /** Why the plugin cannot run, when it cannot. */
   readonly error?: string;
 }
 
 /** Something in a plugins directory that is not a usable plugin. */
 export interface DiscoveryProblem {
-  readonly origin: PluginOrigin;
+  readonly source: PluginSource;
   readonly name: string;
   readonly path: Path;
   readonly message: string;
@@ -77,8 +92,13 @@ export interface Discovered {
   readonly problems: readonly DiscoveryProblem[];
 }
 
-export function pluginId(origin: PluginOrigin, name: string): string {
-  return `${origin}:${name}`;
+/** `<type>:<entry>`: what a source's plugin names start with. */
+export function sourceId(source: PluginSource): string {
+  return `${source.type}:${source.entry}`;
+}
+
+export function pluginId(source: PluginSource, name: string): string {
+  return `${sourceId(source)}:${name}`;
 }
 
 /** A worktree's plugins directory. */
@@ -102,7 +122,7 @@ function manifestName(filename: string): string | undefined {
 export async function discoverPlugins(
   fileSystem: Pick<FileSystemBoundary, "readdir">,
   dir: Path,
-  origin: PluginOrigin
+  source: PluginSource
 ): Promise<Discovered> {
   let entries;
   try {
@@ -113,7 +133,7 @@ export async function discoverPlugins(
     }
     return {
       plugins: [],
-      problems: [{ origin, name: dir.basename, path: dir, message: getErrorMessage(error) }],
+      problems: [{ source, name: dir.basename, path: dir, message: getErrorMessage(error) }],
     };
   }
 
@@ -138,18 +158,18 @@ export async function discoverPlugins(
       }
       if (!hasManifest) {
         problems.push({
-          origin,
+          source,
           name: entry.name,
           path,
           message: `${entry.name}/ has no ${MANIFEST_FILE}`,
         });
         continue;
       }
-      add({ origin, name: entry.name, manifestPath, pluginDir: path });
+      add({ source, name: entry.name, manifestPath, pluginDir: path });
     } else if (entry.isFile) {
       const name = manifestName(entry.name);
       if (name === undefined) continue; // A README or a script beside the manifests.
-      add({ origin, name, manifestPath: path });
+      add({ source, name, manifestPath: path });
     }
   }
 
@@ -157,7 +177,7 @@ export async function discoverPlugins(
   for (const [name, refs] of [...byName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (!PLUGIN_NAME.test(name)) {
       problems.push({
-        origin,
+        source,
         name,
         path: refs[0]!.manifestPath,
         message: `"${name}" is not a usable plugin name (letters, digits, ., - and _)`,
@@ -166,7 +186,7 @@ export async function discoverPlugins(
     }
     if (refs.length > 1) {
       problems.push({
-        origin,
+        source,
         name,
         path: refs[0]!.manifestPath,
         message:
@@ -190,25 +210,44 @@ export async function loadPlugin(
   ref: PluginRef,
   platform: NodeJS.Platform
 ): Promise<LoadedPlugin> {
-  const id = pluginId(ref.origin, ref.name);
+  const id = pluginId(ref.source, ref.name);
   let documents: PluginDocument[];
   try {
     documents = parseManifest(await fileSystem.readFile(ref.manifestPath));
   } catch (error) {
-    return { ...ref, id, documents: [], applied: [], platforms: [], error: getErrorMessage(error) };
+    return {
+      ...ref,
+      id,
+      documents: [],
+      applied: [],
+      platforms: [],
+      settings: {},
+      error: getErrorMessage(error),
+    };
   }
 
   const platforms = new Set<PluginPlatform>();
   for (const doc of documents) for (const p of doc.platforms) platforms.add(p);
   const own = pluginPlatformOf(platform);
+  const applied = documentsFor(documents, platform);
+
+  let settings: Record<string, Setting> = {};
+  let error: string | undefined;
+  try {
+    settings = mergeSettings(applied.map((doc) => doc.settings));
+  } catch (cause) {
+    error = getErrorMessage(cause);
+  }
+  if (own === undefined) error = `${platform} is not a platform plugins run on`;
 
   return {
     ...ref,
     id,
     documents,
-    applied: documentsFor(documents, platform),
+    applied,
     platforms: [...platforms],
-    ...(own === undefined && { error: `${platform} is not a platform plugins run on` }),
+    settings,
+    ...(error !== undefined && { error }),
   };
 }
 
@@ -216,10 +255,10 @@ export async function loadPlugin(
 export async function loadPlugins(
   fileSystem: Pick<FileSystemBoundary, "readdir" | "readFile">,
   dir: Path,
-  origin: PluginOrigin,
+  source: PluginSource,
   platform: NodeJS.Platform
 ): Promise<{ plugins: LoadedPlugin[]; problems: DiscoveryProblem[] }> {
-  const discovered = await discoverPlugins(fileSystem, dir, origin);
+  const discovered = await discoverPlugins(fileSystem, dir, source);
   const plugins = await Promise.all(
     discovered.plugins.map((ref) => loadPlugin(fileSystem, ref, platform))
   );

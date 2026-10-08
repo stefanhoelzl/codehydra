@@ -291,6 +291,14 @@ export class SimpleGitClient implements IGitClient {
     this.logger.scoped({ path: worktreePath.toString() }).debug("AddWorktree", { branch });
   }
 
+  async addDetachedWorktree(repoPath: Path, worktreePath: Path, commit: string): Promise<void> {
+    await this.wrapGitOperation(async () => {
+      const git = this.getGit(repoPath);
+      await git.raw(["worktree", "add", "--detach", worktreePath.toNative(), commit]);
+    }, `Failed to add worktree at ${worktreePath.toString()}`);
+    this.logger.scoped({ path: worktreePath.toString() }).debug("AddDetachedWorktree", { commit });
+  }
+
   async removeWorktree(repoPath: Path, worktreePath: Path): Promise<void> {
     await this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
@@ -560,6 +568,20 @@ export class SimpleGitClient implements IGitClient {
         await git.raw(["config", "--local", "--remove-section", section]);
       }, `Failed to remove config section ${section}`)
     );
+  }
+
+  async resolveCommit(repoPath: Path, rev: string): Promise<string | null> {
+    try {
+      const git = this.getGit(repoPath);
+      // `--end-of-options` keeps a revision that starts with "-" from reading as a flag.
+      const hash = (
+        await git.raw(["rev-parse", "--verify", "--quiet", "--end-of-options", `${rev}^{commit}`])
+      ).trim();
+      return hash === "" ? null : hash;
+    } catch {
+      // --verify --quiet exits 1 for a revision that names nothing: no answer.
+      return null;
+    }
   }
 
   async clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void> {

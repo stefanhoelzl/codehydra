@@ -515,14 +515,29 @@ plugin can contribute:
 | Where                                                                  | Whose            | Applies to    | Contributes           | Runs                               |
 | ---------------------------------------------------------------------- | ---------------- | ------------- | --------------------- | ---------------------------------- |
 | `~/.codehydra/plugins/` (Windows: `%USERPROFILE%\.codehydra\plugins\`) | yours            | every project | hooks and automations | right away (enabled)               |
+| another folder, listed in [`plugins.config`](#plugin-sources)          | yours            | every project | hooks and automations | right away (enabled)               |
+| a git repository, listed in [`plugins.config`](#plugin-sources)        | yours            | every project | hooks and automations | right away (enabled)               |
 | `.codehydra/plugins/` in a worktree                                    | the repository's | that worktree | hooks only            | once trusted (see [Trust](#trust)) |
 
-In either folder a plugin is **one YAML file**, `<name>.yaml`, or **a folder**
+In each, a plugin is **one YAML file**, `<name>.yaml`, or **a folder**
 holding `plugin.yaml` and whatever files its scripts use. The file or folder
 name is the plugin's name (letters, digits, `.`, `-` and `_`); there is no name
 key. Other files in the plugins folder are ignored; a folder without
 `plugin.yaml`, or a name used by both a file and a folder, is reported as a
 problem.
+
+A plugin is named `<type>:<entry>:<name>`, after where it comes from:
+
+| Name                   | A plugin…                                                       |
+| ---------------------- | --------------------------------------------------------------- |
+| `local:default:github` | in `~/.codehydra/plugins/`                                      |
+| `local:work:jira`      | in the folder the `plugins.config` entry `work` lists           |
+| `remote:acme:deploy`   | in the git repository the `plugins.config` entry `acme` lists   |
+| `project:my-app:setup` | in the `.codehydra/plugins/` of the project `my-app`'s worktree |
+
+A repository's plugins take its project's name, its folder's name. Two open
+projects can share one; inside a workspace, `project:<name>:<plugin>` means
+that workspace's project.
 
 A repository's plugins are read from the **worktree**, so they must be
 committed on the branch the worktree checks out. They run as they are in the
@@ -533,6 +548,79 @@ is logged).
 
 Plugins are read each time they would run, so an edit takes effect the next
 time without a restart.
+
+### Plugin sources
+
+`plugins.config` lists where else your plugins come from — more folders, and
+git repositories — and gives the plugins' [settings](#plugin-settings) their
+values. It is one setting holding YAML, edited as text in the settings dialog
+(or with `ch config set plugins.config`, or `ch plugin add|remove`). Each key
+names an entry; its `type` (default `local`) says what kind:
+
+```yaml
+default: # ~/.codehydra/plugins — always there; listed only to configure it
+  config:
+    github: { token: ghp_xxx }
+work: # another folder of plugins
+  path: ~/work/ch-plugins
+acme: # a git repository of plugins
+  type: remote
+  url: git@github.com:acme/ch-plugins.git
+  ref: main # branch, tag or commit; default: its default branch
+  path: plugins # the folder in the repository that holds them; default: its root
+  config:
+    deploy: { region: us } # values for remote:acme:deploy's settings
+my-app: # a repository's own .codehydra/plugins
+  type: project
+  project: my-app # name, path or origin; default: the entry's key
+  config:
+    setup: { db-url: "postgres://127.0.0.1/dev" }
+```
+
+- **Every source is laid out like `~/.codehydra/plugins/`**: one file or one
+  folder per plugin. Their plugins run after `~/.codehydra/plugins/`'s, in the
+  order the entries are written.
+- A `local` entry's `path` is absolute or starts with `~`. A `project` entry
+  adds no plugins — a repository's come from its worktree — it only gives them
+  values. One naming a project that is not open waits for it to open; two
+  naming one project, or one whose name several open projects share, is
+  reported and neither is used (name it by path or origin instead).
+- The schema is strict, like a manifest's: an unknown key, a relative folder or
+  a duplicate name is refused when you set it, saying why.
+- `plugins.config` can hold tokens, so a bug report never includes it (it shows
+  as `<omitted>`); it is written to `config.json` as is.
+
+**A git repository** is cloned into
+`<data directory>/plugins/remotes/<entry>-<hash>/`, with your own git — your SSH
+keys and credential helpers, as for a project cloned from a URL. There is no
+terminal to type a password into, so a private repository needs credentials git
+can find on its own. Its plugins are read from a checkout of the commit its
+`ref` names:
+
+- It is **fetched when CodeHydra starts** (in the background), when the entry
+  is added or its `ref` changes, and when you run `ch plugin update`. Never
+  otherwise: plugins do not change under you mid-session. A commit `ref` is
+  never fetched again once it is there.
+- A fetch that lands a new commit checks it out beside the old one and
+  switches to it; a script already running finishes in the checkout it started
+  in. Nothing is ever changed in place — and a local edit in a checkout is
+  gone at the next one.
+- Until its first clone finishes a repository contributes nothing; hooks do not
+  wait for it. A fetch that fails (offline, no access) leaves the last checkout
+  running, and is reported as `remote:<entry> fetch` in `ch plugin errors`.
+- Removing the entry removes its plugins at once, and its clone.
+
+```sh
+ch plugin add git@github.com:acme/ch-plugins.git --name acme --path plugins
+ch plugin add ~/work/ch-plugins       # a folder; named after it unless --name
+ch plugin update [acme]               # fetch one repository now, or every one
+ch plugin remove acme                 # the entry, its values and its clone
+```
+
+`ch plugin add` takes a git URL (`https://…`, `git@host:…`, or `org/repo` for
+GitHub) or a folder; a repository is cloned first, and refused if that fails.
+`add` and `remove` rewrite `plugins.config` keeping your comments. MCP has the
+same as `plugin_add`, `plugin_remove` and `plugin_update`.
 
 ### The manifest
 
@@ -597,17 +685,67 @@ the way GitHub Actions runs a `run:` step for its shell:
   `PATH` — so `ch` works in every script — plus:
   - `CH_PLUGIN_DIR`: the plugin's folder (folder plugins only), to reach the
     files it bundles;
-  - `CH_WORKSPACE_DIR`: the worktree, for hooks.
+  - `CH_WORKSPACE_DIR`: the worktree, for hooks;
+  - `CH_CONFIG_<NAME>`: the values of the plugin's own
+    [settings](#plugin-settings) — never another plugin's, nor any
+    `CH_CONFIG_*` in CodeHydra's own environment.
 - **Working directory**: the worktree for a hook; the plugin's folder (or the
   plugins folder, for a one-file plugin) for an automation. From a worktree,
   `ch` acts on that workspace without being told which (`ch ws title`, …).
 - **Timeout**: none for a hook (see [Canceling a hook](#canceling-a-hook)); an
   automation's script is killed after `poll.timeout` seconds (default 30).
 
+### Plugin settings
+
+A plugin can declare settings, which you give values in
+[`plugins.config`](#plugin-sources) — a token, a region — so the plugin itself
+needs no editing, which matters most for one from a git repository:
+
+```yaml
+config:
+  region:
+    type: enum # string | number | boolean | enum
+    values: [eu, us] # enum only
+    default: eu
+    description: Where to deploy
+  token:
+    type: string
+    required: true
+    secret: true
+```
+
+The values go in `plugins.config`, under the entry the plugin comes from, by
+plugin name:
+
+```yaml
+acme:
+  type: remote
+  url: git@github.com:acme/ch-plugins.git
+  config:
+    deploy: { token: ghp_xxx, region: us }
+```
+
+- Every script the plugin runs — hook or automation — gets each setting with a
+  value (or a default) as `CH_CONFIG_<NAME>`: upper-cased, `-` turned into
+  `_`, `true`/`false` for a boolean. Only in the environment, never in the
+  JSON on stdin, so never in a run log.
+- A `required` setting with no value, a value of the wrong type or not among an
+  enum's `values`, or a value for a setting the plugin does not declare (a
+  typo) means the plugin **cannot run**, as with an invalid manifest: it is
+  reported, and the other plugins still run. So are values for a plugin the
+  entry does not have.
+- A manifest whose documents declare one setting twice cannot run either; the
+  `config:` sections of the documents that apply on your platform are merged.
+- `secret` marks a credential. It is stored as written — `plugins.config` is
+  kept out of bug reports whole.
+- A repository's plugins get their values from the `type: project` entry
+  naming their project.
+
 ### Run logs and errors
 
 Every run writes its own log file:
-`<data directory>/logs/plugins/<local|workspace/<project>>/<plugin>/<hooks|automations>/<entry>/<time>.<ok|failed>.log`.
+`<data directory>/logs/plugins/<local|remote>/<entry>/<plugin>/<hooks|automations>/<name>/<time>.<ok|failed>.log`
+(a repository's plugin: `…/plugins/project/<project>/<plugin>/…`).
 It holds the source (the plugin), entry, shell, working directory, times and exit, then the
 JSON the script was handed, its stderr and its stdout. The environment is never
 written. Per entry the newest ten failed runs and the latest successful one are
@@ -618,8 +756,9 @@ it — output can carry credentials an automation inlines. Instead:
 
 - a failed run raises a **Plugin failed** notification naming the plugin, the
   entry and the exit, and pointing to `ch plugin errors` for the run log
-  (`local:github automations.reviews: exit 1 — see ch plugin errors`); a plugin that cannot run at all — an invalid manifest, a folder
-  without `plugin.yaml` — raises **Plugin cannot run**. Each is raised once
+  (`local:default:github automations.reviews: exit 1 — see ch plugin errors`); a
+  plugin that cannot run at all — an invalid manifest, a folder without
+  `plugin.yaml`, a setting without its value — raises **Plugin cannot run**. Each is raised once
   per distinct message, not every time it happens again;
 - `ch plugin errors` lists the same: every plugin that cannot run, and the last
   failed run of each hook and automation (until it next succeeds, or
@@ -631,20 +770,27 @@ it — output can carry credentials an automation inlines. Instead:
 ### Managing plugins
 
 ```sh
-ch plugin list                      # name, origin, enabled/disabled/ask, platforms, path
-ch plugin disable local:github      # stop running it: hooks and automations
-ch plugin enable workspace:setup    # trust one of this repository's plugins
-ch plugin errors                    # what is wrong, with run logs
-ch plugin schema [--items]          # the manifest's JSON Schema, or the items'
-ch plugin render <template>         # render piped items through a Liquid template
+ch plugin list                         # name, enabled/disabled/ask, platforms, checkout, path
+ch plugin disable local:default:github # stop running it: hooks and automations
+ch plugin enable project:my-app:setup  # trust one of this repository's plugins
+ch plugin add|remove|update …          # manage plugins.config's sources (see Plugin sources)
+ch plugin errors                       # what is wrong, with run logs
+ch plugin schema [--items]             # the manifest's JSON Schema, or the items'
+ch plugin render <template>            # render piped items through a Liquid template
 ```
 
-A plugin is named `local:<name>` (yours) or `workspace:<name>` (the
-repository's). `ch plugin list` run inside a workspace also shows that
-repository's plugins; `workspace:<name>` needs a workspace too (run it from
-one, or pass `--workspace`). MCP has the same as `plugin_list`,
-`plugin_enable`, `plugin_disable`, `plugin_errors`, `plugin_schema` and
+`ch plugin list` run inside a workspace also shows that repository's plugins;
+naming one of them needs a workspace too (run it from one, or pass
+`--workspace`). A plugin of a git repository shows its checkout — the commit
+and when it was fetched, or why the last fetch failed — and a repository not
+cloned yet shows as `remote:<entry>:*`, `cloning`. MCP has the same as
+`plugin_list`, `plugin_enable`, `plugin_disable`, `plugin_add`,
+`plugin_remove`, `plugin_update`, `plugin_errors`, `plugin_schema` and
 `plugin_render`.
+
+Plugins were named `local:<name>` and `workspace:<name>` before sources
+existed; those names are no longer accepted. What you enabled or disabled
+under them carries over.
 
 To stop every plugin at once — hooks and automations — set `plugins.enabled`
 to `false` (settings, `ch config set plugins.enabled false`,
@@ -668,8 +814,9 @@ prints matters: one JSON object, or nothing (the same as `{}`). Anything else �
 invalid JSON, `null`, an array, an unknown key — is a failed run.
 
 **Several plugins** may define the same entry. They run one after another —
-your plugins by name, then the repository's by name, each plugin's documents
-in file order — and their results combine: `env` variables and `tags` merge,
+yours first (`~/.codehydra/plugins/`, then each [source](#plugin-sources) in
+the order `plugins.config` lists them, each by name), then the repository's by
+name, each plugin's documents in file order — and their results combine: `env` variables and `tags` merge,
 a later plugin winning for the same name; the last `title` set wins; the first
 refusal of a deletion stops the rest. A failed plugin contributes nothing, and
 for an open the next one still runs.
@@ -907,15 +1054,20 @@ every plugin of the repository not yet answered for, each with a checkbox
   an automation. An unchecked or disabled `before-worktree-deleted` lets the
   deletion proceed without that gate.
 - A repository with no plugins is never asked anything.
-- Change an answer with `ch plugin enable|disable workspace:<name>`. Your own
-  plugins are never asked about; `ch plugin disable local:<name>` stops one.
+- Change an answer with `ch plugin enable|disable project:<project>:<name>`.
+  Your own plugins — local folders and git repositories you listed — are never
+  asked about; `ch plugin disable local:default:<name>` (or
+  `remote:<entry>:<name>`, …) stops one. An update of a git repository is not
+  asked about either: you chose to follow its `ref`; pin a commit to choose
+  each change yourself.
 - A project's Always or Never for the repository hooks CodeHydra ran before
   plugins still stands for its plugins until they are answered for.
 
 ### Automations
 
-An automation is a script your plugin runs every poll cycle. Like a hook, its
-value is the script itself:
+An automation is a script your plugin — in `~/.codehydra/plugins/`, another
+folder or a git repository — runs every poll cycle. Like a hook, its value is
+the script itself:
 
 ```yaml
 automations:

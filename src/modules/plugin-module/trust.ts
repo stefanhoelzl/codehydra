@@ -1,8 +1,9 @@
 /**
  * Whether a plugin may run: one state per plugin — enabled, disabled, or ask.
  *
- * Local plugins are the user's own (they put them in `~/.codehydra/plugins`),
- * so they start enabled. Workspace plugins are code from a repository, and the
+ * Local and remote plugins are the user's own (they put them in a plugins
+ * folder, or listed the repository in `plugins.config`), so they start
+ * enabled. A repository's plugins are code from that repository, and the
  * escalation worth defending against is the one that needs no carelessness:
  * `ch ws switch <git-url>` clones a repository and opens it, so without a gate,
  * code from something nobody has ever looked at runs the moment a workspace
@@ -24,10 +25,12 @@
  * CLI — would mean a repository's deletion gate could be walked past by typing
  * `ch ws delete`.
  *
- * Stored in state.json as `plugins.state`: `local:<name>` for a local plugin,
- * `workspace:<projectRef>:<name>` for a repository's. The per-project answers
- * of the hooks that came before plugins (`hooks.trusted`) still count: a
- * workspace plugin with no answer of its own takes its project's.
+ * Stored in state.json as `plugins.state`, by the plugin's name —
+ * `local:<entry>:<name>`, `remote:<entry>:<name>` — except that a repository's
+ * plugin is stored by its project's ref rather than its name:
+ * `project:<projectRef>:<name>`. The per-project answers of the hooks that
+ * came before plugins (`hooks.trusted`) still count: a repository's plugin
+ * with no answer of its own takes its project's.
  */
 
 import type {
@@ -41,7 +44,8 @@ import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../utils/path/path";
 import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
 import { isRef } from "../../utils/ref";
-import type { PluginOrigin } from "./discovery";
+import type { PluginSource } from "./discovery";
+import { DEFAULT_SOURCE } from "./sources";
 
 // =============================================================================
 // Types
@@ -82,19 +86,21 @@ export interface TrustRequest {
 }
 
 export interface PluginTrust {
-  /** A plugin's current state. `project` is required for a workspace plugin. */
-  state(origin: PluginOrigin, name: string, project?: TrustProject): EnabledState;
+  /** A plugin's current state. `project` is required for a repository's plugin. */
+  state(source: PluginSource, name: string, project?: TrustProject): EnabledState;
   /** Set a plugin's state; `ask` forgets the stored answer. */
-  set(origin: PluginOrigin, name: string, state: EnabledState, project?: ProjectRef): Promise<void>;
+  set(source: PluginSource, name: string, state: EnabledState, project?: ProjectRef): Promise<void>;
   /**
-   * Which of a project's workspace plugins may run now: the enabled ones, plus
+   * Which of a project's repository plugins may run now: the enabled ones, plus
    * whatever the user allows when asked about those at `ask`.
    */
   check(request: TrustRequest): Promise<ReadonlySet<string>>;
   /**
-   * Rename the answers stored by project path, as versions before refs did, to
-   * their project's ref. An answer whose project is unknown keeps its key and
-   * is never read again: its project asks afresh.
+   * Bring answers stored by older versions to today's keys: `local:<name>` is
+   * the default folder's (`local:default:<name>`), `workspace:` is `project:`,
+   * and a project stored by its path, as versions before refs did, is stored
+   * by its ref. An answer whose project is unknown keeps its path and is never
+   * read again: its project asks afresh.
    */
   migrateKeys(refsByPath: ReadonlyMap<string, ProjectRef>): Promise<void>;
 }
@@ -104,19 +110,37 @@ export interface PluginTrust {
 // =============================================================================
 
 /** The state.json key of one plugin's answer. */
-export function trustKey(origin: PluginOrigin, name: string, project?: ProjectRef): string {
-  if (origin === "local") return `local:${name}`;
-  if (project === undefined) throw new Error("A workspace plugin's trust needs its project");
-  return `workspace:${project}:${name}`;
+export function trustKey(source: PluginSource, name: string, project?: ProjectRef): string {
+  if (source.type !== "project") return `${source.type}:${source.entry}:${name}`;
+  if (project === undefined) throw new Error("A repository plugin's trust needs its project");
+  return `project:${project}:${name}`;
 }
 
-/** The project in a workspace key; names never contain `:`, refs and paths may. */
-function projectOfKey(key: string): { project: string; name: string } | undefined {
-  if (!key.startsWith("workspace:")) return undefined;
-  const rest = key.slice("workspace:".length);
+/** A project plugin's source, for its trust key: the entry is the project's ref. */
+const PROJECT_SOURCE: PluginSource = { type: "project", entry: "" };
+
+/**
+ * An older version's key in today's form, or undefined when it already is.
+ * Names never contain `:`; refs and paths may, so a project is split off at
+ * the last one.
+ */
+function migratedKey(
+  key: string,
+  refOf: (path: string) => ProjectRef | undefined
+): string | undefined {
+  const local = /^local:([^:]+)$/.exec(key);
+  if (local !== null) return `local:${DEFAULT_SOURCE}:${local[1]}`;
+
+  const prefix = ["workspace:", "project:"].find((candidate) => key.startsWith(candidate));
+  if (prefix === undefined) return undefined;
+  const rest = key.slice(prefix.length);
   const cut = rest.lastIndexOf(":");
   if (cut <= 0) return undefined;
-  return { project: rest.slice(0, cut), name: rest.slice(cut + 1) };
+  const project = rest.slice(0, cut);
+  const name = rest.slice(cut + 1);
+  const ref = isRef(project) ? project : (refOf(project) ?? project);
+  const next = `project:${ref}:${name}`;
+  return next === key ? undefined : next;
 }
 
 // =============================================================================
@@ -188,10 +212,10 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     return undefined;
   }
 
-  function state(origin: PluginOrigin, name: string, project?: TrustProject): EnabledState {
-    const answer = stored()[trustKey(origin, name, project?.ref)];
+  function state(source: PluginSource, name: string, project?: TrustProject): EnabledState {
+    const answer = stored()[trustKey(source, name, project?.ref)];
     if (answer !== undefined) return answer ? "enabled" : "disabled";
-    if (origin === "local") return "enabled";
+    if (source.type !== "project") return "enabled";
     const legacy = project === undefined ? undefined : legacyAnswer(project.path);
     if (legacy !== undefined) return legacy ? "enabled" : "disabled";
     return "ask";
@@ -239,7 +263,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
         await persist(
           Object.fromEntries(
             plugins.map((name) => [
-              trustKey("workspace", name, request.project.ref),
+              trustKey(PROJECT_SOURCE, name, request.project.ref),
               answers.get(name) === true,
             ])
           )
@@ -255,7 +279,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     const allowed = new Set<string>();
     let pending: string[] = [];
     for (const name of request.plugins) {
-      const current = state("workspace", name, request.project);
+      const current = state(PROJECT_SOURCE, name, request.project);
       if (current === "enabled") allowed.add(name);
       else if (current === "ask") pending.push(name);
     }
@@ -270,7 +294,7 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
           const answer = answers.get(name);
           if (answer === undefined) {
             // Not in that question: maybe answered durably meanwhile, else ask.
-            const current = state("workspace", name, request.project);
+            const current = state(PROJECT_SOURCE, name, request.project);
             if (current === "enabled") allowed.add(name);
             else if (current === "ask") rest.push(name);
           } else if (answer) {
@@ -292,9 +316,9 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
 
   return {
     state,
-    async set(origin, name, next, project) {
+    async set(source, name, next, project) {
       await persist({
-        [trustKey(origin, name, project)]: next === "ask" ? undefined : next === "enabled",
+        [trustKey(source, name, project)]: next === "ask" ? undefined : next === "enabled",
       });
     },
     check,
@@ -303,15 +327,14 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
       let changed = false;
       const next: Record<string, boolean> = {};
       for (const [key, value] of Object.entries(current)) {
-        const parsed = projectOfKey(key);
-        const ref =
-          parsed === undefined || isRef(parsed.project) ? undefined : refOf(parsed.project);
-        if (ref !== undefined && parsed !== undefined) {
-          changed = true;
-          next[trustKey("workspace", parsed.name, ref)] = value;
-        } else {
+        const migrated = migratedKey(key, refOf);
+        if (migrated === undefined) {
           next[key] = value;
+          continue;
         }
+        changed = true;
+        // An answer already stored under the new key is the newer one.
+        if (!(migrated in current)) next[migrated] = value;
       }
       if (changed) await deps.enabled.set(next);
 

@@ -795,6 +795,7 @@ const pluginModule = createPluginModule({
   dispatcher,
   ui: presentationModule,
   pathProvider,
+  git: gitClient,
   sink: createHookOutputSink({
     transport: apiServerModule,
     logger: loggingService.createLogger("plugins"),
