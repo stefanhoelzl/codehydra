@@ -204,6 +204,15 @@ const NAMING_FIXTURE = {
   response: { content: "Boundary probe" },
 } as const;
 
+/**
+ * How the general-purpose sub-agent's system prompt opens (checked on 2.1.294
+ * and 2.1.295) — the only thing that tells its calls apart from the parent's,
+ * which talk to the same mock. Specific on purpose: 2.1.295 opened the main
+ * agent's prompt with "You are an agent working with the user…", so a shorter
+ * prefix answered the parent as though it were the sub-agent.
+ */
+const SUBAGENT_SYSTEM_PROMPT = "You are an agent for Claude Code";
+
 /** The text of a message, whichever shape it arrived in. */
 function messageText(message: ChatMessage | undefined): string {
   const content = message?.content;
@@ -357,7 +366,7 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
   if (scenario === "subagent") {
     // The sub-agent talks to the same mock, under its own system prompt.
     mock.addFixture({
-      match: { systemMessage: "You are an agent" },
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT },
       response: { content: "Sub-agent done." },
     });
   }
@@ -375,11 +384,11 @@ function installFixtures(mock: LLMock, scenario: ScenarioName): void {
     // the main Stop, so 5s outlasts the scenario; and no longer, because Claude
     // runs the shell in a process group of its own, which outlives the kill.
     mock.addFixture({
-      match: { systemMessage: "You are an agent", hasToolResult: false },
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT, hasToolResult: false },
       response: bashCall("sleep 5", "long research", false),
     });
     mock.addFixture({
-      match: { systemMessage: "You are an agent" },
+      match: { systemMessage: SUBAGENT_SYSTEM_PROMPT },
       response: { content: "Sub-agent done." },
     });
   }
