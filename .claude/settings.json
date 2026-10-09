@@ -10,7 +10,8 @@
       "Bash(pnpm build:*)",
       "Bash(pnpm --version:*)",
       "Bash(tsc --version:*)",
-      "Bash(gh pr merge:*)"
+      "Bash(gh pr merge:*)",
+      "Bash(pnpm format:check)"
     ]
   },
   "enabledPlugins": {
