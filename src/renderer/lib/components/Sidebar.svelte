@@ -998,9 +998,11 @@
     padding-bottom: 6px;
   }
 
+  /* Cells align to the top, so the status icon stays on the first line beside
+     the hover actions, however many lines the labels wrap onto. */
   .workspace-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
   }
 
   .workspace-btn {
@@ -1076,8 +1078,10 @@
     background: color-mix(in srgb, var(--_color) 50%, transparent);
   }
 
+  /* As tall as the first line's box (.workspace-btn's 4px padding around the
+     18px line .row-actions also spans), so its icon centers on that line. */
   .status-cell {
-    min-height: 36px;
+    height: 26px;
     background: transparent;
     border: none;
     cursor: pointer;
