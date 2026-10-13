@@ -58,14 +58,104 @@ export const mockStatusBarItem: FakeStatusBarItem = {
   dispose: vi.fn(),
 };
 
+/**
+ * A quick pick or input box made by `window.createQuickPick` / `createInputBox`.
+ * `accept()` and `hide()` stand in for the user pressing Enter and Escape.
+ */
+export interface FakeQuickInput {
+  readonly kind: "pick" | "input";
+  items: readonly { label: string }[];
+  selectedItems: readonly { label: string }[];
+  activeItems: readonly { label: string }[];
+  canSelectMany: boolean;
+  title: string | undefined;
+  placeholder: string | undefined;
+  prompt: string | undefined;
+  value: string;
+  password: boolean;
+  visible: boolean;
+  disposed: boolean;
+  show(): void;
+  hide(): void;
+  dispose(): void;
+  accept(): void;
+  onDidAccept(callback: () => void): { dispose: () => void };
+  onDidHide(callback: () => void): { dispose: () => void };
+}
+
+/** Quick picks and input boxes created so far, in creation order. */
+export const createdQuickInputs: FakeQuickInput[] = [];
+
+function createQuickInput(kind: "pick" | "input"): FakeQuickInput {
+  const accepted: Array<() => void> = [];
+  const hidden: Array<() => void> = [];
+  const input: FakeQuickInput = {
+    kind,
+    items: [],
+    selectedItems: [],
+    activeItems: [],
+    canSelectMany: false,
+    title: undefined,
+    placeholder: undefined,
+    prompt: undefined,
+    value: "",
+    password: false,
+    visible: false,
+    disposed: false,
+    show: () => {
+      input.visible = true;
+    },
+    hide: () => {
+      if (!input.visible) return;
+      input.visible = false;
+      for (const callback of hidden) callback();
+    },
+    dispose: () => {
+      input.disposed = true;
+    },
+    accept: () => {
+      for (const callback of accepted) callback();
+    },
+    onDidAccept: (callback) => {
+      accepted.push(callback);
+      return { dispose: () => {} };
+    },
+    onDidHide: (callback) => {
+      hidden.push(callback);
+      return { dispose: () => {} };
+    },
+  };
+  createdQuickInputs.push(input);
+  return input;
+}
+
 // --- classes / enums (static, unaffected by mockReset) ---------------------
 
 export const StatusBarAlignment = { Left: 1, Right: 2 } as const;
 
 export const ViewColumn = { Active: 1, One: 1, Two: 2, Beside: -2 } as const;
 
+export interface FakeUri {
+  readonly scheme: string;
+  readonly authority: string;
+  readonly fsPath: string;
+  with(change: { scheme?: string; authority?: string }): FakeUri;
+  toString(): string;
+}
+
+function fakeUri(scheme: string, authority: string, fsPath: string): FakeUri {
+  return {
+    scheme,
+    authority,
+    fsPath,
+    with: (change) => fakeUri(change.scheme ?? scheme, change.authority ?? authority, fsPath),
+    toString: () => `${scheme}://${authority}${fsPath}`,
+  };
+}
+
 export const Uri = {
   parse: (value: string) => ({ toString: () => value }),
+  file: (fsPath: string) => fakeUri("file", "", fsPath),
 };
 
 // --- namespaces ------------------------------------------------------------
@@ -96,6 +186,10 @@ export const window = {
   showInformationMessage: vi.fn(),
   showWarningMessage: vi.fn(),
   showErrorMessage: vi.fn(),
+  showOpenDialog: vi.fn(),
+  showSaveDialog: vi.fn(),
+  createQuickPick: vi.fn(() => createQuickInput("pick")),
+  createInputBox: vi.fn(() => createQuickInput("input")),
   createStatusBarItem: vi.fn(() => mockStatusBarItem),
   // Plain and log channels alike: a log channel (`{ log: true }`) also has level methods.
   createOutputChannel: vi.fn(() => ({
@@ -139,6 +233,7 @@ export function resetVscodeFake(): void {
   closeHandlers.length = 0;
   shellExecutionStartHandlers.length = 0;
   window.terminals.length = 0;
+  createdQuickInputs.length = 0;
   mockStatusBarItem.text = "";
   mockStatusBarItem.tooltip = "";
   mockStatusBarItem.command = undefined;

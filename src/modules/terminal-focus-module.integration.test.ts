@@ -27,6 +27,7 @@ import {
   VSCODE_MODAL_CHANGED_OPERATION_ID,
   INTENT_VSCODE_MODAL_CHANGED,
   type ModalHookInput,
+  type ModalSource,
   type VscodeModalChangedIntent,
 } from "../intents/vscode-modal-changed";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
@@ -212,10 +213,15 @@ async function report(s: Setup, path: WorkspaceRef, status: AggregatedAgentStatu
   await settle();
 }
 
-async function modal(s: Setup, path: WorkspaceRef, open: boolean): Promise<void> {
+async function modal(
+  s: Setup,
+  path: WorkspaceRef,
+  open: boolean,
+  source: ModalSource = "editor"
+): Promise<void> {
   const intent: VscodeModalChangedIntent = {
     type: INTENT_VSCODE_MODAL_CHANGED,
-    payload: { workspaceRef: path, open },
+    payload: { workspaceRef: path, source, open },
   };
   await s.dispatcher.dispatch(intent);
   await settle();
@@ -315,6 +321,17 @@ describe("TerminalFocusModule", () => {
     expect(s.calls).toHaveLength(0);
 
     await switchTo(s, WS);
+    expect(s.calls.map((c) => c.workspaceRef)).toEqual([WS]);
+  });
+
+  it("focuses behind a waiting sidebar card, which is not in front of the terminal", async () => {
+    const s = setup();
+    s.state.active = OTHER;
+    s.state.agent = idle;
+
+    await modal(s, WS, true, "sidebar");
+    await switchTo(s, WS);
+
     expect(s.calls.map((c) => c.workspaceRef)).toEqual([WS]);
   });
 

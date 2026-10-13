@@ -53,10 +53,20 @@ import {
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
+  type VscodeShowMessagePayload,
   type VscodeShowMessageType,
   showHookResultSchema,
 } from "../intents/vscode-show-message";
-import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
+import {
+  INTENT_VSCODE_CANCEL_MESSAGE,
+  VscodeCancelMessageOperation,
+  type VscodeCancelMessageIntent,
+} from "../intents/vscode-cancel-message";
+import type {
+  ShowHookInput,
+  ShowHookResult,
+  VscodeShowMessageResult,
+} from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { workspacePathSchema, type WorkspacePath, type WorkspaceRef } from "../intents/contract";
 import { parseWorkspaceRef, projectRefFor } from "../utils/ref";
@@ -306,7 +316,7 @@ function createMinimalCommandOperation(): Operation<OperationSchemas> {
 
 /** Minimal vscode-show-message operation that skips workspace resolution. */
 function createMinimalShowMessageOperation(): Operation<OperationSchemas> {
-  return createMinimalOperation<string | null, ShowHookResult>(
+  return createMinimalOperation<VscodeShowMessageResult, ShowHookResult>(
     VSCODE_SHOW_MESSAGE_OPERATION_ID,
     INTENT_VSCODE_SHOW_MESSAGE,
     "show",
@@ -440,6 +450,7 @@ export async function createApiServerEnv(
   );
   testDispatcher.registerOperation(createMinimalCommandOperation());
   testDispatcher.registerOperation(createMinimalShowMessageOperation());
+  testDispatcher.registerOperation(new VscodeCancelMessageOperation());
 
   // Register finalize operation with mutable hook input (shared across setWorkspaceConfig calls)
   const finalizeOp = createMinimalFinalizeOperation();
@@ -549,24 +560,25 @@ export async function createApiServerEnv(
     },
 
     /**
-     * Show a notification in a workspace via the vscode-show-message hook.
+     * Dispatch a vscode:show-message to a workspace: a toast, a status-bar
+     * change, or a question (ask, select, input, pick-file) and its answer.
      */
-    async showNotification(
+    async show(
       workspacePath: WorkspacePath,
-      request: { severity: "info" | "warning" | "error"; message: string; actions?: string[] },
-      timeoutMs?: number
-    ): Promise<string | null> {
-      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
+      payload: Omit<VscodeShowMessagePayload, "workspaceRef">
+    ): Promise<VscodeShowMessageResult> {
+      return testDispatcher.dispatch<VscodeShowMessageIntent>({
         type: INTENT_VSCODE_SHOW_MESSAGE,
-        payload: {
-          workspaceRef: testWorkspaceRef(workspacePath),
-          type: request.severity as VscodeShowMessageType,
-          message: request.message,
-          options: request.actions,
-          timeoutMs,
-        },
+        payload: { workspaceRef: testWorkspaceRef(workspacePath), ...payload },
       });
-      return result as string | null;
+    },
+
+    /** End the question waiting under `waiter` (vscode:cancel-message). */
+    async cancel(waiter: string): Promise<void> {
+      await testDispatcher.dispatch<VscodeCancelMessageIntent>({
+        type: INTENT_VSCODE_CANCEL_MESSAGE,
+        payload: { waiter },
+      });
     },
 
     /**
@@ -598,53 +610,6 @@ export async function createApiServerEnv(
           workspaceRef: testWorkspaceRef(workspacePath),
           type: "status" as VscodeShowMessageType,
           message: null,
-        },
-      });
-      return result as string | null;
-    },
-
-    /**
-     * Show a quick pick via the vscode-show-message hook.
-     */
-    async showQuickPick(
-      workspacePath: WorkspacePath,
-      request: {
-        items: readonly { label: string; description?: string; detail?: string }[];
-        title?: string;
-        placeholder?: string;
-      },
-      timeoutMs?: number
-    ): Promise<string | null> {
-      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
-        type: INTENT_VSCODE_SHOW_MESSAGE,
-        payload: {
-          workspaceRef: testWorkspaceRef(workspacePath),
-          type: "select" as VscodeShowMessageType,
-          message: null,
-          hint: request.placeholder,
-          options: request.items.map((i) => i.label),
-          timeoutMs,
-        },
-      });
-      return result as string | null;
-    },
-
-    /**
-     * Show an input box via the vscode-show-message hook.
-     */
-    async showInputBox(
-      workspacePath: WorkspacePath,
-      request: { title?: string; prompt?: string; placeholder?: string; value?: string },
-      timeoutMs?: number
-    ): Promise<string | null> {
-      const result = await testDispatcher.dispatch<VscodeShowMessageIntent>({
-        type: INTENT_VSCODE_SHOW_MESSAGE,
-        payload: {
-          workspaceRef: testWorkspaceRef(workspacePath),
-          type: "select" as VscodeShowMessageType,
-          message: request.prompt ?? null,
-          hint: request.placeholder,
-          timeoutMs,
         },
       });
       return result as string | null;

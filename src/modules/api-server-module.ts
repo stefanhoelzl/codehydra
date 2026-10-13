@@ -60,6 +60,8 @@ import type {
   ShowQuickPickResponse,
   ShowInputBoxRequest,
   ShowInputBoxResponse,
+  ShowFileDialogRequest,
+  ShowFileDialogResponse,
 } from "../shared/api-protocol";
 import {
   COMMAND_TIMEOUT_MS,
@@ -100,11 +102,13 @@ import type { AgentLifecycleIntent } from "../intents/agent-lifecycle";
 import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
-import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/vscode-show-message";
 import {
-  INTENT_VSCODE_MODAL_CHANGED,
-  type VscodeModalChangedIntent,
-} from "../intents/vscode-modal-changed";
+  VSCODE_SHOW_MESSAGE_OPERATION_ID,
+  type VscodeShowMessagePayload,
+  type VscodeShowMessageResult,
+} from "../intents/vscode-show-message";
+import { VSCODE_CANCEL_MESSAGE_OPERATION_ID } from "../intents/vscode-cancel-message";
+import { createModalEdges } from "./modal-edges";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { SEND_AGENT_MESSAGE_OPERATION_ID } from "../intents/send-agent-message";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
@@ -567,7 +571,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * Send a UI event and wait for its ack.
    *
    * With `modal`, the event shows a modal the sidekick acks on dismissal, and it
-   * is tracked in `openModals` until then. `timeoutMs` bounds only the caller's
+   * is tracked in `editorModals` until then. `timeoutMs` bounds only the caller's
    * wait (0 = none): VS Code cannot close a modal from code, so a timed-out modal
    * stays up and stays counted. A socket that drops takes its modals with it, and
    * fails a call still waiting on one.
@@ -592,7 +596,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
       if (!modalOpen) return;
       modalOpen = false;
       socket.off("disconnect", onDisconnect);
-      modalClosed(workspaceRef);
+      editorModals.closed(workspaceRef);
     };
 
     const onDisconnect = (): void => {
@@ -601,7 +605,7 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     };
 
     if (modalOpen) {
-      modalOpened(workspaceRef);
+      editorModals.opened(workspaceRef);
       socket.on("disconnect", onDisconnect);
     }
 
@@ -635,57 +639,70 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
    * a call that timed out, or a notification without actions whose call returned
    * at once, still holds the workspace until the user dismisses it.
    */
-  const openModals = new Map<WorkspaceRef, number>();
+  const editorModals = createModalEdges(dispatcher, logger, "editor");
+
+  // ---------------------------------------------------------------------------
+  // Questions (ask, select, input, pick-file)
+  // ---------------------------------------------------------------------------
+
+  /** Questions in flight by waiter, so `vscode:cancel-message` can end them. */
+  const waiting = new Map<string, () => void>();
+  /**
+   * Waiters cancelled before their question was put: a caller that left while
+   * the intent was still resolving its workspace. Consumed when it arrives.
+   */
+  const cancelledEarly = new Set<string>();
+  /** Names each quick pick and input box for `ui:cancel`. */
+  let promptSeq = 0;
+  const CANCELLED = Symbol("cancelled");
+
+  function cancelWaiter(waiter: string): void {
+    const cancel = waiting.get(waiter);
+    if (cancel) cancel();
+    else cancelledEarly.add(waiter);
+  }
 
   /**
-   * The last edge report per workspace. Each report waits for the previous one,
-   * so an open and its close cannot overtake each other in the dispatcher and
-   * leave the workspace parked.
+   * Put a question and wait for the answer: null when dismissed, timed out or
+   * cancelled. A `closable` one (quick pick, input box) is closed on time-out or
+   * cancel; anything else stays up until the user dismisses it, and stays
+   * counted as a modal until then — only the caller stops waiting.
    */
-  const modalReports = new Map<WorkspaceRef, Promise<void>>();
-
-  function reportModalEdge(workspaceRef: WorkspaceRef, open: boolean): void {
-    const previous = modalReports.get(workspaceRef) ?? Promise.resolve();
-    const report = previous.then(async () => {
-      try {
-        await dispatcher.dispatch<VscodeModalChangedIntent>({
-          type: INTENT_VSCODE_MODAL_CHANGED,
-          payload: { workspaceRef, open },
-        });
-      } catch (error) {
-        logger
-          .scoped({ workspace: workspaceRef })
-          .warn("Failed to report modal change", { open, error: getErrorMessage(error) });
-      }
-    });
-    modalReports.set(workspaceRef, report);
-    void report.finally(() => {
-      if (modalReports.get(workspaceRef) === report) modalReports.delete(workspaceRef);
-    });
-  }
-
-  function modalOpened(workspaceRef: WorkspaceRef): void {
-    const count = (openModals.get(workspaceRef) ?? 0) + 1;
-    openModals.set(workspaceRef, count);
-    if (count === 1) reportModalEdge(workspaceRef, true);
-  }
-
-  function modalClosed(workspaceRef: WorkspaceRef): void {
-    const count = (openModals.get(workspaceRef) ?? 0) - 1;
-    if (count > 0) {
-      openModals.set(workspaceRef, count);
-      return;
-    }
-    openModals.delete(workspaceRef);
-    reportModalEdge(workspaceRef, false);
-  }
-
-  async function showNotification(
+  async function put<TReq extends object, TRes>(
     workspaceRef: WorkspaceRef,
-    request: ShowNotificationRequest,
-    timeoutMs: number = 0
-  ): Promise<ApiResult<ShowNotificationResponse>> {
-    return sendUiEvent(workspaceRef, "ui:showNotification", request, timeoutMs, { modal: true });
+    event: "ui:showNotification" | "ui:showQuickPick" | "ui:showInputBox" | "ui:showFileDialog",
+    request: TReq,
+    closable: boolean,
+    options: { readonly timeoutMs?: number | undefined; readonly waiter?: string | undefined }
+  ): Promise<TRes | null> {
+    const { waiter, timeoutMs } = options;
+    if (waiter !== undefined && cancelledEarly.delete(waiter)) return null;
+
+    const id = `prompt-${++promptSeq}`;
+    const { promise: cancelled, resolve: cancel } = Promise.withResolvers<typeof CANCELLED>();
+    if (waiter !== undefined) waiting.set(waiter, () => cancel(CANCELLED));
+    const timer =
+      timeoutMs !== undefined && timeoutMs > 0
+        ? setTimeout(() => cancel(CANCELLED), timeoutMs)
+        : undefined;
+    try {
+      const outcome = await Promise.race([
+        sendUiEvent<TReq, TRes>(workspaceRef, event, closable ? { ...request, id } : request, 0, {
+          modal: true,
+        }),
+        cancelled,
+      ]);
+      if (outcome === CANCELLED) {
+        const socket = liveSocket(workspaceRef);
+        if (closable && !("error" in socket)) socket.emit("ui:cancel", { id });
+        return null;
+      }
+      if (!outcome.success) throw new Error(outcome.error);
+      return outcome.data;
+    } finally {
+      clearTimeout(timer);
+      if (waiter !== undefined) waiting.delete(waiter);
+    }
   }
 
   async function updateStatusBar(
@@ -700,22 +717,6 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
     request: StatusBarDisposeRequest
   ): Promise<ApiResult<void>> {
     return sendUiEvent(workspaceRef, "ui:statusBarDispose", request);
-  }
-
-  async function showQuickPick(
-    workspaceRef: WorkspaceRef,
-    request: ShowQuickPickRequest,
-    timeoutMs: number = 0
-  ): Promise<ApiResult<ShowQuickPickResponse>> {
-    return sendUiEvent(workspaceRef, "ui:showQuickPick", request, timeoutMs, { modal: true });
-  }
-
-  async function showInputBox(
-    workspaceRef: WorkspaceRef,
-    request: ShowInputBoxRequest,
-    timeoutMs: number = 0
-  ): Promise<ApiResult<ShowInputBoxResponse>> {
-    return sendUiEvent(workspaceRef, "ui:showInputBox", request, timeoutMs, { modal: true });
   }
 
   // ---------------------------------------------------------------------------
@@ -1396,84 +1397,109 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
 
   async function handleShowMessage(
     workspaceRef: WorkspaceRef,
-    type: string,
-    message: string | null,
-    hint: string | undefined,
-    options: readonly string[] | undefined,
-    timeoutMs: number | undefined
-  ): Promise<string | null> {
-    if (type === "status") {
-      if (message === null) {
-        const result = await disposeStatusBar(workspaceRef, { id: STATUS_BAR_ID });
+    payload: VscodeShowMessagePayload
+  ): Promise<VscodeShowMessageResult> {
+    const { type, message, hint } = payload;
+    const wait = { timeoutMs: payload.timeoutMs, waiter: payload.waiter };
+
+    switch (type) {
+      case "status": {
+        if (message === null) {
+          const result = await disposeStatusBar(workspaceRef, { id: STATUS_BAR_ID });
+          if (!result.success) throw new Error(result.error);
+          return null;
+        }
+        const result = await updateStatusBar(workspaceRef, {
+          id: STATUS_BAR_ID,
+          text: message,
+          ...(hint !== undefined && { tooltip: hint }),
+        });
         if (!result.success) throw new Error(result.error);
         return null;
       }
-      const result = await updateStatusBar(workspaceRef, {
-        id: STATUS_BAR_ID,
-        text: message,
-        ...(hint !== undefined && { tooltip: hint }),
-      });
-      if (!result.success) throw new Error(result.error);
-      return null;
-    }
 
-    if (type === "info" || type === "warning" || type === "error") {
-      if (options === undefined || options.length === 0) {
-        // Nothing to answer, so the caller is not held up. The sidekick still
-        // acks only on dismissal, which is what the modal tracking waits for.
-        if (!isConnected(workspaceRef)) throw new Error("Workspace not connected");
-        void showNotification(workspaceRef, { severity: type, message: message! }).then(
-          (result) => {
-            if (!result.success) {
-              logger
-                .scoped({ workspace: workspaceRef })
-                .debug("Notification ended without dismissal", { error: result.error });
-            }
-          }
-        );
-        return null;
-      }
-      const result = await showNotification(
-        workspaceRef,
-        {
-          severity: type,
-          message: message!,
-          ...(options !== undefined && { actions: [...options] }),
-        },
-        timeoutMs
-      );
-      if (!result.success) throw new Error(result.error);
-      return result.data.action;
-    }
-
-    if (type === "select") {
-      if (options !== undefined) {
-        const result = await showQuickPick(
+      case "info":
+      case "warning":
+      case "error": {
+        // A toast: answers nothing, holds nobody up, blocks nothing.
+        const result = await sendUiEvent<ShowNotificationRequest, ShowNotificationResponse>(
           workspaceRef,
-          {
-            items: options.map((label) => ({ label })),
-            ...(hint !== undefined && { placeholder: hint }),
-          },
-          timeoutMs
+          "ui:showNotification",
+          { severity: type, message: message ?? "" }
         );
         if (!result.success) throw new Error(result.error);
-        return result.data.selected;
+        return null;
       }
 
-      // No options = free text input
-      const result = await showInputBox(
-        workspaceRef,
-        {
-          ...(message !== null && { prompt: message }),
-          ...(hint !== undefined && { placeholder: hint }),
-        },
-        timeoutMs
-      );
-      if (!result.success) throw new Error(result.error);
-      return result.data.value;
-    }
+      case "ask": {
+        const data = await put<ShowNotificationRequest, ShowNotificationResponse>(
+          workspaceRef,
+          "ui:showNotification",
+          {
+            severity: payload.severity ?? "info",
+            message: message ?? "",
+            modal: true,
+            ...(payload.detail !== undefined && { detail: payload.detail }),
+            ...(payload.options !== undefined && { actions: payload.options }),
+          },
+          false,
+          wait
+        );
+        return data?.action ?? null;
+      }
 
-    throw new Error(`Unknown show-message type: ${type}`);
+      case "select": {
+        const data = await put<ShowQuickPickRequest, ShowQuickPickResponse>(
+          workspaceRef,
+          "ui:showQuickPick",
+          {
+            items: payload.items ?? [],
+            ...(message !== null && { title: message }),
+            ...(hint !== undefined && { placeholder: hint }),
+            ...(payload.many !== undefined && { canPickMany: payload.many }),
+          },
+          true,
+          wait
+        );
+        return data?.selected ?? null;
+      }
+
+      case "input": {
+        const data = await put<ShowInputBoxRequest, ShowInputBoxResponse>(
+          workspaceRef,
+          "ui:showInputBox",
+          {
+            ...(message !== null && { prompt: message }),
+            ...(hint !== undefined && { placeholder: hint }),
+            ...(payload.value !== undefined && { value: payload.value }),
+            ...(payload.password !== undefined && { password: payload.password }),
+          },
+          true,
+          wait
+        );
+        return data?.value ?? null;
+      }
+
+      case "pick-file": {
+        const data = await put<ShowFileDialogRequest, ShowFileDialogResponse>(
+          workspaceRef,
+          "ui:showFileDialog",
+          {
+            ...(message !== null && { title: message }),
+            ...(payload.folders !== undefined && { folders: payload.folders }),
+            ...(payload.many !== undefined && { many: payload.many }),
+            ...(payload.save !== undefined && { save: payload.save }),
+            ...(payload.filters !== undefined && { filters: payload.filters }),
+            ...(payload.start !== undefined && { start: payload.start }),
+          },
+          false,
+          wait
+        );
+        const paths = data?.paths ?? null;
+        if (paths === null) return null;
+        return payload.many ? paths : (paths[0] ?? null);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1635,22 +1661,17 @@ export function createApiServerModule(deps: ApiServerModuleDeps): ApiServerModul
               throw new Error("API server not available");
             }
 
-            const { workspaceRef } = ctx;
-            const { intent } = ctx;
-            const { type, message, hint, options: msgOptions, timeoutMs } = intent.payload;
-
             return {
-              result: {
-                result: await handleShowMessage(
-                  workspaceRef,
-                  type,
-                  message,
-                  hint,
-                  msgOptions,
-                  timeoutMs
-                ),
-              },
+              result: { result: await handleShowMessage(ctx.workspaceRef, ctx.intent.payload) },
             };
+          },
+        },
+      },
+
+      [VSCODE_CANCEL_MESSAGE_OPERATION_ID]: {
+        cancel: {
+          handler: async (ctx): Promise<void> => {
+            cancelWaiter(ctx.intent.payload.waiter);
           },
         },
       },

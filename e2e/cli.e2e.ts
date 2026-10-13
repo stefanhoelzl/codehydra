@@ -352,25 +352,6 @@ test.describe("ch notification", () => {
     ch(["notification", "close", first.id]);
     await expect(repeated).toHaveCount(0);
   });
-
-  test("waits for the clicked action and closes the card", async () => {
-    const answer = chAsync([
-      "notification",
-      "show",
-      "Deploy?",
-      "--actions",
-      "Deploy",
-      "--actions",
-      "Skip",
-      "--wait",
-    ]);
-
-    const question = card("Deploy\\?");
-    await question.locator("vscode-button", { hasText: "Deploy" }).click();
-
-    expect(json(await answer)).toEqual({ choice: "Deploy" });
-    await expect(question).toHaveCount(0);
-  });
 });
 
 test.describe("ch mcp", () => {

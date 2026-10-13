@@ -318,8 +318,8 @@ failed panel means Dismiss.
   all were busy notifies (`notification`).
 - **Sidebar cards** — clone progress, failures and updates appear as cards at
   the bottom of the sidebar. The same card raised again stacks into one with a
-  counter. Dismissing a card closes it; clicking a button answers it and closes
-  it. A card about a workspace names it — click the title to go there — and
+  counter. Dismissing a card closes it; clicking a button (on a card that asks
+  something) answers it and closes it. A card about a workspace names it — click the title to go there — and
   goes away when the workspace is deleted. Agents, scripts and hooks can raise
   their own with `ch notification show` (see
   [Sidebar notifications](#sidebar-notifications)).
@@ -1204,8 +1204,8 @@ nothing is tracked:
 
 An operation that acts on a workspace needs `workspace` (a name, looked up in
 every open project, `<project>::<name>`, or a [ref](#workspace-and-project-refs))
-and may add `project` to say where to look the name up. An action that waits for you (`notification.show` with
-`wait: true`, say) holds up the whole poll until it is answered.
+and may add `project` to say where to look the name up. No action waits for
+you: an item has nobody to hand an answer to.
 
 #### Templates
 
@@ -1359,7 +1359,7 @@ ch ws agent message --wake "pick this back up"
 ```
 
 - **Messages are for the agent**, while notifications, the status bar and
-  `ws ask` are for you. The agent never sees a notification, and you see a
+  [questions](#asking-you) are for you. The agent never sees a notification, and you see a
   message only in the agent's transcript.
 - A busy agent reads it at its next step, and an idle one starts a turn on it.
   The command returns once the agent has taken it: sent, not read.
@@ -1392,10 +1392,12 @@ Claude Code reports nothing while a question blocks its start, such as whether
 you trust the folder, so if its session has not started within a minute the
 workspace reads idle. Once you answer, it turns busy again and runs the prompt.
 
-So does a dialog in the workspace's editor — a notification, pick list or text
-prompt raised by the agent, `ch` or a plugin. The workspace reads idle
-until you dismiss it, even while the agent keeps working and even with no agent
-running, then returns to its real status.
+So does a [question](#asking-you) put to you — a dialog, pick list, text
+prompt or file dialog in the workspace's editor, or a `ws ask --sidebar` card —
+raised by the agent, `ch` or a plugin. The workspace reads idle until you
+answer or dismiss it, even while the agent keeps working and even with no agent
+running, then returns to its real status. A toast does not count: it waits for
+nothing.
 
 ### Pages and browsers
 
@@ -1458,7 +1460,8 @@ running CodeHydra by itself; if none is running, it exits 3.
 | `ws agent open\|close\|restart\|session`                           | The agent terminal and server                                                                                    |
 | `ws agent message <text>`                                          | [Message the running agent](#messages-to-a-running-agent) (`-` reads stdin, `--wake`)                            |
 | `ws status set <idle\|busy>`                                       | Report the agent's status                                                                                        |
-| `ws notify`, `ws status-bar`, `ws ask`                             | For you: a notification, status-bar text, or a question in the editor (`ask` waits for the answer)               |
+| `ws notify`, `ws status-bar`                                       | For you: a toast or status-bar text in the editor; neither waits                                                 |
+| `ws ask`, `ws select`, `ws input`, `ws pick-file`                  | For you: a question that waits for your answer, see [Asking you](#asking-you)                                    |
 | `notification show <title>`, `notification close <id>`             | For you: a card in CodeHydra's sidebar, see below                                                                |
 | `ws goto`, `ws diff`, `ws preview`, `ws browser`                   | Open a file (`file:line:col`), a diff, a markdown preview, a URL in the editor                                   |
 | `ws vscode-command <command>`                                      | Run a VS Code command                                                                                            |
@@ -1619,14 +1622,14 @@ ch lock run device,port -- npm run e2e   # several locks for one command
 CodeHydra uses for clone progress and errors, visible whichever workspace you
 are looking at. (`ch ws notify` is different: a toast inside one workspace's
 editor.) Both are for you, and no agent sees them. To tell an agent
-something, [send it a message](#messages-to-a-running-agent).
+something, [send it a message](#messages-to-a-running-agent). Neither waits
+or has buttons: a question is [`ch ws ask`](#asking-you).
 
 ```sh
 ch notification show "Nightly build finished"
 id=$(ch notification show "Building" --type spinner --percent 0 | jq -r .id)
 ch notification show "Building" --id "$id" --type spinner --percent 50
 ch notification close "$id"
-ch notification show "Deploy to staging?" --actions Deploy --actions Skip --wait --attach
 ```
 
 - It returns the card's `id` (`{"id": …}` when piped). Pass `--id` to change
@@ -1638,12 +1641,54 @@ ch notification show "Deploy to staging?" --actions Deploy --actions Skip --wait
 - A card is app-wide. `--attach` ties it to the current workspace
   (`--workspace` to another): it names the workspace, clicking its title
   switches there, and it closes when the workspace is deleted.
-- `--wait` blocks until you answer and returns the clicked action as `choice`,
-  or `null` if you dismissed it, `--timeout <seconds>` passed or the workspace
-  went away. Answering closes the card. Stopping the command (<kbd>Ctrl</kbd>+<kbd>C</kbd>)
-  takes the question down, unless another caller is waiting on the same card.
 - A card that says exactly what an open card says joins it (a counter) and
   gets its id; it goes away once every caller that raised it has closed it.
+
+### Asking you
+
+Four commands put a question to you and wait for the answer. A notification
+tells you something and never waits; a question always does.
+
+```sh
+ch ws ask "Deploy to staging?" --options Deploy --options Skip
+ch ws ask "Deploy to staging?" --options Deploy --detail "main is green" --sidebar
+ch ws select "Which branch?" --options main --options '{"label":"dev","description":"nightly"}'
+ch ws select "Run which suites?" --options unit --options e2e --many
+ch ws input "Release name" --value v1.2.0
+ch ws pick-file "Pick a screenshot" --filters '{"Images":["png","jpg"]}'
+```
+
+- **`ws ask`** — a question with 1 to 5 buttons (50 characters each). It is a
+  dialog in the workspace's editor, or with `--sidebar` a card in CodeHydra's
+  sidebar that you see from any workspace (clicking its title goes there).
+  **Cancel is always there** — the dialog's own Cancel button, the card's
+  dismiss button — so never pass one as an option. `--detail` adds a second
+  line, `--level info|warning|error` sets the icon.
+- **`ws select`** — a list you can filter, for more options than buttons hold,
+  long labels, or several answers (`--many`). An option is a label or a JSON
+  object: `{"label": …, "description": …, "detail": …, "picked": true}`
+  (`picked` ticks it in advance, with `--many`). `--hint` is the filter box's
+  placeholder.
+- **`ws input`** — free text: `--value` fills it in, `--password` masks it,
+  `--hint` is the placeholder.
+- **`ws pick-file`** — an open dialog for files, `--folders` for folders,
+  `--many` for several, `--save` for a save dialog (a path that need not
+  exist). `--filters` limits the file types, `--start` is where it opens
+  (relative to your shell's directory). It browses the machine the workspace
+  runs on.
+- Each returns `{"answer": …}`: the clicked button, the chosen label (a list
+  with `--many`), the text or the path. It is `null` if you cancelled or
+  pressed <kbd>Escape</kbd>, `--timeout <seconds>` passed, or the command was
+  stopped (<kbd>Ctrl</kbd>+<kbd>C</kbd>, an agent's turn cancelled). Read it
+  with `jq -r .answer`.
+- While a question is open, its workspace shows as waiting for you, like an
+  agent that went idle. A stopped or timed-out `select` or `input` closes;
+  an `ask` dialog or a file dialog cannot be closed from outside, so it stays
+  until you dismiss it, and that answer goes nowhere.
+- The dialogs, lists and file pickers appear in the workspace's editor, so you
+  see them when you are on that workspace; only `ws ask --sidebar` reaches you
+  anywhere. A plugin's automation cannot ask; a plugin script can run
+  `ch ws ask` itself.
 
 ### MCP
 
@@ -1655,6 +1700,7 @@ agents launch):
 | Workspaces | `workspace_get_status`, `workspace_create`, `workspace_delete`, `workspace_switch`, `workspace_hibernate`, `workspace_wake`, `workspace_set_wakeup`, `workspace_clear_wakeup`, `workspace_get_wakeup`, `workspace_set_title`, `workspace_list_tags`, `workspace_set_tag`, `workspace_remove_tag`, `workspace_get_metadata`, `workspace_set_metadata` |
 | Agent      | `workspace_get_agent_session`, `workspace_restart_agent_server`, `workspace_open_agent`, `workspace_close_agent`, `workspace_send_agent_message`, `workspace_set_agent_status`                                                                                                                                                                       |
 | Editor     | `workspace_execute_command`, `ui_show_message`, `workspace_open_browser`, `workspace_open_diff`, `workspace_goto`, `workspace_preview_markdown`, `system_open_path`                                                                                                                                                                                  |
+| Questions  | `ui_ask`, `ui_select`, `ui_input`, `ui_pick_file`                                                                                                                                                                                                                                                                                                    |
 | Projects   | `project_list`, `project_open`, `project_close`                                                                                                                                                                                                                                                                                                      |
 | Locks      | `lock_take` (does not wait unless asked), `lock_release`, `lock_list`                                                                                                                                                                                                                                                                                |
 | Sidebar    | `notification_show`, `notification_close`                                                                                                                                                                                                                                                                                                            |

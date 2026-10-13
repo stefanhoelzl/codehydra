@@ -113,6 +113,10 @@ import type {
   schemas as updateAgentStatusSchemas,
 } from "./update-agent-status";
 import type {
+  VSCODE_CANCEL_MESSAGE_OPERATION_ID,
+  schemas as vscodeCancelMessageSchemas,
+} from "./vscode-cancel-message";
+import type {
   VSCODE_COMMAND_OPERATION_ID,
   schemas as vscodeCommandSchemas,
 } from "./vscode-command";
@@ -168,6 +172,7 @@ type Operations =
   | Entry<typeof SUBMIT_BUG_REPORT_OPERATION_ID, typeof submitBugReportSchemas>
   | Entry<typeof SWITCH_WORKSPACE_OPERATION_ID, typeof switchWorkspaceSchemas>
   | Entry<typeof UPDATE_AGENT_STATUS_OPERATION_ID, typeof updateAgentStatusSchemas>
+  | Entry<typeof VSCODE_CANCEL_MESSAGE_OPERATION_ID, typeof vscodeCancelMessageSchemas>
   | Entry<typeof VSCODE_COMMAND_OPERATION_ID, typeof vscodeCommandSchemas>
   | Entry<typeof VSCODE_MODAL_CHANGED_OPERATION_ID, typeof vscodeModalChangedSchemas>
   | Entry<typeof VSCODE_SHOW_MESSAGE_OPERATION_ID, typeof vscodeShowMessageSchemas>

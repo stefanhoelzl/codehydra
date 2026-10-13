@@ -1,6 +1,12 @@
 /**
  * VscodeModalChangedOperation - Reports that a workspace gained or lost its open modals.
  *
+ * Two sources, each reporting its own edges: `editor` (the modals below) and
+ * `sidebar` (a sidebar card attached to the workspace that waits for an answer —
+ * `ch ws ask --sidebar`). Either one parks the workspace on idle; only an editor
+ * modal also holds back the terminal focus, since only it sits in front of the
+ * terminal.
+ *
  * Every `vscode:show-message` modal (notification, quick pick, input box) blocks the
  * workspace's editor on the user until it is dismissed, whoever raised it. The API server
  * server tracks each one from emit until the sidekick acks its dismissal (or the socket
@@ -35,7 +41,9 @@ export const VSCODE_MODAL_CHANGED_OPERATION_ID = "vscode-modal-changed";
 export const vscodeModalChangedPayloadSchema = z
   .object({
     workspaceRef: workspaceRefSchema,
-    /** True while at least one modal is open in the workspace's editor. */
+    /** Where the question is shown: the workspace's editor, or a sidebar card. */
+    source: z.enum(["editor", "sidebar"]),
+    /** True while at least one question from this source is open. */
     open: z.boolean(),
   })
   .readonly();
@@ -43,6 +51,7 @@ export const vscodeModalChangedPayloadSchema = z
 /** Operation-added enrichment for the "modal" hook point (beyond the base HookContext). */
 const modalEnrichmentSchema = z.object({
   ...workspaceTargetShape,
+  source: z.enum(["editor", "sidebar"]),
   open: z.boolean(),
 });
 
@@ -69,6 +78,7 @@ export const schemas = {
 // =============================================================================
 
 export type VscodeModalChangedPayload = z.infer<typeof vscodeModalChangedPayloadSchema>;
+export type ModalSource = VscodeModalChangedPayload["source"];
 export type VscodeModalChangedIntent = IntentOf<typeof schemas>;
 
 /** Input context for the "modal" hook point: base envelope + inferred enrichment. */
@@ -91,6 +101,7 @@ export class VscodeModalChangedOperation implements Operation<typeof schemas> {
       workspacePath: (
         await resolveWorkspaceIdentity(ctx.dispatch, payload.workspaceRef, { withProject: false })
       ).workspacePath,
+      source: payload.source,
       open: payload.open,
     };
     const { errors } = await ctx.hooks.collect("modal", modalCtx);

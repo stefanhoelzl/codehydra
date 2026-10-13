@@ -1333,7 +1333,11 @@ describe("repository hooks from before plugins", () => {
 
     await setup.connectEditor();
 
-    expect(setup.editorMessages[0]).toMatchObject({ type: "warning", options: ["Migrate"] });
+    expect(setup.editorMessages[0]).toMatchObject({
+      type: "ask",
+      severity: "warning",
+      options: ["Migrate"],
+    });
     expect(setup.editorMessages[0]!.message).toContain(
       "after-worktree-created, on-workspace-opened.win.cmd"
     );

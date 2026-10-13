@@ -10,6 +10,7 @@ import {
   createdTerminals,
   closeHandlers,
   commands,
+  createdQuickInputs,
   env as vscodeEnv,
   resetVscodeFake,
   shellExecutionStartHandlers,
@@ -287,9 +288,9 @@ describe("sidekick workspace environment", () => {
   });
 });
 
-// CodeHydra shows a workspace as waiting on the user until the modal's ack
-// arrives, so the ack must follow the dismissal — also without actions.
-describe("sidekick modal notifications", () => {
+// CodeHydra shows a workspace as waiting on the user until a modal's ack
+// arrives, so the ack must follow the dismissal. A toast waits for nothing.
+describe("sidekick notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetVscodeFake();
@@ -301,31 +302,210 @@ describe("sidekick modal notifications", () => {
     delete process.env._CH_API_PORT;
   });
 
+  it("shows a toast and acks it at once", () => {
+    vscodeWindow.showWarningMessage.mockReturnValueOnce(new Promise(() => {}));
+    activate(makeContext());
+    const ack = vi.fn();
+
+    getSocket()._handlers["ui:showNotification"]!({ severity: "warning", message: "Hi" }, ack);
+
+    expect(vscodeWindow.showWarningMessage).toHaveBeenCalledWith("Hi");
+    expect(ack).toHaveBeenCalledWith({ success: true, data: { action: null } });
+  });
+
   it.each([
-    ["without actions", undefined, undefined],
-    ["with actions", ["Yes", "No"], "Yes"],
-  ])("acks a notification %s only once it is dismissed", async (_label, actions, clicked) => {
+    ["clicked", "Yes", "Yes"],
+    ["cancelled", undefined, null],
+  ])("acks a modal only once it is %s", async (_label, clicked, answer) => {
     let dismiss: (selected: string | undefined) => void = () => {};
     vscodeWindow.showInformationMessage.mockReturnValueOnce(
       new Promise<string | undefined>((resolve) => (dismiss = resolve))
     );
     activate(makeContext());
-    const socket = getSocket();
     const ack = vi.fn();
 
-    socket._handlers["ui:showNotification"]!({ severity: "info", message: "Hi", actions }, ack);
+    getSocket()._handlers["ui:showNotification"]!(
+      { severity: "info", message: "Hi", modal: true, detail: "more", actions: ["Yes", "No"] },
+      ack
+    );
     await Promise.resolve();
     expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
       "Hi",
-      { modal: true },
-      ...(actions ?? [])
+      { modal: true, detail: "more" },
+      "Yes",
+      "No"
     );
     expect(ack).not.toHaveBeenCalled();
 
     dismiss(clicked);
     await vi.waitFor(() =>
-      expect(ack).toHaveBeenCalledWith({ success: true, data: { action: clicked ?? null } })
+      expect(ack).toHaveBeenCalledWith({ success: true, data: { action: answer } })
     );
+  });
+});
+
+describe("sidekick quick picks, input boxes and file dialogs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetVscodeFake();
+    process.env._CH_API_PORT = "8123";
+  });
+
+  afterEach(() => {
+    deactivate();
+    delete process.env._CH_API_PORT;
+  });
+
+  function lastInput() {
+    return createdQuickInputs[createdQuickInputs.length - 1]!;
+  }
+
+  it("answers the accepted entry of a quick pick", () => {
+    activate(makeContext());
+    const ack = vi.fn();
+
+    getSocket()._handlers["ui:showQuickPick"]!(
+      {
+        id: "p1",
+        title: "Branch",
+        placeholder: "filter",
+        items: [{ label: "main", description: "default" }, { label: "dev" }],
+      },
+      ack
+    );
+    const pick = lastInput();
+    expect(pick).toMatchObject({ visible: true, title: "Branch", placeholder: "filter" });
+    expect(pick.items).toEqual([{ label: "main", description: "default" }, { label: "dev" }]);
+    pick.selectedItems = [pick.items[1]!];
+    pick.accept();
+
+    expect(ack).toHaveBeenCalledWith({ success: true, data: { selected: "dev" } });
+    expect(pick.disposed).toBe(true);
+  });
+
+  it("answers every ticked entry with canPickMany, the picked ones ticked in advance", () => {
+    activate(makeContext());
+    const ack = vi.fn();
+
+    getSocket()._handlers["ui:showQuickPick"]!(
+      {
+        canPickMany: true,
+        items: [{ label: "a", picked: true }, { label: "b" }, { label: "c", picked: true }],
+      },
+      ack
+    );
+    const pick = lastInput();
+    expect(pick.canSelectMany).toBe(true);
+    expect(pick.selectedItems.map((item) => item.label)).toEqual(["a", "c"]);
+    pick.accept();
+
+    expect(ack).toHaveBeenCalledWith({ success: true, data: { selected: ["a", "c"] } });
+  });
+
+  it("answers null when a quick pick is dismissed", () => {
+    activate(makeContext());
+    const ack = vi.fn();
+
+    getSocket()._handlers["ui:showQuickPick"]!({ items: [{ label: "a" }] }, ack);
+    lastInput().hide();
+
+    expect(ack).toHaveBeenCalledWith({ success: true, data: { selected: null } });
+  });
+
+  it("closes a quick pick or input box on ui:cancel, which answers null", () => {
+    activate(makeContext());
+    const pickAck = vi.fn();
+    const inputAck = vi.fn();
+    const socket = getSocket();
+
+    socket._handlers["ui:showQuickPick"]!({ id: "p1", items: [{ label: "a" }] }, pickAck);
+    socket._handlers["ui:showInputBox"]!({ id: "p2" }, inputAck);
+    socket._handlers["ui:cancel"]!({ id: "p1" });
+    socket._handlers["ui:cancel"]!({ id: "unknown" });
+
+    expect(pickAck).toHaveBeenCalledWith({ success: true, data: { selected: null } });
+    expect(createdQuickInputs[0]!.visible).toBe(false);
+    expect(inputAck).not.toHaveBeenCalled();
+    expect(createdQuickInputs[1]!.visible).toBe(true);
+  });
+
+  it("answers an input box's text, and null when it is dismissed", () => {
+    activate(makeContext());
+    const accepted = vi.fn();
+    const dismissed = vi.fn();
+    const socket = getSocket();
+
+    socket._handlers["ui:showInputBox"]!(
+      { prompt: "Name?", placeholder: "x", value: "draft", password: true },
+      accepted
+    );
+    const box = lastInput();
+    expect(box).toMatchObject({
+      prompt: "Name?",
+      placeholder: "x",
+      value: "draft",
+      password: true,
+    });
+    box.value = "final";
+    box.accept();
+    socket._handlers["ui:showInputBox"]!({}, dismissed);
+    lastInput().hide();
+
+    expect(accepted).toHaveBeenCalledWith({ success: true, data: { value: "final" } });
+    expect(dismissed).toHaveBeenCalledWith({ success: true, data: { value: null } });
+  });
+
+  it("opens an open dialog on the workspace's machine and answers the paths", async () => {
+    vscodeWindow.showOpenDialog.mockResolvedValueOnce([
+      { fsPath: "/repo/a.png" },
+      { fsPath: "/repo/b.png" },
+    ]);
+    activate(makeContext());
+    const ack = vi.fn();
+
+    getSocket()._handlers["ui:showFileDialog"]!(
+      { title: "Images", many: true, filters: { Images: ["png"] }, start: "/repo" },
+      ack
+    );
+
+    await vi.waitFor(() =>
+      expect(ack).toHaveBeenCalledWith({
+        success: true,
+        data: { paths: ["/repo/a.png", "/repo/b.png"] },
+      })
+    );
+    const options = vscodeWindow.showOpenDialog.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      title: "Images",
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: true,
+      filters: { Images: ["png"] },
+    });
+    expect((options["defaultUri"] as { fsPath: string }).fsPath).toBe("/repo");
+  });
+
+  it("opens a save dialog with save, and answers null when cancelled", async () => {
+    vscodeWindow.showSaveDialog.mockResolvedValueOnce({ fsPath: "/repo/out.txt" });
+    vscodeWindow.showOpenDialog.mockResolvedValueOnce(undefined);
+    activate(makeContext());
+    const saved = vi.fn();
+    const cancelled = vi.fn();
+    const socket = getSocket();
+
+    socket._handlers["ui:showFileDialog"]!({ save: true }, saved);
+    socket._handlers["ui:showFileDialog"]!({ folders: true }, cancelled);
+
+    await vi.waitFor(() =>
+      expect(saved).toHaveBeenCalledWith({ success: true, data: { paths: ["/repo/out.txt"] } })
+    );
+    await vi.waitFor(() =>
+      expect(cancelled).toHaveBeenCalledWith({ success: true, data: { paths: null } })
+    );
+    expect(vscodeWindow.showOpenDialog.mock.calls[0]![0]).toMatchObject({
+      canSelectFiles: false,
+      canSelectFolders: true,
+    });
   });
 });
 

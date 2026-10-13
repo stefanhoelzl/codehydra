@@ -1,8 +1,9 @@
 /**
  * VscodeShowMessageOperation - Unified VS Code UI messaging.
  *
- * Covers notifications, status bar, quick pick, and input box through
- * a single intent with a `type` discriminator.
+ * Covers toasts, the status bar, and the questions that wait for the user (an
+ * ask's buttons, a quick pick, an input box, a file dialog) through a single
+ * intent with a `type` discriminator.
  *
  * Runs two steps:
  * 1. Dispatch workspace:resolve to turn workspaceRef into the workspace
@@ -30,29 +31,89 @@ export const VSCODE_SHOW_MESSAGE_OPERATION_ID = "vscode-show-message";
 // Contract schemas (single source of truth)
 // =============================================================================
 
-export const vscodeShowMessageTypeSchema = z.enum(["info", "warning", "error", "status", "select"]);
+export const vscodeShowMessageTypeSchema = z.enum([
+  "info",
+  "warning",
+  "error",
+  "status",
+  "ask",
+  "select",
+  "input",
+  "pick-file",
+]);
 
+/** One entry of a `select` list. */
+export const vscodeSelectItemSchema = z
+  .object({
+    label: z.string(),
+    description: z.string().optional(),
+    detail: z.string().optional(),
+    /** Ticked in advance (multi-select only). */
+    picked: z.boolean().optional(),
+  })
+  .readonly();
+
+/**
+ * Fields each type reads; the others are ignored.
+ *
+ * - info/warning/error: a toast (`message`). Never waits.
+ * - status: status-bar text (`message`, `hint` = tooltip); null message clears it.
+ * - ask: a modal with `options` as buttons, `detail` under the message, `severity`
+ *   for its icon. VS Code adds Cancel itself.
+ * - select: a quick pick of `items` (`message` = title, `hint` = placeholder), `many`.
+ * - input: a text box (`message` = prompt, `hint` = placeholder), `value`, `password`.
+ * - pick-file: an open dialog (`message` = title), `folders`, `many`, `save` (a
+ *   save dialog instead), `filters`, `start`.
+ */
 export const vscodeShowMessagePayloadSchema = z
   .object({
     workspaceRef: workspaceRefSchema,
     type: vscodeShowMessageTypeSchema,
     /** Display text. null = dismiss (only valid for status). */
     message: z.string().nullable(),
-    /** Secondary text: tooltip for status, placeholder for select. */
+    /** Tooltip for status, placeholder for select and input. */
     hint: z.string().optional(),
-    /** Action buttons (notification) or selection items (select). Omit for free text input. */
+    /** Secondary text of an ask. */
+    detail: z.string().optional(),
+    /** Icon of an ask. */
+    severity: z.enum(["info", "warning", "error"]).optional(),
+    /** Buttons of an ask. */
     options: z.array(z.string()).readonly().optional(),
-    /** Timeout in milliseconds for interactive operations. */
+    /** Entries of a select. */
+    items: z.array(vscodeSelectItemSchema).readonly().optional(),
+    /** Answer with several: a select's ticked items, a pick-file's paths. */
+    many: z.boolean().optional(),
+    /** Prefilled text of an input. */
+    value: z.string().optional(),
+    /** Mask an input's text. */
+    password: z.boolean().optional(),
+    /** Pick folders instead of files. */
+    folders: z.boolean().optional(),
+    /** A save dialog: a path that need not exist yet. */
+    save: z.boolean().optional(),
+    /** File filters: name → extensions without the dot. */
+    filters: z.record(z.string(), z.array(z.string()).readonly()).readonly().optional(),
+    /** Absolute directory (or file, for save) the dialog starts at. */
+    start: z.string().optional(),
+    /** Give up waiting after this long; the answer is then null. */
     timeoutMs: z.number().optional(),
+    /**
+     * Opaque token naming this wait, so a caller that goes away can end it with
+     * `vscode:cancel-message { waiter }`. Minted by the registry entry per call.
+     */
+    waiter: z.string().min(1).optional(),
   })
   .readonly();
 
-export const vscodeShowMessageResultSchema = z.string().nullable();
+/** The answer: a string, several with `many`, null when dismissed, timed out or cancelled. */
+export const vscodeShowMessageResultSchema = z
+  .union([z.string(), z.array(z.string()).readonly()])
+  .nullable();
 
 /** Per-handler result for the "show" hook point. */
 export const showHookResultSchema = z
   .object({
-    result: z.string().nullable().optional(),
+    result: vscodeShowMessageResultSchema.optional(),
   })
   .readonly();
 
@@ -84,6 +145,8 @@ export const schemas = {
 
 export type VscodeShowMessageType = z.infer<typeof vscodeShowMessageTypeSchema>;
 export type VscodeShowMessagePayload = z.infer<typeof vscodeShowMessagePayloadSchema>;
+export type VscodeShowMessageResult = z.infer<typeof vscodeShowMessageResultSchema>;
+export type VscodeSelectItem = z.infer<typeof vscodeSelectItemSchema>;
 export type VscodeShowMessageIntent = IntentOf<typeof schemas>;
 export type ShowHookResult = z.infer<typeof showHookResultSchema>;
 

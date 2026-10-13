@@ -1569,7 +1569,8 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
         type: INTENT_VSCODE_SHOW_MESSAGE,
         payload: {
           workspaceRef,
-          type: "warning",
+          type: "ask",
+          severity: "warning",
           message:
             `This repository's ${LEGACY_HOOKS_DIR.join("/")} (${files.join(", ")}) no longer ` +
             `run: CodeHydra runs plugins now. Migrate writes .codehydra/plugins/` +

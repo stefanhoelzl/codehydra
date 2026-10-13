@@ -17,12 +17,14 @@ import {
 } from "../../intents/show-notification";
 import { CLOSE_NOTIFICATION_OPERATION_ID } from "../../intents/close-notification";
 import type { NotificationManager } from "./sessions";
+import type { ModalEdges } from "../modal-edges";
 
 export function createNotificationHooks(
   notifications: Pick<
     NotificationManager,
     "isOpen" | "show" | "showAndWait" | "close" | "releaseWaiter"
-  >
+  >,
+  waiting?: ModalEdges
 ): AppHookDeclarations {
   return {
     [SHOW_NOTIFICATION_OPERATION_ID]: {
@@ -39,11 +41,16 @@ export function createNotificationHooks(
             ...(workspaceRef !== undefined && { workspaceRef }),
           };
           if (!wait) return { result: { result: { id: notifications.show(request) } } };
-          const choice = await notifications.showAndWait(request, {
-            ...(timeoutMs !== undefined && { timeoutMs }),
-            ...(waiter !== undefined && { waiter }),
-          });
-          return { result: { result: { choice } } };
+          if (workspaceRef !== undefined) waiting?.opened(workspaceRef);
+          try {
+            const choice = await notifications.showAndWait(request, {
+              ...(timeoutMs !== undefined && { timeoutMs }),
+              ...(waiter !== undefined && { waiter }),
+            });
+            return { result: { result: { choice } } };
+          } finally {
+            if (workspaceRef !== undefined) waiting?.closed(workspaceRef);
+          }
         },
       },
     },

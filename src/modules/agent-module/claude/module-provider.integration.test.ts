@@ -483,10 +483,10 @@ describe("createClaudeModuleProvider", () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
 
-      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, "editor", true);
       expect(provider.getStatus(WS_REF)).toEqual(IDLE);
 
-      provider.setModalOpen(WS_REF, false);
+      provider.setModalOpen(WS_REF, "editor", false);
       expect(provider.getStatus(WS_REF)).toEqual(BUSY);
       expect(statusChanges).toEqual([BUSY, IDLE, BUSY]);
     });
@@ -494,14 +494,14 @@ describe("createClaudeModuleProvider", () => {
     it("records agent changes while parked without reporting them", async () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, "editor", true);
       statusChanges.length = 0;
 
       capturedStatusCallback!("idle");
       capturedStatusCallback!("busy");
       expect(statusChanges).toEqual([]);
 
-      provider.setModalOpen(WS_REF, false);
+      provider.setModalOpen(WS_REF, "editor", false);
       expect(statusChanges).toEqual([BUSY]);
     });
 
@@ -510,10 +510,10 @@ describe("createClaudeModuleProvider", () => {
       const statusChanges: AggregatedAgentStatus[] = [];
       provider.onStatusChange((_wp, status) => statusChanges.push(status));
 
-      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, "editor", true);
       expect(provider.getStatus(WS_REF)).toEqual(IDLE);
 
-      provider.setModalOpen(WS_REF, false);
+      provider.setModalOpen(WS_REF, "editor", false);
       expect(provider.getStatus(WS_REF)).toEqual(NONE);
       expect(statusChanges).toEqual([IDLE, NONE]);
     });
@@ -523,8 +523,8 @@ describe("createClaudeModuleProvider", () => {
       capturedStatusCallback!("idle");
       statusChanges.length = 0;
 
-      provider.setModalOpen(WS_REF, true);
-      provider.setModalOpen(WS_REF, false);
+      provider.setModalOpen(WS_REF, "editor", true);
+      provider.setModalOpen(WS_REF, "editor", false);
 
       // An agent.status.set nudge bypasses the core, so the last report here is
       // not necessarily what the UI shows — each edge corrects it.
@@ -534,7 +534,7 @@ describe("createClaudeModuleProvider", () => {
     it("stays parked when the provider is removed mid-modal", async () => {
       const { provider, statusChanges } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, "editor", true);
       statusChanges.length = 0;
 
       const onStoppedCb = serverStoppedCallback();
@@ -546,18 +546,32 @@ describe("createClaudeModuleProvider", () => {
     it("clearWorkspaceTracking drops the park", async () => {
       const { provider } = await startedProvider();
       capturedStatusCallback!("busy");
-      provider.setModalOpen(WS_REF, true);
+      provider.setModalOpen(WS_REF, "editor", true);
 
       provider.clearWorkspaceTracking(WS_REF);
 
       expect(provider.getStatus(WS_REF)).toEqual(BUSY);
     });
 
+    it("stays parked until every source has closed", async () => {
+      const { provider, statusChanges } = await startedProvider();
+      capturedStatusCallback!("busy");
+
+      provider.setModalOpen(WS_REF, "editor", true);
+      provider.setModalOpen(WS_REF, "sidebar", true);
+      provider.setModalOpen(WS_REF, "editor", false);
+      expect(provider.getStatus(WS_REF)).toEqual(IDLE);
+
+      provider.setModalOpen(WS_REF, "sidebar", false);
+      expect(provider.getStatus(WS_REF)).toEqual(BUSY);
+      expect(statusChanges).toEqual([BUSY, IDLE, IDLE, IDLE, BUSY]);
+    });
+
     it("parks only the workspace showing the modal", async () => {
       const { provider } = await startedProvider();
       capturedStatusCallback!("busy");
 
-      provider.setModalOpen(WS_REF_B, true);
+      provider.setModalOpen(WS_REF_B, "editor", true);
 
       expect(provider.getStatus(WS_REF)).toEqual(BUSY);
       expect(provider.getStatus(WS_REF_B)).toEqual(IDLE);
