@@ -51,7 +51,8 @@
     "site:dev": "vite --config site/vite.config.js",
     "site:build": "vite build --config site/vite.config.js",
     "site:preview": "vite preview --config site/vite.config.js",
-    "demo:record": "node scripts/record-demo.ts",
+    "demo:record": "playwright test -c playwright.demo.config.ts",
+    "demo:smoke": "DEMO_FILM=0 playwright test -c playwright.demo.config.ts",
     "site:check": "svelte-check --tsconfig site/tsconfig.web.json",
     "check:e2e": "tsc -p e2e/tsconfig.json --noEmit"
   },

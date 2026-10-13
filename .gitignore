@@ -46,5 +46,6 @@ pnpm-debug.log*
 .claude/settings.local.json
 
 e2e/.output/
+demo/.output/
 playwright-report/
 test-results/

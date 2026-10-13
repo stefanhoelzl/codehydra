@@ -7,8 +7,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-// Explicit .ts extension so `scripts/record-demo.ts` can import these fixtures
-// under bare node (which requires extensions in relative ESM specifiers).
 import {
   DEV_ELECTRON,
   DRIVER_APP_ARGS,

@@ -25,7 +25,7 @@
           </span>
           Parallel Workspaces
         </h3>
-        <p>Run multiple AI agents simultaneously, each in its own isolated workspace</p>
+        <p>One task, one git worktree, one agent — as many side by side as you like</p>
       </div>
       <div class="feature-card">
         <h3>
@@ -63,12 +63,111 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+          </span>
+          MCP and CLI Support
+        </h3>
+        <p>
+          Agents and scripts create, switch and delete workspaces through MCP, the ch CLI or the VS
+          Code extension API
+        </p>
+      </div>
+      <div class="feature-card">
+        <h3>
+          <span class="feature-icon">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="8" height="8" rx="2" />
+              <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+              <rect x="13" y="13" width="8" height="8" rx="2" />
+            </svg>
+          </span>
+          Plugins &amp; Automations
+        </h3>
+        <p>
+          Scripts turn pull requests — or anything a script can list — into workspaces, and hook
+          into every workspace's life
+        </p>
+      </div>
+      <div class="feature-card">
+        <h3>
+          <span class="feature-icon">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+              <path d="M19 3v4" />
+              <path d="M21 5h-4" />
+            </svg>
+          </span>
+          Hibernate &amp; Wake
+        </h3>
+        <p>
+          Park a workspace to free its editor and agent; a wakeup script wakes it when CI passes
+        </p>
+      </div>
+      <div class="feature-card">
+        <h3>
+          <span class="feature-icon">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
             </svg>
           </span>
           Real-time Status
         </h3>
-        <p>Monitor agent status (idle/busy) with visual indicators and app badge</p>
+        <p>A green dot when an agent is done, so you don't have to watch it — plus an app badge</p>
+      </div>
+      <div class="feature-card">
+        <h3>
+          <span class="feature-icon">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
+              />
+              <path d="M20 3v4" />
+              <path d="M22 5h-4" />
+              <path d="M4 17v2" />
+              <path d="M5 18H3" />
+            </svg>
+          </span>
+          Claude Code &amp; OpenCode
+        </h3>
+        <p>Both built in; pick one per workspace</p>
       </div>
       <div class="feature-card">
         <h3>
@@ -104,77 +203,6 @@
               stroke-linecap="round"
               stroke-linejoin="round"
             >
-              <path
-                d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"
-              />
-              <path d="M20 3v4" />
-              <path d="M22 5h-4" />
-              <path d="M4 17v2" />
-              <path d="M5 18H3" />
-            </svg>
-          </span>
-          Multi-Agent Support
-        </h3>
-        <p>Built-in OpenCode and Claude Code integration with real-time status monitoring</p>
-      </div>
-      <div class="feature-card">
-        <h3>
-          <span class="feature-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <rect x="2" y="2" width="20" height="8" rx="2" />
-              <rect x="2" y="14" width="20" height="8" rx="2" />
-              <line x1="6" y1="6" x2="6.01" y2="6" />
-              <line x1="6" y1="18" x2="6.01" y2="18" />
-            </svg>
-          </span>
-          MCP Server
-        </h3>
-        <p>Model Context Protocol server exposes workspace API to AI agents</p>
-      </div>
-      <div class="feature-card">
-        <h3>
-          <span class="feature-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 0 1 .837-.276c.47.07.802.48.968.925a2.501 2.501 0 1 0 3.214-3.214c-.446-.166-.855-.497-.925-.968a.979.979 0 0 1 .276-.837l1.61-1.61a2.404 2.404 0 0 1 1.705-.707c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z"
-              />
-            </svg>
-          </span>
-          IDE Integration
-        </h3>
-        <p>VS Code extension API for commands, workspace control, and automation</p>
-      </div>
-      <div class="feature-card">
-        <h3>
-          <span class="feature-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
               <rect x="2" y="4" width="20" height="16" rx="2" />
               <path d="M6 8h.001" />
               <path d="M10 8h.001" />
@@ -188,29 +216,7 @@
           </span>
           Keyboard Driven
         </h3>
-        <p>Shortcut mode for lightning-fast workspace navigation</p>
-      </div>
-      <div class="feature-card">
-        <h3>
-          <span class="feature-icon">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 13v8" />
-              <path d="m8 17 4 4 4-4" />
-              <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
-            </svg>
-          </span>
-          Remote Projects
-        </h3>
-        <p>Clone straight from a git URL — stored as a bare clone, worktrees on demand</p>
+        <p>Alt+X shortcut mode for lightning-fast workspace navigation</p>
       </div>
     </div>
     <div class="platform-row">
