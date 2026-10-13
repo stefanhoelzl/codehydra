@@ -1237,56 +1237,31 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   });
 
   describe("UI events", () => {
-    it("showNotification round-trip with action", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+    const WS = wsPath("/test/workspace");
+
+    it("shows a toast and returns once it is shown", async () => {
+      const client = createClient(WS);
       await waitForConnect(client);
-
+      const requests: unknown[] = [];
       client.on("ui:showNotification", (request, ack) => {
-        expect(request.severity).toBe("info");
-        expect(request.message).toBe("Continue?");
-        expect(request.actions).toEqual(["Yes", "No"]);
-        ack({ success: true, data: { action: "Yes" } });
-      });
-
-      const result = await env.showNotification(wsPath("/test/workspace"), {
-        severity: "info",
-        message: "Continue?",
-        actions: ["Yes", "No"],
-      });
-
-      expect(result).toBe("Yes");
-    });
-
-    it("showNotification fire-and-forget without actions", async () => {
-      const client = createClient(wsPath("/test/workspace"));
-      await waitForConnect(client);
-
-      client.on("ui:showNotification", (request, ack) => {
-        expect(request.severity).toBe("warning");
-        expect(request.message).toBe("Something happened");
-        expect(request.actions).toBeUndefined();
+        requests.push(request);
         ack({ success: true, data: { action: null } });
       });
 
-      const result = await env.showNotification(wsPath("/test/workspace"), {
-        severity: "warning",
-        message: "Something happened",
-      });
-
-      expect(result).toBeNull();
+      await expect(env.show(WS, { type: "warning", message: "Something happened" })).resolves.toBe(
+        null
+      );
+      expect(requests).toEqual([{ severity: "warning", message: "Something happened" }]);
     });
 
-    it("showNotification throws when workspace not connected", async () => {
+    it("fails a toast when the workspace is not connected", async () => {
       await expect(
-        env.showNotification(wsPath("/nonexistent"), {
-          severity: "info",
-          message: "test",
-        })
+        env.show(wsPath("/nonexistent"), { type: "info", message: "test" })
       ).rejects.toThrow("Workspace not connected");
     });
 
     it("updateStatusBar round-trip", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+      const client = createClient(WS);
       await waitForConnect(client);
 
       client.on("ui:statusBarUpdate", (request, ack) => {
@@ -1296,7 +1271,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         ack({ success: true, data: undefined });
       });
 
-      const result = await env.updateStatusBar(wsPath("/test/workspace"), {
+      const result = await env.updateStatusBar(WS, {
         text: "$(sync~spin) Building...",
         tooltip: "Build in progress",
       });
@@ -1305,7 +1280,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     });
 
     it("disposeStatusBar round-trip", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+      const client = createClient(WS);
       await waitForConnect(client);
 
       client.on("ui:statusBarDispose", (request, ack) => {
@@ -1313,68 +1288,177 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         ack({ success: true, data: undefined });
       });
 
-      const result = await env.disposeStatusBar(wsPath("/test/workspace"));
+      const result = await env.disposeStatusBar(WS);
 
       expect(result).toBeNull();
     });
 
-    it("showQuickPick round-trip with selection", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+    it("asks with a modal and answers the clicked button", async () => {
+      const client = createClient(WS);
       await waitForConnect(client);
+      client.on("ui:showNotification", (request, ack) => {
+        expect(request).toEqual({
+          severity: "warning",
+          message: "Continue?",
+          modal: true,
+          detail: "It cannot be undone",
+          actions: ["Yes", "No"],
+        });
+        ack({ success: true, data: { action: "Yes" } });
+      });
 
+      const answer = await env.show(WS, {
+        type: "ask",
+        severity: "warning",
+        message: "Continue?",
+        detail: "It cannot be undone",
+        options: ["Yes", "No"],
+      });
+
+      expect(answer).toBe("Yes");
+    });
+
+    it("selects from a quick pick, several with many", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
       client.on("ui:showQuickPick", (request, ack) => {
-        expect(request.items).toEqual([{ label: "Option A" }, { label: "Option B" }]);
-        expect(request.placeholder).toBe("Select an option...");
-        ack({ success: true, data: { selected: "Option A" } });
+        expect(request).toMatchObject({
+          title: "Which?",
+          placeholder: "filter",
+          canPickMany: true,
+          items: [{ label: "A", description: "first", picked: true }, { label: "B" }],
+        });
+        expect(request.id).toEqual(expect.any(String));
+        ack({ success: true, data: { selected: ["A", "B"] } });
       });
 
-      const result = await env.showQuickPick(wsPath("/test/workspace"), {
-        items: [{ label: "Option A" }, { label: "Option B" }],
-        placeholder: "Select an option...",
+      const answer = await env.show(WS, {
+        type: "select",
+        message: "Which?",
+        hint: "filter",
+        many: true,
+        items: [{ label: "A", description: "first", picked: true }, { label: "B" }],
       });
 
-      expect(result).toBe("Option A");
+      expect(answer).toEqual(["A", "B"]);
     });
 
-    it("showInputBox round-trip with value", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+    it("asks for text in an input box", async () => {
+      const client = createClient(WS);
       await waitForConnect(client);
-
       client.on("ui:showInputBox", (request, ack) => {
-        expect(request.prompt).toBe("Workspace name");
-        expect(request.placeholder).toBe("my-workspace");
-        ack({ success: true, data: { value: "user-input" } });
+        expect(request).toMatchObject({
+          prompt: "Token",
+          placeholder: "ghp_…",
+          value: "draft",
+          password: true,
+        });
+        ack({ success: true, data: { value: "secret" } });
       });
 
-      const result = await env.showInputBox(wsPath("/test/workspace"), {
-        prompt: "Workspace name",
-        placeholder: "my-workspace",
+      const answer = await env.show(WS, {
+        type: "input",
+        message: "Token",
+        hint: "ghp_…",
+        value: "draft",
+        password: true,
       });
 
-      expect(result).toBe("user-input");
+      expect(answer).toBe("secret");
     });
 
-    it("showNotification times out when client does not ack", async () => {
-      const client = createClient(wsPath("/test/workspace"));
+    it.each([
+      ["one path", false, ["/repo/a.txt"], "/repo/a.txt"],
+      [
+        "every path with many",
+        true,
+        ["/repo/a.txt", "/repo/b.txt"],
+        ["/repo/a.txt", "/repo/b.txt"],
+      ],
+      ["null when cancelled", false, null, null],
+    ])("picks a file: %s", async (_label, many, paths, answer) => {
+      const client = createClient(WS);
       await waitForConnect(client);
+      client.on("ui:showFileDialog", (request, ack) => {
+        expect(request).toEqual({
+          title: "Pick",
+          many,
+          filters: { Text: ["txt"] },
+          start: "/repo",
+        });
+        ack({ success: true, data: { paths } });
+      });
 
-      // Handler that never acks
-      client.on("ui:showNotification", () => {
-        // Intentionally do not call ack
+      await expect(
+        env.show(WS, {
+          type: "pick-file",
+          message: "Pick",
+          many,
+          filters: { Text: ["txt"] },
+          start: "/repo",
+        })
+      ).resolves.toEqual(answer);
+    });
+
+    it("answers null at the timeout, and closes a quick pick", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      let shownId: string | undefined;
+      const cancelled = new Promise<string>((resolve) => {
+        client.on("ui:cancel", (request) => resolve(request.id));
+      });
+      client.on("ui:showQuickPick", (request) => {
+        shownId = request.id;
       });
 
       const start = Date.now();
-      await expect(
-        env.showNotification(
-          wsPath("/test/workspace"),
-          { severity: "info", message: "test", actions: ["OK"] },
-          500
-        )
-      ).rejects.toThrow("UI event timed out");
-      const elapsed = Date.now() - start;
+      const answer = await env.show(WS, {
+        type: "select",
+        message: null,
+        items: [{ label: "A" }],
+        timeoutMs: 300,
+      });
 
-      expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
-      expect(elapsed).toBeLessThan(2000);
+      expect(answer).toBeNull();
+      expect(Date.now() - start).toBeGreaterThanOrEqual(300 - TIMING_TOLERANCE_MS);
+      await expect(cancelled).resolves.toBe(shownId);
+    });
+
+    it("answers null when its waiter is cancelled, and closes the input box", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      const cancelled = new Promise<string>((resolve) => {
+        client.on("ui:cancel", (request) => resolve(request.id));
+      });
+      const shown = new Promise<string | undefined>((resolve) => {
+        client.on("ui:showInputBox", (request) => resolve(request.id));
+      });
+
+      const answer = env.show(WS, { type: "input", message: "Name", waiter: "w-1" });
+      const id = await shown;
+      await env.cancel("w-1");
+
+      await expect(answer).resolves.toBeNull();
+      await expect(cancelled).resolves.toBe(id);
+    });
+
+    it("never puts a question whose waiter was cancelled before it arrived", async () => {
+      const client = createClient(WS);
+      await waitForConnect(client);
+      const shown = vi.fn();
+      client.on("ui:showQuickPick", shown);
+
+      await env.cancel("w-early");
+      const answer = await env.show(WS, {
+        type: "select",
+        message: null,
+        items: [{ label: "A" }],
+        waiter: "w-early",
+      });
+
+      expect(answer).toBeNull();
+      await delay(20);
+      expect(shown).not.toHaveBeenCalled();
     });
   });
 
@@ -1382,13 +1466,18 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
   // dismissal; the server reports the 0↔1 edges so the workspace reads idle.
   describe("modal tracking", () => {
     const WS = wsPath("/test/workspace");
+    const ASK = { type: "ask", message: "Hi", options: ["OK"] } as const;
 
-    /** The `open` flags of every vscode:modal-changed the module dispatched. */
+    /** The `open` flags of every vscode:modal-changed the module dispatched (all `editor`). */
     function modalEdges(): boolean[] {
       return env.mockDispatch.mock.calls
         .map(([intent]) => intent as Intent)
         .filter((intent) => intent.type === INTENT_VSCODE_MODAL_CHANGED)
-        .map((intent) => (intent.payload as { open: boolean }).open);
+        .map((intent) => {
+          const payload = intent.payload as { source: string; open: boolean };
+          expect(payload.source).toBe("editor");
+          return payload.open;
+        });
     }
 
     it("reports open on emit and closed on the dismissal ack", async () => {
@@ -1399,7 +1488,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         dismiss = () => ack({ success: true, data: { action: "OK" } });
       });
 
-      const shown = env.showNotification(WS, { severity: "info", message: "Hi", actions: ["OK"] });
+      const shown = env.show(WS, ASK);
       await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
 
       await vi.waitFor(() => expect(dismiss).toBeDefined());
@@ -1408,22 +1497,17 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
     });
 
-    it("returns at once without actions but stays open until dismissed", async () => {
+    it("does not count a toast", async () => {
       const client = createClient(WS);
       await waitForConnect(client);
-      let dismiss: (() => void) | undefined;
       client.on("ui:showNotification", (_request, ack) => {
-        dismiss = () => ack({ success: true, data: { action: null } });
+        ack({ success: true, data: { action: null } });
       });
 
-      await expect(env.showNotification(WS, { severity: "info", message: "Hi" })).resolves.toBe(
-        null
-      );
-      await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
+      await env.show(WS, { type: "info", message: "Hi" });
+      await delay(20);
 
-      await vi.waitFor(() => expect(dismiss).toBeDefined());
-      dismiss!();
-      await vi.waitFor(() => expect(modalEdges()).toEqual([true, false]));
+      expect(modalEdges()).toEqual([]);
     });
 
     it("keeps a timed-out modal open until its late ack", async () => {
@@ -1434,9 +1518,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         dismiss = () => ack({ success: true, data: { action: "OK" } });
       });
 
-      await expect(
-        env.showNotification(WS, { severity: "info", message: "Hi", actions: ["OK"] }, 50)
-      ).rejects.toThrow("UI event timed out");
+      await expect(env.show(WS, { ...ASK, timeoutMs: 50 })).resolves.toBeNull();
       expect(modalEdges()).toEqual([true]);
 
       await vi.waitFor(() => expect(dismiss).toBeDefined());
@@ -1455,11 +1537,12 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         acks.push(() => ack({ success: true, data: { selected: null } }));
       });
 
-      await env.showNotification(WS, { severity: "info", message: "Hi" });
-      const picked = env.showQuickPick(WS, { items: [{ label: "A" }] });
+      const asked = env.show(WS, ASK);
+      const picked = env.show(WS, { type: "select", message: null, items: [{ label: "A" }] });
       await vi.waitFor(() => expect(acks).toHaveLength(2));
 
       acks[0]!();
+      await asked;
       await delay(20);
       expect(modalEdges()).toEqual([true]);
 
@@ -1475,7 +1558,7 @@ describe("ApiServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         // Never acked: the extension host goes away with the input box open.
       });
 
-      const asked = env.showInputBox(WS, { prompt: "Name" });
+      const asked = env.show(WS, { type: "input", message: "Name" });
       await vi.waitFor(() => expect(modalEdges()).toEqual([true]));
 
       client.disconnect();

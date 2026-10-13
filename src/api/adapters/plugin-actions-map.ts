@@ -61,7 +61,12 @@ export const PLUGIN_ACTIONS_MAP: Readonly<Record<OperationName, PluginActionMapp
   "vscode.message": null,
   "vscode.notify": INVOKE,
   "vscode.status-bar": INVOKE,
+  // A question waits for its answer, and an automation item has nobody to
+  // hand one to; a script that needs one calls `ch ws ask` itself.
   "vscode.ask": null,
+  "vscode.select": null,
+  "vscode.input": null,
+  "vscode.pick-file": null,
   "vscode.browser": null,
   "vscode.diff": null,
   "vscode.goto": null,

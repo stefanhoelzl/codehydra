@@ -44,6 +44,9 @@ export type {
   ShowQuickPickResponse,
   ShowInputBoxRequest,
   ShowInputBoxResponse,
+  ShowFileDialogRequest,
+  ShowFileDialogResponse,
+  CancelUiRequest,
 } from "../../../src/shared/api-protocol";
 
 export type {

@@ -20,6 +20,7 @@ import type {
   AgentPromptConfig,
 } from "./types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
+import type { ModalSource } from "../../intents/vscode-modal-changed";
 import type { DownloadProgressCallback } from "../../utils/binary-download";
 
 /**
@@ -147,13 +148,14 @@ export interface AgentModuleProvider {
   applyTerminalLifecycle(workspaceRef: WorkspaceRef, event: AgentLifecycleEvent): void;
 
   /**
-   * Record whether a modal is open in the workspace's editor. While one is, the
-   * workspace reports "idle" whatever the agent is doing (even with no agent
-   * session): the editor is blocked on the user. Every call re-reports the
+   * Record whether a question from `source` is open: a modal in the workspace's
+   * editor, or a sidebar card attached to it that waits for an answer. While any
+   * is, the workspace reports "idle" whatever the agent is doing (even with no
+   * agent session): it is blocked on the user. Every call re-reports the
    * workspace's effective status, so a nudge from `agent.status.set` is
    * corrected on the next edge.
    */
-  setModalOpen(workspaceRef: WorkspaceRef, open: boolean): void;
+  setModalOpen(workspaceRef: WorkspaceRef, source: ModalSource, open: boolean): void;
 
   // --- Query ---
 

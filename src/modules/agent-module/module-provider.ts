@@ -44,6 +44,7 @@ import { toError } from "../../shared/error-utils";
 import type { Logger } from "../../boundaries/platform/logging";
 import { createNoneStatus, convertToAggregatedStatus } from "./status-utils";
 import { AgentUnreachableError } from "./types";
+import type { ModalSource } from "../../intents/vscode-modal-changed";
 
 // =============================================================================
 // Spec Interface
@@ -202,10 +203,11 @@ export function createAgentModuleProvider<P extends AgentProvider>(
   const statusCache = new Map<WorkspaceRef, AggregatedAgentStatus>();
 
   /**
-   * Workspaces with a modal open in their editor. Overlaid on `statusCache`:
+   * Workspaces with a question open — a modal in their editor, or a sidebar card
+   * waiting for an answer — and from which sources. Overlaid on `statusCache`:
    * such a workspace reads idle whatever its agent reports (see `effectiveStatus`).
    */
-  const modalOpen = new Set<WorkspaceRef>();
+  const modalOpen = new Map<WorkspaceRef, Set<ModalSource>>();
 
   /** Tracks pending handleServerStarted() promises for startWorkspace(). */
   const serverStartedPromises = new Map<WorkspaceRef, Promise<void>>();
@@ -482,8 +484,11 @@ export function createAgentModuleProvider<P extends AgentProvider>(
       spec.applyTerminalLifecycle(workspaceRef, event, ctx);
     },
 
-    setModalOpen(workspaceRef: WorkspaceRef, open: boolean): void {
-      if (open) modalOpen.add(workspaceRef);
+    setModalOpen(workspaceRef: WorkspaceRef, source: ModalSource, open: boolean): void {
+      const sources = modalOpen.get(workspaceRef) ?? new Set<ModalSource>();
+      if (open) sources.add(source);
+      else sources.delete(source);
+      if (sources.size > 0) modalOpen.set(workspaceRef, sources);
       else modalOpen.delete(workspaceRef);
       // Reported unconditionally rather than deduplicated: an `agent.status.set`
       // nudge reaches the UI without passing through here, so the last status

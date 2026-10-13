@@ -1513,6 +1513,7 @@ describe("createAgentModule", () => {
               intent: ctx.intent,
               workspaceRef: TEST_WS_REF,
               workspacePath: (ctx.intent.payload as { workspacePath: WorkspacePath }).workspacePath,
+              source: (ctx.intent.payload as { source: "editor" | "sidebar" }).source,
               open: (ctx.intent.payload as { open: boolean }).open,
               capabilities: { agent, ...(modalRecorded && { [MODAL_RECORDED_CAPABILITY]: true }) },
             }),
@@ -1527,10 +1528,14 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_VSCODE_MODAL_CHANGED,
-        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+        payload: {
+          workspacePath: testPath("/test/workspace").toNative(),
+          source: "editor",
+          open: true,
+        },
       });
 
-      expect(mockProvider.setModalOpen).toHaveBeenCalledWith(TEST_WS_REF, true);
+      expect(mockProvider.setModalOpen).toHaveBeenCalledWith(TEST_WS_REF, "editor", true);
     });
 
     it("waits for terminal-focus to record the modal (modal-recorded)", async () => {
@@ -1539,7 +1544,11 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_VSCODE_MODAL_CHANGED,
-        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+        payload: {
+          workspacePath: testPath("/test/workspace").toNative(),
+          source: "editor",
+          open: true,
+        },
       });
 
       expect(mockProvider.setModalOpen).not.toHaveBeenCalled();
@@ -1551,7 +1560,11 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({
         type: INTENT_VSCODE_MODAL_CHANGED,
-        payload: { workspacePath: testPath("/test/workspace").toNative(), open: true },
+        payload: {
+          workspacePath: testPath("/test/workspace").toNative(),
+          source: "editor",
+          open: true,
+        },
       });
 
       expect(mockProvider.setModalOpen).not.toHaveBeenCalled();

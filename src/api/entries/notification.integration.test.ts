@@ -1,8 +1,9 @@
 // @vitest-environment node
 /**
- * The `notification.*` registry entries, run through the real registry, the
- * real notification operations and the presenter's own hook handlers over a
- * real NotificationManager — so the flat CLI/MCP input, attachment, waiting and
+ * The `notification.*` registry entries — and `vscode.ask` with `sidebar`, which
+ * puts its question on the same cards — run through the real registry, the real
+ * notification operations and the presenter's own hook handlers over a real
+ * NotificationManager, so the flat CLI/MCP input, attachment, waiting and
  * disconnect are asserted as a caller sees them.
  */
 
@@ -53,7 +54,12 @@ function setup() {
     projects: { [PROJECT]: { projectId: "app-1" as ProjectId } },
   });
   const cards = createMockNotificationManager();
-  cards.register(dispatcher);
+  /** The waiting edges a card attached to a workspace reports. */
+  const waits: string[] = [];
+  cards.register(dispatcher, {
+    opened: (ref) => waits.push(`open ${ref}`),
+    closed: (ref) => waits.push(`closed ${ref}`),
+  });
   const registry = createRegistry(
     {
       dispatcher,
@@ -84,7 +90,7 @@ function setup() {
     return registry.invoke(registry.get(name), ctx, input);
   };
 
-  return { call, cards };
+  return { call, cards, waits };
 }
 
 describe("notification entries", () => {
@@ -158,40 +164,17 @@ describe("notification entries", () => {
     ).rejects.toMatchObject({ category: "no-workspace" });
   });
 
-  it("returns the clicked action when waiting, and the card is gone", async () => {
+  it("has no buttons and never waits: a question is vscode.ask", async () => {
     const { call, cards } = setup();
 
-    const answer = call("notification.show", null, {
+    const result = await call("notification.show", null, {
       title: "Deploy?",
-      actions: ["Deploy", "Skip"],
+      actions: ["Deploy"],
       wait: true,
     });
-    await cards.settle();
-    expect(cards.lastNotification!.opened.actions).toEqual([
-      { id: "Deploy", label: "Deploy" },
-      { id: "Skip", label: "Skip" },
-    ]);
-    cards.emitEvent(0, { actionId: "Skip" });
 
-    await expect(answer).resolves.toEqual({ choice: "Skip" });
-    expect(cards.lastNotification!.closed).toBe(true);
-  });
-
-  it("releases a wait when its caller disconnects", async () => {
-    const { call, cards } = setup();
-    const connection = new AbortController();
-
-    const answer = call(
-      "notification.show",
-      null,
-      { title: "Deploy?", actions: ["Deploy"], wait: true },
-      connection.signal
-    );
-    await cards.settle();
-    connection.abort();
-
-    await expect(answer).resolves.toEqual({ choice: null });
-    expect(cards.lastNotification!.closed).toBe(true);
+    expect(result).toEqual({ id: cards.lastNotification!.id });
+    expect(cards.lastNotification!.opened.actions).toBeUndefined();
   });
 
   it("closes a card by id, and ignores one that is gone", async () => {
@@ -203,5 +186,78 @@ describe("notification entries", () => {
     await expect(call("notification.close", null, { id })).resolves.toEqual({ closed: true });
     expect(cards.lastNotification!.closed).toBe(true);
     await expect(call("notification.close", null, { id })).resolves.toEqual({ closed: true });
+  });
+});
+
+describe("vscode.ask with sidebar", () => {
+  const DEPLOY = { message: "Deploy?", options: ["Deploy", "Skip"], sidebar: true };
+
+  it("puts the question on a card attached to the asking workspace, and answers the click", async () => {
+    const { call, cards } = setup();
+
+    const answer = call("vscode.ask", FEAT, { ...DEPLOY, detail: "to staging", level: "warning" });
+    await cards.settle();
+    expect(cards.lastNotification!.opened).toEqual({
+      title: "Deploy?",
+      message: "to staging",
+      type: "warning",
+      dismissible: true,
+      actions: [
+        { id: "Deploy", label: "Deploy" },
+        { id: "Skip", label: "Skip" },
+      ],
+    });
+    expect(cards.lastNotification!.workspaceRef).toBe(FEAT);
+    cards.emitEvent(0, { actionId: "Skip" });
+
+    await expect(answer).resolves.toEqual({ answer: "Skip" });
+    expect(cards.lastNotification!.closed).toBe(true);
+  });
+
+  it("answers null when the card is dismissed: its X is the Cancel", async () => {
+    const { call, cards } = setup();
+
+    const answer = call("vscode.ask", FEAT, DEPLOY);
+    await cards.settle();
+    cards.emitEvent(0, { actionId: "dismiss" });
+
+    await expect(answer).resolves.toEqual({ answer: null });
+  });
+
+  it("parks the workspace on the user while it waits", async () => {
+    const { call, cards, waits } = setup();
+
+    const answer = call("vscode.ask", FEAT, DEPLOY);
+    await cards.settle();
+    expect(waits).toEqual([`open ${FEAT}`]);
+    cards.emitEvent(0, { actionId: "Deploy" });
+    await answer;
+
+    expect(waits).toEqual([`open ${FEAT}`, `closed ${FEAT}`]);
+  });
+
+  it("answers null and closes the card when its caller disconnects", async () => {
+    const { call, cards, waits } = setup();
+    const connection = new AbortController();
+
+    const answer = call("vscode.ask", FEAT, DEPLOY, connection.signal);
+    await cards.settle();
+    connection.abort();
+
+    await expect(answer).resolves.toEqual({ answer: null });
+    expect(cards.lastNotification!.closed).toBe(true);
+    expect(waits).toEqual([`open ${FEAT}`, `closed ${FEAT}`]);
+  });
+
+  it("refuses more than five buttons, and labels a button cannot hold", async () => {
+    const { call } = setup();
+    const six = ["a", "b", "c", "d", "e", "f"];
+
+    await expect(
+      call("vscode.ask", FEAT, { message: "Which?", options: six, sidebar: true })
+    ).rejects.toMatchObject({ category: "usage" });
+    await expect(
+      call("vscode.ask", FEAT, { message: "Which?", options: ["x".repeat(51)] })
+    ).rejects.toMatchObject({ category: "usage" });
   });
 });

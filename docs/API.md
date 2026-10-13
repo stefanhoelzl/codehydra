@@ -485,46 +485,50 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                              | Request Payload                        | Response                                |
-| ---------------------------------- | -------------------------------------- | --------------------------------------- |
-| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `ApiResult<WorkspaceStatus>`            |
-| `api:workspace:getAgentSession`    | None                                   | `ApiResult<AgentSession \| null>`       |
-| `api:workspace:restartAgentServer` | None                                   | `ApiResult<number>`                     |
-| `api:workspace:getMetadata`        | None                                   | `ApiResult<Record<string, string>>`     |
-| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `ApiResult<void>`                       |
-| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `ApiResult<unknown>`                    |
-| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `ApiResult<void>`                       |
-| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `ApiResult<DeleteWorkspaceResponse>`    |
-| `api:workspace:create`             | `WorkspaceCreateRequest`               | `ApiResult<Workspace>`                  |
-| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                 |
-| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                 |
-| `api:workspace:hibernate`          | `{ wakeup?, shell?, env? }`            | `ApiResult<{ started: boolean }>`       |
-| `api:workspace:wake`               | None                                   | `ApiResult<Workspace>`                  |
-| `api:workspace:setWakeup`          | `{ script, shell?, env? }`             | `ApiResult<WakeupStatus>`               |
-| `api:workspace:clearWakeup`        | None                                   | `ApiResult<null>`                       |
-| `api:workspace:getWakeup`          | None                                   | `ApiResult<WakeupStatus \| null>`       |
-| `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                       |
-| `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`             |
-| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                       |
-| `api:workspace:removeTag`          | `{ name: string }`                     | `ApiResult<void>`                       |
-| `api:workspace:openAgent`          | None                                   | `ApiResult<unknown>`                    |
-| `api:workspace:closeAgent`         | None                                   | `ApiResult<{ closed: boolean }>`        |
-| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `ApiResult<null>`                       |
-| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `ApiResult<void>`                       |
-| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `ApiResult<{ result: string \| null }>` |
-| `api:workspace:openBrowser`        | `{ url: string }`                      | `ApiResult<unknown>`                    |
-| `api:workspace:openDiff`           | `{ left, right, title? }`              | `ApiResult<unknown>`                    |
-| `api:workspace:goto`               | `{ location: string }`                 | `ApiResult<unknown>`                    |
-| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `ApiResult<unknown>`                    |
-| `api:project:list`                 | None                                   | `ApiResult<Project[]>`                  |
-| `api:reportIssue`                  | `{ description: string }`              | `ApiResult<{ submitted: true }>`        |
-| `api:config:get`                   | `{ key: string }`                      | `ApiResult<unknown>`                    |
-| `api:config:list`                  | None                                   | `ApiResult<ConfigRow[]>`                |
-| `api:config:set`                   | `{ key: string, value: string }`       | `ApiResult<ConfigRow>`                  |
-| `api:config:reset`                 | `{ key: string }`                      | `ApiResult<ConfigRow>`                  |
-| `api:notification:show`            | `NotificationShowRequest`              | `ApiResult<{ id } \| { choice }>`       |
-| `api:notification:close`           | `{ id: string }`                       | `ApiResult<{ closed: true }>`           |
-| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `ApiResult<OperationDescriptor[]>`      |
+| Event                              | Request Payload                        | Response                             |
+| ---------------------------------- | -------------------------------------- | ------------------------------------ |
+| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `ApiResult<WorkspaceStatus>`         |
+| `api:workspace:getAgentSession`    | None                                   | `ApiResult<AgentSession \| null>`    |
+| `api:workspace:restartAgentServer` | None                                   | `ApiResult<number>`                  |
+| `api:workspace:getMetadata`        | None                                   | `ApiResult<Record<string, string>>`  |
+| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `ApiResult<void>`                    |
+| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `ApiResult<unknown>`                 |
+| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `ApiResult<void>`                    |
+| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `ApiResult<DeleteWorkspaceResponse>` |
+| `api:workspace:create`             | `WorkspaceCreateRequest`               | `ApiResult<Workspace>`               |
+| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)              |
+| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)              |
+| `api:workspace:hibernate`          | `{ wakeup?, shell?, env? }`            | `ApiResult<{ started: boolean }>`    |
+| `api:workspace:wake`               | None                                   | `ApiResult<Workspace>`               |
+| `api:workspace:setWakeup`          | `{ script, shell?, env? }`             | `ApiResult<WakeupStatus>`            |
+| `api:workspace:clearWakeup`        | None                                   | `ApiResult<null>`                    |
+| `api:workspace:getWakeup`          | None                                   | `ApiResult<WakeupStatus \| null>`    |
+| `api:workspace:setTitle`           | `{ title: string \| null }`            | `ApiResult<void>`                    |
+| `api:workspace:listTags`           | None                                   | `ApiResult<WorkspaceTag[]>`          |
+| `api:workspace:setTag`             | `{ name: string } & TagOptions`        | `ApiResult<void>`                    |
+| `api:workspace:removeTag`          | `{ name: string }`                     | `ApiResult<void>`                    |
+| `api:workspace:openAgent`          | None                                   | `ApiResult<unknown>`                 |
+| `api:workspace:closeAgent`         | None                                   | `ApiResult<{ closed: boolean }>`     |
+| `api:workspace:sendAgentMessage`   | `SendAgentMessageRequest`              | `ApiResult<null>`                    |
+| `api:workspace:setAgentStatus`     | `{ status: "idle" \| "busy" }`         | `ApiResult<void>`                    |
+| `api:workspace:showMessage`        | `ShowMessageRequest`                   | `ApiResult<null>`                    |
+| `api:workspace:ask`                | `AskRequest`                           | `ApiResult<{ answer }>`              |
+| `api:workspace:select`             | `SelectRequest`                        | `ApiResult<{ answer }>`              |
+| `api:workspace:input`              | `InputRequest`                         | `ApiResult<{ answer }>`              |
+| `api:workspace:pickFile`           | `PickFileRequest`                      | `ApiResult<{ answer }>`              |
+| `api:workspace:openBrowser`        | `{ url: string }`                      | `ApiResult<unknown>`                 |
+| `api:workspace:openDiff`           | `{ left, right, title? }`              | `ApiResult<unknown>`                 |
+| `api:workspace:goto`               | `{ location: string }`                 | `ApiResult<unknown>`                 |
+| `api:workspace:previewMarkdown`    | `{ path: string }`                     | `ApiResult<unknown>`                 |
+| `api:project:list`                 | None                                   | `ApiResult<Project[]>`               |
+| `api:reportIssue`                  | `{ description: string }`              | `ApiResult<{ submitted: true }>`     |
+| `api:config:get`                   | `{ key: string }`                      | `ApiResult<unknown>`                 |
+| `api:config:list`                  | None                                   | `ApiResult<ConfigRow[]>`             |
+| `api:config:set`                   | `{ key: string, value: string }`       | `ApiResult<ConfigRow>`               |
+| `api:config:reset`                 | `{ key: string }`                      | `ApiResult<ConfigRow>`               |
+| `api:notification:show`            | `NotificationShowRequest`              | `ApiResult<{ id }>`                  |
+| `api:notification:close`           | `{ id: string }`                       | `ApiResult<{ closed: true }>`        |
+| `api:registry:describe`            | `{ target: "mcp" \| "cli" }`           | `ApiResult<OperationDescriptor[]>`   |
 
 Everything below `api:log` is new: these operations existed only as MCP tools
 before the registry, and are now on both surfaces. Purely additive — no existing
@@ -541,18 +545,28 @@ channel changed shape. `ConfigRow` is `{ key, value, default, source, applies, v
 
 It also gained `ignoreWarnings`, which the MCP tool already had.
 
+**Questions moved out of `api:workspace:showMessage`** (and the MCP `ui_show_message`
+tool): `ShowMessageRequest` is now `{ type: "info" | "warning" | "error" | "status",
+message, hint? }` — a toast or the status bar, never waiting — and returns `null`.
+`type: "select"`, `options` and `timeout` are gone; a question is one of the four
+channels below, each returning `{ answer }` (`null` when cancelled, timed out or the
+caller went away). `api:notification:show` lost `actions`, `wait` and `timeout`.
+See [Questions](#questions).
+
 ### Event Channels (Server → Client)
 
-| Event                 | Request Payload           | Response                              | Description                                     |
-| --------------------- | ------------------------- | ------------------------------------- | ----------------------------------------------- |
-| `config`              | `ApiConfig`               | (none)                                | Configuration sent after connection             |
-| `command`             | `CommandRequest`          | `ApiResult<unknown>`                  | Execute VS Code command                         |
-| `shutdown`            | None                      | `ApiResult<void>`                     | Terminate extension host for workspace deletion |
-| `ui:showNotification` | `ShowNotificationRequest` | `ApiResult<ShowNotificationResponse>` | Show a modal notification; acked on dismissal   |
-| `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `ApiResult<void>`                     | Create or update a status bar item              |
-| `ui:statusBarDispose` | `StatusBarDisposeRequest` | `ApiResult<void>`                     | Dispose a status bar item                       |
-| `ui:showQuickPick`    | `ShowQuickPickRequest`    | `ApiResult<ShowQuickPickResponse>`    | Show a quick pick list                          |
-| `ui:showInputBox`     | `ShowInputBoxRequest`     | `ApiResult<ShowInputBoxResponse>`     | Show an input box                               |
+| Event                 | Request Payload           | Response                              | Description                                                          |
+| --------------------- | ------------------------- | ------------------------------------- | -------------------------------------------------------------------- |
+| `config`              | `ApiConfig`               | (none)                                | Configuration sent after connection                                  |
+| `command`             | `CommandRequest`          | `ApiResult<unknown>`                  | Execute VS Code command                                              |
+| `shutdown`            | None                      | `ApiResult<void>`                     | Terminate extension host for workspace deletion                      |
+| `ui:showNotification` | `ShowNotificationRequest` | `ApiResult<ShowNotificationResponse>` | A toast (acked at once), or with `modal` a dialog acked on dismissal |
+| `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `ApiResult<void>`                     | Create or update a status bar item                                   |
+| `ui:statusBarDispose` | `StatusBarDisposeRequest` | `ApiResult<void>`                     | Dispose a status bar item                                            |
+| `ui:showQuickPick`    | `ShowQuickPickRequest`    | `ApiResult<ShowQuickPickResponse>`    | Show a quick pick list                                               |
+| `ui:showInputBox`     | `ShowInputBoxRequest`     | `ApiResult<ShowInputBoxResponse>`     | Show an input box                                                    |
+| `ui:showFileDialog`   | `ShowFileDialogRequest`   | `ApiResult<ShowFileDialogResponse>`   | Show an open or save dialog                                          |
+| `ui:cancel`           | `{ id }`                  | (none)                                | Close the quick pick / input box of that request id                  |
 
 The authoritative declarations for all events and payloads are in `src/shared/api-protocol.ts` (compiled by both the CodeHydra server and the sidekick extension).
 
@@ -774,6 +788,7 @@ $ ch project list
 $ ch project close ohi               # by name
 $ ch project close ohi --remove-local-repo   # also delete its directory (no workspaces left)
 $ ch ws notify "build finished" --level warning   # for the user
+$ ch ws ask "Deploy?" --options Deploy --sidebar  # waits for the user's answer
 $ ch ws agent message "main is green again"      # for the agent
 $ ch ws diff old.ts new.ts           # builds the $vscode Uri wrappers for you
 $ ch lock take device "smoke test"   # wait for, then hold, a shared resource
@@ -812,7 +827,7 @@ most often branches on. The code comes from the failure's `category`, not from t
 wording of its message.
 
 Calls have no client-side timeout — `ch lock take` waits its turn, `ch ws ask` waits
-for a person — so bound a wait yourself when you need one (`timeout 60 ch …`). An app
+for a person (or give it `--timeout`) — so bound a wait yourself when you need one (`timeout 60 ch …`). An app
 that goes away mid-call still ends the call, as exit `3`.
 
 ### Locks
@@ -869,7 +884,8 @@ $ ch bg ch lock run device "long session"                 # hold until killed
 `api:notification:show` / `api:notification:close`) raises cards in CodeHydra's own
 sidebar — the ones CodeHydra uses for clone progress and errors — through the
 `notification:show` / `notification:close` intents. Unlike `ch ws notify` (a toast in one
-workspace's editor) they need no workspace.
+workspace's editor) they need no workspace. A card never waits and has no buttons: a
+question on a card is `ch ws ask --sidebar` (see [Questions](#questions)).
 
 ```console
 $ ch notification show "Nightly build finished"
@@ -877,34 +893,67 @@ $ ch notification show "Building" --type spinner --percent 20 --format json
 {"id":"ntf-3"}
 $ ch notification show "Building" --id ntf-3 --type spinner --percent 80
 $ ch notification close ntf-3
-$ ch notification show "Deploy?" --actions Deploy --actions Skip --wait --attach
-choice  Deploy
 ```
 
 `NotificationShowRequest` is `{ title, message?, type? ("info" default | "warning" |
-"error" | "spinner"), percent? (0–100), dismissible? (true), actions?: string[], id?,
-attach?, workspace?, project?, wait?, timeout? (seconds) }`.
+"error" | "spinner"), percent? (0–100), dismissible? (true), id?, attach?, workspace?,
+project? }`.
 
 - **Ids** are minted by CodeHydra. `id` updates that card; a card that is no longer open
   (dismissed) is exit `6`. `close` of a card that is gone does nothing.
-- **Collapsing.** A show whose text (title, message, type, dismissible, actions) and
+- **Collapsing.** A show whose text (title, message, type, dismissible) and
   attached workspace match an open card joins it — the card shows a counter and the
   call gets its id — and the card closes once every show holding it has closed it.
   Progress is not part of the match.
 - **Attachment.** `attach` ties the card to the caller's workspace, `workspace` to a
   named one: the card names the workspace, clicking its title switches there, and
   `workspace:deleted` closes it. Otherwise it is app-wide.
-- **Waiting.** `wait` blocks and returns `{ choice }`: the clicked action, or `null` on
-  dismiss, `timeout`, or the workspace going away. A choice or dismiss closes the card
-  and answers every caller waiting on it. A waiter whose connection drops gives up its
-  hold, so the question goes away with its last waiter.
+
+### Questions
+
+`ch ws ask|select|input|pick-file` (MCP `ui_ask` / `ui_select` / `ui_input` /
+`ui_pick_file`, API server `api:workspace:ask` / `select` / `input` / `pickFile`) put a
+question to the user and wait for the answer, through `vscode:show-message` (types
+`ask`, `select`, `input`, `pick-file`) — or, for `ask` with `sidebar`, a waiting
+`notification:show` card attached to the workspace. A notification tells; a question
+waits.
+
+```console
+$ ch ws ask "Deploy?" --options Deploy --options Skip --detail "main is green"
+{"answer":"Deploy"}
+$ ch ws ask "Deploy?" --options Deploy --sidebar --timeout 600
+$ ch ws select "Branch" --options main --options '{"label":"dev","description":"nightly"}'
+$ ch ws select "Suites" --options unit --options e2e --many
+{"answer":["unit","e2e"]}
+$ ch ws input "Token" --password
+$ ch ws pick-file "Screenshot" --filters '{"Images":["png"]}' --start ./docs
+```
+
+| Request           | Fields (besides `workspace?`, `project?`, `timeout?` in seconds)                                                                    | `answer`                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `AskRequest`      | `message` (≤ 200), `options` (1–5, ≤ 50 each), `detail?`, `level?` (`info`), `sidebar?`                                             | the clicked option                         |
+| `SelectRequest`   | `options` (1–1000: a label or `{ label, description?, detail?, picked? }`), `message?` (title), `many?`, `hint?` (placeholder)      | the label; with `many`, every ticked label |
+| `InputRequest`    | `message?` (prompt), `value?`, `password?`, `hint?`                                                                                 | the text                                   |
+| `PickFileRequest` | `message?` (title), `folders?`, `many?`, `save?`, `filters?` (`{ name: [ext] }`), `start?` (absolute, or relative to a shell's cwd) | the path; with `many`, every path          |
+
+- **Cancel.** `ask` always has one — VS Code's Cancel button on the dialog, the dismiss
+  button on a card — so it is never an option. Escape cancels the others. Cancel, the
+  `timeout`, and the caller going away (Ctrl+C, an aborted agent turn: the connection's
+  `signal`, which dispatches `vscode:cancel-message { waiter }`) all answer `null`.
+- **Closing.** On a time-out or a cancel a quick pick or input box is closed
+  (`ui:cancel`); a dialog and a file dialog cannot be closed from code and stay until
+  the user dismisses them — that late answer goes nowhere.
+- **Waiting on the user.** While a question is open the workspace reads idle
+  (`vscode:modal-changed`, `source: "editor"` for the editor's, `"sidebar"` for a card).
+  Only an editor modal also holds back the terminal focus.
+- `save` takes neither `many` nor `folders` (exit `2`).
 
 ### Agent messages
 
 `ch ws agent message <text>` (MCP `workspace_send_agent_message`, API server
 `api:workspace:sendAgentMessage`) puts text into a workspace's **running** agent's
 conversation through the `agent:send-message` intent. It is the agent's channel, as the
-notifications above, `ws notify`, `ws status-bar` and `ws ask` are the user's.
+notifications and questions above, `ws notify` and `ws status-bar` are the user's.
 
 `SendAgentMessageRequest` is `{ text, wake? (false), workspace?, project? }`. `text` given as
 `-` on the command line is read from stdin. The result is `null` once the agent has taken

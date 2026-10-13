@@ -21,6 +21,7 @@ import { ShowNotificationOperation } from "../../intents/show-notification";
 import { CloseNotificationOperation } from "../../intents/close-notification";
 import { NotificationManager } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
+import type { ModalEdges } from "../modal-edges";
 import { defineHooks } from "../../intents/declarations";
 
 /** Per-card state exposed for assertions. */
@@ -43,8 +44,11 @@ export interface MockNotification {
 export interface MockNotificationManager {
   /** A dispatcher carrying just the notification operations, for modules that only raise cards. */
   readonly dispatcher: Dispatcher;
-  /** Carry the notification operations on a test's own dispatcher instead. */
-  register(dispatcher: Dispatcher): void;
+  /**
+   * Carry the notification operations on a test's own dispatcher instead. With
+   * `waiting`, a wait on a card attached to a workspace reports its edges there.
+   */
+  register(dispatcher: Dispatcher, waiting?: ModalEdges): void;
   /** Every card opened so far, in order. Mutates live. */
   readonly notifications: MockNotification[];
   /** The most recently opened card, or null. */
@@ -106,12 +110,12 @@ export function createMockNotificationManager(): MockNotificationManager {
     }
   }
 
-  function register(dispatcher: Dispatcher): void {
+  function register(dispatcher: Dispatcher, waiting?: ModalEdges): void {
     dispatcher.registerOperation(new ShowNotificationOperation());
     dispatcher.registerOperation(new CloseNotificationOperation());
     dispatcher.registerModule({
       name: "notifications-mock",
-      hooks: defineHooks(createNotificationHooks(manager)),
+      hooks: defineHooks(createNotificationHooks(manager, waiting)),
     });
   }
 

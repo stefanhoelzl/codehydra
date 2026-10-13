@@ -100,7 +100,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. Everyt
 | `get-agent-session`    | `get`                                     | Return session info                                        |
 | `restart-agent`        | `restart`                                 | Restart agent server                                       |
 | `agent-lifecycle`      | `lifecycle`                               | Terminal open/close transitions (reported by the sidekick) |
-| `vscode-modal-changed` | `modal`                                   | Park the workspace on idle while an editor modal is open   |
+| `vscode-modal-changed` | `modal`                                   | Park the workspace on idle while a question is open        |
 
 Provider initialization is lazy: it happens on the first `open-workspace` for the configured agent, using the MCP port captured during `app:start`.
 
@@ -274,11 +274,13 @@ These are the event names since OpenCode 1.1.1; the older `permission.updated` i
 
 ### Open Modal Override
 
-A modal in the workspace's editor — a notification, quick pick or input box raised through `vscode:show-message` (MCP `ui_show_message`, `ch`, repo hooks; with or without action buttons) — blocks it on the user, so the workspace reads **idle** while one is open, whatever the agent is doing and even with no agent session.
+A question put to the user blocks the workspace on them, so it reads **idle** while one is open, whatever the agent is doing and even with no agent session. Two sources:
 
-- **Lifetime**: the sidekick acks every modal only when it is dismissed. The API server counts open modals per workspace from emit until that ack or a socket disconnect, independent of the caller's wait: a notification without actions returns to its caller at once, and a call's `timeout` ends only the wait (VS Code cannot close a modal from code). Notifications have no default timeout.
-- **Edges**: the 0↔1 transitions are dispatched as `vscode:modal-changed` (serialized per workspace), resolved to the workspace's agent module like `agent:lifecycle`, which calls `setModalOpen`.
-- **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while a modal is open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core) is corrected on the next edge. `getStatus` returns the effective status.
+- **`editor`**: a modal in the workspace's editor — an ask dialog, quick pick, input box or file dialog raised through `vscode:show-message` (`ch ws ask|select|input|pick-file`, MCP `ui_ask`…, plugins). A toast (`info`/`warning`/`error`) is not a modal. The sidekick acks every modal only when it is dismissed; the API server counts open modals per workspace from emit until that ack or a socket disconnect, independent of the caller's wait: a call's `timeout` or cancel ends the wait and closes a quick pick or input box (`ui:cancel`), but a dialog or file dialog cannot be closed from code, so it stays counted until dismissed.
+- **`sidebar`**: a `notification:show` card attached to the workspace that waits for an answer (`ch ws ask --sidebar`), counted by the presenter's notification hooks until it is answered, dismissed or released.
+
+- **Edges**: each source dispatches its 0↔1 transitions as `vscode:modal-changed { source }` (`createModalEdges`, serialized per workspace), resolved to the workspace's agent module like `agent:lifecycle`, which calls `setModalOpen(ref, source, open)`. Terminal focus is held back only by an `editor` modal.
+- **Overlay**: the module-provider core keeps the agent's own status in its cache and reports `idle` while any source has a question open; agent changes made meanwhile are recorded but not reported. Each edge re-reports the effective status unconditionally, so an `agent.status.set` nudge (which bypasses the core) is corrected on the next edge. `getStatus` returns the effective status.
 - Parking is ordinary idle: the badge, chime and OS notification follow their usual idle-count rules.
 
 ### Background Tasks: Sub-agents and Shells (Claude Code)

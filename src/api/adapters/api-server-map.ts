@@ -65,7 +65,10 @@ export const API_SERVER_MAP: Readonly<Record<OperationName, ApiServerMapping | n
   // API server carries only the general form above.
   "vscode.notify": null,
   "vscode.status-bar": null,
-  "vscode.ask": null,
+  "vscode.ask": { channel: "api:workspace:ask" },
+  "vscode.select": { channel: "api:workspace:select" },
+  "vscode.input": { channel: "api:workspace:input" },
+  "vscode.pick-file": { channel: "api:workspace:pickFile" },
   "vscode.browser": { channel: "api:workspace:openBrowser" },
   "vscode.diff": { channel: "api:workspace:openDiff" },
   "vscode.goto": { channel: "api:workspace:goto" },

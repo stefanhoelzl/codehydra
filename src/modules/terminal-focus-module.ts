@@ -16,7 +16,8 @@
  * OS window focus and the in-window focus chain so keystrokes reach xterm.
  *
  * Hooks:
- * - vscode:modal-changed → "modal": tracks which workspaces have a modal open.
+ * - vscode:modal-changed → "modal": tracks which workspaces have a modal open in
+ *   their editor (a waiting sidebar card is not in front of the terminal).
  *   While one is, the agent provider reports the workspace "idle" whatever the
  *   agent is doing, so that idle says nothing about the agent terminal: it can
  *   arrive before the sidekick has created it (the Migrate offer for old hooks
@@ -116,9 +117,11 @@ export function createTerminalFocusModule(deps: TerminalFocusModuleDeps): Intent
       [VSCODE_MODAL_CHANGED_OPERATION_ID]: {
         modal: {
           handler: async (ctx): Promise<HookOutput<void>> => {
-            const { workspaceRef, open } = ctx;
-            if (open) modalOpen.add(workspaceRef);
-            else modalOpen.delete(workspaceRef);
+            const { workspaceRef, source, open } = ctx;
+            if (source === "editor") {
+              if (open) modalOpen.add(workspaceRef);
+              else modalOpen.delete(workspaceRef);
+            }
             return { provides: { [MODAL_RECORDED_CAPABILITY]: true } };
           },
         },

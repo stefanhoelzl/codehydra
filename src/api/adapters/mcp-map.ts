@@ -47,12 +47,16 @@ export const MCP_MAP: Readonly<Record<OperationName, McpMapping | null>> = {
 
   "vscode.command": { tool: "workspace_execute_command" },
   "vscode.message": { tool: "ui_show_message" },
-  // The split forms exist so the CLI has three commands instead of one with a
-  // mode flag. A tool takes structured arguments already, so splitting it here
-  // would only add schemas to every agent's context for no gain.
+  // notify and status-bar are split out so the CLI has a command each instead
+  // of one with a mode flag. A tool takes structured arguments already, so
+  // splitting it here would only add schemas to every agent's context.
   "vscode.notify": null,
   "vscode.status-bar": null,
-  "vscode.ask": null,
+  // The questions each wait for an answer of their own shape, so each is a tool.
+  "vscode.ask": { tool: "ui_ask" },
+  "vscode.select": { tool: "ui_select" },
+  "vscode.input": { tool: "ui_input" },
+  "vscode.pick-file": { tool: "ui_pick_file" },
   "vscode.browser": { tool: "workspace_open_browser" },
   "vscode.diff": { tool: "workspace_open_diff" },
   "vscode.goto": { tool: "workspace_goto" },

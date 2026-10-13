@@ -532,8 +532,8 @@ export function createAgentModule(
         modal: {
           requires: { agent: provider.type, [MODAL_RECORDED_CAPABILITY]: ANY_VALUE },
           handler: async (ctx): Promise<void> => {
-            const { workspaceRef, open } = ctx;
-            provider.setModalOpen(workspaceRef, open);
+            const { workspaceRef, source, open } = ctx;
+            provider.setModalOpen(workspaceRef, source, open);
           },
         },
       },

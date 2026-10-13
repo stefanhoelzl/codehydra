@@ -4,7 +4,8 @@
  *
  * Distinct from `vscode.message` / `ch ws notify`, which raise a toast inside a
  * workspace's editor. A sidebar card is app-wide unless the caller attaches it
- * to a workspace, so these work from anywhere.
+ * to a workspace, so these work from anywhere. A card here never waits: a
+ * question on a card is `vscode.ask` with `sidebar`.
  */
 
 import { z } from "zod/v4";
@@ -17,7 +18,6 @@ import { createReferenceResolver, targetFields } from "./target";
 import {
   INTENT_SHOW_NOTIFICATION,
   type ShowNotificationIntent,
-  type ShowNotificationResult,
 } from "../../intents/show-notification";
 import {
   INTENT_CLOSE_NOTIFICATION,
@@ -54,10 +54,6 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
   const { dispatcher } = deps;
   const resolveReference = createReferenceResolver(dispatcher);
 
-  // Names each wait so a caller that disconnects can release it. Per registry,
-  // not per call site: tokens only have to be unique among live waits.
-  let waiterSeq = 0;
-
   const show = defineEntry({
     name: "notification.show",
     kind: "command",
@@ -68,10 +64,9 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
       "a new message) or to notification.close. A card is app-wide unless attach is set (the " +
       "calling workspace) or workspace is given: an attached card names the workspace, " +
       "switches to it when clicked, and closes when the workspace is deleted. A card that says " +
-      "exactly what an open card says joins it (a repeat counter) and returns its id. With " +
-      "wait, blocks until the user answers and returns { choice }: the clicked action, or " +
-      "null if dismissed, timed out, or the workspace went away; answering closes the card. " +
-      "Updating a card the user already dismissed fails as not found.",
+      "exactly what an open card says joins it (a repeat counter) and returns its id. Never " +
+      "waits and has no buttons: to ask the user something, use vscode.ask (with sidebar for " +
+      "a card). Updating a card the user already dismissed fails as not found.",
     input: z.object({
       title: z.string().min(1).max(200).describe("Card title"),
       message: z.string().max(1000).optional().describe("Secondary text under the title"),
@@ -93,19 +88,12 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
         .optional()
         .default(true)
         .describe("Show a dismiss button (default true)"),
-      actions: z
-        .array(z.string().min(1).max(50))
-        .max(5)
-        .optional()
-        .describe("Action buttons; the clicked one is returned as the choice"),
       id: z.string().min(1).optional().describe("Card to update instead of opening a new one"),
       attach: z.boolean().optional().describe("Attach the card to the calling workspace"),
       workspace: targetFields.workspace.describe(
         "Attach the card to this workspace instead: a name (your own project first) or a path"
       ),
       project: targetFields.project,
-      wait: z.boolean().optional().describe("Block until the user answers; returns { choice }"),
-      timeout: z.number().positive().optional().describe("Give up waiting after this many seconds"),
     }),
     requiresWorkspace: false,
     handler: async (ctx, input) => {
@@ -116,9 +104,6 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
         dismissible: input.dismissible,
         ...(input.message !== undefined && { message: input.message }),
         ...(input.percent !== undefined && { progress: input.percent / 100 }),
-        ...(input.actions !== undefined && {
-          actions: input.actions.map((label) => ({ id: label, label })),
-        }),
       };
       const payload = {
         config,
@@ -126,52 +111,15 @@ export function notificationEntries(deps: EntryDeps): readonly AnyOperationEntry
         ...(workspaceRef !== undefined && { workspaceRef }),
       };
 
-      /** A card that is gone reaches the caller as not-found (CLI exit 6). */
-      const answer = (result: ShowNotificationResult): ShowNotificationResult => {
-        if ("missing" in result) {
-          throw new ApiError("not-found", `No open notification "${input.id ?? ""}".`);
-        }
-        return result;
-      };
-
-      if (!input.wait) {
-        return answer(
-          await dispatcher.dispatch<ShowNotificationIntent>({
-            type: INTENT_SHOW_NOTIFICATION,
-            payload,
-          })
-        );
+      const result = await dispatcher.dispatch<ShowNotificationIntent>({
+        type: INTENT_SHOW_NOTIFICATION,
+        payload,
+      });
+      // A card that is gone reaches the caller as not-found (CLI exit 6).
+      if ("missing" in result) {
+        throw new ApiError("not-found", `No open notification "${input.id ?? ""}".`);
       }
-
-      // A wait lives as long as its caller: when the connection goes (Ctrl+C on
-      // `ch`, an aborted agent turn) the wait is released and gives up its hold
-      // on the card, which closes once nobody else holds it.
-      const waiter = `waiter-${++waiterSeq}`;
-      const release = (): void => {
-        void dispatcher
-          .dispatch<CloseNotificationIntent>({
-            type: INTENT_CLOSE_NOTIFICATION,
-            payload: { waiter },
-          })
-          .catch(() => undefined);
-      };
-      if (ctx.signal.aborted) return { choice: null };
-      ctx.signal.addEventListener("abort", release, { once: true });
-      try {
-        return answer(
-          await dispatcher.dispatch<ShowNotificationIntent>({
-            type: INTENT_SHOW_NOTIFICATION,
-            payload: {
-              ...payload,
-              wait: true,
-              waiter,
-              ...(input.timeout !== undefined && { timeoutMs: input.timeout * 1000 }),
-            },
-          })
-        );
-      } finally {
-        ctx.signal.removeEventListener("abort", release);
-      }
+      return result;
     },
   });
 

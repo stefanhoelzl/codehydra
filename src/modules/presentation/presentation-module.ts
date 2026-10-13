@@ -128,6 +128,7 @@ import {
   type NotificationSnapshot,
 } from "./sessions";
 import { createNotificationHooks } from "./notification-hooks";
+import { createModalEdges } from "../modal-edges";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { WorkspaceRef } from "../../intents/contract";
 import { makeWorkspaceRef, projectNameOf, projectRefOf } from "../../utils/ref";
@@ -1555,7 +1556,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         },
         ...startup.appStartHooks,
       },
-      ...createNotificationHooks(notifications),
+      ...createNotificationHooks(
+        notifications,
+        createModalEdges(deps.dispatcher, logger, "sidebar")
+      ),
       [SETUP_OPERATION_ID]: startup.setupHooks,
       [CLOSE_PROJECT_OPERATION_ID]: {
         confirm: { handler: confirmClose },

@@ -225,12 +225,13 @@ export interface ServerToClientEvents {
   shutdown: (ack: (result: ApiResult<void>) => void) => void;
 
   /**
-   * Show a modal notification in VS Code.
+   * Show a notification in VS Code.
    *
-   * Acked when the user dismisses it — also when it has no actions. The server
-   * counts the modal as open until then and shows the workspace as waiting on
-   * the user (see `vscode:modal-changed`). The same holds for
-   * `ui:showQuickPick` and `ui:showInputBox`.
+   * With `modal`, a dialog acked when the user dismisses it, with the clicked
+   * action. The server counts the modal as open until then and shows the
+   * workspace as waiting on the user (see `vscode:modal-changed`). The same holds
+   * for `ui:showQuickPick`, `ui:showInputBox` and `ui:showFileDialog`. Without
+   * `modal`, a toast acked at once (action null).
    */
   "ui:showNotification": (
     request: ShowNotificationRequest,
@@ -279,6 +280,21 @@ export interface ServerToClientEvents {
     request: ShowInputBoxRequest,
     ack: (result: ApiResult<ShowInputBoxResponse>) => void
   ) => void;
+
+  /**
+   * Show an open or save dialog.
+   */
+  "ui:showFileDialog": (
+    request: ShowFileDialogRequest,
+    ack: (result: ApiResult<ShowFileDialogResponse>) => void
+  ) => void;
+
+  /**
+   * Close the quick pick or input box opened with this request id; the request
+   * is then acked with no answer. Anything else (a modal, a file dialog, an id
+   * already answered) cannot be closed from code and is left alone. No ack.
+   */
+  "ui:cancel": (request: CancelUiRequest) => void;
 }
 
 // ============================================================================
@@ -460,6 +476,10 @@ export type NotificationSeverity = "info" | "warning" | "error";
 export interface ShowNotificationRequest {
   readonly severity: NotificationSeverity;
   readonly message: string;
+  /** A dialog that waits for the user; a toast when absent. */
+  readonly modal?: boolean | undefined;
+  /** Secondary text under a modal's message. */
+  readonly detail?: string | undefined;
   readonly actions?: readonly string[] | undefined;
 }
 
@@ -495,28 +515,36 @@ export interface QuickPickItem {
   readonly label: string;
   readonly description?: string | undefined;
   readonly detail?: string | undefined;
+  /** Ticked in advance, with `canPickMany`. */
+  readonly picked?: boolean | undefined;
 }
 
 /**
  * Request to show a quick pick list.
  */
 export interface ShowQuickPickRequest {
+  /** Names it for `ui:cancel`. */
+  readonly id?: string | undefined;
   readonly items: readonly QuickPickItem[];
   readonly title?: string | undefined;
   readonly placeholder?: string | undefined;
+  readonly canPickMany?: boolean | undefined;
 }
 
 /**
- * Response from a quick pick selection.
+ * Response from a quick pick selection: the label, every ticked label with
+ * `canPickMany`, null when dismissed.
  */
 export interface ShowQuickPickResponse {
-  readonly selected: string | null;
+  readonly selected: string | readonly string[] | null;
 }
 
 /**
  * Request to show an input box.
  */
 export interface ShowInputBoxRequest {
+  /** Names it for `ui:cancel`. */
+  readonly id?: string | undefined;
   readonly title?: string | undefined;
   readonly prompt?: string | undefined;
   readonly placeholder?: string | undefined;
@@ -529,6 +557,36 @@ export interface ShowInputBoxRequest {
  */
 export interface ShowInputBoxResponse {
   readonly value: string | null;
+}
+
+/**
+ * Request to show an open dialog, or a save dialog with `save`.
+ */
+export interface ShowFileDialogRequest {
+  readonly title?: string | undefined;
+  /** Pick folders instead of files (open only). */
+  readonly folders?: boolean | undefined;
+  /** Allow several (open only). */
+  readonly many?: boolean | undefined;
+  readonly save?: boolean | undefined;
+  /** Name → extensions without the dot. */
+  readonly filters?: Readonly<Record<string, readonly string[]>> | undefined;
+  /** Absolute path the dialog starts at. */
+  readonly start?: string | undefined;
+}
+
+/**
+ * Response from a file dialog: the chosen paths (one for save), null when dismissed.
+ */
+export interface ShowFileDialogResponse {
+  readonly paths: readonly string[] | null;
+}
+
+/**
+ * Request to close a quick pick or input box.
+ */
+export interface CancelUiRequest {
+  readonly id: string;
 }
 
 /**
