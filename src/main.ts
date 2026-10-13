@@ -20,16 +20,7 @@ import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 // Boundaries - Platform
-import {
-  DefaultPathProvider,
-  legacyWindowsDataRoot,
-  windowsDataRoot,
-  type PathProvider,
-} from "./boundaries/platform/path-provider";
-import {
-  relocateDataRoot,
-  type DataRootRelocation,
-} from "./boundaries/platform/data-root-relocation";
+import { DefaultPathProvider, type PathProvider } from "./boundaries/platform/path-provider";
 import type { BuildInfo } from "./boundaries/platform/build-info";
 import { ElectronLog, type Logging } from "./boundaries/platform/logging";
 import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem";
@@ -221,41 +212,12 @@ const inheritedEnv = clearInheritedEnv(process.env);
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
 const platformInfo = new NodePlatformInfo();
-// Windows releases keep their data in %LOCALAPPDATA% since they stopped using the
-// roaming profile. Move an existing install's data before anything opens it; when
-// that fails (an older instance still running), this run stays in the old folder.
-const legacyDataRoot =
-  platformInfo.platform === "win32" && !buildInfo.isDevelopment && !process.env._CHDEV_ROOT_DIR
-    ? legacyWindowsDataRoot(platformInfo.homeDir)
-    : null;
-const dataRootRelocation: DataRootRelocation =
-  legacyDataRoot === null
-    ? { status: "nothing" }
-    : relocateDataRoot(legacyDataRoot, windowsDataRoot(platformInfo.homeDir));
-const pathProvider: PathProvider = new DefaultPathProvider(
-  buildInfo,
-  platformInfo,
-  dataRootRelocation.status === "failed" ? { platformRoot: dataRootRelocation.from } : {}
-);
+const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 const loggingService: Logging = new ElectronLog(pathProvider);
 const appLogger = loggingService.createLogger("app");
 if (inheritedEnv.length > 0) {
   appLogger.info("Cleared variables inherited from a launching CodeHydra", {
     names: inheritedEnv.join(","),
-  });
-}
-if (dataRootRelocation.status === "moved") {
-  appLogger.info("Moved the data folder", {
-    from: dataRootRelocation.from,
-    to: dataRootRelocation.to,
-    sourceCodeKept: dataRootRelocation.sourceCodeKept,
-  });
-  for (const warning of dataRootRelocation.warnings) appLogger.warn(warning);
-} else if (dataRootRelocation.status === "failed") {
-  appLogger.warn("Could not move the data folder; using the old one until the next start", {
-    from: dataRootRelocation.from,
-    to: dataRootRelocation.to,
-    error: dataRootRelocation.error,
   });
 }
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
@@ -264,7 +226,6 @@ const fileSystemLayer = new DefaultFileSystemBoundary(loggingService.createLogge
 // Config — constructed before modules so they can register keys
 const configService = new DefaultConfig({
   configPath: pathProvider.homePath("config.json"),
-  legacyConfigPath: pathProvider.dataPath("config.json"),
   fileSystem: fileSystemLayer,
   logger: loggingService.createLogger("config"),
   isDevelopment: buildInfo.isDevelopment,
@@ -803,7 +764,6 @@ const pluginModule = createPluginModule({
   }),
   // Built further down; read when app:start migrates.
   projectRefs: () => localProjectModule.projectRefs(),
-  workspaceConnected: (listener) => apiServerModule.onWorkspaceConnected(listener),
   registry: () => operationRegistry,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
@@ -975,15 +935,6 @@ const cleanupModule = createCleanupModule({
   logger: loggingService.createLogger("cleanup"),
   isPackagedBuild: !buildInfo.isDevelopment,
   rules: [
-    // Agent hook/MCP configs. They bake in this launch's ports and API token,
-    // so they were never data: they now live under the temp root.
-    { kind: "retire", path: "claude/configs" },
-    // The IDE server we shipped before VSCodium. Nothing has read it since the
-    // `code-server.port` -> `ide-server.port` rename.
-    { kind: "retire", path: "code-server" },
-    // OpenCode's config is passed inline via OPENCODE_CONFIG_CONTENT; this file
-    // is what the old on-disk approach left behind.
-    { kind: "retire", path: "opencode/opencode.codehydra.json" },
     // One log file per launch, and electron-log only ever rotates the current
     // one, so nothing bounded the directory's growth.
     // Script run logs (plugins, wakeup scripts) prune themselves per entry

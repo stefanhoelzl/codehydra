@@ -84,14 +84,10 @@ import { defineEntry } from "../../api/types";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { Config } from "../../boundaries/platform/config";
-import {
-  INTENT_VSCODE_SHOW_MESSAGE,
-  type VscodeShowMessageIntent,
-} from "../../intents/vscode-show-message";
-import type { Operation, OperationContext, OperationSchemas } from "../../intents/lib/operation";
+import type { Operation, OperationSchemas } from "../../intents/lib/operation";
 import type { HookOutputSink } from "./output-sink";
 import { makeWorkspaceRef, projectRefFor } from "../../utils/ref";
-import type { ProjectRef, WorkspaceRef } from "../../intents/contract";
+import type { ProjectRef } from "../../intents/contract";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 
 const PROJECT_ROOT = projPath("/project");
@@ -103,9 +99,6 @@ const WORKSPACE_URL = "http://127.0.0.1:25448/?folder=/workspaces/feature-x";
 const HOME = testPath("/home");
 const LOCAL_PLUGINS = new Path(HOME, "plugins");
 const WORKSPACE_PLUGINS = new Path(WORKSPACE_PATH, ".codehydra", "plugins");
-
-/** The script the migration writes for a legacy source named `gh`. */
-const MIGRATED_SCRIPT = '{\nfetch\n} | ch plugin render "$CH_PLUGIN_DIR/templates/gh.yaml"';
 
 /** What the agent module contributes to the agent terminal's environment. */
 const AGENT_ENV = { _CH_WORKSPACE_PATH: WORKSPACE_PATH };
@@ -128,22 +121,12 @@ interface SetupOptions {
   readonly enabled?: boolean;
   /** Seeds `plugins.state`. */
   readonly pluginsEnabled?: Record<string, boolean>;
-  /** Seeds the pre-plugin `hooks.trusted`. */
-  readonly legacyTrusted?: Record<string, boolean>;
   /** The project refs the startup migration knows, by path. */
   readonly projectRefs?: ReadonlyMap<string, ProjectRef>;
   /** How the trust dialog answers: an action id plus unchecked plugin names. */
   readonly trustAnswer?: { action: string; unchecked?: string[] };
-  /** Seeds the pre-plugin `auto-workspace.sources` setting. */
-  readonly legacySources?: string;
-  /** The platform the module runs on (default linux). */
-  readonly platform?: NodeJS.Platform;
   /** Seeds `auto-workspaces` tracking entries. */
   readonly tracking?: Record<string, unknown>;
-  /** Old hook files in the worktree's `.codehydra/hooks`. */
-  readonly legacyHooks?: readonly string[];
-  /** What the editor's notification answers (a button, or null for dismissed). */
-  readonly editorAnswer?: string | null;
   /** Seeds `plugins.config`. */
   readonly sources?: string;
   /** Other folders' plugins: folder → file name → manifest text. */
@@ -178,10 +161,6 @@ interface TestSetup {
   killedCount(): number;
   /** Start the app's automations (and stop them again when the test ends). */
   startApp(): Promise<void>;
-  /** The workspace's editor connects. */
-  connectEditor(): Promise<void>;
-  /** Messages shown in the workspace's editor, in order. */
-  readonly editorMessages: VscodeShowMessageIntent["payload"][];
 }
 
 function manifestEntries(
@@ -247,33 +226,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
           manifestEntries(new Path(dir), manifests)
         )
       ),
-      ...manifestEntries(
-        new Path(WORKSPACE_PATH, ".codehydra", "hooks"),
-        options?.legacyHooks === undefined
-          ? undefined
-          : Object.fromEntries(options.legacyHooks.map((name) => [name, "#!/bin/sh\n"]))
-      ),
     },
   });
-
-  const editorMessages: VscodeShowMessageIntent["payload"][] = [];
-  const showMessageSchemas = {
-    type: INTENT_VSCODE_SHOW_MESSAGE,
-    payload: z.custom<VscodeShowMessageIntent["payload"]>(),
-    result: z.string().nullable(),
-  } satisfies OperationSchemas;
-  class ShowMessageOp implements Operation<typeof showMessageSchemas> {
-    readonly id = "vscode-show-message";
-    readonly schemas = showMessageSchemas;
-    async execute(
-      ctx: OperationContext<VscodeShowMessageIntent, typeof showMessageSchemas>
-    ): Promise<string | null> {
-      editorMessages.push(ctx.intent.payload);
-      return ctx.intent.payload.options === undefined ? null : (options?.editorAnswer ?? null);
-    }
-  }
-  dispatcher.registerOperation(new ShowMessageOp());
-  const connected: Array<(workspaceRef: WorkspaceRef) => void> = [];
 
   const outcomes = options?.outcomes ?? {};
   const processRunner = createMockProcessRunner({
@@ -394,7 +348,6 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const stateService = createMockState({
     values: {
       "plugins.state": options?.pluginsEnabled ?? {},
-      "hooks.trusted": options?.legacyTrusted ?? {},
       ...(options?.tracking !== undefined && { "auto-workspaces": options.tracking }),
     },
   });
@@ -431,9 +384,6 @@ function createTestSetup(options?: SetupOptions): TestSetup {
       "plugins.enabled": options?.enabled ?? true,
       "paths.bash": null,
       "plugins.config": options?.sources ?? "",
-      ...(options?.legacySources !== undefined && {
-        "auto-workspace.sources": options.legacySources,
-      }),
     },
   });
   const pathProvider = createMockPathProvider({ homeRootDir: HOME });
@@ -444,7 +394,7 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     logger: createBehavioralLogger(),
     tempDir: pathProvider.tempPath("plugins"),
     binDir: new Path(testPath("/data/bin")),
-    platform: options?.platform ?? "linux",
+    platform: "linux",
     env: { PATH: "/usr/bin" },
   });
   // Automations run through the poll, as in the app.
@@ -463,14 +413,9 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     pathProvider: createMockPathProvider({ homeRootDir: HOME }),
     git,
     sink,
-    workspaceConnected: (listener) => {
-      connected.push(listener);
-      return () => {};
-    },
     projectRefs: async () => options?.projectRefs ?? new Map(),
     registry: () => registry,
-    platform: options?.platform ?? "linux",
-    env: { PATH: "/usr/bin" },
+    platform: "linux",
   });
   dispatcher.registerModule(module);
 
@@ -508,11 +453,6 @@ function createTestSetup(options?: SetupOptions): TestSetup {
           intent: { type: "app:shutdown", payload: {} },
         })
       );
-    },
-    editorMessages,
-    connectEditor: async () => {
-      for (const listener of connected) listener(WORKSPACE_REF);
-      await settle();
     },
     killedCount: () =>
       Array.from({ length: processRunner.$.spawnedCount }, (_, i) =>
@@ -941,18 +881,6 @@ describe("trust", () => {
     expect(setup.stateService.getEffective()["plugins.state"]).toEqual({});
   });
 
-  it("takes a project's answer from before plugins for its workspace plugins", async () => {
-    const setup = createTestSetup({
-      workspace: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
-      outcomes: { "echo a": {} },
-      legacyTrusted: { [PROJECT_ROOT]: true },
-    });
-    await openWorkspace(setup);
-
-    expect(setup.dialogs).toEqual([]);
-    expect(setup.ran).toEqual(["echo a"]);
-  });
-
   it("never runs a disabled local plugin", async () => {
     const setup = createTestSetup({
       local: { "a.yaml": hooksManifest({ "after-worktree-created": "echo a" }) },
@@ -1256,116 +1184,6 @@ describe("automations", () => {
     await setup.startApp();
 
     expect(setup.ran).toEqual([]);
-  });
-
-  it("moves the pre-plugin sources setting into a plugin, tracking entries included", async () => {
-    const setup = createTestSetup({
-      legacySources:
-        'name: gh\ncmd: fetch\ntemplate:\n  name: "ws-{{ id }}"\n  key: "{{ id }}"\n  git: "https://x/y.git"',
-      tracking: { "gh/1": { workspaceName: "ws-1", createdAt: "2026-01-01T00:00:00.000Z" } },
-      outcomes: {
-        // What `ch plugin render` would print for the item the cmd emitted.
-        [MIGRATED_SCRIPT]: {
-          stdout: JSON.stringify([
-            { action: "workspace.create", name: "ws-1", key: "1", project: "https://x/y.git" },
-          ]),
-        },
-      },
-    });
-
-    await setup.startApp();
-
-    const manifest = await setup.fileSystem.readFile(
-      new Path(LOCAL_PLUGINS, "auto-workspaces", "plugin.yaml")
-    );
-    expect(manifest).toContain("ch plugin render");
-    expect(
-      await setup.fileSystem.readFile(
-        new Path(LOCAL_PLUGINS, "auto-workspaces", "templates", "gh.yaml")
-      )
-    ).toContain("action: workspace.create");
-    expect(Object.keys(setup.stateService.getEffective()["auto-workspaces"] as object)).toEqual([
-      "local:default:auto-workspaces/gh/1",
-    ]);
-    // The migrated automation ran, and found its item already handled.
-    expect(setup.ran).toEqual([MIGRATED_SCRIPT]);
-    // The setting is cleared, so the move happens once.
-    expect(setup.config.getEffective()).not.toHaveProperty("auto-workspace.sources");
-    expect(setup.notifications.map((n) => n.title)).toContain(
-      "Auto-workspace sources are now a plugin"
-    );
-  });
-
-  it("moves a Windows source's cmd into a batch file the automation pipes", async () => {
-    // The runner writes cmd's `@echo off` prelude ahead of the body.
-    const script =
-      '@echo off\r\n"%CH_PLUGIN_DIR%\\sources\\gh.cmd" | ch plugin render "%CH_PLUGIN_DIR%\\templates\\gh.yaml"';
-    const setup = createTestSetup({
-      platform: "win32",
-      legacySources: 'name: gh\ncmd: fetch ^(a^) %20 %PATH%\ntemplate:\n  name: "ws-{{ id }}"',
-      outcomes: { [script]: { stdout: "[]" } },
-    });
-
-    await setup.startApp();
-
-    expect(
-      await setup.fileSystem.readFile(
-        new Path(LOCAL_PLUGINS, "auto-workspaces", "sources", "gh.cmd")
-      )
-    ).toBe("@echo off\r\nfetch ^(a^) %%20 %PATH%\r\n");
-    expect(setup.ran).toEqual([script]);
-  });
-});
-
-describe("repository hooks from before plugins", () => {
-  it("never runs them", async () => {
-    const setup = createTestSetup({ legacyHooks: ["after-worktree-created"] });
-    await openWorkspace(setup);
-
-    expect(setup.ran).toEqual([]);
-  });
-
-  it("offers to migrate them in the editor, and writes the plugin on Migrate", async () => {
-    const setup = createTestSetup({
-      legacyHooks: ["after-worktree-created", "on-workspace-opened.win.cmd"],
-      editorAnswer: "Migrate",
-    });
-
-    await setup.connectEditor();
-
-    expect(setup.editorMessages[0]).toMatchObject({
-      type: "ask",
-      severity: "warning",
-      options: ["Migrate"],
-    });
-    expect(setup.editorMessages[0]!.message).toContain(
-      "after-worktree-created, on-workspace-opened.win.cmd"
-    );
-    const manifest = await setup.fileSystem.readFile(new Path(WORKSPACE_PLUGINS, "hooks.yaml"));
-    expect(manifest).toContain("$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created");
-    expect(setup.editorMessages[1]?.message).toMatch(/Wrote \.codehydra\/plugins\/hooks\.yaml/);
-  });
-
-  it("writes nothing when the offer is dismissed", async () => {
-    const setup = createTestSetup({ legacyHooks: ["after-worktree-created"], editorAnswer: null });
-
-    await setup.connectEditor();
-
-    expect(setup.editorMessages).toHaveLength(1);
-    await expect(
-      setup.fileSystem.readFile(new Path(WORKSPACE_PLUGINS, "hooks.yaml"))
-    ).rejects.toThrow();
-  });
-
-  it("stays quiet once the repository has a plugin", async () => {
-    const setup = createTestSetup({
-      legacyHooks: ["after-worktree-created"],
-      workspace: { "setup.yaml": "hooks: {}\n" },
-    });
-
-    await setup.connectEditor();
-
-    expect(setup.editorMessages).toEqual([]);
   });
 });
 

@@ -94,10 +94,6 @@ import { resolveProjectReference, type ProjectLocation } from "../../api/workspa
 import { projectNameOf } from "../../utils/ref";
 import { expandGitUrl, extractRepoName } from "../../utils/url-utils";
 import { looksLikeGitUrl, resolveLocalPath } from "../../utils/project-reference";
-import {
-  INTENT_VSCODE_SHOW_MESSAGE,
-  type VscodeShowMessageIntent,
-} from "../../intents/vscode-show-message";
 import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
@@ -105,7 +101,6 @@ import type { OperationRegistry } from "../../api/registry";
 import type { PluginListing, PluginSourceListing, Plugins } from "../../api/entries/deps";
 import { ApiError } from "../../api/errors";
 import { invokePluginAction } from "../../api/adapters/plugin-actions";
-import { notify } from "../presentation/notification-card";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
   DELETE_WORKSPACE_HOOKS,
@@ -166,19 +161,6 @@ import { createAutomations, type AutomationSource } from "./automations";
 import { POLL_TICK_OPERATION_ID, type PollJob } from "../../intents/poll-tick";
 import type { PollError } from "../poll-module";
 import {
-  convertLegacySources,
-  LEGACY_SOURCES_DIR,
-  LEGACY_SOURCES_PLUGIN,
-  LEGACY_TEMPLATES_DIR,
-} from "./legacy-sources";
-import { MANIFEST_FILE, discoverPlugins } from "./discovery";
-import {
-  LEGACY_HOOKS_DIR,
-  MIGRATED_PLUGIN_FILE,
-  listLegacyHooks,
-  migrateLegacyHooks,
-} from "./legacy-hooks";
-import {
   defineEvents,
   defineHooks,
   type EventFor,
@@ -213,12 +195,6 @@ export interface PluginModuleDeps {
   >;
   readonly sink: HookOutputSink;
   /**
-   * Subscribe to a workspace's editor connecting (it does on every open). The
-   * migration offer for old `.codehydra/hooks` is shown there, so it needs an
-   * editor to show in.
-   */
-  readonly workspaceConnected: (listener: (workspaceRef: WorkspaceRef) => void) => () => void;
-  /**
    * The ref of every project with a record, by its path — what the startup
    * migration turns stored project paths into.
    */
@@ -230,8 +206,6 @@ export interface PluginModuleDeps {
   readonly registry: () => OperationRegistry;
   /** Which documents apply. Default: this process's platform. */
   readonly platform?: NodeJS.Platform;
-  /** The environment legacy sources are converted against. Default: this process's. */
-  readonly env?: NodeJS.ProcessEnv;
 }
 
 // =============================================================================
@@ -338,9 +312,6 @@ const SOURCES_HELP = [
 // Module
 // =============================================================================
 
-/** The migration offer's button. */
-const ACTION_MIGRATE = "Migrate";
-
 /** A plugin, with the environment its settings' values make. */
 interface ConfiguredPlugin extends LoadedPlugin {
   /** `CH_CONFIG_*` for its scripts. */
@@ -435,14 +406,12 @@ interface HookTarget {
 
 export function createPluginModule(deps: PluginModuleDeps): PluginModule {
   const platform = deps.platform ?? process.platform;
-  const env = deps.env ?? process.env;
 
   const pluginsEnabled = deps.config.register("plugins.enabled", {
     default: true,
     description: "Run plugins: hooks and automations (the switch for when one is broken)",
     applies: "live",
     ...storeBoolean(),
-    legacyNames: { "hooks.enabled": (value) => (typeof value === "boolean" ? value : undefined) },
   });
 
   const sourcesConfig = deps.config.register("plugins.config", {
@@ -470,16 +439,9 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     description: "Plugins enabled or disabled (unlisted: local enabled, workspace asked)",
     ...booleanMapStore,
   });
-  const legacyTrusted = deps.stateService.register("hooks.trusted", {
-    default: {},
-    deprecated: true,
-    description: "Per-project hook trust from before plugins (read as the project's default)",
-    ...booleanMapStore,
-  });
 
   const trust: PluginTrust = createPluginTrust({
     enabled: enabledState,
-    legacyTrusted,
     ui: deps.ui,
     logger: deps.logger,
   });
@@ -489,21 +451,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
 
   const localDir = deps.pathProvider.homePath("plugins");
   const logsRoot = deps.pathProvider.dataPath("logs/plugins");
-
-  /**
-   * The setting automations replaced. Read once at start to move it into a
-   * plugin, then reset: readable, never settable.
-   */
-  const legacySources = deps.config.register("auto-workspace.sources", {
-    default: null,
-    deprecated: true,
-    description: "Auto-workspace sources, from before plugins (moved into a plugin at start)",
-    omit: true,
-    ...storeCustom<string | null>({
-      parse: (raw) => raw,
-      validate: (value) => (value === null || typeof value === "string" ? value : undefined),
-    }),
-  });
 
   // ---------------------------------------------------------------------------
   // Loading
@@ -1391,11 +1338,10 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     leases.delete(id);
   }
 
-  /** Read once, before the first tick reads them: legacy sources moved, tracking loaded. */
+  /** Read once, before the first tick reads them: tracking loaded. */
   let prepared: Promise<void> | undefined;
   function prepare(): Promise<void> {
     prepared ??= (async () => {
-      await moveLegacySources();
       automations.load();
     })();
     return prepared;
@@ -1449,174 +1395,6 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     }
     return automations.handle(source, printed);
   }
-
-  /**
-   * Move the pre-plugin `auto-workspace.sources` setting into a local plugin,
-   * `auto-workspaces`, once — and its tracking entries with it, so nothing it
-   * already created is created again. A plugin of that name that already
-   * exists is left alone (a move that wrote it but could not clear the setting
-   * has nothing left to do). A failed move keeps the setting for next time.
-   */
-  async function moveLegacySources(): Promise<void> {
-    const raw = legacySources.get();
-    if (typeof raw !== "string" || raw.trim() === "") return;
-
-    const pluginDir = new Path(localDir, LEGACY_SOURCES_PLUGIN);
-    const manifestPath = new Path(pluginDir, MANIFEST_FILE);
-    try {
-      let exists = true;
-      try {
-        await deps.fileSystem.readFile(manifestPath);
-      } catch {
-        exists = false;
-      }
-      if (!exists) {
-        const converted = convertLegacySources(raw, platform, env);
-        // The templates and sources first and the manifest last: the manifest
-        // is what says the move happened, so a move cut short is redone on the
-        // next start.
-        const templatesDir = new Path(pluginDir, LEGACY_TEMPLATES_DIR);
-        await deps.fileSystem.mkdir(templatesDir);
-        for (const [file, text] of Object.entries(converted.templates)) {
-          await deps.fileSystem.writeFile(new Path(templatesDir, file), text);
-        }
-        const sourcesDir = new Path(pluginDir, LEGACY_SOURCES_DIR);
-        for (const [file, text] of Object.entries(converted.sources)) {
-          await deps.fileSystem.mkdir(sourcesDir);
-          await deps.fileSystem.writeFile(new Path(sourcesDir, file), text);
-        }
-        await deps.fileSystem.writeFile(manifestPath, converted.manifest);
-        await automations.renameTracking((key) => {
-          const slash = key.indexOf("/");
-          if (slash === -1) return undefined;
-          const name = converted.renames.get(key.slice(0, slash));
-          return name === undefined
-            ? undefined
-            : `${automationId(`${DEFAULT_PLUGIN_PREFIX}${LEGACY_SOURCES_PLUGIN}`, name)}/${key.slice(slash + 1)}`;
-        });
-        for (const error of converted.errors) {
-          deps.logger.warn("Auto-workspace source could not be moved (invalid)", {
-            source: error.name ?? `#${error.index}`,
-            message: error.message,
-          });
-        }
-        const dropped = converted.dropped.map((item) => `${item.source}: ${item.field}`);
-        if (dropped.length > 0) {
-          deps.logger.warn("Auto-workspace template fields could not be moved", {
-            fields: dropped.join(", "),
-          });
-        }
-        notify(deps.dispatcher, {
-          type: dropped.length > 0 || converted.errors.length > 0 ? "warning" : "info",
-          title: "Auto-workspace sources are now a plugin",
-          message:
-            `They moved to ${manifestPath.toNative()}` +
-            (converted.errors.length > 0
-              ? ` (${converted.errors.length} invalid source(s) left out)`
-              : "") +
-            (dropped.length > 0 ? `. Template fields left out: ${dropped.join(", ")}` : ""),
-          dismissible: true,
-        });
-        deps.logger
-          .scoped({ path: manifestPath.toString() })
-          .info("Moved auto-workspace.sources into a plugin");
-      }
-      await legacySources.reset();
-    } catch (error) {
-      deps.logger.warn("Could not move auto-workspace.sources into a plugin", {
-        error: getErrorMessage(error),
-      });
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Repository hooks from before plugins
-  // ---------------------------------------------------------------------------
-
-  /** Workspaces with an offer on screen, so a reconnect does not stack a second. */
-  const offering = new Set<WorkspaceRef>();
-
-  /**
-   * Offer to migrate a worktree's old `.codehydra/hooks`, which no longer run.
-   *
-   * Raised on every open while the hook files are there and the repository
-   * has no plugin — loud on purpose: the hooks stopped running silently, and
-   * a setup step that no longer happens is easy to miss. Migrate writes
-   * `.codehydra/plugins/hooks.yaml` (legacy-hooks.ts) for the user to commit.
-   */
-  async function offerHookMigration(workspaceRef: WorkspaceRef): Promise<void> {
-    if (offering.has(workspaceRef)) return;
-    offering.add(workspaceRef);
-    try {
-      const { workspacePath, projectRef: resolvedProject } =
-        await deps.dispatcher.dispatch<ResolveWorkspaceIntent>({
-          type: INTENT_RESOLVE_WORKSPACE,
-          payload: { workspaceRef },
-        });
-      const worktree = new Path(workspacePath);
-      const files = await listLegacyHooks(deps.fileSystem, worktree);
-      if (files.length === 0) return;
-      const pluginsDir = workspacePluginsDir(worktree);
-      const repository: PluginSource = {
-        type: "project",
-        entry: projectNameOf(resolvedProject),
-      };
-      if ((await discoverPlugins(deps.fileSystem, pluginsDir, repository)).plugins.length > 0) {
-        return;
-      }
-
-      const answer = await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
-        type: INTENT_VSCODE_SHOW_MESSAGE,
-        payload: {
-          workspaceRef,
-          type: "ask",
-          severity: "warning",
-          message:
-            `This repository's ${LEGACY_HOOKS_DIR.join("/")} (${files.join(", ")}) no longer ` +
-            `run: CodeHydra runs plugins now. Migrate writes .codehydra/plugins/` +
-            `${MIGRATED_PLUGIN_FILE}, which runs them again.`,
-          options: [ACTION_MIGRATE],
-        },
-      });
-      if (answer !== ACTION_MIGRATE) return;
-
-      const migrated = migrateLegacyHooks(files);
-      await deps.fileSystem.mkdir(pluginsDir);
-      await deps.fileSystem.writeFile(
-        new Path(pluginsDir, MIGRATED_PLUGIN_FILE),
-        migrated.manifest,
-        {
-          exclusive: true,
-        }
-      );
-      const skipped = migrated.ambiguous.map(
-        (item) => `${item.entry} on ${item.platform} (${item.files.join(", ")})`
-      );
-      await deps.dispatcher.dispatch<VscodeShowMessageIntent>({
-        type: INTENT_VSCODE_SHOW_MESSAGE,
-        payload: {
-          workspaceRef,
-          type: "info",
-          message:
-            `Wrote .codehydra/plugins/${MIGRATED_PLUGIN_FILE}: commit it. The hooks run again ` +
-            `from the next time a workspace opens.` +
-            (skipped.length > 0
-              ? ` Left out, since several files claimed them: ${skipped.join("; ")}.`
-              : ""),
-        },
-      });
-    } catch (error) {
-      deps.logger
-        .scoped({ workspace: workspaceRef })
-        .warn("Could not offer to migrate .codehydra/hooks", { error: getErrorMessage(error) });
-    } finally {
-      offering.delete(workspaceRef);
-    }
-  }
-
-  deps.workspaceConnected((workspaceRef) => {
-    void offerHookMigration(workspaceRef);
-  });
 
   // ---------------------------------------------------------------------------
   // `ch plugin`

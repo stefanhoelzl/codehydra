@@ -141,8 +141,9 @@ export interface PersistedKeyDefinition<T> {
    * Map of legacy key -> translator that produces the new value from the legacy
    * JSON value. Used to migrate renamed keys without crashing on the old name.
    *
-   * In config.json the translator runs on the typed legacy value, and the legacy
-   * entry is preserved on disk. Env vars and CLI flags honor legacy names too, but
+   * In config.json the translator runs on the typed legacy value, and load()
+   * rewrites the file with the value under the new key and the legacy entry gone
+   * (one-way: a downgrade does not find it). Env vars and CLI flags honor legacy names too, but
    * via pure-rename: the raw string is run through the new key's parse() (the
    * translator is not invoked), since a string can't be fed to the typed translator.
    */
@@ -498,6 +499,7 @@ export type PersistedIssue =
   | { kind: "invalid"; key: string; value: unknown; description?: string; validValues?: string }
   | { kind: "unknown"; key: string }
   | { kind: "deprecated"; key: string }
+  | { kind: "renamed"; legacy: string; newKey: string }
   | { kind: "legacy-shadowed"; legacy: string; newKey: string }
   | { kind: "legacy-untranslatable"; legacy: string; newKey: string; value: unknown }
   | { kind: "broken-json"; path: string; backup: string; error: string };
@@ -635,7 +637,8 @@ export class PersistedDefinitions {
    *  - active known key → def.validate(value); won't validate → `invalid` issue.
    *  - deprecated key → loaded read-only (value validated and included so get()
    *    can read it) plus a benign `deprecated` issue; never `invalid`.
-   *  - legacy name (new key absent) → translate; translator returns undefined → `legacy-untranslatable`.
+   *  - legacy name (new key absent) → translate, with a `renamed` issue; translator
+   *    returns undefined → `legacy-untranslatable`.
    *  - legacy name (new key present) → `legacy-shadowed` issue.
    *  - unknown key → `unknown` issue.
    */
@@ -685,6 +688,7 @@ export class PersistedDefinitions {
           continue;
         }
         values[legacy.newKey] = translated;
+        issues.push({ kind: "renamed", legacy: key, newKey: legacy.newKey });
         continue;
       }
 

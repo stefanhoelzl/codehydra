@@ -17,8 +17,7 @@
  *   never finish, on the loading panel and on the deletion panel;
  * - automations create workspaces (reconciled and as events, waking a
  *   hibernated one), run another action, and report a failing script with its
- *   run log;
- * - a repository still carrying the old `.codehydra/hooks` is offered Migrate.
+ *   run log.
  *
  * The user's plugins are written after launch: `useApp` resets the data root
  * (the home's plugins included) right before it launches, and plugins are read
@@ -733,58 +732,4 @@ test("a failing automation is reported with its run log, never its output", asyn
   expect(readFileSync(failing!.log, "utf8")).toContain("token=e2e-secret went wrong");
   // The secret is in the run log only: not in the app log.
   expect(JSON.stringify(appLogEntries())).not.toContain("e2e-secret");
-});
-
-// =============================================================================
-// Repository hooks from before plugins
-// =============================================================================
-
-test("a repository with old hooks is offered Migrate, which writes a plugin", async () => {
-  test.setTimeout(CREATE_TIMEOUT + 60_000);
-  const legacy = await createTestGitRepo();
-  try {
-    const hooks = join(legacy.path, ".codehydra", "hooks");
-    mkdirSync(hooks, { recursive: true });
-    writeFileSync(join(hooks, "after-worktree-created"), "#!/bin/sh\ncat > /dev/null\n");
-    const git = simpleGit(legacy.path);
-    await git.add(".codehydra");
-    await git.commit("Old-style hooks");
-
-    // The creation panel is not on screen while other workspaces are, so open
-    // the second project, and its workspace, the way a shell would.
-    expect(ch(["project", "open", legacy.path]).status).toBe(0);
-    expect(ch(["ws", "create", "legacy-1", "--project", legacy.path]).status).toBe(0);
-    expect(ch(["ws", "switch", "legacy-1", "--project", legacy.path]).status).toBe(0);
-    await waitForWorkspaceFrame(app(), "legacy-1");
-
-    // The sidekick shows an offer with a button as a modal dialog in the editor.
-    // Look the frame up afresh each time: the workspace iframe can be replaced
-    // while the editor starts.
-    const migrate = async () =>
-      (await app().findTarget("workspace")).frame.getByRole("button", { name: "Migrate" });
-    await expect
-      .poll(async () => (await migrate()).isVisible(), {
-        intervals: POLL_INTERVALS,
-        timeout: 120_000,
-      })
-      .toBe(true);
-    await (await migrate()).click();
-
-    // Two projects are open now, so find this worktree by name.
-    const projects = join(DATA_ROOT, "projects");
-    const worktree = readdirSync(projects)
-      .map((dir) => join(projects, dir, "workspaces", "legacy-1"))
-      .find((path) => existsSync(path));
-    expect(worktree).toBeDefined();
-    const manifest = join(worktree!, ".codehydra", "plugins", "hooks.yaml");
-    // Poll the content, not the file: an exclusive write creates it empty first.
-    await expect
-      .poll(() => (existsSync(manifest) ? readFileSync(manifest, "utf8") : ""), {
-        intervals: POLL_INTERVALS,
-        timeout: 30_000,
-      })
-      .toContain("$CH_WORKSPACE_DIR/.codehydra/hooks/after-worktree-created");
-  } finally {
-    await legacy.cleanup();
-  }
 });

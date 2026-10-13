@@ -186,11 +186,6 @@ const OSC52_CLIPBOARD: TextPatch = {
  * over it — its key came from an unauthenticated localhost route that any local
  * process could mint from, the same process that could already read the
  * partition off disk.
- *
- * A `secrets.provider` blob left behind by the code-server era is sealed with a
- * key we no longer have, so the provider's `load()` fails to `JSON.parse` it,
- * catches, and clears the key — old data degrades to a fresh sign-in rather than
- * breaking startup.
  */
 const SECRET_STORAGE_PERSISTENCE: TextPatch = {
   id: "secret-storage-persistence",

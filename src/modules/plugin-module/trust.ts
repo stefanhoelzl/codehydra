@@ -28,15 +28,10 @@
  * Stored in state.json as `plugins.state`, by the plugin's name —
  * `local:<entry>:<name>`, `remote:<entry>:<name>` — except that a repository's
  * plugin is stored by its project's ref rather than its name:
- * `project:<projectRef>:<name>`. The per-project answers of the hooks that
- * came before plugins (`hooks.trusted`) still count: a repository's plugin
- * with no answer of its own takes its project's.
+ * `project:<projectRef>:<name>`.
  */
 
-import type {
-  DeprecatedPersistedAccessor,
-  PersistedAccessor,
-} from "../../boundaries/platform/store-definition";
+import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { DialogConfig, DialogSection } from "../../shared/dialog-types";
 import type { DialogHandle } from "../presentation/sessions";
 import type { Logger } from "../../boundaries/platform/logging-types";
@@ -66,13 +61,11 @@ export interface TrustDialogOpener {
 
 export interface PluginTrustDeps {
   readonly enabled: PersistedAccessor<Record<string, boolean>>;
-  /** The per-project answers stored before plugins existed. */
-  readonly legacyTrusted: Pick<DeprecatedPersistedAccessor, "get">;
   readonly ui: TrustDialogOpener;
   readonly logger: Logger;
 }
 
-/** A project, as trust needs it: its ref for the answers, its path for the pre-plugin ones. */
+/** A project, as trust needs it: its ref for the answers, its path for the dialog. */
 export interface TrustProject {
   readonly ref: ProjectRef;
   readonly path: string;
@@ -202,23 +195,10 @@ export function createPluginTrust(deps: PluginTrustDeps): PluginTrust {
     return deps.enabled.get() ?? {};
   }
 
-  function legacyAnswer(projectPath: string): boolean | undefined {
-    const legacy = deps.legacyTrusted.get();
-    if (typeof legacy !== "object" || legacy === null) return undefined;
-    const target = new Path(projectPath);
-    for (const [path, value] of Object.entries(legacy as Record<string, unknown>)) {
-      if (typeof value === "boolean" && target.equals(path)) return value;
-    }
-    return undefined;
-  }
-
   function state(source: PluginSource, name: string, project?: TrustProject): EnabledState {
     const answer = stored()[trustKey(source, name, project?.ref)];
     if (answer !== undefined) return answer ? "enabled" : "disabled";
-    if (source.type !== "project") return "enabled";
-    const legacy = project === undefined ? undefined : legacyAnswer(project.path);
-    if (legacy !== undefined) return legacy ? "enabled" : "disabled";
-    return "ask";
+    return source.type === "project" ? "ask" : "enabled";
   }
 
   async function persist(changes: Record<string, boolean | undefined>): Promise<void> {

@@ -9,13 +9,12 @@
  *
  * Order, with the switch as the commit point:
  *
- *   1. records   legacy managed records → URL-only, so no record names a clone path
- *   2. clones    copy each managed clone to <to>/remotes
- *   3. repair    `git worktree repair` from each copy — its worktrees' `.git`
+ *   1. clones    copy each managed clone to <to>/remotes
+ *   2. repair    `git worktree repair` from each copy — its worktrees' `.git`
  *                files name the old clone and git fails inside them otherwise
- *   4. switch    record the new root, and the workspaces directories left under
+ *   3. switch    record the new root, and the workspaces directories left under
  *                the old one; rewrite path-keyed state; move screenshots
- *   5. cleanup   delete the old clones
+ *   4. cleanup   delete the old clones
  *
  * A failure before the switch undoes what ran (copies deleted, repairs pointed
  * back) and the old root stays in use. After it, failures are reported, never
@@ -30,12 +29,11 @@ import type { ProgressItem } from "../../shared/dialog-types";
 import { getErrorMessage } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
 import { extractRepoName } from "../../utils/url-utils";
-import { managedClonePath, managedProjectDirName } from "../../boundaries/platform/paths";
+import { managedClonePath } from "../../boundaries/platform/paths";
 import {
   generateProjectId,
   isManaged,
   loadAllProjects,
-  saveProject,
   type StoreDirs,
 } from "../local-project-module";
 import { remotesDirUnder, workspacesDirUnder } from "./workspaces-root";
@@ -66,7 +64,6 @@ export interface MigrationReport {
 }
 
 const STEP_LABELS = {
-  records: "Prepare project records",
   clones: "Copy cloned repositories",
   repair: "Reconnect existing workspaces to the moved repositories",
   switch: "Switch to the new folder",
@@ -121,24 +118,13 @@ export async function migrateWorkspacesRoot(
     remotesDir: remotesDirUnder(from).toString(),
   };
 
-  // 1. records ---------------------------------------------------------------
-  progress.set("records", "running");
-  const stored = await loadAllProjects(fs, oldDirs);
   const managed: ManagedProject[] = [];
   const local: Path[] = [];
-  for (const { config, dirName, legacy } of stored) {
+  for (const config of await loadAllProjects(fs, oldDirs)) {
     const url = config.remoteUrl;
     if (url === undefined || !isManaged(oldDirs, config.path, url)) {
       local.push(new Path(config.path));
       continue;
-    }
-    if (legacy) {
-      // Strict, unlike the startup conversion: the old clone is about to be
-      // deleted, so a record still naming it would reopen nothing.
-      await saveProject(fs, oldDirs, config.path, url);
-      if (dirName !== managedProjectDirName(url)) {
-        await fs.unlink(new Path(deps.projectsDir, dirName, "config.json"));
-      }
     }
     managed.push({
       url,
@@ -146,7 +132,6 @@ export async function migrateWorkspacesRoot(
       to: managedClonePath(remotesDirUnder(to), url),
     });
   }
-  progress.set("records", "done");
 
   const copied: ManagedProject[] = [];
   const repaired: { project: ManagedProject; worktrees: Path[] }[] = [];
@@ -165,7 +150,7 @@ export async function migrateWorkspacesRoot(
   };
 
   try {
-    // 2. clones --------------------------------------------------------------
+    // 1. clones --------------------------------------------------------------
     progress.set("clones", "running", managed.length === 0 ? "none" : undefined);
     for (const [index, project] of managed.entries()) {
       progress.set(
@@ -179,7 +164,7 @@ export async function migrateWorkspacesRoot(
     }
     progress.set("clones", "done");
 
-    // 3. repair --------------------------------------------------------------
+    // 2. repair --------------------------------------------------------------
     progress.set("repair", "running");
     for (const project of managed) {
       const worktrees = (await gitClient.listWorktrees(project.to))
@@ -190,7 +175,7 @@ export async function migrateWorkspacesRoot(
     }
     progress.set("repair", "done");
 
-    // 4. switch (commit point) -----------------------------------------------
+    // 3. switch (commit point) -----------------------------------------------
     progress.set("switch", "running");
     // The workspaces directories that still hold worktrees stay CodeHydra's own.
     const left: Path[] = [];
@@ -210,7 +195,7 @@ export async function migrateWorkspacesRoot(
     await moveScreenshots(deps, managed);
     progress.set("switch", "done");
 
-    // 5. cleanup -------------------------------------------------------------
+    // 4. cleanup -------------------------------------------------------------
     progress.set("cleanup", "running");
     const leftovers: string[] = [];
     for (const project of managed) {
