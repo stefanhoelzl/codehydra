@@ -229,6 +229,46 @@ jobs:
           # without this the trace and screenshots never reach the artifact.
           include-hidden-files: true
 
+  # The landing-page demo's story, driven and asserted without filming, so a
+  # change that breaks it fails here rather than at the next `pnpm demo:record`.
+  # Real app (dev build) and real Claude CLI against the demo's scripted mock
+  # model; no network beyond the IDE server download on this fresh root.
+  demo:
+    name: Demo smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+
+      # The demo owns its root, under the runner temp dir so it is disposable.
+      - name: Point the app at a disposable root
+        run: echo "_CHDEV_ROOT_DIR=${{ runner.temp }}/ch-demo" >> "$GITHUB_ENV"
+
+      - name: Install the Claude CLI
+        uses: ./.github/actions/install-claude
+
+      # The demo starts its own Xvfb; jq backs its stand-in `gh --jq`.
+      - name: Install Xvfb and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb jq
+
+      - run: pnpm build
+      - run: pnpm demo:smoke
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-smoke-failure
+          path: |
+            demo/.output/
+            ${{ runner.temp }}/ch-demo/logs/
+          retention-days: 7
+          if-no-files-found: warn
+          include-hidden-files: true
+
   # The installer is what most Windows users download; the portable dir above is not.
   # Install it silently, then run the download-binaries spec against the *installed* app.
   e2e-windows-installer:

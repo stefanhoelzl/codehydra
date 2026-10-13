@@ -9,6 +9,8 @@
     "*.ts",
     "../playwright.config.ts",
     "../playwright.dev.config.ts",
+    "../playwright.demo.config.ts",
+    "../demo/*.ts",
     "../scripts/appctrl.ts"
   ]
 }
