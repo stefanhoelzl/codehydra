@@ -457,8 +457,7 @@ describe("WorkspacesRootModule", () => {
       expect(s.state.getEffective()[PENDING_ROOT_STATE_KEY]).toBeNull();
     });
 
-    it("migrates back to the data root, as the Windows data-root move requests", async () => {
-      // NEW_ROOT stands in for the old data root, still holding the source code.
+    it("migrates back to the data root", async () => {
       const s = setup({
         inUse: NEW_ROOT.toNative(),
         pending: DATA.toNative(),

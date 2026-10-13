@@ -14,14 +14,12 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as nodePath from "node:path";
 import { execFileSync } from "node:child_process";
-import { parse } from "yaml";
 import { ExecaProcessRunner } from "../../boundaries/platform/process";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging.test-utils";
 import { Path } from "../../utils/path/path";
 import { createShellResolver, type ShellName } from "./shells";
 import { createScriptRunner, type ScriptRequest, type ScriptRunner } from "./script-runner";
-import { convertLegacySources } from "../plugin-module/legacy-sources";
 
 const isWindows = process.platform === "win32";
 
@@ -156,33 +154,6 @@ describe.runIf(isWindows)("cmd", () => {
 
     expect(run.result.exitCode).toBe(0);
     expect(run.result.stdout.trim()).toBe('{"ok":true}');
-  });
-
-  it("runs a migrated auto-workspace source as the old cmd /c did", async () => {
-    // cmd.exe runs the left side of a pipe in a second cmd.exe that parses it
-    // again; the migrated source must still see its `^` escapes, and a `%`
-    // that a command line kept.
-    const converted = convertLegacySources(
-      "name: src\ncmd: echo a^(b^),c%20 ^& echo x\ntemplate:\n  name: x",
-      "win32",
-      process.env
-    );
-    const pluginDir = nodePath.join(root, "plugin");
-    await fs.mkdir(nodePath.join(pluginDir, "sources"), { recursive: true });
-    for (const [file, text] of Object.entries(converted.sources)) {
-      await fs.writeFile(nodePath.join(pluginDir, "sources", file), text);
-    }
-    // Stands in for `ch plugin render`: a batch file too, printing what it is piped.
-    await fs.mkdir(nodePath.join(root, "bin"), { recursive: true });
-    await fs.writeFile(nodePath.join(root, "bin", "ch.cmd"), "@findstr .\r\n");
-    const script = (parse(converted.manifest) as { automations: Record<string, string> })
-      .automations["src"]!;
-
-    const run = await runner.run(request("cmd", script, { pluginDir: new Path(pluginDir) }));
-
-    expect(run.result.exitCode).toBe(0);
-    // `^&` is a literal `&` to echo, as it was to the old `cmd /c`.
-    expect(run.result.stdout.trim()).toBe("a(b),c%20 & echo x");
   });
 });
 

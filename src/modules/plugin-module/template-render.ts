@@ -1,7 +1,7 @@
 /**
  * Liquid templates for `ch plugin render`: an opt-in filter for automation
  * scripts that would rather describe their items as a template than build them
- * in jq, and the bridge the migrated `auto-workspace.sources` run through.
+ * in jq.
  *
  * A template is a YAML mapping; every string leaf is a Liquid template rendered
  * against one input item, and every other value — a number, a boolean, a list —

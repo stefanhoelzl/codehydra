@@ -832,26 +832,6 @@ describe("LocalProjectModule Integration", () => {
       expect(resolved[0]).toEqual({ remoteUrl: REPO_URL });
     });
 
-    it("moves a legacy record to the URL-named directory, leaving the worktrees", async () => {
-      const setup = createTestSetup();
-      writeConfig(setup.fs, MANAGED_PATH, REPO_URL);
-      const legacyDir = nodePath.join(PROJECTS_DIR, projectDirName(MANAGED_PATH));
-      setup.fs.$.setEntry(nodePath.join(legacyDir, "workspaces"), { type: "directory" });
-
-      const { results } = await setup.readyHooks.collect("load-projects", {
-        intent: appReadyIntent(),
-      });
-
-      expect(results[0]!.projectPaths).toEqual([MANAGED_PATH]);
-      expect(readJson(setup.fs, MANAGED_RECORD)).toEqual({ remoteUrl: REPO_URL });
-      expect(
-        setup.fs.$.entries.has(new Path(nodePath.join(legacyDir, "config.json")).toString())
-      ).toBe(false);
-      expect(
-        setup.fs.$.entries.has(new Path(nodePath.join(legacyDir, "workspaces")).toString())
-      ).toBe(true);
-    });
-
     it("removes both directories when a managed project is closed", async () => {
       const setup = createTestSetup();
       await setup.openHooks.collect("register", {

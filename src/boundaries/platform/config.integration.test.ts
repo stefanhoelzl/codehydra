@@ -18,7 +18,7 @@ import { createFileSystemMock, file, directory } from "./filesystem.state-mock";
 import { DefaultConfig, parseEnvVars, parseCliArgs, resolveFileReferences } from "./config";
 import type { Config, ConfigDeps } from "./config";
 import type { PersistedKeyDefinition } from "./store-definition";
-import { parseBool, PersistedValidationError } from "./store-definition";
+import { parseBool, PersistedValidationError, storeNumber } from "./store-definition";
 import { testPath } from "../../shared/test-fixtures";
 
 // =============================================================================
@@ -563,92 +563,6 @@ describe("Config", () => {
     });
   });
 
-  describe("moving config.json to the home root", () => {
-    const LEGACY_PATH = testPath("/data/config.json");
-
-    /** A sync filesystem the move can read, write and delete in. */
-    function createSyncFiles(initial: Record<string, string>): {
-      files: Map<string, string>;
-      deps: Pick<ConfigDeps, "readFileSync" | "writeFileSync" | "unlinkSync" | "mkdirSync">;
-    } {
-      const files = new Map(
-        Object.entries(initial).map(([key, content]) => [testPath(key).toString(), content])
-      );
-      const enoent = (path: string): Error => {
-        const err = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
-        err.code = "ENOENT";
-        return err;
-      };
-      return {
-        files,
-        deps: {
-          readFileSync: (path) => {
-            const content = files.get(testPath(path).toString());
-            if (content === undefined) throw enoent(path);
-            return content;
-          },
-          writeFileSync: (path, content) => void files.set(testPath(path).toString(), content),
-          unlinkSync: (path) => {
-            if (!files.delete(testPath(path).toString())) throw enoent(path);
-          },
-          mkdirSync: () => {},
-        },
-      };
-    }
-
-    it("moves the old file into the home when the home has none", () => {
-      const { files, deps } = createSyncFiles({ "/data/config.json": '{"test.key":"kept"}' });
-      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
-      const key = svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      expect(key.get()).toBe("kept");
-      expect(svc.wasConfigured()).toBe(true);
-      expect(files.get(CONFIG_PATH.toString())).toBe('{"test.key":"kept"}');
-      expect(files.has(LEGACY_PATH.toString())).toBe(false);
-    });
-
-    it("leaves a stale old file alone when the home already has one", () => {
-      const { files, deps } = createSyncFiles({
-        "/app/config.json": '{"test.key":"current"}',
-        "/data/config.json": '{"test.key":"stale"}',
-      });
-      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
-      const key = svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      expect(key.get()).toBe("current");
-      expect(files.get(LEGACY_PATH.toString())).toBe('{"test.key":"stale"}');
-    });
-
-    it("reads the old file this time when the move fails, keeping it", () => {
-      const { files, deps } = createSyncFiles({ "/data/config.json": '{"test.key":"kept"}' });
-      const svc = createService({
-        ...deps,
-        legacyConfigPath: LEGACY_PATH,
-        mkdirSync: () => {
-          throw new Error("EACCES: no home");
-        },
-      });
-      const key = svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      // Neither the settings nor the "already configured" answer are lost.
-      expect(key.get()).toBe("kept");
-      expect(svc.wasConfigured()).toBe(true);
-      expect(files.has(LEGACY_PATH.toString())).toBe(true);
-    });
-
-    it("is a first run when neither file exists", () => {
-      const { deps } = createSyncFiles({});
-      const svc = createService({ ...deps, legacyConfigPath: LEGACY_PATH });
-      svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      expect(svc.wasConfigured()).toBe(false);
-    });
-  });
-
   describe("invalid JSON in config.json", () => {
     it("load() renames the file to config.json.broken and uses defaults", () => {
       const renames: Array<{ from: string; to: string }> = [];
@@ -855,12 +769,33 @@ describe("Config", () => {
       expect(newKey.get()).toBe("migrated:raw");
     });
 
-    it("preserves the legacy entry in config.json (no rewrite)", () => {
+    it("moves the legacy entry to the new key in config.json", () => {
       const writes: Array<{ path: string; content: string }> = [];
       const svc = createService({
         fileEntries: {
           "/app": directory(),
-          "/app/config.json": file(JSON.stringify({ "legacy.old-name": "raw" })),
+          "/app/config.json": file(JSON.stringify({ "legacy.old-name": "raw", other: 1 })),
+        },
+        writeFileSync: (path, content) => {
+          writes.push({ path, content });
+        },
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+      svc.register("other", { default: 0, ...storeNumber() });
+      svc.load();
+
+      expect(writes).toHaveLength(1);
+      expect(JSON.parse(writes[0]!.content)).toEqual({ other: 1, "test.new": "migrated:raw" });
+    });
+
+    it("drops a legacy entry the new key shadows from config.json", () => {
+      const writes: Array<{ path: string; content: string }> = [];
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(
+            JSON.stringify({ "legacy.old-name": "raw", "test.new": "explicit" })
+          ),
         },
         writeFileSync: (path, content) => {
           writes.push({ path, content });
@@ -869,7 +804,7 @@ describe("Config", () => {
       svc.register("test.new", defWithLegacy("test.new"));
       svc.load();
 
-      expect(writes).toHaveLength(0);
+      expect(JSON.parse(writes[0]!.content)).toEqual({ "test.new": "explicit" });
     });
 
     it("new key wins on conflict in config.json; legacy ignored with warn", () => {
@@ -1193,12 +1128,12 @@ describe("resolveFileReferences", () => {
   it("carries a multi-line value, which is the whole point", () => {
     // A command line cannot: Windows delimits arguments on whitespace, so only
     // the first line of an inline value would ever arrive.
-    const yaml = "name: gh\ntype: cron\nmode: events\ncmd: poll\n";
+    const yaml = "acme:\n  type: remote\n  url: https://x/y.git\n";
     const { values } = resolveFileReferences(
-      { "auto-workspace.sources": `@${testPath("/cfg/sources.yaml").toNative()}` },
-      reader({ [testPath("/cfg/sources.yaml").toNative()]: yaml })
+      { "plugins.config": `@${testPath("/cfg/plugins.yaml").toNative()}` },
+      reader({ [testPath("/cfg/plugins.yaml").toNative()]: yaml })
     );
-    expect(values["auto-workspace.sources"]).toBe("name: gh\ntype: cron\nmode: events\ncmd: poll");
+    expect(values["plugins.config"]).toBe("acme:\n  type: remote\n  url: https://x/y.git");
   });
 
   it("strips one trailing newline but keeps interior blank lines", () => {

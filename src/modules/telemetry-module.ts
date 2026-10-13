@@ -50,7 +50,6 @@ export interface TelemetryModuleDeps {
   readonly configService: Config;
   /** Persisted app state (state.json) — owns the auto-generated distinct-id. */
   readonly stateService: StateService;
-  /** Registry the state module drains to migrate distinct-id out of config.json. */
   /** Accessor for the user's agent selection (registered in the composition root). */
   readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   /** Accessor for telemetry.enabled (registered in the composition root). */

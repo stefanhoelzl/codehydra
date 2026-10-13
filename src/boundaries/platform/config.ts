@@ -26,12 +26,9 @@
  * uses the async FileSystemBoundary for writes (all callers are post-ready).
  *
  * config.json lives in the home root (`~/.codehydra`), next to the user's plugins.
- * It used to live in the data root; load() moves a file found there on the first
- * start that has none in the home (mkdirSync / writeFileSync / unlinkSync — a copy
- * and delete rather than a rename, since the two roots may be on different drives).
  */
 
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type {
   PersistedKeyDefinition,
   ComputedDefaultContext,
@@ -110,7 +107,7 @@ function generateHelpText(
     "A CLI value of @<path> is read from that file instead — the only way to pass",
     "a multi-line value (Windows splits a command line on whitespace, so only the",
     "first line of one would arrive). Use @@ for a value that starts with a literal @.",
-    "  e.g. --auto-workspace.sources=@./sources.yaml",
+    "  e.g. --plugins.config=@./plugins.yaml",
     "",
     "Keys:",
     "",
@@ -235,11 +232,6 @@ export interface Config {
 
 export interface ConfigDeps {
   readonly configPath: Path;
-  /**
-   * Where config.json lived before it moved to the home root. load() moves a
-   * file found here to `configPath` when there is none there yet.
-   */
-  readonly legacyConfigPath?: Path;
   readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly isDevelopment: boolean;
@@ -252,10 +244,6 @@ export interface ConfigDeps {
   readonly writeFileSync?: (path: string, content: string) => void;
   /** Override sync file renamer (for testing). Defaults to node:fs renameSync. */
   readonly renameSync?: (oldPath: string, newPath: string) => void;
-  /** Override sync recursive mkdir (for testing). Defaults to node:fs mkdirSync. */
-  readonly mkdirSync?: (path: string) => void;
-  /** Override sync file delete (for testing). Defaults to node:fs unlinkSync. */
-  readonly unlinkSync?: (path: string) => void;
 }
 
 // =============================================================================
@@ -299,7 +287,7 @@ const FILE_REFERENCE_PREFIX = "@";
  * Windows delimits arguments on whitespace before any of our code runs, so a
  * flag carrying a YAML document arrives truncated at its first newline — the
  * app then rejects the fragment and refuses to start, which is exactly what
- * `--auto-workspace.sources=<yaml>` did. A path has no whitespace to split on,
+ * `--plugins.config=<yaml>` would do. A path has no whitespace to split on,
  * and it reads better than a screenful of quoted argument on every platform.
  *
  * Deliberately CLI-only: env vars and config.json carry newlines just fine, so
@@ -485,9 +473,8 @@ export class DefaultConfig implements Config {
     //    so getHelpText()/getEffective() work even if we throw below.
     const defaults = this.store.seedDefaults(computedDefaultCtx);
 
-    // 2. config.json: move it from its old home first, then read (I/O) → validate.
-    const readPath = this.moveLegacyConfig(syncRead);
-    const file = readConfigFile(readPath, syncRead, syncRename);
+    // 2. config.json: read (I/O) → validate.
+    const file = readConfigFile(configPath, syncRead, syncRename);
     this.configFileExisted = file.existed;
     const fileResult = this.store.validate(file.data);
 
@@ -517,92 +504,41 @@ export class DefaultConfig implements Config {
     this.store.markSources(Object.keys(envResult.values), "env");
     this.store.markSources(Object.keys(cliResult.values), "cli");
 
-    // 6. If config.json contained unknown keys, rewrite it with those stripped
-    //    (active, deprecated, and legacy entries are preserved).
-    const unknownFileKeys = fileResult.issues.flatMap((issue) =>
-      issue.kind === "unknown" ? [issue.key] : []
-    );
-    if (unknownFileKeys.length > 0) {
-      const stripped = new Set(unknownFileKeys);
+    // 6. If config.json contained unknown keys or legacy names, rewrite it: unknown
+    //    keys stripped, a renamed key's value moved to its new name (active and
+    //    deprecated entries are preserved).
+    const stripped = new Set<string>();
+    const renamed: Record<string, unknown> = {};
+    for (const issue of fileResult.issues) {
+      if (issue.kind === "unknown") stripped.add(issue.key);
+      if (
+        issue.kind === "renamed" ||
+        issue.kind === "legacy-shadowed" ||
+        issue.kind === "legacy-untranslatable"
+      ) {
+        stripped.add(issue.legacy);
+      }
+      if (issue.kind === "renamed") renamed[issue.newKey] = fileResult.values[issue.newKey];
+    }
+    if (stripped.size > 0) {
       const kept: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(file.data)) {
         if (!stripped.has(key)) kept[key] = value;
       }
+      Object.assign(kept, renamed);
       const syncWrite =
         this.deps.writeFileSync ?? ((p: string, c: string) => writeFileSync(p, c, "utf-8"));
       try {
         syncWrite(configPath.toNative(), JSON.stringify(kept, null, 2));
         this.deps.logger
           .scoped({ path: configPath.toString() })
-          .debug("Config rewritten (unknown keys stripped)");
+          .debug("Config rewritten (unknown keys stripped, renamed keys moved)");
       } catch (error) {
         this.deps.logger.scoped({ path: configPath.toString() }).warn("Config rewrite failed", {
           error: getErrorMessage(error),
         });
       }
     }
-  }
-
-  /**
-   * Move config.json from the data root to the home root, once.
-   *
-   * Only when the home has none: a file there is the one in use, and a stale
-   * copy left in the data root (a downgrade wrote it, say) must not overwrite
-   * it. Copy-then-delete, so a crash in between leaves both files rather than
-   * neither, and the next start finds the new one and leaves the old alone.
-   *
-   * Returns the file to read this time: the home's, or — when the move failed —
-   * the old one, so a failed move costs neither the user's settings for this
-   * session nor a spurious first-run wizard. Writes still go to the home.
-   */
-  private moveLegacyConfig(syncRead: (path: string) => string): Path {
-    const { configPath, legacyConfigPath, logger } = this.deps;
-    if (legacyConfigPath === undefined || legacyConfigPath.equals(configPath)) return configPath;
-
-    try {
-      syncRead(configPath.toNative());
-      return configPath;
-    } catch (error) {
-      if (!isEnoent(error)) return configPath;
-    }
-
-    let content: string;
-    try {
-      content = syncRead(legacyConfigPath.toNative());
-    } catch {
-      return configPath;
-    }
-
-    const syncMkdir =
-      this.deps.mkdirSync ?? ((p: string) => void mkdirSync(p, { recursive: true }));
-    const syncWrite =
-      this.deps.writeFileSync ?? ((p: string, c: string) => writeFileSync(p, c, "utf-8"));
-    const syncUnlink = this.deps.unlinkSync ?? unlinkSync;
-    try {
-      syncMkdir(configPath.dirname.toNative());
-      syncWrite(configPath.toNative(), content);
-    } catch (error) {
-      logger.warn("Could not move config.json to its new location", {
-        from: legacyConfigPath.toString(),
-        to: configPath.toString(),
-        error: getErrorMessage(error),
-      });
-      return legacyConfigPath;
-    }
-    try {
-      syncUnlink(legacyConfigPath.toNative());
-    } catch (error) {
-      logger
-        .scoped({ path: legacyConfigPath.toString() })
-        .warn("Moved config.json, but could not remove the old file", {
-          error: getErrorMessage(error),
-        });
-    }
-    logger.info("Moved config.json", {
-      from: legacyConfigPath.toString(),
-      to: configPath.toString(),
-    });
-    return configPath;
   }
 
   /**
@@ -619,6 +555,13 @@ export class DefaultConfig implements Config {
           break;
         case "deprecated":
           logger.debug("Deprecated config key (read-only)", { source, key: issue.key });
+          break;
+        case "renamed":
+          logger.info("Renamed config key", {
+            source,
+            legacy: issue.legacy,
+            newKey: issue.newKey,
+          });
           break;
         case "legacy-shadowed":
           logger.warn("Legacy config key shadowed by new key (ignored)", {

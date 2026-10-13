@@ -54,8 +54,7 @@ export interface PathProvider {
  * - Development (isDevelopment=true): `./app-data/` (relative to process.cwd())
  * - Production Linux: `~/.local/share/codehydra/`
  * - Production macOS: `~/Library/Application Support/Codehydra/`
- * - Production Windows: `%LOCALAPPDATA%/Codehydra/` (before: `%APPDATA%/Codehydra/`, see
- *   data-root-relocation.ts)
+ * - Production Windows: `%LOCALAPPDATA%/Codehydra/`
  *
  * `_CHDEV_ROOT_DIR` overrides both roots at once, in either build flavor.
  *
@@ -82,15 +81,7 @@ export class DefaultPathProvider implements PathProvider {
   /** Platform for platform-specific path construction */
   private readonly platform: "darwin" | "linux" | "win32";
 
-  /**
-   * @param options.platformRoot The production root to use instead of the platform's
-   *   (the legacy Windows folder, while its data could not be moved yet).
-   */
-  constructor(
-    buildInfo: BuildInfo,
-    platformInfo: PlatformInfo,
-    private readonly options: { readonly platformRoot?: string } = {}
-  ) {
+  constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     this.platform = platformInfo.platform as "darwin" | "linux" | "win32";
 
     // Compute roots
@@ -147,9 +138,6 @@ export class DefaultPathProvider implements PathProvider {
     if (override) {
       return override;
     }
-    if (this.options.platformRoot) {
-      return this.options.platformRoot;
-    }
 
     const { platform, homeDir } = platformInfo;
 
@@ -198,9 +186,4 @@ export class DefaultPathProvider implements PathProvider {
  */
 export function windowsDataRoot(homeDir: string): string {
   return join(process.env.LOCALAPPDATA || join(homeDir, "AppData", "Local"), "Codehydra");
-}
-
-/** `%APPDATA%\Codehydra`: where Windows releases kept their data before (the roaming profile). */
-export function legacyWindowsDataRoot(homeDir: string): string {
-  return join(process.env.APPDATA || join(homeDir, "AppData", "Roaming"), "Codehydra");
 }

@@ -20,8 +20,8 @@
  *   their editor (a waiting sidebar card is not in front of the terminal).
  *   While one is, the agent provider reports the workspace "idle" whatever the
  *   agent is doing, so that idle says nothing about the agent terminal: it can
- *   arrive before the sidekick has created it (the Migrate offer for old hooks
- *   is raised the moment the sidekick connects). A terminal.focus sent then
+ *   arrive before the sidekick has created it (a modal can be raised the moment
+ *   the sidekick connects). A terminal.focus sent then
  *   makes VS Code create a terminal of its own, racing the sidekick's, and can
  *   hang until the command times out. Focusing behind a modal is wrong anyway,
  *   so nothing is sent while one is open; closing it re-reports the real status,

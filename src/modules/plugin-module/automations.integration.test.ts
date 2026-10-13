@@ -3,10 +3,9 @@
  * Integration tests for the automations engine through the Dispatcher.
  *
  * The engine is handed its automations and their scripts' output by the plugin
- * module; here a test adapter stands in for both. Sources are written in the
- * compact one-document-per-source YAML of the pre-plugin setting (parsed by
- * legacy-sources.ts) and each becomes an automation whose id is its name, so
- * the tracking keys read `<name>/<key>`. The poll module drives the cycles in
+ * module; here a test adapter stands in for both. Each source is an item
+ * template (as `ch plugin render` takes) under an automation whose id is its
+ * name, so the tracking keys read `<name>/<key>`. The poll module drives the cycles in
  * the app (poll-module.integration.test.ts covers its timer); here `tick()` runs
  * one the way the plugin module does — collect, then handle what each script
  * printed — and raises a card for the errors a cycle returns, as the poll
@@ -60,8 +59,7 @@ import {
 import { HIBERNATED_METADATA_KEY } from "../../intents/hibernate-workspace";
 import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
 import { createAutomations } from "./automations";
-import { convertLegacyTemplate, parseSources } from "./legacy-sources";
-import { renderInput } from "./template-render";
+import { renderInput, type TemplateObject } from "./template-render";
 import { notify } from "../presentation/notification-card";
 import type { IntentModule } from "../../intents/lib/module";
 import type { OperationName } from "../../api/names";
@@ -339,27 +337,35 @@ class SwitchWorkspaceOp implements Operation<typeof switchSchemas> {
 
 // ---- Setup ----
 
-function sourceYaml(name = "gh"): string {
-  return `name: ${name}
-cmd: fetch
-template:
-  name: "ws-{{ id }}"
-  key: "{{ id }}"
-  git: "https://github.com/org/repo.git"
-  prompt: "Work on {{ id }}"`;
+/** Automation name → the item template its script renders each fetched item through. */
+type Sources = Record<string, TemplateObject>;
+
+function source(name = "gh"): Sources {
+  return {
+    [name]: {
+      action: "workspace.create",
+      event: false,
+      name: "ws-{{ id }}",
+      key: "{{ id }}",
+      project: "https://github.com/org/repo.git",
+      prompt: "Work on {{ id }}",
+    },
+  };
 }
 
-/** An events-mode source. `focus` is appended verbatim when given. */
-function eventsYaml(options?: { name?: string; focus?: boolean; prompt?: boolean }): string {
-  return `name: ${options?.name ?? "gh"}
-type: cron
-mode: events
-cmd: fetch
-template:
-  name: "ws-{{ id }}"
-  git: "https://github.com/org/repo.git"${options?.prompt === false ? "" : `\n  prompt: "Work on {{ id }}"`}
-  metadata:
-    title: "Event {{ id }}"${options?.focus === undefined ? "" : `\n  focus: ${String(options.focus)}`}`;
+/** An event source. `focus` sets `stealFocus` when given. */
+function eventSource(options?: { name?: string; focus?: boolean; prompt?: boolean }): Sources {
+  return {
+    [options?.name ?? "gh"]: {
+      action: "workspace.create",
+      event: true,
+      name: "ws-{{ id }}",
+      project: "https://github.com/org/repo.git",
+      ...(options?.prompt !== false && { prompt: "Work on {{ id }}" }),
+      metadata: { title: "Event {{ id }}" },
+      ...(options?.focus !== undefined && { stealFocus: options.focus }),
+    },
+  };
 }
 
 interface CmdControl {
@@ -368,7 +374,7 @@ interface CmdControl {
 }
 
 function createSetup(options?: {
-  sources?: string | null;
+  sources?: Sources | null;
   configDefaults?: Record<string, unknown>;
   existingEntries?: Record<string, StateEntry>;
 }) {
@@ -394,7 +400,7 @@ function createSetup(options?: {
   const notificationManager = createMockNotificationManager();
 
   const mockConfig = createMockConfig({ defaults: { ...(options?.configDefaults ?? {}) } });
-  let sourcesYaml = options?.sources ?? null;
+  let sources = options?.sources ?? null;
   let enabled = true;
   /** Actions invoked for non-create automations, in order. */
   const invoked: Array<{ action: OperationName; input: Record<string, unknown> }> = [];
@@ -418,11 +424,7 @@ function createSetup(options?: {
     stateService: state,
     enabled: () => enabled,
     sources: async () =>
-      parseSources(sourcesYaml).sources.map((source) => ({
-        id: source.name,
-        plugin: "local:test",
-        name: source.name,
-      })),
+      Object.keys(sources ?? {}).map((name) => ({ id: name, plugin: "local:test", name })),
     // The engine's side of the item contract; the schemas themselves are items.ts's.
     parseItem: (raw) => {
       const { action, ...input } = raw as Record<string, unknown>;
@@ -439,17 +441,10 @@ function createSetup(options?: {
     },
   });
 
-  // Each source's script prints its items as a migrated source does: the raw
-  // data rendered through its template, rewritten to the create-item shape. A
-  // template that names another action is rendered as it is.
-  const printed = (name: string): unknown[] => {
-    const legacy = parseSources(sourcesYaml).sources.find((s) => s.name === name)!;
-    const template =
-      legacy.template["action"] === undefined
-        ? convertLegacyTemplate(legacy.template, legacy.mode, () => {})
-        : legacy.template;
-    return cmd.items.map((data) => renderInput(template, data));
-  };
+  // Each source's script prints its items as `ch plugin render` does: the raw
+  // data rendered through its template.
+  const printed = (name: string): unknown[] =>
+    cmd.items.map((data) => renderInput(sources![name]!, data));
 
   /** One poll tick, as the plugin module drives it. A failed script has nothing to handle. */
   currentCycle = async (): Promise<void> => {
@@ -490,8 +485,8 @@ function createSetup(options?: {
     mockConfig,
     invoked,
     failingActions,
-    setSources: (yaml: string | null): void => {
-      sourcesYaml = yaml;
+    setSources: (next: Sources | null): void => {
+      sources = next;
     },
     setEnabled: (value: boolean): void => {
       enabled = value;
@@ -525,7 +520,7 @@ describe("automations: workspace.create", () => {
   it("creates a workspace for a new item on the first tick", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, setMetaOp } = createSetup({
-      sources: sourceYaml(),
+      sources: source(),
     });
     cmd.items = [{ id: "1" }];
 
@@ -555,7 +550,7 @@ describe("automations: workspace.create", () => {
 
   it("dedups an already-tracked item across ticks", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    const { dispatcher, cmd, openWorkspaceOp } = createSetup({ sources: source() });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
@@ -566,7 +561,7 @@ describe("automations: workspace.create", () => {
 
   it("forgets an entry when item and workspace are both gone, and recreates on reappearance", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: source() });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)).toHaveProperty("gh/1");
@@ -584,7 +579,7 @@ describe("automations: workspace.create", () => {
 
   it("records the project on the entry it writes", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state } = createSetup({ sources: sourceYaml() });
+    const { dispatcher, cmd, state } = createSetup({ sources: source() });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)["gh/1"]).toMatchObject({
@@ -598,7 +593,7 @@ describe("automations: workspace.create", () => {
   it("keeps an entry when its item vanishes from one poll but the workspace is still there", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp } = createSetup({
-      sources: sourceYaml(),
+      sources: source(),
     });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
@@ -620,7 +615,7 @@ describe("automations: workspace.create", () => {
   it("keeps a legacy entry with no project while some project has that workspace", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, listProjectsOp } = createSetup({
-      sources: sourceYaml(),
+      sources: source(),
       existingEntries: { "gh/1": { workspaceName: "ws-1", createdAt: "2020-01-01T00:00:00Z" } },
     });
     listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
@@ -636,7 +631,7 @@ describe("automations: workspace.create", () => {
     // project:close tears workspaces down at runtime without touching the disk,
     // so an absent project says nothing about whether the worktree survived.
     const { dispatcher, cmd, state } = createSetup({
-      sources: sourceYaml(),
+      sources: source(),
       existingEntries: {
         "gh/1": {
           workspaceName: "ws-1",
@@ -655,7 +650,7 @@ describe("automations: workspace.create", () => {
   it("adopts an existing workspace instead of creating, writing only the entry", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp, getBasesOp, setMetaOp } =
-      createSetup({ sources: sourceYaml() });
+      createSetup({ sources: source() });
     listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
     cmd.items = [{ id: "1" }];
 
@@ -675,7 +670,7 @@ describe("automations: workspace.create", () => {
   it("adopts rather than colliding forever when an entry is lost but the workspace remains", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, listProjectsOp, openWorkspaceOp } = createSetup({
-      sources: sourceYaml(),
+      sources: source(),
     });
     // The state that shipped in the bug reports: worktree present, entry gone.
     listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
@@ -692,7 +687,7 @@ describe("automations: workspace.create", () => {
 
   it("does not write an entry when creation fails, and retries next tick", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: source() });
     openWorkspaceOp.failFor.add("ws-1");
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
@@ -707,7 +702,7 @@ describe("automations: workspace.create", () => {
 
   it("skips a tick when the cmd exits non-zero, staying active", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: sourceYaml() });
+    const { dispatcher, cmd, state, openWorkspaceOp } = createSetup({ sources: source() });
     cmd.items = [{ id: "1" }];
     cmd.exitCode = 1;
     await dispatcher.dispatch(startIntent());
@@ -725,20 +720,20 @@ describe("automations: workspace.create", () => {
     await dispatcher.dispatch(startIntent());
     expect(openWorkspaceOp.dispatched).toHaveLength(0);
 
-    setSources(sourceYaml()); // the user adds a plugin
+    setSources(source()); // the user adds a plugin
     await tick();
     expect(openWorkspaceOp.dispatched).toHaveLength(1);
   });
 
   it("forgets entries for an automation that is gone (orphan cleanup)", async () => {
     vi.useFakeTimers();
-    const { dispatcher, cmd, state, setSources } = createSetup({ sources: sourceYaml("gh") });
+    const { dispatcher, cmd, state, setSources } = createSetup({ sources: source("gh") });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
     expect(entriesOf(state)).toHaveProperty("gh/1");
 
     cmd.items = [];
-    setSources(sourceYaml("other")); // gh removed
+    setSources(source("other")); // gh removed
     await tick();
     expect(entriesOf(state)).not.toHaveProperty("gh/1");
   });
@@ -748,14 +743,15 @@ describe("automations: workspace.create", () => {
     const broken = "https://github.com/org/broken.git";
     const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, notificationManager } =
       createSetup({
-        sources: `name: bad
-cmd: fetch
-template:
-  name: "bad-{{ id }}"
-  key: "{{ id }}"
-  git: "${broken}"
----
-${sourceYaml("good")}`,
+        sources: {
+          bad: {
+            action: "workspace.create",
+            name: "bad-{{ id }}",
+            key: "{{ id }}",
+            project: broken,
+          },
+          ...source("good"),
+        },
       });
     openProjectOp.failFor.add(broken);
     cmd.items = [{ id: "1" }];
@@ -777,12 +773,14 @@ ${sourceYaml("good")}`,
     const url = "relative-dir";
     const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp, notificationManager } =
       createSetup({
-        sources: `name: github
-cmd: fetch
-template:
-  name: "ws-{{ id }}"
-  key: "{{ id }}"
-  project: "${url}"`,
+        sources: {
+          github: {
+            action: "workspace.create",
+            name: "ws-{{ id }}",
+            key: "{{ id }}",
+            project: url,
+          },
+        },
       });
     cmd.items = [{ id: "1" }];
 
@@ -818,12 +816,14 @@ template:
     vi.useFakeTimers();
     const missing = testPath("/home/user/projects/missing");
     const { dispatcher, cmd, state, openProjectOp, notificationManager } = createSetup({
-      sources: `name: local
-cmd: fetch
-template:
-  name: "ws-{{ id }}"
-  key: "{{ id }}"
-  project: '${missing.toNative()}'`,
+      sources: {
+        local: {
+          action: "workspace.create",
+          name: "ws-{{ id }}",
+          key: "{{ id }}",
+          project: missing.toNative(),
+        },
+      },
     });
     openProjectOp.failFor.add(missing.toString()); // the normalized form project:open receives
     cmd.items = [{ id: "1" }];
@@ -842,7 +842,7 @@ template:
     it("creates a workspace when nothing matches the rendered name", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, state, openWorkspaceOp, setMetaOp, wakeOp } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       cmd.items = [{ id: "1" }];
 
@@ -865,7 +865,7 @@ template:
     it("wakes a hibernated match and re-applies metadata instead of creating", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, setMetaOp, wakeOp } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
       cmd.items = [{ id: "1" }];
@@ -887,7 +887,7 @@ template:
     it("only refreshes metadata when the match is awake", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, setMetaOp, wakeOp, switchOp } =
-        createSetup({ sources: eventsYaml() });
+        createSetup({ sources: eventSource() });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
       cmd.items = [{ id: "1" }];
 
@@ -902,7 +902,7 @@ template:
     it("switches to an awake match when the template asks for focus", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, switchOp } = createSetup({
-        sources: eventsYaml({ focus: true }),
+        sources: eventSource({ focus: true }),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
       cmd.items = [{ id: "1" }];
@@ -919,7 +919,7 @@ template:
     it("sends the prompt to a matched workspace's agent as a message", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, sendMessageOp } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
       cmd.items = [{ id: "1" }];
@@ -941,7 +941,7 @@ template:
     it("sends the prompt after waking a hibernated match", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, wakeOp, sendMessageOp } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
       cmd.items = [{ id: "1" }];
@@ -955,7 +955,7 @@ template:
     it("sends nothing to a match when the template has no prompt", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, sendMessageOp, setMetaOp } = createSetup({
-        sources: eventsYaml({ prompt: false }),
+        sources: eventSource({ prompt: false }),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1"));
       cmd.items = [{ id: "1" }];
@@ -968,7 +968,7 @@ template:
 
     it("never sends a prompt it already gave a newly created workspace", async () => {
       vi.useFakeTimers();
-      const { dispatcher, cmd, sendMessageOp } = createSetup({ sources: eventsYaml() });
+      const { dispatcher, cmd, sendMessageOp } = createSetup({ sources: eventSource() });
       cmd.items = [{ id: "1" }];
 
       await dispatcher.dispatch(startIntent());
@@ -979,7 +979,7 @@ template:
     it("warns about a prompt no agent took, and keeps going", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, sendMessageOp, logger } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1"), workspaceNamed("ws-2"));
       sendMessageOp.notSent = "No Claude session is running";
@@ -998,7 +998,7 @@ template:
     it("skips an event whose workspace is mid-teardown", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, resolveWsOp, openWorkspaceOp, setMetaOp, wakeOp } =
-        createSetup({ sources: eventsYaml() });
+        createSetup({ sources: eventSource() });
       listProjectsOp.workspaces.push(workspaceNamed("ws-1", { [HIBERNATED_METADATA_KEY]: "true" }));
       resolveWsOp.closing = "delete";
       cmd.items = [{ id: "1" }];
@@ -1013,7 +1013,7 @@ template:
     it("fires again for a repeated event — the cmd owns dedup", async () => {
       vi.useFakeTimers();
       const { dispatcher, cmd, listProjectsOp, openWorkspaceOp, wakeOp } = createSetup({
-        sources: eventsYaml(),
+        sources: eventSource(),
       });
       cmd.items = [{ id: "1" }];
       await dispatcher.dispatch(startIntent());
@@ -1031,14 +1031,10 @@ template:
       vi.useFakeTimers();
       const broken = "https://github.com/org/broken.git";
       const { dispatcher, cmd, state, openProjectOp, openWorkspaceOp } = createSetup({
-        sources: `name: ev
-mode: events
-cmd: fetch
-template:
-  name: "ev-{{ id }}"
-  git: "${broken}"
----
-${sourceYaml("good")}`,
+        sources: {
+          ev: { action: "workspace.create", event: true, name: "ev-{{ id }}", project: broken },
+          ...source("good"),
+        },
       });
       openProjectOp.failFor.add(broken);
       cmd.items = [{ id: "1" }];
@@ -1052,12 +1048,12 @@ ${sourceYaml("good")}`,
 
     it("forgets entries left behind when a source flips to events mode", async () => {
       vi.useFakeTimers();
-      const { dispatcher, cmd, state, setSources } = createSetup({ sources: sourceYaml("gh") });
+      const { dispatcher, cmd, state, setSources } = createSetup({ sources: source("gh") });
       cmd.items = [{ id: "1" }];
       await dispatcher.dispatch(startIntent());
       expect(entriesOf(state)).toHaveProperty("gh/1");
 
-      setSources(eventsYaml());
+      setSources(eventSource());
       cmd.items = [];
       await tick();
       expect(entriesOf(state)).not.toHaveProperty("gh/1");
@@ -1103,18 +1099,14 @@ describe("migrateEntries", () => {
 });
 
 describe("automations: other actions", () => {
-  const hibernateYaml = `name: stale
-mode: events
-cmd: fetch
-template:
-  action: workspace.hibernate
-  name: unused
-  workspace: "{{ ws }}"`;
+  const hibernate: Sources = {
+    stale: { action: "workspace.hibernate", workspace: "{{ ws }}" },
+  };
 
   it("runs the action once per item with the rendered input, tracking nothing", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, invoked, openWorkspaceOp } = createSetup({
-      sources: hibernateYaml,
+      sources: hibernate,
     });
     cmd.items = [{ ws: "a" }, { ws: "b" }];
 
@@ -1131,7 +1123,7 @@ template:
   it("reports a refused action and still runs the next item", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, invoked, failingActions, notificationManager } = createSetup({
-      sources: hibernateYaml,
+      sources: hibernate,
     });
     failingActions.add("workspace.hibernate");
     cmd.items = [{ ws: "a" }, { ws: "b" }];
@@ -1169,7 +1161,7 @@ describe("switched off", () => {
   it("skips whole cycles, forgetting nothing it tracks", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, state, setEnabled, setSources, openWorkspaceOp } = createSetup({
-      sources: sourceYaml("gh"),
+      sources: source("gh"),
     });
     cmd.items = [{ id: "1" }];
     await dispatcher.dispatch(startIntent());
@@ -1189,12 +1181,7 @@ describe("items", () => {
   it("reports an invalid item by index, and still runs the rest", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, invoked, notificationManager } = createSetup({
-      sources: `name: mixed
-cmd: fetch
-template:
-  name: "the legacy parser needs one"
-  action: "{{ action }}"
-  workspace: "{{ ws }}"`,
+      sources: { mixed: { action: "{{ action }}", workspace: "{{ ws }}" } },
     });
     cmd.items = [{ ws: "a" }, { action: "workspace.hibernate", ws: "b" }];
 
@@ -1211,10 +1198,7 @@ template:
   it("refuses a create item without a project", async () => {
     vi.useFakeTimers();
     const { dispatcher, cmd, openWorkspaceOp, notificationManager } = createSetup({
-      sources: `name: noproject
-cmd: fetch
-template:
-  name: "ws-{{ id }}"`,
+      sources: { noproject: { action: "workspace.create", name: "ws-{{ id }}" } },
     });
     cmd.items = [{ id: "1" }];
 

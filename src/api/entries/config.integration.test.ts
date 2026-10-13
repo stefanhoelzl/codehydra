@@ -65,7 +65,7 @@ function setup(options: { env?: Record<string, string> } = {}): Setup {
     applies: "live",
     ...storeString({ nullable: true }),
   });
-  config.register("auto-workspace.sources", {
+  config.register("plugins.config", {
     default: null,
     omit: true,
     ...storeString({ nullable: true }),
@@ -121,8 +121,8 @@ describe("config entries", () => {
 
       // help is a CLI action and old.key is deprecated: neither is a setting.
       expect(rows.map((r) => r.key)).toEqual([
-        "auto-workspace.sources",
         "log.level",
+        "plugins.config",
         "secret.token",
         "sidebar.width",
         "silent",
@@ -163,12 +163,12 @@ describe("config entries", () => {
     it("hides redacted values and omits omitted ones", async () => {
       const { registry, config } = setup();
       await config.set("secret.token", "hunter2");
-      await config.set("auto-workspace.sources", "---\nname: a\n");
+      await config.set("plugins.config", "---\nname: a\n");
 
       const rows = (await call(registry, "config.list", {})) as Record<string, unknown>[];
 
       expect(rows.find((r) => r.key === "secret.token")?.value).toBe("<redacted>");
-      expect(rows.find((r) => r.key === "auto-workspace.sources")?.value).toBe("<omitted>");
+      expect(rows.find((r) => r.key === "plugins.config")?.value).toBe("<omitted>");
     });
 
     it("reports an env override as its source", async () => {
@@ -193,12 +193,10 @@ describe("config entries", () => {
     it("returns an omitted value in the clear but a redacted one as the token", async () => {
       const { registry, config } = setup();
       await config.set("secret.token", "hunter2");
-      await config.set("auto-workspace.sources", "---\nname: a\n");
+      await config.set("plugins.config", "---\nname: a\n");
 
       expect(await call(registry, "config.get", { key: "secret.token" })).toBe("<redacted>");
-      expect(await call(registry, "config.get", { key: "auto-workspace.sources" })).toBe(
-        "---\nname: a\n"
-      );
+      expect(await call(registry, "config.get", { key: "plugins.config" })).toBe("---\nname: a\n");
     });
 
     it.each(["no.such.key", "help", "old.key"])(

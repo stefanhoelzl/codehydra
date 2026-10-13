@@ -148,16 +148,6 @@ export interface StoreDirs {
 }
 
 /**
- * A record read back from disk: the config, the directory it was found in, and
- * whether it is in the legacy managed shape that still stores the clone path.
- */
-export interface StoredProject {
-  readonly config: ProjectConfig;
-  readonly dirName: string;
-  readonly legacy: boolean;
-}
-
-/**
  * Whether a project is managed in the current layout: cloned from `remoteUrl`
  * into exactly the place that URL derives. Only then may its record drop the
  * path — anything else keeps storing it, so no project is reopened somewhere
@@ -186,10 +176,9 @@ function recordDirName(dirs: StoreDirs, projectPath: string, remoteUrl?: string)
 
 /**
  * Parse one record. A managed project's record holds only its URL and the
- * path is derived from it; a local project's holds its path. The legacy
- * managed shape holds both.
+ * path is derived from it; a local project's holds its path.
  */
-function parseRecord(dirs: StoreDirs, content: string): Omit<StoredProject, "dirName"> | undefined {
+function parseRecord(dirs: StoreDirs, content: string): ProjectConfig | undefined {
   const parsed: unknown = JSON.parse(content);
   if (typeof parsed !== "object" || parsed === null) return undefined;
   const record = parsed as { path?: unknown; remoteUrl?: unknown };
@@ -197,14 +186,11 @@ function parseRecord(dirs: StoreDirs, content: string): Omit<StoredProject, "dir
 
   if (typeof record.path === "string") {
     const path = projectPathSchema.parse(new Path(record.path).toString());
-    return {
-      config: { path, ...(remoteUrl !== undefined && { remoteUrl }) },
-      legacy: isManaged(dirs, path, remoteUrl),
-    };
+    return { path, ...(remoteUrl !== undefined && { remoteUrl }) };
   }
   if (remoteUrl !== undefined) {
     const path = projectPathSchema.parse(managedClonePath(dirs.remotesDir, remoteUrl).toString());
-    return { config: { path, remoteUrl }, legacy: false };
+    return { path, remoteUrl };
   }
   return undefined;
 }
@@ -235,8 +221,8 @@ export async function saveProject(
 export async function loadAllProjects(
   fs: ProjectFs,
   dirs: StoreDirs
-): Promise<readonly StoredProject[]> {
-  const results: StoredProject[] = [];
+): Promise<readonly ProjectConfig[]> {
+  const results: ProjectConfig[] = [];
 
   let entries;
   try {
@@ -251,7 +237,7 @@ export async function loadAllProjects(
     const configPath = new Path(dirs.projectsDir, entry.name, "config.json");
     try {
       const stored = parseRecord(dirs, await fs.readFile(configPath));
-      if (stored) results.push({ ...stored, dirName: entry.name });
+      if (stored) results.push(stored);
     } catch {
       // Skip invalid entries (ENOENT, malformed JSON, invalid path, etc.)
       continue;
@@ -259,13 +245,6 @@ export async function loadAllProjects(
   }
 
   return results;
-}
-
-async function loadAllProjectConfigs(
-  fs: ProjectFs,
-  dirs: StoreDirs
-): Promise<readonly ProjectConfig[]> {
-  return (await loadAllProjects(fs, dirs)).map((stored) => stored.config);
 }
 
 async function getProjectConfig(
@@ -279,14 +258,14 @@ async function getProjectConfig(
   const configPath = new Path(dirs.projectsDir, projectDirName(normalizedPath), "config.json");
   try {
     const stored = parseRecord(dirs, await fs.readFile(configPath));
-    if (stored?.config.path === normalizedPath) return stored.config;
+    if (stored?.path === normalizedPath) return stored;
   } catch {
     // Not there - try scanning all records
   }
 
   // Fallback: scan every record. A managed project's lives in a URL-named
   // directory and yields its path only once parsed.
-  const allConfigs = await loadAllProjectConfigs(fs, dirs);
+  const allConfigs = await loadAllProjects(fs, dirs);
   return allConfigs.find((config) => config.path === normalizedPath);
 }
 
@@ -325,34 +304,6 @@ async function removeProject(
   const pathDir = projectDirName(projectPath);
   for (const dirName of new Set([recordDir, pathDir])) {
     await removeRecordDir(fs, new Path(dirs.projectsDir, dirName));
-  }
-}
-
-/**
- * Rewrite legacy managed records — `{path, remoteUrl}` in the path-named
- * directory — as `{remoteUrl}` in the URL-named one. Best-effort: a record
- * that cannot be moved keeps working in its old shape and is tried again at
- * the next start.
- */
-async function migrateLegacyRecords(
-  fs: ProjectFs,
-  dirs: StoreDirs,
-  stored: readonly StoredProject[],
-  logger: Logger
-): Promise<void> {
-  for (const { config, dirName, legacy } of stored) {
-    if (!legacy || config.remoteUrl === undefined) continue;
-    try {
-      await saveProject(fs, dirs, config.path, config.remoteUrl);
-      if (dirName !== managedProjectDirName(config.remoteUrl)) {
-        // Only the record moves: the old directory still holds the worktrees.
-        await fs.unlink(new Path(dirs.projectsDir, dirName, "config.json"));
-      }
-    } catch (error: unknown) {
-      logger
-        .scoped({ path: config.path })
-        .warn("Failed to migrate project record", { error: getErrorMessage(error) });
-    }
   }
 }
 
@@ -412,7 +363,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
 
   async function projectRefs(): Promise<ReadonlyMap<string, ProjectRef>> {
     const refs = new Map<string, ProjectRef>();
-    for (const config of await loadAllProjectConfigs(fs, dirs())) {
+    for (const config of await loadAllProjects(fs, dirs())) {
       refs.set(new Path(config.path).toString(), projectRefFor(config.path, config.remoteUrl));
     }
     return refs;
@@ -637,9 +588,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): LocalPro
         "load-projects": {
           handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
             const stored = await loadAllProjects(fs, dirs());
-            await migrateLegacyRecords(fs, dirs(), stored, logger);
-            // A record whose old copy could not be removed is read twice.
-            const projectPaths = [...new Set(stored.map((s) => s.config.path))];
+            const projectPaths = stored.map((config) => config.path);
             return { result: { projectPaths } };
           },
         },

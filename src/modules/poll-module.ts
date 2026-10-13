@@ -113,13 +113,6 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
       "next (a change applies after the current wait elapses)",
     applies: "live",
     ...storeNumber({ min: 1 }),
-    legacyNames: Object.fromEntries(
-      ["automations.poll-interval", "auto-workspace.poll-interval"].map((name) => [
-        name,
-        (value: unknown) =>
-          typeof value === "number" && Number.isFinite(value) && value >= 1 ? value : undefined,
-      ])
-    ),
   });
   const timeout: PersistedAccessor<number> = deps.config.register("poll.timeout", {
     default: DEFAULT_TIMEOUT_SECONDS,

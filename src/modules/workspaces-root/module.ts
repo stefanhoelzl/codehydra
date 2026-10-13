@@ -11,14 +11,10 @@
  * Continue with the current folder, or Quit. A request survives a crash, so the
  * next start runs it again.
  *
- * Two one-time moves arrive as the same request, and run without asking:
- *
- *   - Windows' data root moved (`%APPDATA%` to `%LOCALAPPDATA%`) and left the
- *     source code behind: data-root-relocation.ts records the old root as the one
- *     in use and the new data root as pending.
- *   - Earlier releases kept the wanted folder in config (`paths.workspaces`) and
- *     the one in use in state (`paths.workspaces-current`). The one in use carries
- *     over; a wanted folder that differs becomes the request.
+ * A one-time move arrives as the same request, and runs without asking: earlier
+ * releases kept the wanted folder in config (`paths.workspaces`) and the one in
+ * use in state (`paths.workspaces-current`). The one in use carries over; a
+ * wanted folder that differs becomes the request.
  *
  * Once, before any of that: the external tags earlier migrations wrote become
  * recorded directories (see convert-adoptions.ts).
@@ -213,10 +209,9 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
       remotesDir: remotesDirUnder(root.current()).toString(),
     });
     const inside = projects.find(
-      ({ config: project }) =>
-        target.equals(project.path) || target.isChildOf(new Path(project.path))
+      (project) => target.equals(project.path) || target.isChildOf(new Path(project.path))
     );
-    if (inside) return `It is inside the project ${inside.config.path}.`;
+    if (inside) return `It is inside the project ${inside.path}.`;
 
     try {
       await fs.mkdir(target);
@@ -555,7 +550,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
       });
       const converted = await convertMigrationAdoptions(
         { gitClient: deps.gitClient, logger },
-        projects.map(({ config: project }) => new Path(project.path)),
+        projects.map((project) => new Path(project.path)),
         recordPreviousDirs
       );
       if (converted.length > 0) {

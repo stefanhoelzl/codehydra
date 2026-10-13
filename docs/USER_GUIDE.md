@@ -425,8 +425,6 @@ The same keys work in three places, highest precedence first:
 (`%USERPROFILE%\.codehydra\` on Windows), the one folder for what you write
 yourself — settings and your [plugins](#plugins) — the same place on every
 platform, so it can live in your dotfiles.
-A `config.json` left in the data directory by an older version is moved there
-on the first start.
 
 What the app writes lives in the data directory: `state.json` (what the app
 itself remembers: which plugins are enabled (`plugins.state`), the hide-hibernated toggle, tracked
@@ -437,15 +435,6 @@ logs in `logs/wakeup/`):
 - **Linux**: `~/.local/share/codehydra/`
 - **macOS**: `~/Library/Application Support/Codehydra/`
 - **Windows**: `%LOCALAPPDATA%\Codehydra\`
-
-Windows versions before this one kept it in `%APPDATA%\Codehydra\` (the
-roaming profile). The first start of a newer version moves settings, state,
-logs and binaries to `%LOCALAPPDATA%` and then migrates the workspaces without
-asking, as a [move of the workspaces folder](#where-workspaces-live) does:
-cloned repositories move, existing
-workspaces stay in the old folder and remain listed, new ones are created in
-the new one. While an older CodeHydra is still running from the old folder,
-nothing moves and the next start tries again.
 
 ### From a shell or an agent
 
@@ -796,7 +785,7 @@ To stop every plugin at once — hooks and automations — set `plugins.enabled`
 to `false` (settings, `ch config set plugins.enabled false`,
 `CH_PLUGINS__ENABLED=false`, or `--plugins.enabled=false`); it applies
 immediately, and automations resume where they left off when it is turned back
-on. The old name `hooks.enabled` is still read.
+on.
 
 ### Hooks
 
@@ -1090,8 +1079,7 @@ notification in the same poll:
 The first poll runs at startup, once CodeHydra has opened your projects; after
 that, `poll.interval` is the number of seconds between the end of one poll and
 the start of the next (default 60, minimum 1; a change applies once the current
-wait ends; the old `automations.poll-interval` and
-`auto-workspace.poll-interval` are still read). The same poll runs
+wait ends). The same poll runs
 [wakeup scripts](#wakeup-scripts). Every automation runs each poll, all at
 once, and each one's items are acted on as soon as its script ends. The script
 gets `{}` on stdin and is killed after `poll.timeout` seconds (default 30). A
@@ -1237,32 +1225,6 @@ A field whose string renders empty is left out, so `prompt: "{{ body }}"` for an
 item without a body means no prompt. Input that is not a JSON array fails the
 render, so a command that failed and printed nothing is not taken for an empty
 list. MCP has the same as `plugin_render`.
-
-The `auto-workspace.sources` setting this replaces is moved on the first start
-into `~/.codehydra/plugins/auto-workspaces/`: each source becomes an automation
-that pipes its `cmd` through `ch plugin render` and a template in `templates/`,
-rewritten to the item fields above (`git` → `project`, `focus` → `stealFocus`,
-the nested `agent` → `agent`/`agentName`/`permissionMode`/`model`, `mode:
-events` → `event: true`). On Windows each `cmd` goes into a batch file of its
-own in `sources/`, which the automation pipes — piping the command line itself
-would make cmd.exe parse it twice and strip its `^` escapes. A batch file reads
-`%` differently from the command line the setting ran, so every `%` that is not
-part of a set variable (`%20` in a URL) is written as `%%`. What the sources
-already created stays tracked, and the setting is cleared. A template field
-with no counterpart is named in the notification.
-
-### Repository hooks from before plugins
-
-The `.codehydra/hooks/<entry>` files repositories used to ship no longer run.
-While a worktree still has them and no plugin of its own, every time it opens
-its editor shows a warning naming them, with **Migrate**: that writes
-`.codehydra/plugins/hooks.yaml`, which runs each file from its entry as before
-— a `.win`/`.linux`/`.mac` file only on its platform, a `.cmd`/`.bat` file
-through cmd, a `.ps1` through PowerShell, anything else through bash (which
-runs the file itself, so its shebang and exec bit still decide). Commit it; the
-hooks run again from the next open, once the plugin is trusted. An entry
-several files claimed on a platform ran nothing before and is left out,
-named in the message.
 
 ## Agents
 
