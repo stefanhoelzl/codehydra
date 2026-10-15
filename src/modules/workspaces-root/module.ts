@@ -16,6 +16,11 @@
  * use in state (`paths.workspaces-current`). The one in use carries over; a
  * wanted folder that differs becomes the request.
  *
+ * A root in use that cannot be read (a drive that is not attached) holds the
+ * starting screen with Retry, Continue without it, or Quit: otherwise every
+ * cloned project fails to open and every workspace in it is missing, which
+ * looks like they were deleted.
+ *
  * Once, before any of that: the external tags earlier migrations wrote become
  * recorded directories (see convert-adoptions.ts).
  */
@@ -599,6 +604,72 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Startup: a root that is not there
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Why the root in use cannot be read, or null. A drive that is not attached
+   * (a Dev Drive, an external or network drive) takes every cloned project and
+   * workspace with it, which would otherwise look like they were deleted.
+   */
+  async function rootProblem(): Promise<string | null> {
+    const current = root.current();
+    if (current.equals(dataRoot)) return null;
+    try {
+      await fs.readdir(current);
+      return null;
+    } catch (error) {
+      return getErrorMessage(error);
+    }
+  }
+
+  function unavailableConfig(current: Path, problem: string): DialogConfig {
+    return {
+      sections: [
+        { type: "text", content: "The workspaces folder is not available", style: "heading" },
+        { type: "text", content: current.toNative(), style: "subtitle" },
+        {
+          type: "text",
+          content:
+            "Your cloned repositories and workspaces are in this folder. If it is on a drive " +
+            "that is not attached — a Dev Drive, an external or network drive — attach it, " +
+            "then Retry. Continuing without it opens no project cloned into it and lists none " +
+            "of the workspaces in it, until CodeHydra starts with the folder available.",
+        },
+        { type: "text", content: problem, style: "error" },
+        buttons([
+          { id: ACTION_RETRY, label: "Retry", primary: true },
+          { id: ACTION_CONTINUE, label: "Continue without it" },
+          { id: ACTION_QUIT, label: "Quit" },
+        ]),
+      ],
+    };
+  }
+
+  /** Hold the starting screen while the root in use cannot be read, until it can or the user moves on. */
+  async function awaitRoot(): Promise<void> {
+    let problem = await rootProblem();
+    if (problem === null) return;
+    const current = root.current();
+    logger
+      .scoped({ path: current.toString() })
+      .warn("Workspaces folder not available", { error: problem });
+    const handle = ui.dialog(unavailableConfig(current, problem), { kind: "modal" });
+    try {
+      for (;;) {
+        const action = await nextAction(handle);
+        if (action === ACTION_QUIT) await quit();
+        if (action === ACTION_CONTINUE) return;
+        problem = await rootProblem();
+        if (problem === null) return;
+        handle.update(unavailableConfig(current, problem));
+      }
+    } finally {
+      handle.close();
+    }
+  }
+
   /** Run the pending migration, until it succeeds or the user stops trying. */
   async function settle(): Promise<void> {
     const requested = pendingRoot.get();
@@ -682,6 +753,7 @@ export function createWorkspacesRootModule(deps: WorkspacesRootModuleDeps): Work
         migrations: {
           handler: async (): Promise<void> => {
             await convertLegacyKeys();
+            await awaitRoot();
             await convertAdoptions();
             await settle();
           },

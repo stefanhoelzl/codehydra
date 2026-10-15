@@ -476,11 +476,64 @@ describe("WorkspacesRootModule", () => {
     });
   });
 
+  describe("a root that is not available", () => {
+    /** The root in use, with its clone, as when its drive is attached. */
+    const attached = { [new Path(NEW_CLONE, ".git", "HEAD").toString()]: file("ref: main") };
+
+    it("does not ask when the root can be read", async () => {
+      const s = setup({ inUse: NEW_ROOT.toNative(), dataClone: false, entries: attached });
+      await s.migrations();
+      expect(s.dialogs.handles).toHaveLength(0);
+    });
+
+    it("waits on the starting screen until Retry finds it", async () => {
+      const s = setup({ inUse: NEW_ROOT.toNative(), dataClone: false });
+      const done = s.migrations();
+      await waitForButton(s.dialogs, "retry");
+      expect(texts(s.dialogs.lastHandle!.config)).toContain(NEW_ROOT.toNative());
+
+      // Still missing: the dialog stays.
+      await press(s.dialogs, "retry");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(s.dialogs.lastHandle!.closed).toBe(false);
+
+      await s.fs.mkdir(NEW_ROOT);
+      await press(s.dialogs, "retry");
+      await done;
+      expect(s.dialogs.lastHandle!.closed).toBe(true);
+      expect(s.root.current().equals(NEW_ROOT)).toBe(true);
+    });
+
+    it("continues without it, keeping it as the root", async () => {
+      const s = setup({ inUse: NEW_ROOT.toNative(), dataClone: false });
+      const done = s.migrations();
+      await press(s.dialogs, "continue");
+      await done;
+      expect(s.state.getEffective()[ROOT_STATE_KEY]).toBe(NEW_ROOT.toNative());
+    });
+
+    it("quits without returning", async () => {
+      const s = setup({ inUse: NEW_ROOT.toNative(), dataClone: false });
+      let settled = false;
+      void s.migrations().then(() => {
+        settled = true;
+      });
+      await press(s.dialogs, "quit");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(s.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_APP_SHUTDOWN })
+      );
+      expect(settled).toBe(false);
+    });
+  });
+
   describe("the keys of earlier releases", () => {
     it("carry the root in use over", async () => {
       const s = setup({
         legacyConfigured: NEW_ROOT.toNative(),
         legacyCurrent: NEW_ROOT.toNative(),
+        entries: { [NEW_ROOT.toString()]: directory() },
       });
       await s.migrations();
 
