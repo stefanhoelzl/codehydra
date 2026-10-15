@@ -59,6 +59,8 @@ export function notify(
  */
 export class NotificationCard {
   private id: string | null = null;
+  /** What the card was last given to say. */
+  private config: NotificationConfig | null = null;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly dispatcher: Dispatch) {}
@@ -72,8 +74,10 @@ export class NotificationCard {
    * Show `config` and wait for the user.
    *
    * Resolves with the clicked button's id, or null when the card is dismissed
-   * or closed. Either way the card is gone afterwards. Updates made while it
-   * waits still apply — they replace the question's content in place.
+   * or closed. Either way the card is gone afterwards — unless the button was a
+   * `keepOpen` one: then the card stays, and the next `ask` waits on it again.
+   * Updates made while it waits still apply — they replace the question's
+   * content in place.
    */
   ask(config: NotificationConfig): Promise<string | null> {
     return new Promise((resolve) => {
@@ -95,8 +99,9 @@ export class NotificationCard {
             () => null
           )
           .then((choice) => {
-            // Answered or closed — either way the card no longer exists.
-            if (this.id === id) this.id = null;
+            // Answered or closed — the card no longer exists, unless the
+            // button that answered keeps it up.
+            if (this.id === id && !this.keepsOpen(choice)) this.id = null;
             resolve(choice);
           });
       });
@@ -115,8 +120,14 @@ export class NotificationCard {
     });
   }
 
+  /** Whether `choice` is a button of the card's current content that leaves it up. */
+  private keepsOpen(choice: string | null): boolean {
+    return this.config?.actions?.some((action) => action.id === choice && action.keepOpen) ?? false;
+  }
+
   /** Open or update; returns the card's id, or null when it could not be shown. */
   private async apply(config: NotificationConfig): Promise<string | null> {
+    this.config = config;
     const current = this.id;
     let result;
     try {

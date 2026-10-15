@@ -33,7 +33,17 @@ export interface NotificationConfig {
   /** When true, a dismiss button is shown */
   readonly dismissible?: boolean;
   /** Action buttons rendered below the notification content */
-  readonly actions?: readonly DialogButton[];
+  readonly actions?: readonly NotificationButton[];
+}
+
+/** A notification's action button. */
+export interface NotificationButton extends DialogButton {
+  /**
+   * A click answers the card's waiters but leaves the card open, for an action
+   * that does not settle what the card reports (open a log). Default: the
+   * click closes the card.
+   */
+  readonly keepOpen?: boolean;
 }
 
 // ---- IPC Protocol ----

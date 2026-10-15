@@ -21,7 +21,8 @@
  * - With `wait`: blocks until the user answers and returns `{ choice }` — the
  *   clicked button's id, or null on dismiss, `timeoutMs`, the attached
  *   workspace going away, or the waiter being released (`notification:close`
- *   with its `waiter` token). A choice or a dismiss closes the card. With both
+ *   with its `waiter` token). A choice or a dismiss closes the card — except a
+ *   `keepOpen` button's, which answers the waiters and leaves it up. With both
  *   `id` and `wait`, the waiter takes the card over.
  *
  * Contract schemas: zod is the single source of truth. The payload/result/hook
@@ -35,8 +36,7 @@ import { type IntentOf } from "./lib/operation";
 import { onlyDefined, requireResult, throwHookErrors } from "./lib/hook-helpers";
 import { hookCtxSchema, workspaceRefSchema } from "./contract";
 import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
-import type { NotificationConfig } from "../shared/notification-types";
-import type { DialogButton } from "../shared/dialog-types";
+import type { NotificationButton, NotificationConfig } from "../shared/notification-types";
 
 export const INTENT_SHOW_NOTIFICATION = "notification:show" as const;
 export const SHOW_NOTIFICATION_OPERATION_ID = "show-notification";
@@ -56,6 +56,8 @@ export const notificationButtonSchema = z
     busy: z.boolean().optional(),
     busyLabel: z.string().optional(),
     title: z.string().optional(),
+    /** A click answers the waiters but leaves the card open. */
+    keepOpen: z.boolean().optional(),
   })
   .readonly();
 
@@ -144,8 +146,8 @@ export type ShowNotificationHookInput = HookContext & { readonly intent: ShowNot
 export function toNotificationConfig(
   config: ShowNotificationPayload["config"]
 ): NotificationConfig {
-  const actions = config.actions?.map((action): DialogButton => {
-    const { id, label, icon, variant, disabled, busy, busyLabel, title } = action;
+  const actions = config.actions?.map((action): NotificationButton => {
+    const { id, label, icon, variant, disabled, busy, busyLabel, title, keepOpen } = action;
     return {
       id,
       ...(label !== undefined && { label }),
@@ -155,6 +157,7 @@ export function toNotificationConfig(
       ...(busy !== undefined && { busy }),
       ...(busyLabel !== undefined && { busyLabel }),
       ...(title !== undefined && { title }),
+      ...(keepOpen !== undefined && { keepOpen }),
     };
   });
   return {

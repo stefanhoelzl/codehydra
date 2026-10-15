@@ -75,6 +75,30 @@ describe("NotificationCard", () => {
     expect(cards.notifications[0]!.closed).toBe(true);
   });
 
+  it("waits on the same card again after a keepOpen button answered", async () => {
+    const cards = createMockNotificationManager();
+    const card = new NotificationCard(cards.dispatcher);
+    const failing: NotificationConfig = {
+      type: "error",
+      title: "Plugin failed",
+      actions: [{ id: "open-log", label: "Open log", keepOpen: true }],
+    };
+
+    const first = card.ask(failing);
+    await cards.settle();
+    cards.emitEvent(0, { actionId: "open-log" });
+    expect(await first).toBe("open-log");
+
+    const second = card.ask(failing);
+    await cards.settle();
+    expect(cards.notifications).toHaveLength(1);
+    expect(cards.notifications[0]!.closed).toBe(false);
+    card.close();
+    expect(await second).toBeNull();
+    await cards.settle();
+    expect(cards.notifications[0]!.closed).toBe(true);
+  });
+
   it("turns an open card into the question in place", async () => {
     const cards = createMockNotificationManager();
     const card = new NotificationCard(cards.dispatcher);

@@ -167,7 +167,14 @@ export interface Plugins {
   remove(name: string): Promise<PluginSourceListing>;
   /** Fetch one remote source, or every one, and switch to what its ref names now. */
   update(name?: string): Promise<readonly PluginSourceListing[]>;
+  /** What is wrong right now. */
   errors(): readonly PluginError[];
+  /**
+   * Past failures, newest first: the failed runs whose logs are kept, apart
+   * from the ones entries are failing with now, and the failures since start
+   * that left no log.
+   */
+  pastErrors(): Promise<readonly PluginError[]>;
   /** The JSON Schema of a plugin manifest, or of the items an automation prints. */
   schema(which: "manifest" | "items"): Record<string, unknown>;
   /**

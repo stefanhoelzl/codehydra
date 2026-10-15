@@ -120,11 +120,18 @@ function createSetup(options?: { config?: Record<string, unknown> }) {
     }),
   };
 
+  /** Files handed to the system's default app. */
+  const opened: string[] = [];
   const poll = createPollModule({
     dispatcher,
     config,
     logger: createBehavioralLogger(),
     runner,
+    appLayer: {
+      openPath: async (path) => {
+        opened.push(path);
+      },
+    },
   });
   dispatcher.registerOperation(new PollTickOperation());
   dispatcher.registerOperation(new AppShutdownOperation());
@@ -156,6 +163,9 @@ function createSetup(options?: { config?: Record<string, unknown> }) {
     get cards() {
       return cards.notifications.map((card) => card.opened);
     },
+    notifications: cards.notifications,
+    emitEvent: (index: number, actionId: string): void => cards.emitEvent(index, { actionId }),
+    opened,
     settle: () => cards.settle(),
     start: async (): Promise<void> => {
       await poll.events![EVENT_APP_STARTED]!.handler({ type: EVENT_APP_STARTED, payload: {} });
@@ -305,6 +315,98 @@ describe("poll module: failures", () => {
     setup.outcomes["a"] = {};
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(setup.poll.errors()).toEqual([]);
+  });
+
+  it("closes the card when the job next succeeds", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a")]);
+    setup.outcomes["a"] = { exitCode: 1 };
+    await setup.start();
+    await setup.settle();
+    expect(setup.notifications[0]!.closed).toBe(false);
+
+    setup.outcomes["a"] = {};
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+    expect(setup.notifications[0]!.closed).toBe(true);
+  });
+
+  it("closes the card of a job that is no longer collected", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a")]);
+    setup.outcomes["a"] = { exitCode: 1 };
+    await setup.start();
+    await setup.settle();
+
+    setup.setJobs([]);
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+    expect(setup.notifications[0]!.closed).toBe(true);
+  });
+
+  it("opens the newest failed run's log from the card, which stays up", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a")]);
+    setup.outcomes["a"] = { exitCode: 1 };
+    await setup.start();
+    await setup.settle();
+    expect(setup.cards[0]!.actions).toEqual([
+      { id: "open-log", label: "Open log", keepOpen: true },
+    ]);
+
+    setup.emitEvent(0, "open-log");
+    await setup.settle();
+    expect(setup.opened).toEqual([new Path(testPath("/logs/a"), "1.log").toNative()]);
+    expect(setup.notifications[0]!.closed).toBe(false);
+
+    // The same failure again: no new card, the button now opens the new run's log.
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+    expect(setup.notifications).toHaveLength(1);
+    setup.emitEvent(0, "open-log");
+    await setup.settle();
+    expect(setup.opened[1]).toBe(new Path(testPath("/logs/a"), "2.log").toNative());
+    expect(setup.notifications[0]!.closed).toBe(false);
+  });
+
+  it("keeps a dismissed card down until the failure clears and comes back", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a")]);
+    setup.outcomes["a"] = { exitCode: 1 };
+    await setup.start();
+    await setup.settle();
+    setup.emitEvent(0, "dismiss");
+    await setup.settle();
+
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+    expect(setup.notifications).toHaveLength(1);
+
+    setup.outcomes["a"] = { exitCode: 2 };
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    await setup.settle();
+    expect(setup.notifications).toHaveLength(2);
+    expect(setup.notifications[1]!.opened.message).toBe(
+      "local:test automations.a: exit 2 — see the test"
+    );
+  });
+
+  it("keeps a past failure that left no log, and none that did", async () => {
+    const setup = createSetup();
+    setup.setJobs([job("a"), job("b")]);
+    setup.outcomes["a"] = { unavailable: true };
+    setup.outcomes["b"] = { exitCode: 1 };
+    await setup.start();
+    expect(setup.poll.pastErrors()).toEqual([]);
+
+    setup.outcomes["a"] = {};
+    setup.outcomes["b"] = {};
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(setup.poll.errors()).toEqual([]);
+    expect(setup.poll.pastErrors("test")).toMatchObject([
+      { id: "a", message: "bash is not installed" },
+    ]);
+    expect(setup.poll.pastErrors("other")).toEqual([]);
   });
 
   it("fails a run whose owner returned errors, and logs it with the failures", async () => {

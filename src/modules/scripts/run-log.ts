@@ -116,3 +116,75 @@ export async function pruneRunLogs(
     }
   }
 }
+
+/** A failed run, as its log's header records it. */
+export interface FailedRun {
+  readonly source: string;
+  readonly entry: string;
+  /** Why it failed; empty when the header gave no reason. */
+  readonly reason: string;
+  /** ISO time the run started. */
+  readonly startedAt: string;
+  readonly path: Path;
+}
+
+/** The header fields of a run log, or null when `text` is not one. */
+function parseHeader(text: string): Omit<FailedRun, "path"> | null {
+  const fields = new Map<string, string>();
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith("---")) break;
+    const match = /^(\w+):\s+(.*)$/.exec(line);
+    if (match) fields.set(match[1]!, match[2]!);
+  }
+  const source = fields.get("source");
+  const entry = fields.get("entry");
+  const started = fields.get("started");
+  const outcome = fields.get("outcome");
+  if (source === undefined || entry === undefined || started === undefined) return null;
+  const separator = outcome?.indexOf(" — ") ?? -1;
+  return {
+    source,
+    entry,
+    reason: separator === -1 ? "" : outcome!.slice(separator + " — ".length),
+    startedAt: started,
+  };
+}
+
+/**
+ * Every failed run whose log is kept anywhere under `root`, newest first. Best
+ * effort: a directory or file that cannot be read is passed over, as is a file
+ * that is not a run log.
+ */
+export async function readFailedRuns(
+  fileSystem: Pick<FileSystemBoundary, "readdir" | "readFile">,
+  root: Path
+): Promise<FailedRun[]> {
+  const runs: FailedRun[] = [];
+  async function walk(dir: Path): Promise<void> {
+    let entries;
+    try {
+      entries = await fileSystem.readdir(dir);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = new Path(dir, entry.name);
+      if (entry.isDirectory) {
+        await walk(path);
+        continue;
+      }
+      if (!entry.isFile || !LOG_NAME.test(entry.name) || !/\.failed\.log$/i.test(entry.name)) {
+        continue;
+      }
+      let header;
+      try {
+        header = parseHeader(await fileSystem.readFile(path));
+      } catch {
+        continue;
+      }
+      if (header !== null) runs.push({ ...header, path });
+    }
+  }
+  await walk(root);
+  return runs.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}

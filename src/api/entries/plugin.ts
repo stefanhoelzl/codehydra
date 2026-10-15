@@ -15,6 +15,7 @@ import { Path } from "../../utils/path/path";
 import type { AnyOperationEntry, OperationContext } from "../types";
 import type {
   EntryDeps,
+  PluginError,
   PluginListing,
   PluginScope,
   PluginSourceListing,
@@ -212,20 +213,29 @@ export function pluginEntries(deps: EntryDeps): readonly AnyOperationEntry[] {
       "Plugins that cannot run (an invalid manifest, a missing shell) and the last failed run " +
       "of each hook or automation, until it next succeeds or CodeHydra restarts. A failure " +
       "gives the exit and the path of the run's log file, which holds the script's stdin, " +
-      "stderr and stdout — read that rather than guessing.",
-    input: z.object({}),
+      "stderr and stdout — read that rather than guessing. With all, past failures follow, " +
+      "newest first, each marked current false: every failed run whose log is kept (the " +
+      "newest ten per hook or automation, across restarts) and, since CodeHydra started, " +
+      "failures that left no log.",
+    input: z.object({
+      all: z.boolean().optional().describe("Also list past failures, after what is wrong now"),
+    }),
     requiresWorkspace: false,
-    handler: async () =>
-      deps
-        .plugins()
-        .errors()
-        .map((error) => ({
-          plugin: error.plugin,
-          entry: error.entry ?? "",
-          message: error.message,
-          log: error.logPath ?? "",
-          at: error.at,
-        })),
+    handler: async (_ctx, input) => {
+      const plugins = deps.plugins();
+      const row = (error: PluginError) => ({
+        plugin: error.plugin,
+        entry: error.entry ?? "",
+        message: error.message,
+        log: error.logPath ?? "",
+        at: error.at,
+      });
+      if (!input.all) return plugins.errors().map(row);
+      return [
+        ...plugins.errors().map((error) => ({ ...row(error), current: true })),
+        ...(await plugins.pastErrors()).map((error) => ({ ...row(error), current: false })),
+      ];
+    },
   });
 
   const schema = defineEntry({

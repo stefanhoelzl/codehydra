@@ -143,6 +143,15 @@ function setup() {
         at: "2026-09-26T10:00:00Z",
       },
     ],
+    pastErrors: async () => [
+      {
+        plugin: "local:default:github",
+        entry: "automations.prs",
+        message: "exit 2",
+        logPath: "/logs/w.failed.log",
+        at: "2026-09-26T09:00:00.000Z",
+      },
+    ],
     schema: (which) => ({ type: which === "items" ? "array" : "object" }),
     render: async (template, itemsJson) =>
       (JSON.parse(itemsJson) as unknown[]).map((item) => ({ template, item })),
@@ -293,6 +302,20 @@ describe("plugin.errors", () => {
         log: "",
         at: "2026-09-26T10:00:00Z",
       },
+    ]);
+  });
+
+  it("adds past failures after the current ones with all, marking which is which", async () => {
+    const { call } = setup();
+
+    const rows = (await call("plugin.errors", outside, { all: true })) as Array<{
+      message: string;
+      current: boolean;
+    }>;
+    expect(rows.map(({ message, current }) => ({ message, current }))).toEqual([
+      { message: "exit 1", current: true },
+      { message: "document 1: unknown key x", current: true },
+      { message: "exit 2", current: false },
     ]);
   });
 });
