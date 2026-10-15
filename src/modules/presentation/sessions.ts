@@ -497,7 +497,8 @@ export class NotificationManager extends SessionRegistry<NotificationSnapshot, N
 
   /**
    * Route a user interaction. "dismiss" closes the card with no choice; a
-   * button closes it with that button's id. Either way every waiter is told.
+   * button closes it with that button's id — a `keepOpen` one answers with its
+   * id and leaves the card up. Either way every waiter is told.
    */
   routeEvent(event: NotificationUserEvent): void {
     const card = this.lookup(event.notificationId);
@@ -512,7 +513,15 @@ export class NotificationManager extends SessionRegistry<NotificationSnapshot, N
       card.finish(null);
       return;
     }
-    if (card.config.actions?.some((action) => action.id === event.actionId)) {
+    const action = card.config.actions?.find((candidate) => candidate.id === event.actionId);
+    if (action?.keepOpen) {
+      for (const [token, entry] of this.byToken) {
+        if (entry.card === card) this.byToken.delete(token);
+      }
+      card.answer(event.actionId);
+      return;
+    }
+    if (action) {
       card.finish(event.actionId);
       return;
     }
@@ -656,12 +665,17 @@ class NotificationCard implements RegistrySession<NotificationSnapshot> {
     if (this.isClosed) return;
     this.isClosed = true;
     this.hooks.release(this);
+    this.answer(choice);
+    this.notifyChange();
+  }
+
+  /** Answer every waiter with `choice`; the card stays as it is. */
+  answer(choice: string | null): void {
     const waiters = [...this.waiters];
     this.waiters.clear();
     for (const waiter of waiters) {
       if (waiter.timer !== undefined) clearTimeout(waiter.timer);
       waiter.resolve(choice);
     }
-    this.notifyChange();
   }
 }

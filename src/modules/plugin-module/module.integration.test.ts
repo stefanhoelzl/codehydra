@@ -70,7 +70,10 @@ import {
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import type { DialogConfig } from "../../shared/dialog-types";
 import type { NotificationConfig } from "../../shared/notification-types";
-import { createMockNotificationManager } from "../presentation/notification-manager.state-mock";
+import {
+  createMockNotificationManager,
+  type MockNotificationManager,
+} from "../presentation/notification-manager.state-mock";
 import { projPath, wsPath, testPath } from "../../shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import type { RunningHook } from "../presentation/presentation-module";
@@ -144,6 +147,10 @@ interface TestSetup {
   readonly terminalEnv: Array<Record<string, string>>;
   readonly agentStartEnv: Array<Record<string, string>>;
   readonly notifications: readonly NotificationConfig[];
+  /** The cards themselves: closed or not, and clicks on them. */
+  readonly cards: MockNotificationManager;
+  /** Files handed to the system's default app. */
+  readonly opened: string[];
   readonly dialogs: DialogConfig[];
   readonly sinkLines: Array<{ source: string; line: string }>;
   readonly metadataWrites: Array<{ key: string; value: string | null }>;
@@ -187,6 +194,12 @@ function createTestSetup(options?: SetupOptions): TestSetup {
   const agentStartEnv: Array<Record<string, string>> = [];
   const cards = createMockNotificationManager();
   cards.register(dispatcher);
+  const opened: string[] = [];
+  const appLayer = {
+    openPath: async (path: string): Promise<void> => {
+      opened.push(path);
+    },
+  };
   const dialogs: DialogConfig[] = [];
   const sinkLines: Array<{ source: string; line: string }> = [];
   const metadataWrites: Array<{ key: string; value: string | null }> = [];
@@ -398,13 +411,20 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     env: { PATH: "/usr/bin" },
   });
   // Automations run through the poll, as in the app.
-  const poll = createPollModule({ dispatcher, config, logger: createBehavioralLogger(), runner });
+  const poll = createPollModule({
+    dispatcher,
+    config,
+    logger: createBehavioralLogger(),
+    runner,
+    appLayer,
+  });
   dispatcher.registerOperation(new PollTickOperation());
   dispatcher.registerModule(poll);
   const module = createPluginModule({
     fileSystem,
     runner,
-    pollErrors: (owner) => poll.errors(owner),
+    poll,
+    appLayer,
     logger: createBehavioralLogger(),
     config,
     stateService,
@@ -432,6 +452,8 @@ function createTestSetup(options?: SetupOptions): TestSetup {
     get notifications() {
       return cards.notifications.map((card) => card.opened);
     },
+    cards,
+    opened,
     dialogs,
     sinkLines,
     metadataWrites,
@@ -607,8 +629,7 @@ describe("after-worktree-created", () => {
     expect(setup.createdEvents).toHaveLength(1);
     expect(setup.createdEvents[0]!.payload.metadata["title"]).toBe("B");
     const card = setup.notifications.find((n) => n.title === "Plugin failed");
-    // No log path: each run has its own, and a card naming it would never join
-    // the identical one already open.
+    // The text names no log path — the Open log button holds it.
     expect(card?.message).toBe(
       "local:default:a after-worktree-created: exit 3 — see ch plugin errors"
     );
@@ -619,6 +640,41 @@ describe("after-worktree-created", () => {
     expect(error).toMatchObject({ plugin: "local:default:a", entry: "after-worktree-created" });
     const log = await setup.fileSystem.readFile(new Path(error!.logPath!));
     expect(log).toContain("token=secret boom");
+  });
+
+  it("opens the failed run's log from its card, and closes the card on the next success", async () => {
+    const outcomes: Record<string, ScriptOutcome> = { "run a": { exitCode: 3 } };
+    const setup = createTestSetup({
+      local: { "a.yaml": hooksManifest({ "after-worktree-created": "run a" }) },
+      outcomes,
+    });
+    await openWorkspace(setup);
+    await setup.cards.settle();
+    const [error] = setup.module.api.errors();
+    expect(setup.notifications[0]!.actions).toEqual([
+      { id: "open-log", label: "Open log", keepOpen: true },
+    ]);
+
+    setup.cards.emitEvent(0, { actionId: "open-log" });
+    await setup.cards.settle();
+    expect(setup.opened).toEqual([error!.logPath]);
+    expect(setup.cards.notifications[0]!.closed).toBe(false);
+
+    outcomes["run a"] = {};
+    await openWorkspace(setup);
+    await setup.cards.settle();
+    expect(setup.cards.notifications[0]!.closed).toBe(true);
+    expect(setup.module.api.errors()).toEqual([]);
+    // The failure is past now, read back from its log.
+    expect(await setup.module.api.pastErrors()).toEqual([
+      {
+        plugin: "local:default:a",
+        entry: "after-worktree-created",
+        message: "exit 3",
+        logPath: error!.logPath,
+        at: expect.any(String),
+      },
+    ]);
   });
 
   it("treats exit 75 like any other exit: only automations retry", async () => {
@@ -838,6 +894,29 @@ describe("documents and platforms", () => {
     expect(cards[0]!.message).toMatch(
       /local:default:broken: document 1: hooks: unknown key after-worktree-craeted/
     );
+  });
+
+  it("closes a problem's card once the plugin is fixed, and keeps the problem as past", async () => {
+    const setup = createTestSetup({
+      local: { "broken.yaml": "hooks:\n  after-worktree-craeted: echo x\n" },
+      outcomes: { "echo x": {} },
+    });
+    await openWorkspace(setup);
+    await setup.cards.settle();
+    expect(setup.notifications[0]!.actions).toBeUndefined();
+
+    await setup.fileSystem.writeFile(
+      new Path(LOCAL_PLUGINS, "broken.yaml"),
+      hooksManifest({ "on-workspace-opened": "echo x" })
+    );
+    await reopenWorkspace(setup);
+    await setup.cards.settle();
+
+    expect(setup.cards.notifications[0]!.closed).toBe(true);
+    expect(setup.module.api.errors()).toEqual([]);
+    expect(await setup.module.api.pastErrors()).toMatchObject([
+      { plugin: "local:default:broken", message: expect.stringMatching(/unknown key/) },
+    ]);
   });
 });
 

@@ -98,7 +98,12 @@ import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import type { OperationRegistry } from "../../api/registry";
-import type { PluginListing, PluginSourceListing, Plugins } from "../../api/entries/deps";
+import type {
+  PluginError,
+  PluginListing,
+  PluginSourceListing,
+  Plugins,
+} from "../../api/entries/deps";
 import { ApiError } from "../../api/errors";
 import { invokePluginAction } from "../../api/adapters/plugin-actions";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
@@ -159,7 +164,10 @@ import { parseTemplate, renderInput, type TemplateObject } from "./template-rend
 import { safeJsonParse } from "./util";
 import { createAutomations, type AutomationSource } from "./automations";
 import { POLL_TICK_OPERATION_ID, type PollJob } from "../../intents/poll-tick";
-import type { PollError } from "../poll-module";
+import type { PollError, PollModule } from "../poll-module";
+import type { AppBoundary } from "../../boundaries/shell/app";
+import { createFailureCards } from "../scripts/failure-cards";
+import { readFailedRuns } from "../scripts/run-log";
 import {
   defineEvents,
   defineHooks,
@@ -175,8 +183,10 @@ export interface PluginModuleDeps {
   readonly fileSystem: FileSystemBoundary;
   /** Runs every hook script (scripts/scripts.ts, shared with the poll module). */
   readonly runner: ScriptRunner;
-  /** The automations failing right now, as the poll module recorded them. */
-  readonly pollErrors: (owner: string) => readonly PollError[];
+  /** The automations' failures, as the poll module, which runs them, recorded them. */
+  readonly poll: Pick<PollModule, "errors" | "pastErrors">;
+  /** Opens a failed run's log from its card. */
+  readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
   readonly config: Config;
   readonly stateService: StateService;
@@ -383,6 +393,17 @@ function migratedTrackingKey(key: string): string | undefined {
 }
 
 /** An automation's entry name: its run logs and its key in the error book. */
+/** An automation's failure, as the poll module recorded it, in `ch plugin errors`' terms. */
+function fromPollError(failure: PollError): PluginError {
+  return {
+    plugin: failure.source,
+    entry: failure.entry,
+    message: failure.message,
+    ...(failure.logPath !== undefined && { logPath: failure.logPath }),
+    at: failure.at,
+  };
+}
+
 function automationEntry(source: AutomationSource): string {
   return `automations.${source.name}`;
 }
@@ -445,7 +466,13 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     ui: deps.ui,
     logger: deps.logger,
   });
-  const errors: PluginErrorBook = createPluginErrorBook({ dispatcher: deps.dispatcher });
+  const errors: PluginErrorBook = createPluginErrorBook({
+    cards: createFailureCards({
+      dispatcher: deps.dispatcher,
+      openPath: (path) => deps.appLayer.openPath(path),
+      logger: deps.logger,
+    }),
+  });
 
   const runner = deps.runner;
 
@@ -1681,14 +1708,30 @@ export function createPluginModule(deps: PluginModuleDeps): PluginModule {
     errors: () => [
       ...errors.list(),
       // An automation's failures are the poll module's, which runs them.
-      ...deps.pollErrors(AUTOMATIONS_OWNER).map((failure) => ({
-        plugin: failure.source,
-        entry: failure.entry,
-        message: failure.message,
-        ...(failure.logPath !== undefined && { logPath: failure.logPath }),
-        at: failure.at,
-      })),
+      ...deps.poll.errors(AUTOMATIONS_OWNER).map(fromPollError),
     ],
+    async pastErrors() {
+      const current = new Set(
+        [...errors.list(), ...deps.poll.errors(AUTOMATIONS_OWNER)].flatMap((error) =>
+          error.logPath === undefined ? [] : [new Path(error.logPath).toString()]
+        )
+      );
+      // A failed run is past unless it is the one an entry is failing with now.
+      const logged = (await readFailedRuns(deps.fileSystem, logsRoot))
+        .filter((run) => !current.has(run.path.toString()))
+        .map((run): PluginError => ({
+          plugin: run.source,
+          entry: run.entry,
+          message: run.reason,
+          logPath: run.path.toNative(),
+          at: run.startedAt,
+        }));
+      return [
+        ...logged,
+        ...errors.past(),
+        ...deps.poll.pastErrors(AUTOMATIONS_OWNER).map(fromPollError),
+      ].sort((a, b) => b.at.localeCompare(a.at));
+    },
     schema: (which) => (which === "items" ? items().jsonSchema() : manifestJsonSchema()),
     async render(templatePath, itemsJson) {
       let template: TemplateObject;

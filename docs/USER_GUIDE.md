@@ -283,8 +283,9 @@ ch ws hibernate --wakeup 'gh pr checks 12 >/dev/null && echo "{\"action\":\"wake
   the moment you hibernate it.
 - **Failures** — an exit other than 0 (or 75, a temporary failure) or output
   that is not one of the above never wakes the workspace; it raises **Wakeup
-  script failed**, once per distinct message, and the script runs again next
-  poll. `ch ws wakeup show` lists the failure with its run log, kept under
+  script failed**, once per distinct message, with an **Open log** button, and
+  the script runs again next poll. The notification closes by itself once a
+  run succeeds or the workspace is woken. `ch ws wakeup show` lists the failure with its run log, kept under
   `<data directory>/logs/wakeup/`.
 - A workspace with a wakeup script shows an alarm clock tag (⏰) in the
   sidebar; hover it to see the script.
@@ -751,14 +752,25 @@ A script's output never reaches CodeHydra's own log, and an error never quotes
 it — output can carry credentials an automation inlines. Instead:
 
 - a failed run raises a **Plugin failed** notification naming the plugin, the
-  entry and the exit, and pointing to `ch plugin errors` for the run log
+  entry and the exit, and pointing to `ch plugin errors`
   (`local:default:github automations.reviews: exit 1 — see ch plugin errors`); a
   plugin that cannot run at all — an invalid manifest, a folder without
-  `plugin.yaml`, a setting without its value — raises **Plugin cannot run**. Each is raised once
-  per distinct message, not every time it happens again;
+  `plugin.yaml`, a setting without its value — raises **Plugin cannot run**.
+  There is one notification per failing hook, automation or plugin, raised
+  again only when its message changes — not every time it fails again, and not
+  after you dismiss it unless the message changes. It **closes by itself** once
+  the failure is over: the next successful run, the automation removed, the
+  plugin fixed;
+- a failure with a run log has an **Open log** button, which opens the newest
+  failed run's log in your system's default app and leaves the notification
+  up. A plugin that cannot run, or a script that never started, has no log
+  and no button;
 - `ch plugin errors` lists the same: every plugin that cannot run, and the last
   failed run of each hook and automation (until it next succeeds, or
-  CodeHydra restarts), with its log file;
+  CodeHydra restarts), with its log file. `ch plugin errors --all` adds past
+  failures after those, newest first, each with `current` false: every
+  failed run whose log is still kept — so across restarts — and, since
+  CodeHydra started, failures that left no log;
 - a hook's stderr and stdout are also shown in the **CodeHydra Plugins** output
   channel of the workspace's editor after it exits, each line tagged with the
   plugin and entry (up to 500 lines are held until the editor is up).
@@ -770,7 +782,7 @@ ch plugin list                         # name, enabled/disabled/ask, platforms, 
 ch plugin disable local:default:github # stop running it: hooks and automations
 ch plugin enable project:my-app:setup  # trust one of this repository's plugins
 ch plugin add|remove|update …          # manage plugins.config's sources (see Plugin sources)
-ch plugin errors                       # what is wrong, with run logs
+ch plugin errors [--all]               # what is wrong, with run logs; --all adds past failures
 ch plugin schema [--items]             # the manifest's JSON Schema, or the items'
 ch plugin render <template>            # render piped items through a Liquid template
 ```

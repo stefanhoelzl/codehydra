@@ -18,9 +18,13 @@
  *   "result" (output that does not parse, a refused item) fail the job;
  * - exit 75 (`EX_TEMPFAIL`) is a temporary failure: listed at once, raised as a
  *   card only once it has gone on for ten minutes;
- * - one card per distinct message — a job failing every tick raises one card,
- *   not one per tick — and the failure is forgotten when the job next succeeds,
+ * - one card per failing job, raised per distinct message — a job failing
+ *   every tick raises one card, not one per tick — with an Open log button for
+ *   its newest failed run (scripts/failure-cards.ts);
+ * - the failure is forgotten, and its card closed, when the job next succeeds
  *   or is no longer collected (its automation removed, its workspace woken).
+ *   A failure that left no run log (the script never started) is kept as past
+ *   until restart; one with a log is recorded by its log.
  *
  * Every run writes its own log file, judged after its owner has read it: a run
  * whose output its owner refused is logged with the failures.
@@ -41,7 +45,8 @@ import {
   type PollRun,
   type PollTickIntent,
 } from "../intents/poll-tick";
-import { notify } from "./presentation/notification-card";
+import type { AppBoundary } from "../boundaries/shell/app";
+import { createFailureCards, PastFailures } from "./scripts/failure-cards";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 import { describeStatus, type PendingRun, type ScriptRunner } from "./scripts/script-runner";
@@ -79,6 +84,8 @@ export interface PollModuleDeps {
   readonly config: Config;
   readonly logger: Logger;
   readonly runner: ScriptRunner;
+  /** Opens a failed run's log from its card. */
+  readonly appLayer: Pick<AppBoundary, "openPath">;
   /** Default: `Date.now`. */
   readonly now?: () => number;
 }
@@ -86,6 +93,11 @@ export interface PollModuleDeps {
 export interface PollModule extends IntentModule {
   /** The jobs failing right now, optionally of one owner. */
   errors(owner?: string): readonly PollError[];
+  /**
+   * Past failures that left no run log (the script never started), since the
+   * app started, optionally of one owner — the ones with a log are their logs.
+   */
+  pastErrors(owner?: string): readonly PollError[];
 }
 
 function jobKey(job: Pick<PollJob, "owner" | "id">): string {
@@ -126,6 +138,12 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
   // ---------------------------------------------------------------------------
 
   const failures = new Map<string, PollError>();
+  const past = new PastFailures<PollError>();
+  const cards = createFailureCards({
+    dispatcher: deps.dispatcher,
+    openPath: (path) => deps.appLayer.openPath(path),
+    logger: deps.logger,
+  });
   /** When each job's current run of temporary failures began. */
   const temporarySince = new Map<string, number>();
   /** Jobs reported in the tick in progress. */
@@ -144,13 +162,22 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
       at: new Date(now()).toISOString(),
     };
     failures.set(key, entry);
-    if (quiet || previous?.message === message) return;
-    notify(deps.dispatcher, {
-      type: "error",
+    if (previous !== undefined && previous.message !== message) past.add(key, previous);
+    if (quiet) return;
+    cards.raise(key, {
       title: job.failure.title,
       message: `${job.source} ${job.entry}: ${message} — ${job.failure.pointer}`,
-      dismissible: true,
+      ...(entry.logPath !== undefined && { logPath: entry.logPath }),
     });
+  }
+
+  /** The job is not failing (any more): forget it and close its card. */
+  function forget(key: string): void {
+    const previous = failures.get(key);
+    if (previous === undefined) return;
+    failures.delete(key);
+    past.add(key, previous);
+    cards.clear(key);
   }
 
   /**
@@ -243,7 +270,7 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
     }
     temporarySince.delete(key);
     if (failure === undefined) {
-      failures.delete(key);
+      forget(key);
       return;
     }
     deps.logger.warn("Poll job failed", { owner: job.owner, id: job.id, reason: failure });
@@ -272,7 +299,7 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
     // A job no longer collected (its automation removed, its workspace woken)
     // has nothing left to fail.
     for (const key of [...failures.keys()]) {
-      if (!reported.has(key)) failures.delete(key);
+      if (!reported.has(key)) forget(key);
     }
     for (const key of [...temporarySince.keys()]) {
       if (!reported.has(key)) temporarySince.delete(key);
@@ -329,5 +356,7 @@ export function createPollModule(deps: PollModuleDeps): PollModule {
     events,
     errors: (owner) =>
       [...failures.values()].filter((entry) => owner === undefined || entry.owner === owner),
+    pastErrors: (owner) =>
+      past.list().filter((entry) => owner === undefined || entry.owner === owner),
   };
 }

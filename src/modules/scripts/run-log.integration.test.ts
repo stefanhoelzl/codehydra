@@ -14,6 +14,7 @@ import {
   KEEP_FAILED_RUNS,
   formatRunLog,
   pruneRunLogs,
+  readFailedRuns,
   writeRunLog,
   type RunRecord,
 } from "./run-log";
@@ -107,5 +108,51 @@ describe("writeRunLog", () => {
 
     const names = (await fs.readdir(DIR)).map((entry) => entry.name);
     expect(names).toContain("notes.txt");
+  });
+});
+
+describe("readFailedRuns", () => {
+  it("reads every kept failure under the root, newest first, from its header", async () => {
+    const fs = createFileSystemMock({ entries: { "/logs": directory() } });
+    const older = await writeRunLog(
+      fs,
+      DIR,
+      record({ startedAt: new Date("2026-09-26T10:00:00.000Z") })
+    );
+    const newer = await writeRunLog(
+      fs,
+      new Path("/logs/plugins/project/app-1a2b/x/hooks/on-workspace-opened"),
+      record({
+        source: "project:app:x",
+        entry: "on-workspace-opened",
+        reason: "timed out — after 30s",
+        startedAt: new Date("2026-09-26T11:00:00.000Z"),
+      })
+    );
+    await writeRunLog(fs, DIR, record({ outcome: "ok" }));
+    await fs.writeFile(new Path(DIR, "notes.txt"), "not a log");
+
+    expect(await readFailedRuns(fs, new Path("/logs/plugins"))).toEqual([
+      {
+        source: "project:app:x",
+        entry: "on-workspace-opened",
+        reason: "timed out — after 30s",
+        startedAt: "2026-09-26T11:00:00.000Z",
+        path: newer,
+      },
+      {
+        source: "local:github",
+        entry: "prs",
+        reason: "exit 1",
+        startedAt: "2026-09-26T10:00:00.000Z",
+        path: older,
+      },
+    ]);
+  });
+
+  it("finds nothing when the root does not exist", async () => {
+    const fs = createFileSystemMock({ entries: {} });
+
+    expect(await readFailedRuns(fs, new Path("/logs/plugins"))).toEqual([]);
   });
 });

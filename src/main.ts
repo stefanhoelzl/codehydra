@@ -746,11 +746,13 @@ const pollModule = createPollModule({
   config: configService,
   logger: loggingService.createLogger("plugins"),
   runner: scriptRunner,
+  appLayer,
 });
 const pluginModule = createPluginModule({
   fileSystem: fileSystemLayer,
   runner: scriptRunner,
-  pollErrors: (owner) => pollModule.errors(owner),
+  poll: pollModule,
+  appLayer,
   logger: loggingService.createLogger("plugins"),
   config: configService,
   stateService,

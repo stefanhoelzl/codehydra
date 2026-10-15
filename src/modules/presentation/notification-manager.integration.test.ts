@@ -151,6 +151,29 @@ describe("NotificationManager", () => {
       expect(manager.getSnapshot()).toEqual([]);
     });
 
+    it("answers a keepOpen button and leaves the card up", async () => {
+      const { manager } = createManager();
+      const config: NotificationConfig = {
+        title: "Plugin failed",
+        type: "error",
+        actions: [{ id: "open-log", label: "Open log", keepOpen: true }],
+      };
+      const answer = manager.showAndWait({ config }, { waiter: "w1" });
+      const [card] = manager.getSnapshot();
+
+      manager.routeEvent({ notificationId: card!.id, actionId: "open-log" });
+
+      expect(await answer).toBe("open-log");
+      expect(manager.getSnapshot()).toEqual([expect.objectContaining({ id: card!.id })]);
+      // The answered wait is over: releasing its token touches nothing.
+      manager.releaseWaiter("w1");
+      expect(manager.isOpen(card!.id)).toBe(true);
+      const again = manager.showAndWait({ config, id: card!.id }, {});
+      manager.routeEvent({ notificationId: card!.id, actionId: "dismiss" });
+      expect(await again).toBeNull();
+      expect(manager.getSnapshot()).toEqual([]);
+    });
+
     it("answers null on dismiss", async () => {
       const { manager } = createManager();
       const answer = manager.showAndWait({ config: QUESTION }, {});

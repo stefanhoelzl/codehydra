@@ -239,7 +239,13 @@ function createSetup() {
     },
   };
 
-  const poll = createPollModule({ dispatcher, config, logger: createBehavioralLogger(), runner });
+  const poll = createPollModule({
+    dispatcher,
+    config,
+    logger: createBehavioralLogger(),
+    runner,
+    appLayer: { openPath: async () => {} },
+  });
   const wakeup = createWakeupModule({
     dispatcher,
     logger: createBehavioralLogger(),

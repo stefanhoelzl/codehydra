@@ -1047,7 +1047,7 @@ $ ch plugin add git@github.com:acme/ch-plugins.git --name acme --ref main --path
 $ ch plugin add ~/work/ch-plugins        # a folder: a local entry, named after it
 $ ch plugin update [acme]                # fetch one remote entry now, or every one
 $ ch plugin remove acme                  # the entry, its values and its clone
-$ ch plugin errors                       # plugin, entry, message, log, at (rows)
+$ ch plugin errors [--all]               # plugin, entry, message, log, at (rows); --all adds past ones (current: false)
 $ ch plugin schema                       # the manifest's JSON Schema
 $ ch plugin schema --items               # what an automation's script prints (oneOf per action)
 $ gh pr list --json number | ch plugin render reviews.yaml   # items through a Liquid template
