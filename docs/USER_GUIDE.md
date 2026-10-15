@@ -478,6 +478,13 @@ runs on the starting screen before anything opens:
   Quitting keeps the request, so the next start tries again; so does a start
   after a crash in the middle of it.
 
+If the folder in use cannot be read at start — typically a Dev Drive, external
+or network drive that is not attached — the starting screen says so before
+anything opens. Attach it and **Retry**, or **Quit**. **Continue without it**
+starts anyway: projects cloned into that folder do not open and its workspaces
+are not listed until CodeHydra starts with the folder available; nothing is
+deleted or forgotten.
+
 The folder in use is not a setting: `ch config` does not list it, and it
 changes only through a migration. Earlier versions had a `paths.workspaces`
 setting; the first start of this version takes it over, and runs a change of
