@@ -152,20 +152,20 @@ The unified per-agent surface consumed by the generic module (`agent-module-prov
 
 Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concrete provider class):
 
-| Spec member              | Claude                                                              | OpenCode                                       |
-| ------------------------ | ------------------------------------------------------------------- | ---------------------------------------------- |
-| `binary` / `binaryEnv`   | resolver; `_CH_CLAUDE_BIN` (+ `DISABLE_AUTOUPDATER` for a download) | resolver; `_CH_OPENCODE_BIN`                   |
-| `createProvider`         | `new ClaudeCodeProvider({serverManager, workspaceRef, logger})`     | `new OpenCodeProvider(ref, path, logger)`      |
-| `connectProvider`        | `connect(port)`                                                     | `connect(port)` + `fetchStatus()`              |
-| `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`            |
-| `onProviderRegistered`   | —                                                                   | sends the pending initial prompt               |
-| `startServer`            | `startServer(ref)`                                                  | `startServer(ref, path, {initialPrompt, ...})` |
-| `afterProviderReady`     | writes prompt file + no-session marker                              | reports the prompt delivered (already sent)    |
-| `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach             |
-| `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking) |
-| `clearWorkspaceTracking` | — (no per-workspace tracking)                                       | clears the TUI-attached entry                  |
+| Spec member              | Claude                                                              | OpenCode                                                 |
+| ------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------- |
+| `binary` / `binaryEnv`   | resolver; `_CH_CLAUDE_BIN` (+ `DISABLE_AUTOUPDATER` for a download) | resolver; `_CH_OPENCODE_BIN`                             |
+| `createProvider`         | `new ClaudeCodeProvider({serverManager, workspaceRef, logger})`     | `new OpenCodeProvider(ref, path, logger)`                |
+| `connectProvider`        | `connect(port)`                                                     | `connect(port)` + `fetchStatus()`                        |
+| `initialStatus`          | always `"none"` (status arrives via hooks)                          | derived from `getEffectiveCounts()`                      |
+| `onProviderRegistered`   | —                                                                   | queues the pending initial prompt on the primary session |
+| `startServer`            | `startServer(ref)`                                                  | `startServer(ref, path, {initialPrompt, ...})`           |
+| `afterProviderReady`     | writes prompt file + no-session marker                              | reports the prompt delivered (if accepted)               |
+| `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager                          | `triggerWrapperStart` / TUI detach                       |
+| `wireExtraCallbacks`     | —                                                                   | `setMarkActiveHandler` (TUI-attached tracking)           |
+| `clearWorkspaceTracking` | — (no per-workspace tracking)                                       | clears the TUI-attached entry                            |
 
-The initial prompt reaches the agent in memory (Claude: a one-shot temp file named only in the server manager's state), so the agent module also keeps the workspace's `AgentSpec` in the internal `agent.pending-prompt` metadata key until the agent has taken it over — `onInitialPromptDelivered` in `WorkspaceStartOptions`: Claude's first `SessionStart` after the prompt file was written, OpenCode's `afterProviderReady`. A reopen (startup, wake) that finds the key starts the agent with that prompt as a new workspace (no-session marker included); an unreadable key, or one for another agent, is dropped.
+The initial prompt reaches the agent in memory (Claude: a one-shot temp file named only in the server manager's state), so the agent module also keeps the workspace's `AgentSpec` in the internal `agent.pending-prompt` metadata key until the agent has taken it over — `onInitialPromptDelivered` in `WorkspaceStartOptions`: Claude's first `SessionStart` after the prompt file was written, OpenCode's `afterProviderReady` once the server has accepted the queued prompt. OpenCode queues the prompt (`promptAsync`) on the workspace's primary session — the one the TUI attaches to, so the turn it starts is the one the user watches — and a `workspace:open` never waits for that turn; a refused or failed queue leaves the key in place, so the next open delivers the prompt again. A reopen (startup, wake) that finds the key starts the agent with that prompt as a new workspace (no-session marker included); an unreadable key, or one for another agent, is dropped.
 
 ### AgentServerManager
 

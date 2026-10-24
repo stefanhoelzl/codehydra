@@ -65,6 +65,7 @@ const {
     getEffectiveCounts = vi.fn().mockReturnValue({ idle: 0, busy: 0 });
     createSession = vi.fn().mockResolvedValue({ ok: true, value: { id: "session-1" } });
     sendPrompt = vi.fn().mockResolvedValue({ ok: true, value: {} });
+    sendPromptAsync = vi.fn().mockResolvedValue({ ok: true, value: {} });
 
     constructor() {
       statusCallback = null;
@@ -346,7 +347,7 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("pendingPrompt handling", () => {
-    it("sends prompt when pendingPrompt is provided", async () => {
+    it("queues prompt on the primary session when pendingPrompt is provided", async () => {
       const pendingPrompt = { prompt: "hello world" };
       const mockProv = await initializeAndStart(
         provider,
@@ -356,11 +357,16 @@ describe("OpenCode module provider", () => {
         pendingPrompt
       );
 
-      expect(mockProv.createSession).toHaveBeenCalledOnce();
-      expect(mockProv.sendPrompt).toHaveBeenCalledWith("session-1", "hello world", {});
+      // The regression: the prompt must be queued, never sent as a turn —
+      // awaiting the turn held workspace:open in loading until it ended —
+      // and it must land on the primary session, the one the TUI attaches
+      // to, not on a session of its own nobody watches.
+      expect(mockProv.sendPromptAsync).toHaveBeenCalledWith("s1", "hello world", {});
+      expect(mockProv.sendPrompt).not.toHaveBeenCalled();
+      expect(mockProv.createSession).not.toHaveBeenCalled();
     });
 
-    it("sends prompt with agent and model options", async () => {
+    it("queues prompt with agent and model options", async () => {
       const pendingPrompt = {
         prompt: "code review",
         agent: "coder",
@@ -374,48 +380,24 @@ describe("OpenCode module provider", () => {
         pendingPrompt
       );
 
-      expect(mockProv.sendPrompt).toHaveBeenCalledWith("session-1", "code review", {
+      expect(mockProv.sendPromptAsync).toHaveBeenCalledWith("s1", "code review", {
         agent: "coder",
         model: { providerID: "anthropic", modelID: "claude-4" },
       });
+      expect(mockProv.sendPrompt).not.toHaveBeenCalled();
     });
 
-    it("does not send prompt when pendingPrompt is undefined", async () => {
+    it("does not queue prompt when pendingPrompt is undefined", async () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
       expect(mockProv.createSession).not.toHaveBeenCalled();
+      expect(mockProv.sendPromptAsync).not.toHaveBeenCalled();
       expect(mockProv.sendPrompt).not.toHaveBeenCalled();
     });
 
-    it("logs error when createSession fails", async () => {
-      const pendingPrompt = { prompt: "hello" };
-      const createSessionMock = vi.fn().mockResolvedValue({
-        ok: false,
-        error: { message: "session creation failed" },
-      });
-
-      setNextInstanceOverrides({ createSession: createSessionMock });
-
-      const mockProv = await initializeAndStart(
-        provider,
-        serverManager,
-        WS_REF,
-        8080,
-        pendingPrompt
-      );
-
-      expect(createSessionMock).toHaveBeenCalledOnce();
-      expect(mockProv.sendPrompt).not.toHaveBeenCalled();
-    });
-
-    it("logs error when sendPrompt fails", async () => {
-      const pendingPrompt = { prompt: "hello" };
-      const sendPromptMock = vi.fn().mockResolvedValue({
-        ok: false,
-        error: { message: "send failed" },
-      });
-
-      setNextInstanceOverrides({ sendPrompt: sendPromptMock });
+    it("falls back to creating a session when there is no primary", async () => {
+      setNextInstanceOverrides({ getSession: vi.fn().mockReturnValue(null) });
+      const pendingPrompt = { prompt: "hello world" };
 
       const mockProv = await initializeAndStart(
         provider,
@@ -426,8 +408,43 @@ describe("OpenCode module provider", () => {
       );
 
       expect(mockProv.createSession).toHaveBeenCalledOnce();
-      expect(sendPromptMock).toHaveBeenCalledOnce();
-      // sendPrompt returned error - provider should not throw
+      expect(mockProv.sendPromptAsync).toHaveBeenCalledWith("session-1", "hello world", {});
+    });
+
+    it("logs error when the fallback session creation fails", async () => {
+      setNextInstanceOverrides({
+        getSession: vi.fn().mockReturnValue(null),
+        createSession: vi.fn().mockResolvedValue({
+          ok: false,
+          error: { message: "session creation failed" },
+        }),
+      });
+      const pendingPrompt = { prompt: "hello" };
+
+      const mockProv = await initializeAndStart(
+        provider,
+        serverManager,
+        WS_REF,
+        8080,
+        pendingPrompt
+      );
+
+      expect(mockProv.sendPromptAsync).not.toHaveBeenCalled();
+    });
+
+    it("logs error when the prompt queue is refused", async () => {
+      const pendingPrompt = { prompt: "hello" };
+      const sendPromptAsyncMock = vi.fn().mockResolvedValue({
+        ok: false,
+        error: { message: "send failed" },
+      });
+
+      setNextInstanceOverrides({ sendPromptAsync: sendPromptAsyncMock });
+
+      await initializeAndStart(provider, serverManager, WS_REF, 8080, pendingPrompt);
+
+      expect(sendPromptAsyncMock).toHaveBeenCalledOnce();
+      // sendPromptAsync returned error - provider should not throw
     });
   });
 
@@ -576,14 +593,14 @@ describe("OpenCode module provider", () => {
       });
     });
 
-    it("reports the prompt delivered once it has been sent", async () => {
+    it("reports the prompt delivered once the server has accepted it", async () => {
       provider.initialize(null);
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
         serverManager._triggerStarted(WS_REF, 8080, { prompt: "build feature X" });
         return 8080;
       });
       const onInitialPromptDelivered = vi.fn(() => {
-        expect(getLatestMockProvider().sendPrompt).toHaveBeenCalled();
+        expect(getLatestMockProvider().sendPromptAsync).toHaveBeenCalled();
       });
 
       await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
@@ -592,6 +609,73 @@ describe("OpenCode module provider", () => {
       });
 
       expect(onInitialPromptDelivered).toHaveBeenCalledOnce();
+    });
+
+    it("does not report the prompt delivered when the queue is refused", async () => {
+      // The regression: a refused or failed queue used to fire
+      // onInitialPromptDelivered anyway, clearing the pending-prompt metadata
+      // so the prompt was never delivered — on any later open either.
+      provider.initialize(null);
+      vi.mocked(serverManager.startServer).mockImplementation(async () => {
+        serverManager._triggerStarted(WS_REF, 8080, { prompt: "build feature X" });
+        return 8080;
+      });
+      setNextInstanceOverrides({
+        sendPromptAsync: vi.fn().mockResolvedValue({
+          ok: false,
+          error: { message: "send failed" },
+        }),
+      });
+      const onInitialPromptDelivered = vi.fn();
+
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
+        initialPrompt: { prompt: "build feature X" },
+        onInitialPromptDelivered,
+      });
+
+      expect(onInitialPromptDelivered).not.toHaveBeenCalled();
+    });
+
+    it("does not count an acceptance left over from a start that never finished", async () => {
+      provider.initialize(null);
+      // A server start whose startWorkspace never reached afterProviderReady
+      // (e.g. startServer threw after the callback) leaves an acceptance.
+      serverManager._triggerStarted(WS_REF, 8080, { prompt: "build feature X" });
+      await vi.waitFor(() => expect(getLatestMockProvider().sendPromptAsync).toHaveBeenCalled());
+      serverManager._triggerStopped(WS_REF, false);
+
+      vi.mocked(serverManager.startServer).mockImplementation(async () => {
+        serverManager._triggerStarted(WS_REF, 8080, undefined);
+        return 8080;
+      });
+      const onInitialPromptDelivered = vi.fn();
+
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), { onInitialPromptDelivered });
+
+      expect(onInitialPromptDelivered).not.toHaveBeenCalled();
+    });
+
+    it("does not report the prompt delivered when session creation fails", async () => {
+      provider.initialize(null);
+      vi.mocked(serverManager.startServer).mockImplementation(async () => {
+        serverManager._triggerStarted(WS_REF, 8080, { prompt: "build feature X" });
+        return 8080;
+      });
+      setNextInstanceOverrides({
+        getSession: vi.fn().mockReturnValue(null),
+        createSession: vi.fn().mockResolvedValue({
+          ok: false,
+          error: { message: "session creation failed" },
+        }),
+      });
+      const onInitialPromptDelivered = vi.fn();
+
+      await provider.startWorkspace(WS_REF, new Path(WS_PATH), {
+        initialPrompt: { prompt: "build feature X" },
+        onInitialPromptDelivered,
+      });
+
+      expect(onInitialPromptDelivered).not.toHaveBeenCalled();
     });
 
     it("calls startServer without a prompt when no initialPrompt", async () => {

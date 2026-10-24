@@ -314,7 +314,8 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   }
 
   /**
-   * Create a new session.
+   * Create a new session and store it as the primary session — the one the
+   * TUI attaches to and messages are queued on.
    * The session is immediately tracked before SSE events arrive.
    *
    * @returns The full session object on success, or an error
@@ -323,7 +324,13 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     if (!this.client) {
       return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
     }
-    return this.client.createSession();
+    const result = await this.client.createSession();
+    if (result.ok) {
+      this._primarySessionId = result.value.id;
+      // The primary session may be what a waiting sender still lacked.
+      this.readyWaiters.notify();
+    }
+    return result;
   }
 
   /**
@@ -338,6 +345,23 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
     }
     return this.client.sendPrompt(sessionId, prompt, options);
+  }
+
+  /**
+   * Queue a prompt on an existing session.
+   *
+   * Unlike {@link sendPrompt}, which resolves only when the turn it starts has
+   * finished, this resolves as soon as the server has accepted the prompt.
+   */
+  async sendPromptAsync(
+    sessionId: string,
+    prompt: string,
+    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+  ): Promise<Result<void, OpenCodeError>> {
+    if (!this.client) {
+      return err(new OpenCodeError("Not connected", "NOT_CONNECTED"));
+    }
+    return this.client.sendPromptAsync(sessionId, prompt, options);
   }
 
   /**

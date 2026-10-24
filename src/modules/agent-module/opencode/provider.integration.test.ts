@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for OpenCodeProvider.sendMessage.
+ * Integration tests for OpenCodeProvider.sendMessage and .sendPromptAsync.
  *
  * The provider builds its own OpenCodeClient; the client module is swapped for
  * one that runs the real client over the behavioral SDK mock.
@@ -101,5 +101,72 @@ describe("OpenCodeProvider.sendMessage", () => {
       .mockResolvedValue({ data: undefined, error: { name: "NotFoundError" } });
 
     await expect(provider.sendMessage(message, { waitMs: 0 })).rejects.toThrow("NotFoundError");
+  });
+});
+
+describe("OpenCodeProvider.sendPromptAsync", () => {
+  let provider: OpenCodeProvider;
+
+  beforeEach(async () => {
+    sdk.current = createSdkClientMock();
+    provider = new OpenCodeProvider(
+      workspaceRefSchema.parse("ch::local::/workspace::feature-a"),
+      new Path("/workspace/feature-a"),
+      SILENT_LOGGER
+    );
+    await provider.connect(8080);
+  });
+
+  afterEach(() => {
+    provider.dispose();
+  });
+
+  it("queues the prompt with the agent and model options", async () => {
+    const session = await provider.createSession();
+    expect(session.ok).toBe(true);
+    if (!session.ok) return;
+
+    const result = await provider.sendPromptAsync(session.value.id, "build feature X", {
+      agent: "coder",
+      model: { providerID: "anthropic", modelID: "claude-4" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(sdk.current!.$.prompts).toEqual([
+      expect.objectContaining({
+        sessionId: session.value.id,
+        prompt: "build feature X",
+        queued: true,
+        agent: "coder",
+        model: { providerID: "anthropic", modelID: "claude-4" },
+      }),
+    ]);
+  });
+
+  it("makes a created session the primary one the TUI attaches to", async () => {
+    // The regression: the initial prompt's fallback session stayed off the
+    // primary, so the TUI attached elsewhere and its turn ran unwatched.
+    const session = await provider.createSession();
+    expect(session.ok).toBe(true);
+    if (!session.ok) return;
+
+    expect(provider.getSession()?.sessionId).toBe(session.value.id);
+    expect(provider.getEnvironmentVariables()).toMatchObject({
+      _CH_OPENCODE_SESSION_ID: session.value.id,
+    });
+  });
+
+  it("reports not connected without a client", async () => {
+    const disconnected = new OpenCodeProvider(
+      workspaceRefSchema.parse("ch::local::/workspace::feature-b"),
+      new Path("/workspace/feature-b"),
+      SILENT_LOGGER
+    );
+
+    const result = await disconnected.sendPromptAsync("ses-1", "hello");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("Not connected");
+    expect(sdk.current!.$.prompts).toHaveLength(0);
   });
 });

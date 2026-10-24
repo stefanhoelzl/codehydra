@@ -651,6 +651,26 @@ describe("OpenCodeClient", () => {
       ]);
     });
 
+    it("passes agent and model options through to the queued prompt", async () => {
+      client = createClient();
+
+      const result = await client.sendPromptAsync("ses-1", "hello", {
+        agent: "coder",
+        model: { providerID: "anthropic", modelID: "claude-4" },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockSdk.$.prompts).toEqual([
+        expect.objectContaining({
+          sessionId: "ses-1",
+          prompt: "hello",
+          queued: true,
+          agent: "coder",
+          model: { providerID: "anthropic", modelID: "claude-4" },
+        }),
+      ]);
+    });
+
     it("reports an error the server answered with", async () => {
       mockSdk.session.promptAsync = vi
         .fn()
