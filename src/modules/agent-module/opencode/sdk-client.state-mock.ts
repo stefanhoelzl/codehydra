@@ -493,13 +493,19 @@ export function createSdkClientMock(options?: MockSdkClientOptions): MockSdkClie
 
       async promptAsync(args: {
         path: { id: string };
-        body: { parts: Array<{ type: string; text: string }> };
+        body: {
+          parts: Array<{ type: string; text: string }>;
+          agent?: string;
+          model?: { providerID: string; modelID: string };
+        };
       }): Promise<{ data: undefined; error: undefined }> {
         state._recordPrompt({
           sessionId: args.path.id,
           prompt: args.body.parts.find((p) => p.type === "text")?.text ?? "",
           timestamp: Date.now(),
           queued: true,
+          ...(args.body.agent !== undefined && { agent: args.body.agent }),
+          ...(args.body.model !== undefined && { model: args.body.model }),
         });
         return { data: undefined, error: undefined };
       },

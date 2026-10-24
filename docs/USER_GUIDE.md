@@ -1320,7 +1320,9 @@ tools).
 A prompt given when a workspace is created — in the New workspace form, with
 `ch ws create … --prompt`, by `workspace_create` from another agent, or by an
 [automation](#automations) — is sent once, when the agent
-first starts. If CodeHydra quits before that, it is sent on the next start. With it you can choose `--agent claude|opencode`, `--model`
+first starts; the workspace does not wait for the work it starts. If CodeHydra
+quits before the agent takes it over, it is sent on the next start. With it you
+can choose `--agent claude|opencode`, `--model`
 (OpenCode: `provider/model`), `--permission-mode` (Claude Code, e.g. `plan`)
 and `--agent-name`; these need `--agent`.
 

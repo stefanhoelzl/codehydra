@@ -51,6 +51,14 @@ export function createOpenCodeModuleProvider(
    */
   const tuiAttachedWorkspaces = new Set<WorkspaceRef>();
 
+  /**
+   * Workspaces whose initial prompt the server has accepted. Cleared per start:
+   * `onProviderRegistered` fills it, `afterProviderReady` consumes it. Only an
+   * accepted prompt counts as delivered — a refused one must leave the pending
+   * prompt in the workspace's metadata, so a reopen delivers it again.
+   */
+  const initialPromptAccepted = new Set<WorkspaceRef>();
+
   return createAgentModuleProvider<OpenCodeProvider>(
     {
       // --- Identity ---
@@ -93,32 +101,47 @@ export function createOpenCodeModuleProvider(
         }
       },
 
-      // Send the initial prompt (if any) once the provider is registered.
+      // Queue the initial prompt (if any) once the provider is registered.
+      // Queued, never awaited as a turn: the turn a prompt starts can outlast
+      // a workspace:open by minutes, and the open must not sit in loading
+      // until it ends.
       onProviderRegistered: async (workspaceRef, provider, extra) => {
+        // Before the early return: an acceptance left over from a start whose
+        // afterProviderReady never ran must not count for this one.
+        initialPromptAccepted.delete(workspaceRef);
+
         const pendingPrompt = extra as PendingPrompt | undefined;
         if (!pendingPrompt) return;
 
-        const sessionResult = await provider.createSession();
-        if (sessionResult.ok) {
-          const promptResult = await provider.sendPrompt(
-            sessionResult.value.id,
-            pendingPrompt.prompt,
-            {
-              ...(pendingPrompt.agent !== undefined && { agent: pendingPrompt.agent }),
-              ...(pendingPrompt.model !== undefined && { model: pendingPrompt.model }),
-            }
-          );
-          if (!promptResult.ok) {
+        // The primary session is the one the TUI attaches to, so the prompt
+        // must be queued there — a session of its own would run the turn
+        // where nobody sees it. Creating one (which becomes the primary) is
+        // only the fallback for a connect that established no primary.
+        let sessionId = provider.getSession()?.sessionId ?? null;
+        if (sessionId === null) {
+          const sessionResult = await provider.createSession();
+          if (sessionResult.ok) {
+            sessionId = sessionResult.value.id;
+          } else {
             logger
               .scoped({ workspace: workspaceRef })
-              .error("Failed to send initial prompt", { error: promptResult.error.message });
+              .error("Failed to create session for initial prompt", {
+                error: sessionResult.error.message,
+              });
+            return;
           }
+        }
+
+        const promptResult = await provider.sendPromptAsync(sessionId, pendingPrompt.prompt, {
+          ...(pendingPrompt.agent !== undefined && { agent: pendingPrompt.agent }),
+          ...(pendingPrompt.model !== undefined && { model: pendingPrompt.model }),
+        });
+        if (promptResult.ok) {
+          initialPromptAccepted.add(workspaceRef);
         } else {
           logger
             .scoped({ workspace: workspaceRef })
-            .error("Failed to create session for initial prompt", {
-              error: sessionResult.error.message,
-            });
+            .error("Failed to send initial prompt", { error: promptResult.error.message });
         }
       },
 
@@ -142,9 +165,14 @@ export function createOpenCodeModuleProvider(
         });
       },
 
-      // onProviderRegistered has sent the prompt by now (startWorkspace awaits it).
-      afterProviderReady: async (_workspaceRef, options) => {
-        options.onInitialPromptDelivered?.();
+      // onProviderRegistered has queued the prompt by now (startWorkspace
+      // awaits it). Delivered means the server accepted it — from then on the
+      // session holds it; a refused or failed queue leaves the pending prompt
+      // in the workspace's metadata for the next open to deliver.
+      afterProviderReady: async (workspaceRef, options) => {
+        if (initialPromptAccepted.delete(workspaceRef)) {
+          options.onInitialPromptDelivered?.();
+        }
       },
 
       // --- Terminal lifecycle + TUI tracking ---
@@ -168,10 +196,12 @@ export function createOpenCodeModuleProvider(
 
       clearWorkspaceTracking: (workspaceRef) => {
         tuiAttachedWorkspaces.delete(workspaceRef);
+        initialPromptAccepted.delete(workspaceRef);
       },
 
       onDispose: () => {
         tuiAttachedWorkspaces.clear();
+        initialPromptAccepted.clear();
       },
     },
     { logger, binaryName: "opencode" }

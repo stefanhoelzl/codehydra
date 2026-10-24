@@ -283,12 +283,21 @@ export class OpenCodeClient implements IDisposable {
    *
    * @param sessionId - The session to queue the prompt on
    * @param prompt - The prompt text
+   * @param options - Optional agent and model configuration
    */
-  async sendPromptAsync(sessionId: string, prompt: string): Promise<Result<void, OpenCodeError>> {
+  async sendPromptAsync(
+    sessionId: string,
+    prompt: string,
+    options?: { agent?: string; model?: { providerID: string; modelID: string } }
+  ): Promise<Result<void, OpenCodeError>> {
     try {
       const result = await this.sdk.session.promptAsync({
         path: { id: sessionId },
-        body: { parts: [{ type: "text", text: prompt }] },
+        body: {
+          ...(options?.agent !== undefined && { agent: options.agent }),
+          ...(options?.model !== undefined && { model: options.model }),
+          parts: [{ type: "text", text: prompt }],
+        },
       });
       if (result.error !== undefined) {
         return err(
