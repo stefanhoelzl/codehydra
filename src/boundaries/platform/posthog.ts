@@ -7,7 +7,7 @@
  * reports) lives in the modules that call it, and it never reads Config/State.
  *
  * External System Access: modules MUST go through this boundary rather than
- * constructing `PostHog` directly (see CLAUDE.md External System Access Rules).
+ * constructing `PostHog` directly (see AGENTS.md External System Access Rules).
  *
  * Lifecycle:
  *   configure({ distinctId, commonProps })  // pushed in by telemetry-module @ app:start

@@ -8,7 +8,7 @@ This directory contains the source code for VS Code extensions used by CodeHydra
 extensions/
 ├── tsconfig.ext.json         # Shared TypeScript config (strict)
 ├── vite.config.ext.ts        # Base Vite config for extensions
-├── external.json             # External extensions (marketplace IDs)
+├── external.json             # Optional: external extensions (currently absent)
 ├── sidekick/                 # Custom sidekick extension source
 │   ├── src/                  # TypeScript source
 │   │   ├── extension.ts      # Extension entry point
@@ -60,10 +60,10 @@ The main `pnpm build` command runs `build:extensions` before `electron-vite buil
 
 ## External Extensions (external.json)
 
-The `external.json` file lists marketplace extension IDs to install:
+The optional `external.json` file lists marketplace extensions to install, each pinned to a version (no file = none; there is none today):
 
 ```json
-["sst-dev.opencode", "publisher.another-extension"]
+[{ "id": "publisher.name", "version": "1.2.3" }]
 ```
 
 ## Generated Manifest (dist/extensions/manifest.json)

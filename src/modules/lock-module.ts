@@ -31,7 +31,7 @@
  *
  * In-memory is enough because a restart tears down every workspace's terminals:
  * every holder is gone by then, and a persisted lock would be one nobody can
- * release. The sidebar tags this writes DO persist (they are git-config
+ * release. The sidebar tags this writes DO persist (they are workspace
  * metadata), so they are reconciled against the table whenever a workspace is
  * (re)discovered.
  */
@@ -60,7 +60,7 @@ import { defineEvents } from "../intents/declarations";
 
 /**
  * Metadata keys of the two sidebar tags. Fixed rather than derived from the lock
- * name: git config rejects `_` in a variable name, and lock names allow it.
+ * name: metadata keys reject `_`, and lock names allow it.
  */
 export const LOCK_TAG_KEY = tagKey("lock");
 export const LOCK_WAIT_TAG_KEY = tagKey("lock-wait");

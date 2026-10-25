@@ -58,8 +58,8 @@ Review CodeHydra for ARCHITECTURE quality issues.
 - docs/QUALITY.md (Architecture section + Accepted Patterns)
 - docs/ARCHITECTURE.md
 - docs/INTENTS.md
-- docs/AGENTS.md
-- CLAUDE.md (External System Access Rules, Path Handling)
+- docs/AGENT_PROVIDERS.md
+- AGENTS.md (External System Access Rules, Path Handling)
 
 **Look for codebase-wide issues:**
 
@@ -83,7 +83,7 @@ Review CodeHydra for CODE QUALITY issues.
 **Read first:**
 
 - docs/QUALITY.md (Code Quality section + Accepted Patterns)
-- CLAUDE.md (Code Quality Standards)
+- AGENTS.md (Code Quality)
 
 **Look for codebase-wide patterns (NOT localized issues):**
 
@@ -132,7 +132,7 @@ Review CodeHydra for DOCUMENTATION quality issues.
 
 - docs/QUALITY.md (Documentation section + Accepted Patterns)
 - All files in docs/ directory
-- CLAUDE.md
+- AGENTS.md and the nested `AGENTS.md` files
 
 **Assess documentation for:**
 
@@ -157,7 +157,7 @@ Review CodeHydra for TYPE SAFETY issues.
 
 - docs/QUALITY.md (Type Safety section + Accepted Patterns)
 - tsconfig.json, tsconfig.node.json, tsconfig.web.json
-- CLAUDE.md (Code Quality Standards)
+- AGENTS.md (Code Quality)
 
 **Assess TypeScript configuration and usage:**
 

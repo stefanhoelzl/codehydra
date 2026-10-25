@@ -24,7 +24,7 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System overview, concepts, rules
 - [PATTERNS.md](PATTERNS.md) - IPC, UI, CSS implementation patterns
-- [AGENTS.md](AGENTS.md) - Agent provider interface, status tracking, MCP
+- [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md) - Agent provider interface, status tracking, MCP
 
 ---
 
