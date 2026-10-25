@@ -111,12 +111,15 @@ describe("OpenCodeClient", () => {
    */
   function registerSessions(
     c: OpenCodeClient,
-    sessions: Array<{ id: string; parentID?: string }>
+    sessions: Array<{ id: string; parentID?: string; title?: string }>
   ): void {
     for (const session of sessions) {
-      const info: { id: string; parentID?: string } = { id: session.id };
+      const info: { id: string; parentID?: string; title?: string } = { id: session.id };
       if (session.parentID !== undefined) {
         info.parentID = session.parentID;
+      }
+      if (session.title !== undefined) {
+        info.title = session.title;
       }
       c["handleSessionCreated"]({ info });
     }
@@ -274,11 +277,13 @@ describe("OpenCodeClient", () => {
       expect(listener).toHaveBeenCalledWith("busy");
     });
 
-    it("does not fire callback for child session status changes", () => {
-      // Register parent as root, child has parentID
+    it("does not fire callback for a [bg] child session's status changes", () => {
       const listener = vi.fn();
       client = createClient(8080);
-      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
+      registerSessions(client, [
+        { id: "parent-1" },
+        { id: "child-1", parentID: "parent-1", title: "[bg] review auth" },
+      ]);
       client.onStatusChanged(listener);
 
       // Simulate status change for child session
@@ -288,6 +293,74 @@ describe("OpenCodeClient", () => {
 
       // Should NOT fire for child sessions
       expect(listener).not.toHaveBeenCalled();
+    });
+
+    describe("child sessions", () => {
+      /** A client with an idle root and the given children, listening to status. */
+      function withChildren(children: Array<{ id: string; parentID?: string; title?: string }>) {
+        const listener = vi.fn();
+        client = createClient(8080);
+        registerSessions(client, [
+          { id: "root" },
+          ...children.map((c) => ({ parentID: "root", ...c })),
+        ]);
+        client.onStatusChanged(listener);
+        return listener;
+      }
+
+      function status(sessionID: string, type: "busy" | "idle"): void {
+        client["handleSdkEvent"](sdkEvent("session.status", { sessionID, status: { type } }));
+      }
+
+      it("keeps the workspace busy while an unmarked child outlives the root's turn", () => {
+        const listener = withChildren([{ id: "child", title: "review auth" }]);
+        status("root", "busy");
+        status("child", "busy");
+        status("root", "idle");
+        expect(client["_currentStatus"]).toBe("busy");
+
+        status("child", "idle");
+        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+      });
+
+      it("goes idle with the root when only [bg] children run on", () => {
+        const listener = withChildren([
+          { id: "child", title: "[BG] review auth (@general subagent)" },
+        ]);
+        status("root", "busy");
+        status("child", "busy");
+        status("root", "idle");
+        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+      });
+
+      it("opts out everything under a [bg] child", () => {
+        withChildren([
+          { id: "bg", title: "[bg] fan out" },
+          { id: "grandchild", parentID: "bg", title: "review auth" },
+        ]);
+        status("grandchild", "busy");
+        expect(client["_currentStatus"]).toBe("idle");
+      });
+
+      it("matches the marker at the start only", () => {
+        withChildren([{ id: "child", title: "explain the [bg] marker" }]);
+        status("child", "busy");
+        expect(client["_currentStatus"]).toBe("busy");
+      });
+
+      it("releases a busy child that is deleted", () => {
+        withChildren([{ id: "child", title: "review auth" }]);
+        status("child", "busy");
+        client["handleSdkEvent"](sdkEvent("session.deleted", { sessionID: "child" }));
+        expect(client["_currentStatus"]).toBe("idle");
+      });
+
+      it("releases a child on session.idle", () => {
+        withChildren([{ id: "child", title: "review auth" }]);
+        status("child", "busy");
+        client["handleSdkEvent"](sdkEvent("session.idle", { sessionID: "child" }));
+        expect(client["_currentStatus"]).toBe("idle");
+      });
     });
 
     it("does not fire callback when status unchanged", async () => {

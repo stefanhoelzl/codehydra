@@ -3,6 +3,7 @@
  * Defines hook payloads and status mapping for the Claude Code agent.
  */
 
+import { isBackgroundAgentLabel } from "../status-utils";
 import type { AgentActivity } from "../types";
 
 /**
@@ -225,23 +226,35 @@ export function isBackgroundWrapped(command: string): boolean {
 /**
  * Decide whether a running background task keeps the workspace busy.
  *
- * A background sub-agent (type "subagent") is unambiguous agent work and always
- * keeps the workspace busy. A background shell (type "shell") keeps it busy by
- * default — the exception is a shell invoked through the `ch-bg` wrapper, which
- * opts out (see isBackgroundWrapped). Non-running tasks and other types never
- * qualify.
+ * A background sub-agent (type "subagent") keeps the workspace busy unless its
+ * description starts with `[bg]` (see isBackgroundAgentLabel). A background
+ * shell (type "shell") keeps it busy by default — the exception is a shell
+ * invoked through the `ch-bg` wrapper, which opts out (see isBackgroundWrapped).
+ * Non-running tasks and other types never qualify.
  */
 export function taskKeepsBusy(task: ClaudeCodeBackgroundTask): boolean {
-  if (task.status !== undefined && task.status !== "running") {
+  if (!isRunning(task)) {
     return false;
   }
   if (task.type === "subagent") {
-    return true;
+    return !isBackgroundAgentLabel(task.description);
   }
   if (task.type !== "shell") {
     return false;
   }
   return !isBackgroundWrapped(task.command ?? "");
+}
+
+/**
+ * A running background sub-agent its spawner opted out with `[bg]`: it works on
+ * while the workspace reads idle.
+ */
+export function isOptedOutSubagent(task: ClaudeCodeBackgroundTask): boolean {
+  return isRunning(task) && task.type === "subagent" && isBackgroundAgentLabel(task.description);
+}
+
+function isRunning(task: ClaudeCodeBackgroundTask): boolean {
+  return task.status === undefined || task.status === "running";
 }
 
 /**

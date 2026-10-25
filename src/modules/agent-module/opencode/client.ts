@@ -15,6 +15,7 @@ import { OpenCodeError, getErrorMessage } from "../../../shared/errors/service-e
 import { errorCode } from "../../../shared/error-utils";
 import { withTimeout } from "../../../utils/timeout";
 import type { Logger } from "../../../boundaries/platform/logging";
+import { isBackgroundAgentLabel } from "../status-utils";
 import {
   ok,
   err,
@@ -133,8 +134,25 @@ export class OpenCodeClient implements IDisposable {
   private readonly childToRootSession = new Map<string, string>();
 
   /**
-   * Current aggregated status for this port.
-   * Simplified model: 1 agent per port.
+   * Child sessions opted out with `[bg]`: their title (the task description)
+   * starts with the marker, or an ancestor's does. They never keep the
+   * workspace busy.
+   */
+  private readonly optedOutChildSessions = new Set<string>();
+
+  /**
+   * Tracked child sessions that are busy and not opted out. A background
+   * sub-agent outlives its parent's turn, so while any of these runs the
+   * workspace stays busy; a synchronous one runs inside a busy root anyway.
+   */
+  private readonly busyChildSessions = new Set<string>();
+
+  /** The status the root session last reported. */
+  private rootStatus: ClientStatus = "idle";
+
+  /**
+   * Current aggregated status for this port: the root's, or busy while a child
+   * session keeps it busy. Simplified model: 1 agent per port.
    */
   private _currentStatus: ClientStatus = "idle";
 
@@ -353,7 +371,7 @@ export class OpenCodeClient implements IDisposable {
     try {
       const result = await this.getStatus();
       if (result.ok) {
-        this.updateCurrentStatus(result.value);
+        this.updateRootStatus(result.value);
       }
     } catch (statusError) {
       this.logger.warn("Connection error", {
@@ -390,6 +408,8 @@ export class OpenCodeClient implements IDisposable {
     this.statusListeners.clear();
     this.rootSessionIds.clear();
     this.childToRootSession.clear();
+    this.optedOutChildSessions.clear();
+    this.busyChildSessions.clear();
   }
 
   /**
@@ -452,12 +472,7 @@ export class OpenCodeClient implements IDisposable {
       const mappedType = statusType === "retry" ? "busy" : statusType;
       this.logger.debug("Session status", { sessionId: properties.sessionID, status: mappedType });
       this.emitSessionEvent({ type: mappedType, sessionId: properties.sessionID });
-
-      // Only update current status for root sessions (main agents)
-      // This ensures notification chimes only play when main agents finish, not subagents
-      if (this.rootSessionIds.has(properties.sessionID)) {
-        this.updateCurrentStatus(mappedType);
-      }
+      this.applySessionStatus(properties.sessionID, mappedType);
     }
   }
 
@@ -467,12 +482,38 @@ export class OpenCodeClient implements IDisposable {
   private handleSessionIdle(properties: { sessionID: string }): void {
     if (!properties?.sessionID) return;
     this.emitSessionEvent({ type: "idle", sessionId: properties.sessionID });
+    this.applySessionStatus(properties.sessionID, "idle");
+  }
 
-    // Only update current status for root sessions (main agents)
-    // This ensures notification chimes only play when main agents finish, not subagents
-    if (this.rootSessionIds.has(properties.sessionID)) {
-      this.updateCurrentStatus("idle");
+  /**
+   * Fold one session's status into the current status. The root session drives
+   * it; a child session only adds busy while it runs unopted — so a sub-agent
+   * finishing inside its parent's turn chimes nothing, and a background one
+   * still at work when the parent's turn ends holds the workspace busy.
+   */
+  private applySessionStatus(sessionId: string, status: ClientStatus): void {
+    if (this.rootSessionIds.has(sessionId)) {
+      this.updateRootStatus(status);
+      return;
     }
+    if (!this.childToRootSession.has(sessionId) || this.optedOutChildSessions.has(sessionId)) {
+      return;
+    }
+    if (status === "busy") {
+      this.busyChildSessions.add(sessionId);
+    } else {
+      this.busyChildSessions.delete(sessionId);
+    }
+    this.recomputeStatus();
+  }
+
+  private updateRootStatus(status: ClientStatus): void {
+    this.rootStatus = status;
+    this.recomputeStatus();
+  }
+
+  private recomputeStatus(): void {
+    this.updateCurrentStatus(this.busyChildSessions.size > 0 ? "busy" : this.rootStatus);
   }
 
   /**
@@ -498,6 +539,10 @@ export class OpenCodeClient implements IDisposable {
 
     // Clean up child mapping if this was a child session
     this.childToRootSession.delete(sessionId);
+    this.optedOutChildSessions.delete(sessionId);
+    if (this.busyChildSessions.delete(sessionId)) {
+      this.recomputeStatus();
+    }
 
     this.emitSessionEvent({ type: "deleted", sessionId });
   }
@@ -525,7 +570,9 @@ export class OpenCodeClient implements IDisposable {
    * Adds new root sessions to the tracking set, and maps child sessions to their root.
    * Emits a "created" event to notify listeners that a session exists but status is unknown.
    */
-  private handleSessionCreated(properties?: { info?: { id?: string; parentID?: string } }): void {
+  private handleSessionCreated(properties?: {
+    info?: { id?: string; parentID?: string; title?: string };
+  }): void {
     const sessionInfo = properties?.info;
     if (!sessionInfo || typeof sessionInfo.id !== "string") return;
 
@@ -546,6 +593,17 @@ export class OpenCodeClient implements IDisposable {
         if (rootId) {
           this.childToRootSession.set(sessionInfo.id, rootId);
         }
+      }
+      // The task tool titles a child session after the task description (1.x:
+      // "<description> (@<agent> subagent)"), so a leading `[bg]` opts it out —
+      // and with it everything it spawns. OpenCode 1.x runs a task in the
+      // background only with OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true.
+      if (
+        this.childToRootSession.has(sessionInfo.id) &&
+        (isBackgroundAgentLabel(sessionInfo.title) ||
+          this.optedOutChildSessions.has(sessionInfo.parentID))
+      ) {
+        this.optedOutChildSessions.add(sessionInfo.id);
       }
     }
   }

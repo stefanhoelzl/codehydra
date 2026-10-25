@@ -913,7 +913,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       log.silly(
         result.reason === "subagent-stop"
           ? "Ignoring sub-agent Stop for main status"
-          : "Ignoring sub-agent PreToolUse for main status",
+          : result.reason === "subagent-pre-tool-use"
+            ? "Ignoring sub-agent PreToolUse for main status"
+            : "Ignoring [bg] sub-agent hook while idle",
         {
           hookName,
           agentId: payload.agent_id ?? null,
