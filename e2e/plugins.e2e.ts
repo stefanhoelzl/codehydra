@@ -38,7 +38,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { simpleGit } from "simple-git";
 import { createTestGitRepo } from "../src/utils/testing/test-utils";
-import type { Agent } from "./env";
+import { projectAgent } from "./env";
 import { ch, json } from "./ch.ts";
 import {
   DATA_ROOT,
@@ -657,7 +657,10 @@ test("an event wakes the hibernated workspace it matches", async () => {
   const metadata = readMetadataFile("ev-42");
   metadata.protected.hibernated = "true";
   writeFileSync(metadataFileOf("ev-42"), JSON.stringify(metadata));
-  await launchApp(app(), { agent: test.info().project.name as Agent, extraArgs: launchFlags() });
+  await launchApp(app(), {
+    agent: projectAgent(test.info().project.name),
+    extraArgs: launchFlags(),
+  });
   const ui = app().uiPage();
   await hibernatedRow(ui, "ev-42").waitFor({ timeout: CREATE_TIMEOUT });
 

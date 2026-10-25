@@ -17,6 +17,7 @@ import type {
 } from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
 import { OpenCodeClient, type UserRequestEvent } from "./client";
+import type { OpenCodeWireInfo } from "./server-manager";
 import { OpenCodeError } from "../../../shared/errors/service-errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
@@ -44,6 +45,13 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    * Set during connect(), preserved during restart.
    */
   private _port: number | null = null;
+
+  /**
+   * The wire the workspace's server speaks, captured at connect() and
+   * preserved during restart. The server manager owns the truth; this is the
+   * snapshot the client and the terminal environment were built from.
+   */
+  private _wire: OpenCodeWireInfo = { major: 1, password: undefined };
 
   /**
    * Primary session ID for this workspace.
@@ -80,13 +88,15 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   /**
    * @param workspaceRef - The workspace, as the agent and every `ch` it runs name it
    * @param workspacePath - Its directory, which the server's sessions are matched against
+   * @param getWireInfo - The server's wire and password, read when connecting
    */
   constructor(
     private readonly workspaceRef: WorkspaceRef,
     private readonly workspacePath: Path,
-    logger: Logger
+    logger: Logger,
+    private readonly getWireInfo: () => OpenCodeWireInfo | undefined = () => undefined
   ) {
-    // Everything this provider (and its SDK client) logs is about its one workspace.
+    // Everything this provider (and its wire client) logs is about its one workspace.
     this.logger = logger.scoped({ workspace: workspaceRef });
   }
 
@@ -113,11 +123,21 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     const envVars: Record<string, string> = {
       _CH_OPENCODE_PORT: String(session.port),
       _CH_OPENCODE_SESSION_ID: session.sessionId,
+      // Which wire the server speaks — `ch opencode` builds its arguments by
+      // it (`attach` for 1.x, `--server` for 2.x).
+      _CH_OPENCODE_MAJOR: String(this._wire.major),
       // The workspace's ref, for every `ch` the agent runs. Also how the sidekick
       // recognises a running agent terminal after an extension host restart
       // (findRunningAgentTerminal) — keep it set.
       _CH_WORKSPACE: this.workspaceRef,
     };
+    // 2.x only: the server's password. The wrapper hands it to the spawned
+    // opencode as OPENCODE_PASSWORD, the name the TUI reads. It keeps other
+    // local processes off the server; it is no secret from the agent — this
+    // terminal holds it, and the server's own tool commands inherit it.
+    if (this._wire.password !== undefined) {
+      envVars._CH_OPENCODE_PASSWORD = this._wire.password;
+    }
     return envVars;
   }
 
@@ -222,18 +242,11 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   async connect(port: number): Promise<void> {
     if (this.client) return;
 
-    // Store the port
+    // Store the port and the wire the server speaks.
     this._port = port;
+    this._wire = this.getWireInfo() ?? { major: 1, password: undefined };
 
-    const client = new OpenCodeClient(port, this.logger);
-
-    // Subscribe to status changes from client
-    client.onStatusChanged((status) => this.handleStatusChanged(status));
-    // Subscribe to session events for user request correlation
-    client.onSessionEvent((event) => this.handleSessionEvent(port, event));
-    // Subscribe to user request events
-    client.onUserRequestEvent((event) => this.handleUserRequestEvent(event));
-
+    const client = this.createClient();
     this.client = client;
 
     try {
@@ -260,7 +273,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
         await this.createNewSession(client);
       }
 
-      // Connect to SSE for real-time updates
+      // Connect to the event stream for real-time updates
       await client.connect();
     } catch (error) {
       // Connection failed - client is still created but may not have real-time updates
@@ -272,6 +285,30 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     }
     // The primary session may be what a waiting sender still lacked.
     this.readyWaiters.notify();
+  }
+
+  /**
+   * Build a client for the stored port and wire, wired to this provider's
+   * event handling. Callers own assigning it to {@link client}.
+   */
+  private createClient(): OpenCodeClient {
+    if (this._port === null) {
+      throw new Error("Cannot create a client before connect() stored a port");
+    }
+    const client = new OpenCodeClient(this._port, this.logger, {
+      major: this._wire.major,
+      ...(this._wire.password !== undefined && { password: this._wire.password }),
+      ...(this._wire.mcpServer !== undefined && { mcpServer: this._wire.mcpServer }),
+      directory: this.workspacePath.toString(),
+    });
+
+    // Subscribe to status changes from client
+    client.onStatusChanged((status) => this.handleStatusChanged(status));
+    // Subscribe to session events for user request correlation
+    client.onSessionEvent((event) => this.handleSessionEvent(this._port!, event));
+    // Subscribe to user request events
+    client.onUserRequestEvent((event) => this.handleUserRequestEvent(event));
+    return client;
   }
 
   /**
@@ -398,17 +435,11 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       sessionId: this._primarySessionId,
     });
 
-    const client = new OpenCodeClient(this._port, this.logger);
-
-    // Subscribe to events
-    client.onStatusChanged((status) => this.handleStatusChanged(status));
-    client.onSessionEvent((event) => this.handleSessionEvent(this._port!, event));
-    client.onUserRequestEvent((event) => this.handleUserRequestEvent(event));
-
+    const client = this.createClient();
     this.client = client;
 
     try {
-      // Connect to SSE for real-time updates
+      // Connect to the event stream for real-time updates
       await client.connect();
     } catch (error) {
       this.logger.warn("Failed to reconnect", {

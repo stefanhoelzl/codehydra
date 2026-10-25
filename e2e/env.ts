@@ -24,6 +24,25 @@ export const REPO_ROOT = join(import.meta.dirname, "..");
 export type Mode = "packaged" | "dev";
 export type Agent = "opencode" | "claude";
 
+/** The Playwright projects the warm specs run under. */
+export type Project = "opencode" | "opencode-legacy" | "claude" | "download-binaries";
+
+/**
+ * The agent a project exercises: both OpenCode lanes launch `--agent opencode`
+ * — the lane is the binary's version, not a different agent.
+ */
+export function projectAgent(project: string): Agent {
+  return project === "claude" ? "claude" : "opencode";
+}
+
+/**
+ * Which OpenCode wire a project exercises: `opencode` runs OpenCode 2 (pinned
+ * to the 2.x binary download-binaries seeded), `opencode-legacy` runs 1.x (pinned likewise).
+ */
+export function projectOpenCodeMajor(project: string): 1 | 2 {
+  return project === "opencode" ? 2 : 1;
+}
+
 /**
  * Read lazily, not at import time: `playwright.dev.config.ts` sets CH_E2E_MODE *after*
  * its static import of the base config, and static imports hoist.

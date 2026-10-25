@@ -1280,16 +1280,21 @@ Both agents follow the same rules, decided once at startup:
    version (once) and runs it, even when the agent is installed on your
    system. The value is an exact version (`2.1.274`) or a channel that is
    looked up again at every start: `latest` or `stable` for Claude Code,
-   `latest` for OpenCode. Any string is accepted; one that names no release
-   shows up as a failed download on the setup screen.
+   `latest` for OpenCode. For OpenCode, 1.x and 2.x versions both work —
+   they have different server APIs, and CodeHydra speaks whichever the
+   binary runs (an exact `2.1.4` pin pulls OpenCode 2 from its npm package,
+   since 2.x ships no GitHub release binaries). Any string is accepted; one
+   that names no release, or another OpenCode major, shows up as a failed
+   download on the setup screen.
 2. **Installed on your system** — with the key unset (the default), the first
-   `claude` / `opencode` on CodeHydra's `PATH` whose `--version` runs is used.
-   CodeHydra sees the `PATH` it was started with, which for an app launched
-   from the desktop may lack directories your shell adds; then it downloads its
-   own copy instead. Installing or removing the agent takes effect at the next
-   start.
+   `claude` / `opencode` on CodeHydra's `PATH` whose `--version` runs a
+   version CodeHydra can talk to is used. CodeHydra sees the `PATH` it was
+   started with, which for an app launched from the desktop may lack
+   directories your shell adds; then it downloads its own copy instead.
+   Installing or removing the agent takes effect at the next start.
 3. **Otherwise** — CodeHydra downloads the latest release (Claude Code's
-   `stable` channel, OpenCode's latest GitHub release) and checks again for a
+   `stable` channel, OpenCode's latest GitHub release — 1.x today, and
+   whichever major upstream marks latest after that) and checks again for a
    newer one at every start.
 
 Downloads land in the data directory (`claude/<version>/`,
@@ -1320,7 +1325,12 @@ Shift+Tab, not switched on), and `--disallowedTools=Artifact` (see
 ### OpenCode
 
 CodeHydra runs one `opencode serve` per workspace, with the `opencode` chosen
-above, and the agent terminal attaches to it with the same binary. The status shows **None** until the terminal has attached.
+above, and the agent terminal attaches to it with the same binary. Which server
+API that binary speaks — OpenCode 1.x or 2.x — is decided by its version, and
+everything adapts with it (a 2.x server gets a password CodeHydra generates,
+which keeps other programs on your machine off it; the agent terminal and the
+commands the agent runs can see it). The status
+shows **None** until the terminal has attached.
 
 ### Starting, closing and restarting
 

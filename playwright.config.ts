@@ -38,9 +38,11 @@ export default defineConfig({
     // Leaves the root warm.
     { name: "download-binaries", testMatch: "**/download-binaries.e2e.ts" },
 
-    // Same three specs, once per agent. `--agent=` flips the agent on the warm
-    // root without rewriting config.json.
+    // Same specs, once per lane. `--agent=` flips the agent on the warm root
+    // without rewriting config.json; the OpenCode lanes additionally pin the
+    // 2.x / 1.x binary download-binaries seeded (see launchApp's version pin).
     { name: "opencode", testMatch: WARM_SPECS, dependencies: ["download-binaries"] },
+    { name: "opencode-legacy", testMatch: WARM_SPECS, dependencies: ["download-binaries"] },
     { name: "claude", testMatch: WARM_SPECS, dependencies: ["download-binaries"] },
   ],
 });

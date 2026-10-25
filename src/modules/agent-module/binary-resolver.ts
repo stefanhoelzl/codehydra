@@ -6,7 +6,8 @@
  *    `<bundles>/<agent>/<version>/` if missing. A channel word (`latest`,
  *    `stable`) is resolved to a version first. Beats a system install.
  * 2. Otherwise the system install: first match on the app's PATH whose
- *    `--version` runs.
+ *    `--version` runs a supported major (see `supportedMajors`); the version
+ *    it reported is carried along.
  * 3. Otherwise the agent's default channel, downloaded like (1).
  *
  * A channel is re-resolved every startup. When the lookup fails the newest
@@ -35,6 +36,7 @@ import type { Logger } from "../../boundaries/platform/logging";
 import type { SupportedPlatform } from "../../boundaries/platform/platform-info";
 import {
   AgentBinaryError,
+  BinaryDownloadError,
   FileSystemError,
   getErrorMessage,
 } from "../../shared/errors/service-errors";
@@ -53,7 +55,10 @@ export interface ResolvedAgentBinary {
   /** Absolute native path. */
   readonly path: string;
   readonly source: AgentBinarySource;
-  /** The downloaded version; null for a system install. */
+  /**
+   * The version it runs: what was downloaded, or what a system install
+   * reported for `--version`. Null when it could not be read.
+   */
   readonly version: string | null;
 }
 
@@ -72,6 +77,13 @@ export interface AgentBinaryDescriptor {
   readonly executablePath: string;
   /** File names to look for on PATH, in preference order. */
   readonly systemCandidates: readonly string[];
+  /**
+   * Major versions whose server API the app can talk to. A system install of
+   * any other major (by its `--version`) is skipped like one that does not
+   * run; a download of one — pinned, or what a channel named — fails. Undefined
+   * accepts every version.
+   */
+  readonly supportedMajors?: readonly number[];
   /** Resolve a channel to the version it currently points at. */
   resolveChannel(channel: string, httpClient: Pick<HttpClient, "fetch">): Promise<string>;
   /** Build the download request for `version` into `destDir`. */
@@ -160,6 +172,14 @@ function segmentValue(segment: string | undefined): number {
 /** A directory name that looks like a version we downloaded. */
 function isVersionName(name: string): boolean {
   return /^\d+(\.\d+)*(-[0-9A-Za-z.-]+)?$/.test(name);
+}
+
+/**
+ * The x.y.z in a `--version` output — "opencode v2.1.4", "1.2.3 (Claude
+ * Code)" — or null when the output names no version.
+ */
+export function parseAgentVersion(output: string): string | null {
+  return /v?(\d+\.\d+\.\d+)/.exec(output)?.[1] ?? null;
 }
 
 /** PATH from an environment, whatever its key's case (Windows uses `Path`). */
@@ -251,22 +271,35 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
     return null;
   }
 
-  async function runsVersion(executable: string): Promise<boolean> {
+  /** A PATH candidate's `--version` probe: whether it runs, and as what. */
+  interface SystemProbe {
+    readonly runs: boolean;
+    readonly version: string | null;
+  }
+
+  async function probeSystemBinary(executable: string): Promise<SystemProbe> {
     try {
       const proc = runAgentBinary(processRunner, executable, ["--version"], platform);
       const result = await proc.wait(10_000);
       if (result.running) {
         await proc.kill(1000, 1000);
-        return false;
+        return { runs: false, version: null };
       }
-      return result.exitCode === 0;
+      return { runs: result.exitCode === 0, version: parseAgentVersion(result.stdout) };
     } catch {
-      return false;
+      return { runs: false, version: null };
     }
   }
 
-  /** First PATH match that runs, in PATH order and candidate preference. */
-  async function findSystem(): Promise<string | null> {
+  /** Whether a version speaks an API the app supports; an unknown one is given the benefit. */
+  function isSupportedVersion(version: string | null): boolean {
+    if (descriptor.supportedMajors === undefined || version === null) return true;
+    const major = Number.parseInt(version, 10);
+    return descriptor.supportedMajors.includes(major);
+  }
+
+  /** First PATH match that runs a supported version, in PATH order and candidate preference. */
+  async function findSystem(): Promise<{ path: string; version: string | null } | null> {
     const caseInsensitive = platform === "win32";
     const norm = (name: string): string => (caseInsensitive ? name.toLowerCase() : name);
     for (const dir of pathEntries(deps.env, platform)) {
@@ -277,10 +310,25 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
       for (const candidate of descriptor.systemCandidates) {
         if (!names.has(norm(candidate))) continue;
         const executable = new Path(dir, candidate).toNative();
-        if (await runsVersion(executable)) return executable;
-        logger
-          .scoped({ path: executable })
-          .warn("Ignoring system binary that does not run", { name: descriptor.name });
+        const probe = await probeSystemBinary(executable);
+        if (probe.runs) {
+          if (isSupportedVersion(probe.version)) {
+            return { path: executable, version: probe.version };
+          }
+          logger
+            .scoped({ path: executable })
+            .warn("Ignoring system binary of an unsupported major version", {
+              name: descriptor.name,
+              version: probe.version,
+              ...(descriptor.supportedMajors !== undefined && {
+                supportedMajors: descriptor.supportedMajors.join(", "),
+              }),
+            });
+        } else {
+          logger
+            .scoped({ path: executable })
+            .warn("Ignoring system binary that does not run", { name: descriptor.name });
+        }
       }
     }
     return null;
@@ -298,6 +346,14 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
     const existing = inFlight.get(version);
     if (existing) return existing;
     const promise = (async () => {
+      // A pin or a channel naming a major the app cannot talk to fails here,
+      // on the setup screen, rather than running a binary on the wrong API.
+      if (!isSupportedVersion(version)) {
+        throw new BinaryDownloadError(
+          `${descriptor.name} ${version} is not supported (supported majors: ${descriptor.supportedMajors?.join(", ")})`,
+          "INVALID_VERSION"
+        );
+      }
       const destDir = versionDir(version).toNative();
       const request = await descriptor.downloadRequest(version, destDir, httpClient);
       await downloadBinary(request, downloadDeps, onProgress);
@@ -382,8 +438,11 @@ export function createAgentBinaryResolver(deps: AgentBinaryResolverDeps): AgentB
     if (setting === null) {
       const system = await findSystem();
       if (system !== null) {
-        logger.scoped({ path: system }).info("Using system install", { name: descriptor.name });
-        currentBinary = { path: system, source: "system", version: null };
+        logger.scoped({ path: system.path }).info("Using system install", {
+          name: descriptor.name,
+          version: system.version,
+        });
+        currentBinary = { path: system.path, source: "system", version: system.version };
         return;
       }
     }

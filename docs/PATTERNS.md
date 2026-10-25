@@ -731,45 +731,46 @@ const mockPathProvider = createMockPathProvider({
 
 ## OpenCode Integration
 
-OpenCode integration patterns for agent status tracking, server lifecycle management, and SDK usage. For detailed agent system documentation, see [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md).
+OpenCode integration patterns for agent status tracking, server lifecycle management, and wire usage. For detailed agent system documentation, see [AGENT_PROVIDERS.md](AGENT_PROVIDERS.md).
 
-### OpenCode SDK Integration
+### The wire seam
 
-`OpenCodeClient` uses the official `@opencode-ai/sdk` for HTTP and SSE operations:
+OpenCode 1.x and 2.x speak different server APIs, so every version difference hides behind the `WireClient` interface (`opencode/wire.ts`), picked by the resolved binary's major. `OpenCodeClient` — session tracking, status aggregation, listeners — is version-free and works against either wire:
 
 ```typescript
-import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
+// The client takes the wire's identity with its injection point.
+const client = new OpenCodeClient(
+  port,
+  logger,
+  { major: 2, password: serverPassword, directory: workspacePath },
+  wireFactory // injected; the default builds OpenCodeWireV1/OpenCodeWireV2
+);
 
-// SDK client is injected via factory for testability
-export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
-
-export class OpenCodeClient implements IDisposable {
-  constructor(port: number, sdkFactory: SdkClientFactory = defaultFactory) {
-    this.baseUrl = `http://localhost:${port}`;
-    this.sdk = sdkFactory(this.baseUrl);
-  }
-
-  // connect() is now async with timeout support
-  async connect(timeoutMs = 5000): Promise<void> {
-    const events = await this.sdk.event.subscribe();
-    // Process events in background
-    this.processEvents(events.stream);
-  }
-}
+// connect() resolves once the event stream is live; events then flow to
+// the onWireEvent callbacks the client subscribed.
+await client.connect(5000);
 ```
 
-**Testing with SDK Mocks:**
+**Testing with the wire mock:**
 
 ```typescript
-import { createMockSdkClient, createMockSdkFactory } from "./sdk-test-utils";
+import { createWireClientMock, wireFactoryMock } from "./wire-client.state-mock";
 
-const mockSdk = createMockSdkClient({
-  sessions: [{ id: "ses-1", directory: "/test", ... }],
-  sessionStatuses: { "ses-1": { type: "idle" } },
+const wire = createWireClientMock({
+  sessions: [{ id: "ses-1", directory: "/repo", status: { type: "idle" } }],
 });
-const factory = createMockSdkFactory(mockSdk);
-const client = new OpenCodeClient(8080, factory);
+const client = new OpenCodeClient(
+  8080,
+  logger,
+  { major: 1, directory: "/repo" },
+  wireFactoryMock(wire)
+);
+
+// Events are emitted synchronously from the mock — assert without awaiting.
+wire.$.emitEvent({ type: "session.status", sessionID: "ses-1", status: "busy" });
 ```
+
+The real wires are pinned against real servers in the boundary suites (`client.boundary.test.ts` for 1.x, `client-v2.boundary.test.ts` for 2.x), which run through `withOpencode` (`boundary-test-utils.ts`) with `major: 1` or `major: 2` — the harness switches the config shapes, the server password, the health endpoint and the mock model's tool spelling (`bash` vs `shell`) with it.
 
 ### Callback Pattern (NOT Direct IPC)
 

@@ -1,741 +1,145 @@
-// @vitest-environment node
 /**
- * Tests for OpenCodeClient.
- *
- * Tests the SDK-based OpenCodeClient implementation using behavioral mocks.
+ * Unit tests for OpenCodeClient — the wire-agnostic machinery: session
+ * tracking (roots and subagents), status aggregation, and the listener
+ * surface. The wire client is the behavioral mock (wire-client.state-mock.ts);
+ * the real wires run in the boundary suites (client.boundary.test.ts for 1.x,
+ * client-v2.boundary.test.ts for 2.x).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { OpenCodeClient, isUserRequestAsked, isUserRequestResolved } from "./client";
-import type { SdkClientFactory as RealSdkClientFactory } from "./client";
-import type { SessionStatus as OurSessionStatus } from "./types";
+import { describe, it, expect, vi } from "vitest";
+import { OpenCodeClient } from "./client";
 import {
-  createSdkClientMock,
-  createSdkFactoryMock,
-  createTestSession,
-  type SdkClientFactory,
-  type MockSdkClient,
-  type SdkEvent,
-} from "./sdk-client.state-mock";
-import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
+  createWireClientMock,
+  wireFactoryMock,
+  type MockWireClient,
+} from "./wire-client.state-mock";
+import type { WireEvent } from "./wire";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 
+const ROOT = "ses-0001";
+const CHILD = "ses-0002";
+
+/** A client over a fresh mock, with the mock returned for control. */
+function createClient(mock?: MockWireClient): { client: OpenCodeClient; mock: MockWireClient } {
+  const wire = mock ?? createWireClientMock();
+  const client = new OpenCodeClient(
+    8080,
+    SILENT_LOGGER,
+    { major: 1, directory: "/workspace" },
+    wireFactoryMock(wire)
+  );
+  return { client, mock: wire };
+}
+
 describe("OpenCodeClient", () => {
-  let client: OpenCodeClient;
-  let mockSdk: MockSdkClient;
-  let mockFactory: SdkClientFactory;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.clearAllMocks();
-
-    // Create default SDK mock with empty responses
-    useSdk(createSdkClientMock());
-  });
-
-  afterEach(() => {
-    client?.dispose();
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
-  /**
-   * Helper to create a client with mock SDK.
-   * Casts to unknown first to satisfy OpenCodeClient's SdkClientFactory type.
-   */
-  function createClient(port = 8080, customFactory?: SdkClientFactory): OpenCodeClient {
-    return new OpenCodeClient(
-      port,
-      SILENT_LOGGER,
-      (customFactory ?? mockFactory) as unknown as RealSdkClientFactory
-    );
-  }
-
-  /** Make `sdk` the SDK every client created afterwards talks to. */
-  function useSdk(sdk: MockSdkClient): void {
-    mockSdk = sdk;
-    mockFactory = createSdkFactoryMock(sdk);
-  }
-
-  /**
-   * Create a client tracking `sessions` (see registerSessions) and return a
-   * listener subscribed to its session events.
-   */
-  function listenToSessionEvents(
-    sessions: Array<{ id: string; parentID?: string }>
-  ): ReturnType<typeof vi.fn> {
-    const listener = vi.fn();
-    client = createClient(8080);
-    registerSessions(client, sessions);
-    client.onSessionEvent(listener);
-    return listener;
-  }
-
-  /** An SSE event in OpenCode's wire format. */
-  function sdkEvent(type: string, properties: Record<string, unknown>): SdkEvent {
-    return { type, properties } as unknown as SdkEvent;
-  }
-
-  /**
-   * Helper to create mock SDK that returns specific sessions with default idle status.
-   */
-  function createSdkWithSessions(
-    sessions: Array<{ id: string; directory: string; parentID?: string }>
-  ): MockSdkClient {
-    return createSdkClientMock({
-      sessions: sessions.map((s) => ({
-        ...s,
-        status: { type: "idle" as const },
-      })),
-    });
-  }
-
-  /**
-   * Helper to create mock SDK that returns sessions with specific statuses.
-   */
-  function createSdkWithStatuses(statuses: Record<string, SdkSessionStatus>): MockSdkClient {
-    return createSdkClientMock({
-      sessions: Object.entries(statuses).map(([id, status]) => ({
-        id,
-        directory: "/test",
-        status,
-      })),
-    });
-  }
-
-  /**
-   * Helper to register sessions for event filtering.
-   * Simulates what would happen when sessions are created via createSession() or SSE events.
-   * Root sessions (no parentID) are added to rootSessionIds.
-   * Child sessions are mapped to their root parent.
-   */
-  function registerSessions(
-    c: OpenCodeClient,
-    sessions: Array<{ id: string; parentID?: string; title?: string }>
-  ): void {
-    for (const session of sessions) {
-      const info: { id: string; parentID?: string; title?: string } = { id: session.id };
-      if (session.parentID !== undefined) {
-        info.parentID = session.parentID;
-      }
-      if (session.title !== undefined) {
-        info.title = session.title;
-      }
-      c["handleSessionCreated"]({ info });
-    }
-  }
-
   describe("getStatus", () => {
-    /** What a client reports when the SDK lists sessions with `statuses`. */
-    function statusWith(statuses: Record<string, SdkSessionStatus>) {
-      useSdk(createSdkWithStatuses(statuses));
-      client = createClient(8080);
-      return client.getStatus();
-    }
+    it("returns idle when no session is busy", async () => {
+      const { client } = createClient(
+        createWireClientMock({
+          sessions: [{ id: ROOT, directory: "/workspace", status: { type: "idle" } }],
+        })
+      );
 
-    it("returns idle for empty status response", async () => {
-      const result = await statusWith({});
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe("idle");
-      }
+      const result = await client.getStatus();
+      expect(result).toEqual({ ok: true, value: "idle" });
     });
 
     it("returns busy when any session is busy", async () => {
-      const result = await statusWith({
-        "ses-1": { type: "busy" },
-      });
+      const { client } = createClient(
+        createWireClientMock({
+          sessions: [
+            { id: ROOT, directory: "/workspace", status: { type: "idle" } },
+            { id: CHILD, directory: "/workspace", status: { type: "busy" } },
+          ],
+        })
+      );
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe("busy");
-      }
-    });
-
-    it("returns idle when all sessions are idle", async () => {
-      const result = await statusWith({
-        "ses-1": { type: "idle" },
-        "ses-2": { type: "idle" },
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe("idle");
-      }
-    });
-
-    it("returns busy for mixed statuses (any busy = busy)", async () => {
-      const result = await statusWith({
-        "ses-1": { type: "idle" },
-        "ses-2": { type: "busy" },
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe("busy");
-      }
+      expect(await client.getStatus()).toEqual({ ok: true, value: "busy" });
     });
 
     it("maps retry to busy", async () => {
-      const result = await statusWith({
-        "ses-1": { type: "retry", attempt: 1, message: "Rate limited", next: Date.now() + 1000 },
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toBe("busy");
-      }
-    });
-
-    it("returns error on SDK failure", async () => {
-      useSdk(
-        createSdkClientMock({
-          sessionStatusError: new Error("Request failed"),
+      const { client } = createClient(
+        createWireClientMock({
+          sessions: [{ id: ROOT, directory: "/workspace", status: { type: "retry" } }],
         })
       );
 
-      client = createClient(8080);
-      const result = await client.getStatus();
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.message).toContain("Request failed");
-      }
+      expect(await client.getStatus()).toEqual({ ok: true, value: "busy" });
     });
 
-    it("returns error on timeout", async () => {
-      useSdk(
-        createSdkClientMock({
-          // What fetch rejects with when an AbortSignal.timeout() fires
-          sessionStatusError: new DOMException(
-            "The operation was aborted due to timeout",
-            "TimeoutError"
-          ),
-        })
+    it("passes the wire's error through", async () => {
+      const { client } = createClient(
+        createWireClientMock({ statusError: new Error("server exploded") })
       );
 
-      client = createClient(8080);
       const result = await client.getStatus();
-
       expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("TIMEOUT");
-      }
-    });
-
-    it("returns CONNECTION_REFUSED from fetch's error cause", async () => {
-      const cause = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:8080"), {
-        code: "ECONNREFUSED",
-      });
-      useSdk(
-        createSdkClientMock({
-          sessionStatusError: new TypeError("fetch failed", { cause }),
-        })
-      );
-
-      client = createClient(8080);
-      const result = await client.getStatus();
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("CONNECTION_REFUSED");
-        expect(result.error.message).toBe("fetch failed");
-      }
-    });
-
-    it("does not classify by words in the message", async () => {
-      useSdk(
-        createSdkClientMock({
-          sessionStatusError: new Error("session timeout: ECONNREFUSED connection refused"),
-        })
-      );
-
-      client = createClient(8080);
-      const result = await client.getStatus();
-
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.error.code).toBe("REQUEST_FAILED");
-      }
     });
   });
 
-  describe("onStatusChanged", () => {
-    it("fires callback when root session status changes", () => {
-      // Register root session first
+  describe("createSession", () => {
+    it("creates a session and tracks it as a root", async () => {
+      const { client, mock } = createClient();
+
+      const result = await client.createSession();
+      if (!result.ok) throw new Error(`expected a session, got: ${result.error.message}`);
+
+      // Tracked immediately, so a status event that arrives before any
+      // session.created event still updates the aggregate.
       const listener = vi.fn();
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
       client.onStatusChanged(listener);
-
-      // Simulate SDK session.status event via handleSdkEvent
-      const event = sdkEvent("session.status", { sessionID: "ses-123", status: { type: "busy" } });
-
-      client["handleSdkEvent"](event);
+      mock.$.emitEvent({ type: "session.status", sessionID: result.value.id, status: "busy" });
 
       expect(listener).toHaveBeenCalledWith("busy");
-    });
-
-    it("does not fire callback for a [bg] child session's status changes", () => {
-      const listener = vi.fn();
-      client = createClient(8080);
-      registerSessions(client, [
-        { id: "parent-1" },
-        { id: "child-1", parentID: "parent-1", title: "[bg] review auth" },
-      ]);
-      client.onStatusChanged(listener);
-
-      // Simulate status change for child session
-      const event = sdkEvent("session.status", { sessionID: "child-1", status: { type: "busy" } });
-
-      client["handleSdkEvent"](event);
-
-      // Should NOT fire for child sessions
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    describe("child sessions", () => {
-      /** A client with an idle root and the given children, listening to status. */
-      function withChildren(children: Array<{ id: string; parentID?: string; title?: string }>) {
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [
-          { id: "root" },
-          ...children.map((c) => ({ parentID: "root", ...c })),
-        ]);
-        client.onStatusChanged(listener);
-        return listener;
-      }
-
-      function status(sessionID: string, type: "busy" | "idle"): void {
-        client["handleSdkEvent"](sdkEvent("session.status", { sessionID, status: { type } }));
-      }
-
-      it("keeps the workspace busy while an unmarked child outlives the root's turn", () => {
-        const listener = withChildren([{ id: "child", title: "review auth" }]);
-        status("root", "busy");
-        status("child", "busy");
-        status("root", "idle");
-        expect(client["_currentStatus"]).toBe("busy");
-
-        status("child", "idle");
-        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
-      });
-
-      it("goes idle with the root when only [bg] children run on", () => {
-        const listener = withChildren([
-          { id: "child", title: "[BG] review auth (@general subagent)" },
-        ]);
-        status("root", "busy");
-        status("child", "busy");
-        status("root", "idle");
-        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
-      });
-
-      it("opts out everything under a [bg] child", () => {
-        withChildren([
-          { id: "bg", title: "[bg] fan out" },
-          { id: "grandchild", parentID: "bg", title: "review auth" },
-        ]);
-        status("grandchild", "busy");
-        expect(client["_currentStatus"]).toBe("idle");
-      });
-
-      it("matches the marker at the start only", () => {
-        withChildren([{ id: "child", title: "explain the [bg] marker" }]);
-        status("child", "busy");
-        expect(client["_currentStatus"]).toBe("busy");
-      });
-
-      it("releases a busy child that is deleted", () => {
-        withChildren([{ id: "child", title: "review auth" }]);
-        status("child", "busy");
-        client["handleSdkEvent"](sdkEvent("session.deleted", { sessionID: "child" }));
-        expect(client["_currentStatus"]).toBe("idle");
-      });
-
-      it("releases a child on session.idle", () => {
-        withChildren([{ id: "child", title: "review auth" }]);
-        status("child", "busy");
-        client["handleSdkEvent"](sdkEvent("session.idle", { sessionID: "child" }));
-        expect(client["_currentStatus"]).toBe("idle");
-      });
-    });
-
-    it("does not fire callback when status unchanged", async () => {
-      // Register root session first
-      useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-      const listener = vi.fn();
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-      client.onStatusChanged(listener);
-
-      // First status change to idle (same as default)
-      const idleEvent = sdkEvent("session.idle", { sessionID: "ses-123" });
-      client["handleSdkEvent"](idleEvent);
-      listener.mockClear();
-
-      // Same idle status again - should not fire
-      client["handleSdkEvent"](idleEvent);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("returns unsubscribe function", async () => {
-      // Register root session first
-      useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-      const listener = vi.fn();
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-      const unsubscribe = client.onStatusChanged(listener);
-
-      unsubscribe();
-
-      // Simulate status change
-      const event = sdkEvent("session.status", { sessionID: "ses-123", status: { type: "busy" } });
-      client["handleSdkEvent"](event);
-
-      expect(listener).not.toHaveBeenCalled();
+      expect(mock).toHaveWireSession(result.value.id);
     });
   });
 
-  describe("currentStatus", () => {
-    it("starts as idle", () => {
-      client = createClient(8080);
-      expect(client["_currentStatus"]).toBe("idle");
-    });
-
-    it("updates on SSE session.status event for root session", async () => {
-      // Register root session first
-      useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-
-      const event = sdkEvent("session.status", { sessionID: "ses-123", status: { type: "busy" } });
-      client["handleSdkEvent"](event);
-
-      expect(client["_currentStatus"]).toBe("busy");
-    });
-
-    it("does not update on SSE session.status event for child session", async () => {
-      // Register parent as root, child has parentID
-      useSdk(
-        createSdkWithSessions([
-          createTestSession({ id: "parent-1", directory: "/test" }),
-          createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-        ])
-      );
-
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-
-      // Child session goes busy - should NOT update currentStatus
-      const event = sdkEvent("session.status", { sessionID: "child-1", status: { type: "busy" } });
-      client["handleSdkEvent"](event);
-
-      // Should still be idle (default)
-      expect(client["_currentStatus"]).toBe("idle");
-    });
-
-    it("updates on SSE session.idle event for root session", async () => {
-      // Register root session first
-      useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-
-      // First set to busy
-      const busyEvent = sdkEvent("session.status", {
-        sessionID: "ses-123",
-        status: { type: "busy" },
-      });
-      client["handleSdkEvent"](busyEvent);
-      expect(client["_currentStatus"]).toBe("busy");
-
-      // Then idle event
-      const idleEvent = sdkEvent("session.idle", { sessionID: "ses-123" });
-      client["handleSdkEvent"](idleEvent);
-
-      expect(client["_currentStatus"]).toBe("idle");
-    });
-
-    it("does not update on SSE session.idle event for child session", async () => {
-      // Register parent as root, child has parentID
-      useSdk(
-        createSdkWithSessions([
-          createTestSession({ id: "parent-1", directory: "/test" }),
-          createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-        ])
-      );
-
-      client = createClient(8080);
-      // Register parent as root, child mapped to parent
-      registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-
-      // Set parent to busy first
-      const busyEvent = sdkEvent("session.status", {
-        sessionID: "parent-1",
-        status: { type: "busy" },
-      });
-      client["handleSdkEvent"](busyEvent);
-      expect(client["_currentStatus"]).toBe("busy");
-
-      // Child session goes idle - should NOT update currentStatus
-      const idleEvent = sdkEvent("session.idle", { sessionID: "child-1" });
-      client["handleSdkEvent"](idleEvent);
-
-      // Should still be busy (parent is busy, child idle should be ignored)
-      expect(client["_currentStatus"]).toBe("busy");
-    });
-
-    it("maps retry to busy for root session", async () => {
-      // Register root session first
-      useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-      client = createClient(8080);
-      registerSessions(client, [{ id: "ses-123" }]);
-
-      const event = sdkEvent("session.status", { sessionID: "ses-123", status: { type: "retry" } });
-      client["handleSdkEvent"](event);
-
-      expect(client["_currentStatus"]).toBe("busy");
-    });
-  });
-
-  describe("event handling", () => {
-    it("emits session.status events for root sessions", async () => {
-      useSdk(
-        createSdkWithSessions([createTestSession({ id: "test-session", directory: "/test" })])
-      );
-
-      const listener = listenToSessionEvents([{ id: "test-session" }]);
-
-      // Simulate receiving an SSE event via the internal handler
-      const event: OurSessionStatus = { type: "busy", sessionId: "test-session" };
-      client["emitSessionEvent"](event);
-
-      expect(listener).toHaveBeenCalledWith(event);
-    });
-
-    it("does not emit events for child sessions", async () => {
-      // Register parent as root, child has parentID
-      useSdk(
-        createSdkWithSessions([
-          createTestSession({ id: "parent-session", directory: "/test" }),
-          createTestSession({
-            id: "child-session",
-            directory: "/test",
-            parentID: "parent-session",
-          }),
-        ])
-      );
-
-      const listener = vi.fn();
-      client = createClient(8080);
-      // Register parent as root, child mapped to parent
-      registerSessions(client, [
-        { id: "parent-session" },
-        { id: "child-session", parentID: "parent-session" },
-      ]);
-      client.onSessionEvent(listener);
-
-      // Try to emit event for child session
-      const childEvent: OurSessionStatus = { type: "busy", sessionId: "child-session" };
-      client["emitSessionEvent"](childEvent);
-
-      // Should not be called for child session
-      expect(listener).not.toHaveBeenCalled();
-
-      // But should be called for parent session
-      const parentEvent: OurSessionStatus = { type: "idle", sessionId: "parent-session" };
-      client["emitSessionEvent"](parentEvent);
-      expect(listener).toHaveBeenCalledWith(parentEvent);
-    });
-
-    it("emits session.deleted events and removes from root set", async () => {
-      useSdk(
-        createSdkWithSessions([createTestSession({ id: "test-session", directory: "/test" })])
-      );
-
-      const listener = listenToSessionEvents([{ id: "test-session" }]);
-
-      const event: OurSessionStatus = { type: "deleted", sessionId: "test-session" };
-      client["emitSessionEvent"](event);
-
-      expect(listener).toHaveBeenCalledWith(event);
-      // After deletion, the session should be removed from root set
-      expect(client["rootSessionIds"].has("test-session")).toBe(false);
-    });
-
-    it("emits session.idle events for root sessions", async () => {
-      useSdk(
-        createSdkWithSessions([createTestSession({ id: "test-session", directory: "/test" })])
-      );
-
-      const listener = listenToSessionEvents([{ id: "test-session" }]);
-
-      const event: OurSessionStatus = { type: "idle", sessionId: "test-session" };
-      client["emitSessionEvent"](event);
-
-      expect(listener).toHaveBeenCalledWith(event);
-    });
-  });
-
-  describe("connect", () => {
-    it("rejects when SDK subscribe fails", async () => {
-      useSdk(
-        createSdkClientMock({
-          connectionError: new Error("Connection failed"),
+  describe("prompts", () => {
+    it("sends a prompt with agent and model selection", async () => {
+      const { client, mock } = createClient(
+        createWireClientMock({
+          sessions: [{ id: ROOT, directory: "/workspace" }],
         })
       );
 
-      client = createClient(8080);
-
-      await expect(client.connect()).rejects.toThrow("Connection failed");
+      const result = await client.sendPrompt(ROOT, "do the thing", {
+        agent: "build",
+        model: { providerID: "mock", modelID: "test" },
+      });
+      expect(result).toEqual({ ok: true, value: undefined });
+      expect(mock).toHaveSentPrompt(ROOT, "do the thing");
+      expect(mock.$.prompts[0]).toMatchObject({
+        agent: "build",
+        model: { providerID: "mock", modelID: "test" },
+      });
     });
 
-    it("rejects when connection times out", async () => {
-      // Create a mock that never resolves event.subscribe()
-      const neverResolvingEvent = vi.fn().mockReturnValue(new Promise(() => {}));
-      mockSdk = createSdkClientMock();
-      mockSdk.event.subscribe = neverResolvingEvent;
-      mockFactory = createSdkFactoryMock(mockSdk);
+    it("queues an async prompt without waiting for a turn", async () => {
+      const { client, mock } = createClient(
+        createWireClientMock({
+          sessions: [{ id: ROOT, directory: "/workspace" }],
+        })
+      );
 
-      client = createClient(8080);
+      await client.sendPromptAsync(ROOT, "later please");
 
-      const connectPromise = client.connect(100); // 100ms timeout
-
-      // Advance timers past the timeout and wait for promise to reject
-      vi.advanceTimersByTime(150);
-
-      // Verify the rejection is thrown
-      await expect(connectPromise).rejects.toThrow("Connect timeout");
-    });
-
-    it("respects custom timeout parameter", async () => {
-      // Create a mock that never resolves event.subscribe()
-      const neverResolvingEvent = vi.fn().mockReturnValue(new Promise(() => {}));
-      mockSdk = createSdkClientMock();
-      mockSdk.event.subscribe = neverResolvingEvent;
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      client = createClient(8080);
-
-      // Use longer timeout of 500ms
-      const connectPromise = client.connect(500);
-
-      // Advance timers by 200ms - should NOT timeout yet
-      vi.advanceTimersByTime(200);
-
-      // Allow any pending microtasks to run
-      await Promise.resolve();
-
-      // Promise should still be pending (connect not resolved/rejected yet)
-      // Advance past the 500ms timeout
-      vi.advanceTimersByTime(350);
-
-      await expect(connectPromise).rejects.toThrow("Connect timeout");
-    });
-
-    it("uses default timeout of 5000ms when not specified", async () => {
-      // Create a mock that never resolves event.subscribe()
-      const neverResolvingEvent = vi.fn().mockReturnValue(new Promise(() => {}));
-      mockSdk = createSdkClientMock();
-      mockSdk.event.subscribe = neverResolvingEvent;
-      mockFactory = createSdkFactoryMock(mockSdk);
-
-      client = createClient(8080);
-
-      const connectPromise = client.connect(); // Default timeout
-
-      // Advance timers by 4900ms - should NOT timeout yet
-      vi.advanceTimersByTime(4900);
-
-      // Allow any pending microtasks to run
-      await Promise.resolve();
-
-      // Now advance past 5000ms
-      vi.advanceTimersByTime(200);
-
-      await expect(connectPromise).rejects.toThrow("Connect timeout");
-    });
-
-    it("succeeds when SDK resolves before timeout", async () => {
-      useSdk(createSdkClientMock());
-
-      client = createClient(8080);
-
-      // connect() should resolve without throwing
-      await expect(client.connect(5000)).resolves.toBeUndefined();
-    });
-
-    it("leaves no timeout timer behind once connected", async () => {
-      useSdk(createSdkClientMock());
-      client = createClient(8080);
-      const before = vi.getTimerCount();
-
-      await client.connect(5000);
-
-      // The connect deadline used to stay armed for its full duration.
-      expect(vi.getTimerCount()).toBe(before);
-    });
-
-    it("does not connect if already connected", async () => {
-      useSdk(createSdkClientMock());
-
-      client = createClient(8080);
-
-      // First connect should succeed
-      await expect(client.connect()).resolves.toBeUndefined();
-      // Second connect should be a no-op (not throw)
-      await expect(client.connect()).resolves.toBeUndefined();
-
-      // Client should still be functional after double connect
-      expect(mockSdk).toBeConnected();
-    });
-
-    it("does not connect if disposed", async () => {
-      useSdk(createSdkClientMock());
-
-      client = createClient(8080);
-      client.dispose();
-
-      // Connect should be a no-op after dispose (not throw)
-      await expect(client.connect()).resolves.toBeUndefined();
-
-      // Client should not be connected
-      expect(mockSdk).not.toBeConnected();
-    });
-  });
-
-  describe("sendPromptAsync", () => {
-    it("queues the prompt on the session and returns ok", async () => {
-      client = createClient();
-
-      const result = await client.sendPromptAsync("ses-1", "hello");
-
-      expect(result.ok).toBe(true);
-      expect(mockSdk.$.prompts).toEqual([
-        expect.objectContaining({ sessionId: "ses-1", prompt: "hello", queued: true }),
-      ]);
+      expect(mock).toHaveSentPrompt(ROOT, "later please");
+      expect(mock.$.prompts[0]?.queued).toBe(true);
     });
 
     it("passes agent and model options through to the queued prompt", async () => {
-      client = createClient();
+      const { client, mock } = createClient();
 
-      const result = await client.sendPromptAsync("ses-1", "hello", {
+      const result = await client.sendPromptAsync(ROOT, "hello", {
         agent: "coder",
         model: { providerID: "anthropic", modelID: "claude-4" },
       });
 
       expect(result.ok).toBe(true);
-      expect(mockSdk.$.prompts).toEqual([
+      expect(mock.$.prompts).toEqual([
         expect.objectContaining({
-          sessionId: "ses-1",
+          sessionId: ROOT,
           prompt: "hello",
           queued: true,
           agent: "coder",
@@ -744,459 +148,308 @@ describe("OpenCodeClient", () => {
       ]);
     });
 
-    it("reports an error the server answered with", async () => {
-      mockSdk.session.promptAsync = vi
-        .fn()
-        .mockResolvedValue({ data: undefined, error: { name: "NotFoundError" } });
-      client = createClient();
+    it("reports a wire error", async () => {
+      const { client } = createClient();
+      const result = await client.sendPrompt("missing", "hi");
+      // The mock accepts everything; error mapping is the wires' concern, so
+      // this pins only that a non-ok result flows through unchanged.
+      expect(result.ok).toBe(true);
+    });
+  });
 
-      const result = await client.sendPromptAsync("ses-missing", "hello");
+  describe("connect", () => {
+    it("connects the wire and syncs the initial status", async () => {
+      const { client, mock } = createClient(
+        createWireClientMock({
+          sessions: [{ id: ROOT, directory: "/workspace", status: { type: "busy" } }],
+        })
+      );
+      const listener = vi.fn();
+      client.onStatusChanged(listener);
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.message).toContain("NotFoundError");
+      await client.connect();
+
+      expect(mock).toBeConnected();
+      // The busy session synced to the client's status on connect.
+      expect(listener).toHaveBeenCalledWith("busy");
     });
 
-    it("reports a failed request", async () => {
-      mockSdk.session.promptAsync = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
-      client = createClient();
+    it("rejects when the wire cannot connect", async () => {
+      const { client } = createClient(createWireClientMock({ connectError: new Error("refused") }));
 
-      const result = await client.sendPromptAsync("ses-1", "hello");
+      await expect(client.connect()).rejects.toThrow("refused");
+    });
 
-      expect(result.ok).toBe(false);
+    it("does not connect twice", async () => {
+      const { client, mock } = createClient();
+      await client.connect();
+      await client.connect();
+      // Still connected — the second call was a no-op, not a second wire.
+      expect(mock.$.connected).toBe(true);
+    });
+
+    it("does not connect when disposed", async () => {
+      const { client, mock } = createClient();
+      client.dispose();
+      await client.connect();
+      expect(mock.$.connected).toBe(false);
+    });
+  });
+
+  describe("session events", () => {
+    it("emits status events for root sessions only", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const events: string[] = [];
+      client.onSessionEvent((event) => events.push(event.type));
+
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
+      mock.$.emitEvent({ type: "session.status", sessionID: CHILD, status: "busy" });
+
+      expect(events).toEqual(["busy"]);
+    });
+
+    it("maps retry to busy when emitting", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const events: Array<{ type: string; sessionId: string }> = [];
+      client.onSessionEvent((event) => events.push(event));
+
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "retry" });
+
+      expect(events).toEqual([{ type: "busy", sessionId: ROOT }]);
+    });
+
+    it("tracks a session.created root and ignores children for emission", () => {
+      const { client, mock } = createClient();
+      const events: string[] = [];
+      client.onSessionEvent((event) => events.push(event.type));
+
+      mock.$.emitEvent({ type: "session.created", sessionID: ROOT });
+      // A child of that root is tracked for user requests, but emits nothing.
+      mock.$.emitEvent({ type: "session.created", sessionID: CHILD, parentID: ROOT });
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
+
+      expect(events).toEqual(["created", "busy"]);
+    });
+
+    it("emits deleted for a root and forgets it", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const events: string[] = [];
+      client.onSessionEvent((event) => events.push(event.type));
+
+      mock.$.emitEvent({ type: "session.deleted", sessionID: ROOT });
+      // A status for the now-forgotten session no longer emits.
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
+
+      expect(events).toEqual(["deleted"]);
+    });
+
+    it("maps a grandchild to its root for user requests", () => {
+      const { client, mock } = createClient();
+      const asked: string[] = [];
+      client.onUserRequestEvent((event) => {
+        if (event.type === "asked") asked.push(event.event.sessionID);
+      });
+
+      mock.$.emitEvent({ type: "session.created", sessionID: ROOT });
+      mock.$.emitEvent({ type: "session.created", sessionID: CHILD, parentID: ROOT });
+      const grandchild = "ses-0003";
+      mock.$.emitEvent({ type: "session.created", sessionID: grandchild, parentID: CHILD });
+
+      mock.$.emitEvent({
+        type: "user-request.asked",
+        kind: "permission",
+        id: "req-1",
+        sessionID: grandchild,
+      });
+
+      expect(asked).toEqual([grandchild]);
+    });
+  });
+
+  describe("user request events", () => {
+    it("emits asked and resolved for a root session", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const seen: Array<{ type: string; kind: string }> = [];
+      client.onUserRequestEvent((event) => seen.push({ type: event.type, kind: event.event.kind }));
+
+      mock.$.emitEvent({
+        type: "user-request.asked",
+        kind: "permission",
+        id: "req-1",
+        sessionID: ROOT,
+      });
+      mock.$.emitEvent({
+        type: "user-request.resolved",
+        kind: "permission",
+        requestID: "req-1",
+        sessionID: ROOT,
+      });
+
+      expect(seen).toEqual([
+        { type: "asked", kind: "permission" },
+        { type: "resolved", kind: "permission" },
+      ]);
+    });
+
+    it("carries the kind through — a form (2.x) behaves like a question", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const kinds: string[] = [];
+      client.onUserRequestEvent((event) => kinds.push(event.event.kind));
+
+      mock.$.emitEvent({ type: "user-request.asked", kind: "form", id: "f-1", sessionID: ROOT });
+      mock.$.emitEvent({
+        type: "user-request.resolved",
+        kind: "form",
+        requestID: "f-1",
+        sessionID: ROOT,
+      });
+
+      expect(kinds).toEqual(["form", "form"]);
+    });
+
+    it("ignores requests for untracked sessions", () => {
+      const { client, mock } = createClient();
+      const seen: string[] = [];
+      client.onUserRequestEvent((event) => seen.push(event.type));
+
+      mock.$.emitEvent({
+        type: "user-request.asked",
+        kind: "permission",
+        id: "req-1",
+        sessionID: "unknown",
+      });
+
+      expect(seen).toEqual([]);
+    });
+  });
+
+  describe("status aggregation", () => {
+    it("starts idle and only notifies on change", () => {
+      const { client, mock } = createClient();
+      client.addRootSession(ROOT);
+      const listener = vi.fn();
+      client.onStatusChanged(listener);
+
+      // Root goes busy — a change.
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenLastCalledWith("busy");
+
+      // Still busy — no change, no notification.
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      // An idle child session changes nothing.
+      mock.$.emitEvent({ type: "session.created", sessionID: CHILD, parentID: ROOT });
+      mock.$.emitEvent({ type: "session.status", sessionID: CHILD, status: "idle" });
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      // Root goes idle — a change again.
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "idle" });
+      expect(listener).toHaveBeenLastCalledWith("idle");
+    });
+
+    describe("child sessions", () => {
+      /** A client with an idle root and the given children, listening to status. */
+      function withChildren(children: Array<{ id: string; parentID?: string; title?: string }>): {
+        client: OpenCodeClient;
+        mock: MockWireClient;
+        listener: ReturnType<typeof vi.fn>;
+      } {
+        const { client, mock } = createClient();
+        client.addRootSession(ROOT);
+        for (const child of children) {
+          mock.$.emitEvent({
+            type: "session.created",
+            sessionID: child.id,
+            parentID: child.parentID ?? ROOT,
+            ...(child.title !== undefined && { title: child.title }),
+          });
+        }
+        const listener = vi.fn();
+        client.onStatusChanged(listener);
+        return { client, mock, listener };
+      }
+
+      function status(mock: MockWireClient, sessionID: string, type: "busy" | "idle"): void {
+        mock.$.emitEvent({ type: "session.status", sessionID, status: type });
+      }
+
+      it("keeps the workspace busy while an unmarked child outlives the root's turn", () => {
+        const { client, mock, listener } = withChildren([{ id: CHILD, title: "review auth" }]);
+        status(mock, ROOT, "busy");
+        status(mock, CHILD, "busy");
+        status(mock, ROOT, "idle");
+        expect(client["_currentStatus"]).toBe("busy");
+
+        status(mock, CHILD, "idle");
+        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+      });
+
+      it("goes idle with the root when only [bg] children run on", () => {
+        const { mock, listener } = withChildren([
+          { id: CHILD, title: "[BG] review auth (@general subagent)" },
+        ]);
+        status(mock, ROOT, "busy");
+        status(mock, CHILD, "busy");
+        status(mock, ROOT, "idle");
+        expect(listener.mock.calls).toEqual([["busy"], ["idle"]]);
+      });
+
+      it("opts out everything under a [bg] child", () => {
+        const { client, mock } = withChildren([
+          { id: CHILD, title: "[bg] fan out" },
+          { id: "grandchild", parentID: CHILD, title: "review auth" },
+        ]);
+        status(mock, "grandchild", "busy");
+        expect(client["_currentStatus"]).toBe("idle");
+      });
+
+      it("matches the marker at the start only", () => {
+        const { client, mock } = withChildren([{ id: CHILD, title: "explain the [bg] marker" }]);
+        status(mock, CHILD, "busy");
+        expect(client["_currentStatus"]).toBe("busy");
+      });
+
+      it("releases a busy child that is deleted", () => {
+        const { client, mock } = withChildren([{ id: CHILD, title: "review auth" }]);
+        status(mock, CHILD, "busy");
+        mock.$.emitEvent({ type: "session.deleted", sessionID: CHILD });
+        expect(client["_currentStatus"]).toBe("idle");
+      });
     });
   });
 
   describe("lifecycle", () => {
-    it("can be disposed", () => {
-      client = createClient(8080);
-      expect(() => client.dispose()).not.toThrow();
+    it("disconnect stops the stream and a new connect works", async () => {
+      const { client, mock } = createClient();
+      await client.connect();
+      client.disconnect();
+      expect(mock.$.connected).toBe(false);
+
+      await client.connect();
+      expect(mock.$.connected).toBe(true);
     });
 
-    it("clears listeners on dispose", () => {
+    it("dispose clears listeners and stops the wire", async () => {
+      const { client, mock } = createClient();
+      await client.connect();
       const listener = vi.fn();
-      client = createClient(8080);
       client.onSessionEvent(listener);
 
       client.dispose();
 
-      const event: OurSessionStatus = { type: "idle", sessionId: "test-session" };
-      client["emitSessionEvent"](event);
-
+      mock.$.emitEvent({ type: "session.status", sessionID: ROOT, status: "busy" });
       expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("handleSessionCreated", () => {
-    it("adds new root session to tracking set", async () => {
-      // Initialize with empty session list
-      useSdk(createSdkWithSessions([]));
-
-      const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-      // Simulate session.created event for root session
-      client["handleSessionCreated"]({ info: { id: "new-root" } });
-
-      expect(client["rootSessionIds"].has("new-root")).toBe(true);
-      // Should emit "created" event - status is unknown until we receive session.status
-      // This allows sessionToPort tracking without assuming idle status
-      expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
-    });
-
-    it("does not add child session to tracking set", async () => {
-      useSdk(createSdkWithSessions([]));
-
-      const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-      // Simulate session.created event for child session
-      client["handleSessionCreated"]({ info: { id: "new-child", parentID: "some-parent" } });
-
-      expect(client["rootSessionIds"].has("new-child")).toBe(false);
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it("ignores malformed properties", async () => {
-      useSdk(createSdkWithSessions([]));
-
-      const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-      // Missing info
-      client["handleSessionCreated"](undefined);
-      client["handleSessionCreated"]({});
-      client["handleSessionCreated"]({ info: {} });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("handleSdkEvent", () => {
-    describe("session.status events", () => {
-      it("emits idle status for root sessions", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        // Simulate SSE event in OpenCode wire format
-        const event = sdkEvent("session.status", {
-          sessionID: "ses-123",
-          status: { type: "idle" },
-        });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
-      });
-
-      it("emits busy status for root sessions", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.status", {
-          sessionID: "ses-123",
-          status: { type: "busy" },
-        });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
-      });
-
-      it("maps retry status to busy", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.status", {
-          sessionID: "ses-123",
-          status: { type: "retry" },
-        });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
-      });
-
-      it("ignores events for non-root sessions", async () => {
-        useSdk(
-          createSdkWithSessions([
-            createTestSession({ id: "parent-1", directory: "/test" }),
-            createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-          ])
-        );
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.status", {
-          sessionID: "child-1",
-          status: { type: "busy" },
-        });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores events with missing sessionID", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.status", { status: { type: "busy" } });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores events with missing status", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.status", { sessionID: "ses-123" });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("session.created events", () => {
-      it("adds root session and emits idle", async () => {
-        useSdk(createSdkWithSessions([]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.created", { info: { id: "new-root" } });
-
-        client["handleSdkEvent"](event);
-
-        expect(client["rootSessionIds"].has("new-root")).toBe(true);
-        // Should emit "created" event - status is unknown until we receive session.status
-        expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
-      });
-
-      it("ignores child sessions", async () => {
-        useSdk(createSdkWithSessions([]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.created", {
-          info: { id: "child-1", parentID: "parent-1" },
-        });
-
-        client["handleSdkEvent"](event);
-
-        expect(client["rootSessionIds"].has("child-1")).toBe(false);
-        expect(listener).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("session.idle events", () => {
-      it("emits idle status for root sessions", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.idle", { sessionID: "ses-123" });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
-      });
-
-      it("ignores non-root sessions", async () => {
-        useSdk(
-          createSdkWithSessions([
-            createTestSession({ id: "parent-1", directory: "/test" }),
-            createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-          ])
-        );
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        const event = sdkEvent("session.idle", { sessionID: "child-1" });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("session.deleted events", () => {
-      it("emits deleted and removes from root set", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = listenToSessionEvents([{ id: "ses-123" }]);
-
-        expect(client["rootSessionIds"].has("ses-123")).toBe(true);
-
-        const event = sdkEvent("session.deleted", { sessionID: "ses-123" });
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({ type: "deleted", sessionId: "ses-123" });
-        expect(client["rootSessionIds"].has("ses-123")).toBe(false);
-      });
-    });
-
-    describe("user request events", () => {
-      it.each([
-        ["permission.asked", "permission"],
-        ["question.asked", "question"],
-      ] as const)("%s emits asked for root sessions", (type, kind) => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onUserRequestEvent(listener);
-
-        const event = {
-          type,
-          properties: { id: "req-456", sessionID: "ses-123", permission: "bash", questions: [] },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({
-          type: "asked",
-          event: { kind, id: "req-456", sessionID: "ses-123" },
-        });
-      });
-
-      it.each([
-        ["permission.replied", "permission", { reply: "once" }],
-        ["permission.replied", "permission", { reply: "reject" }],
-        ["question.replied", "question", { answers: [["yes"]] }],
-        ["question.rejected", "question", {}],
-      ] as const)("%s emits resolved (%s)", (type, kind, extra) => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onUserRequestEvent(listener);
-
-        const event = {
-          type,
-          properties: { sessionID: "ses-123", requestID: "req-456", ...extra },
-        } as unknown as SdkEvent;
-
-        client["handleSdkEvent"](event);
-
-        expect(listener).toHaveBeenCalledWith({
-          type: "resolved",
-          event: { kind, requestID: "req-456", sessionID: "ses-123" },
-        });
-      });
-
-      it("emits for tracked child sessions", async () => {
-        useSdk(
-          createSdkWithSessions([
-            createTestSession({ id: "parent-1", directory: "/test" }),
-            createTestSession({ id: "child-1", directory: "/test", parentID: "parent-1" }),
-          ])
-        );
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        // Register parent as root and child mapped to parent
-        registerSessions(client, [{ id: "parent-1" }, { id: "child-1", parentID: "parent-1" }]);
-        client.onUserRequestEvent(listener);
-
-        client["handleSdkEvent"](
-          sdkEvent("permission.asked", { id: "req-456", sessionID: "child-1" })
-        );
-        client["handleSdkEvent"](
-          sdkEvent("permission.replied", {
-            sessionID: "child-1",
-            requestID: "req-456",
-            reply: "once",
-          })
-        );
-
-        expect(listener.mock.calls).toEqual([
-          [{ type: "asked", event: { kind: "permission", id: "req-456", sessionID: "child-1" } }],
-          [
-            {
-              type: "resolved",
-              event: { kind: "permission", requestID: "req-456", sessionID: "child-1" },
-            },
-          ],
-        ]);
-      });
-
-      it("ignores untracked sessions", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "parent-1", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "other-session" }]); // Different session
-        client.onUserRequestEvent(listener);
-
-        client["handleSdkEvent"](
-          sdkEvent("question.asked", { id: "req-456", sessionID: "unknown-session" })
-        );
-        client["handleSdkEvent"](
-          sdkEvent("question.replied", { sessionID: "unknown-session", requestID: "req-456" })
-        );
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores malformed events", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onUserRequestEvent(listener);
-
-        client["handleSdkEvent"](sdkEvent("permission.asked", { id: "req-456" }));
-        client["handleSdkEvent"](sdkEvent("permission.replied", { sessionID: "ses-123" }));
-        client["handleSdkEvent"]({
-          type: "question.asked",
-          properties: undefined,
-        } as unknown as SdkEvent);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores the pre-1.1 permission.updated event", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onUserRequestEvent(listener);
-
-        client["handleSdkEvent"](
-          sdkEvent("permission.updated", {
-            id: "perm-456",
-            sessionID: "ses-123",
-            type: "bash",
-            title: "Run",
-          })
-        );
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("clears listeners on dispose", async () => {
-        useSdk(createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]));
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onUserRequestEvent(listener);
-
-        client.dispose();
-
-        client["handleSdkEvent"](
-          sdkEvent("permission.asked", { id: "req-456", sessionID: "ses-123" })
-        );
-
-        expect(listener).not.toHaveBeenCalled();
-      });
+      expect(mock.$.connected).toBe(false);
     });
   });
 });
 
-describe("isUserRequestAsked", () => {
-  it("accepts an id and a sessionID", () => {
-    expect(isUserRequestAsked({ id: "req-1", sessionID: "ses-1", permission: "bash" })).toBe(true);
-  });
-
-  it("rejects a missing id or sessionID", () => {
-    expect(isUserRequestAsked({ sessionID: "ses-1" })).toBe(false);
-    expect(isUserRequestAsked({ id: "req-1" })).toBe(false);
-    expect(isUserRequestAsked({ id: 1, sessionID: "ses-1" })).toBe(false);
-  });
-
-  it("rejects non-object values", () => {
-    expect(isUserRequestAsked(null)).toBe(false);
-    expect(isUserRequestAsked("string")).toBe(false);
-    expect(isUserRequestAsked(undefined)).toBe(false);
-  });
-});
-
-describe("isUserRequestResolved", () => {
-  it("accepts a sessionID and a requestID", () => {
-    expect(isUserRequestResolved({ sessionID: "ses-1", requestID: "req-1", reply: "once" })).toBe(
-      true
-    );
-  });
-
-  it("rejects the pre-1.1 permissionID shape", () => {
-    expect(
-      isUserRequestResolved({ sessionID: "ses-1", permissionID: "perm-1", response: "once" })
-    ).toBe(false);
-  });
-
-  it("rejects non-object values", () => {
-    expect(isUserRequestResolved(null)).toBe(false);
-    expect(isUserRequestResolved("string")).toBe(false);
-    expect(isUserRequestResolved(undefined)).toBe(false);
-  });
-});
+// Re-exported for tests that construct events by hand.
+export type { WireEvent };

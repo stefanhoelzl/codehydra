@@ -2,9 +2,11 @@
  * OpenCode Server Manager - manages one opencode serve instance per workspace.
  *
  * Instead of letting users spawn multiple opencode processes, CodeHydra manages
- * one server per workspace. The opencode CLI wrapper reads the port from the
- * _CH_OPENCODE_PORT environment variable (set by the sidekick extension)
- * and redirects to `opencode attach`.
+ * one server per workspace, speaking the wire its binary's major version names
+ * (1.x or 2.x; 2.x servers are given a password via OPENCODE_PASSWORD). The
+ * opencode CLI wrapper reads the port from the _CH_OPENCODE_PORT environment
+ * variable (set by the sidekick extension) and redirects to `opencode attach`
+ * (1.x) or `opencode --server` (2.x).
  */
 
 import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process";
@@ -15,6 +17,7 @@ import {
 import type { PortManager, HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { Logger } from "../../../boundaries/platform/logging";
+import { randomBytes } from "node:crypto";
 import type { IDisposable, Unsubscribe } from "./types";
 import { waitForHealthy } from "../../../utils/health-check";
 import { Path } from "../../../utils/path/path";
@@ -27,18 +30,43 @@ import type {
 } from "../types";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 import { runAgentBinary, type ResolvedAgentBinary } from "../binary-resolver";
+import { opencodeWireVersion } from "./setup-info";
 import type { WorkspaceRef } from "../../../intents/contract";
 import { prependPath } from "../../../utils/env-path";
 import { getErrorMessage } from "../../../shared/error-utils";
 
 /**
- * Pending initial prompt to send when server becomes healthy.
+ * A workspace's pending initial prompt to send when server becomes healthy.
  */
 export interface PendingPrompt {
   readonly prompt: string;
   readonly agent?: string;
   readonly model?: PromptModel;
 }
+
+/**
+ * Which OpenCode server API a workspace's server speaks, and how to reach it.
+ * 1.x and 2.x are different contracts; 2.x additionally requires a password.
+ */
+export interface OpenCodeWireInfo {
+  /** The server API the workspace's binary speaks. */
+  readonly major: 1 | 2;
+  /**
+   * 2.x only: the per-workspace password the server was given via
+   * `OPENCODE_PASSWORD`. Clients authenticate with HTTP Basic, user
+   * `opencode`. Undefined for 1.x, which has no auth.
+   */
+  readonly password: string | undefined;
+  /**
+   * The MCP server CodeHydra configured on it ({@link OPENCODE_MCP_SERVER}),
+   * when it configured one: 2.x connects MCP servers asynchronously, and a
+   * prompt waits for this one so its first turn sees CodeHydra's tools.
+   */
+  readonly mcpServer?: string;
+}
+
+/** The name CodeHydra's MCP server has in an OpenCode config; its tools are `codehydra_<tool>`. */
+export const OPENCODE_MCP_SERVER = "codehydra";
 
 /**
  * Callback types for OpenCodeServerManager.
@@ -134,6 +162,11 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   /** Workspaces by ref, with what their servers are spawned from. */
   private readonly workspaces = new Map<WorkspaceRef, TrackedWorkspace>();
+  /**
+   * 2.x servers' passwords, by ref. Generated once per server, kept across
+   * restarts (the agent terminal's env holds it), dropped with the workspace.
+   */
+  private readonly serverPasswords = new Map<WorkspaceRef, string>();
   private readonly servers = new Map<WorkspaceRef, ServerEntry>();
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
@@ -170,6 +203,20 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   /** The directory of a workspace, while it is tracked. */
   getWorkspacePath(workspaceRef: WorkspaceRef): Path | undefined {
     return this.workspaces.get(workspaceRef)?.path;
+  }
+
+  /**
+   * The wire a workspace's server speaks, and how to authenticate to it.
+   * Available from the server's start until its workspace stops.
+   */
+  getWireInfo(workspaceRef: WorkspaceRef): OpenCodeWireInfo | undefined {
+    const workspace = this.workspaces.get(workspaceRef);
+    if (workspace === undefined) return undefined;
+    return {
+      major: opencodeWireVersion(workspace.binary?.version),
+      password: this.serverPasswords.get(workspaceRef),
+      ...(this.mcpConfig && { mcpServer: OPENCODE_MCP_SERVER }),
+    };
   }
 
   /**
@@ -274,6 +321,17 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     if (workspace === undefined || binary === undefined) {
       throw new Error(`No opencode binary given for ${workspaceRef}`);
     }
+    const major = opencodeWireVersion(binary.version);
+
+    // A 2.x server requires a password and prints a random one unless it is
+    // given here. Generated once per workspace and kept across restarts: the
+    // agent terminal's environment holds it, and a restart that changed it
+    // would strand a terminal that can no longer attach.
+    let password: string | undefined;
+    if (major === 2) {
+      password = this.serverPasswords.get(workspaceRef) ?? randomBytes(24).toString("base64url");
+      this.serverPasswords.set(workspaceRef, password);
+    }
 
     // OPENCODE_CONFIG_CONTENT is merged into the resolved config last, so these
     // values win over the user's opencode.json. `instructions` is the exception
@@ -285,26 +343,38 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const config: Record<string, unknown> = {
       // Appended to the system prompt as "Instructions from: <path>".
       instructions: [this.getSystemPromptPath().toString()],
-      // CodeHydra updates the binaries it downloads; a system install is the
-      // user's to manage.
-      ...(binary.source === "download" && { autoupdate: false }),
     };
     if (this.mcpConfig) {
       // A local (stdio) server rather than a remote URL: `ch mcp` is launched as
       // a subprocess with everything it needs passed explicitly, so it does not
       // depend on CodeHydra's bin directory being on OpenCode's PATH.
-      config.mcp = {
-        codehydra: {
-          type: "local",
-          command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
-          environment: {
-            _CH_WORKSPACE: workspaceRef,
-            _CH_API_PORT: String(this.mcpConfig.port),
-            _CH_API_TOKEN: this.mcpConfig.token,
-          },
-          enabled: true,
+      const codehydra = {
+        type: "local",
+        command: [this.mcpConfig.nodePath, this.mcpConfig.cliPath, "mcp"],
+        environment: {
+          _CH_WORKSPACE: workspaceRef,
+          _CH_API_PORT: String(this.mcpConfig.port),
+          _CH_API_TOKEN: this.mcpConfig.token,
         },
       };
+      if (major === 2) {
+        // 2.x groups servers under `mcp.servers` (no `enabled`: its inverse
+        // `disabled` defaults to false). `codemode: false` hands the model
+        // CodeHydra's tools directly, as `codehydra_<tool>` like 1.x, instead
+        // of only through the Code Mode `execute` tool's catalog.
+        config.mcp = { servers: { [OPENCODE_MCP_SERVER]: { ...codehydra, codemode: false } } };
+      } else {
+        config.mcp = { [OPENCODE_MCP_SERVER]: { ...codehydra, enabled: true } };
+      }
+    }
+    if (binary.source === "download") {
+      // CodeHydra updates the binaries it downloads; a system install is the
+      // user's to manage. (`autoupdate` in 1.x, `update` in 2.x.)
+      if (major === 2) {
+        config.update = "disable";
+      } else {
+        config.autoupdate = false;
+      }
     }
     // OpenCode's server is spawned from the Electron main process, which does
     // not have CodeHydra's bin directory on PATH — so without this, its bash
@@ -328,6 +398,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
         _CH_API_PORT: String(this.mcpConfig.port),
         _CH_API_TOKEN: this.mcpConfig.token,
       }),
+      ...(password !== undefined && { OPENCODE_PASSWORD: password }),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     };
 
@@ -348,7 +419,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Wait for health check
     try {
-      await this.waitForHealthCheck(port);
+      await this.waitForHealthCheck(port, major, password);
     } catch (error) {
       // Kill the process on health check failure
       await proc.kill(PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS);
@@ -360,13 +431,24 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   /**
    * Wait for health check to pass.
+   *
+   * 1.x answers `GET /path`; 2.x has no `/path` (its web-UI catch-all returns
+   * 200 for anything) — its readiness endpoint is `GET /api/info`, which is
+   * authenticated, so a healthy check also proves the password works.
    */
-  private async waitForHealthCheck(port: number): Promise<void> {
-    const url = `http://127.0.0.1:${port}/path`;
+  private async waitForHealthCheck(port: number, major: 1 | 2, password?: string): Promise<void> {
+    const url = major === 2 ? `http://127.0.0.1:${port}/api/info` : `http://127.0.0.1:${port}/path`;
+    const headers =
+      major === 2 && password !== undefined
+        ? { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` }
+        : undefined;
 
     await waitForHealthy({
       checkFn: async () => {
-        const response = await this.httpClient.fetch(url, { timeout: 2000 });
+        const response = await this.httpClient.fetch(url, {
+          timeout: 2000,
+          ...(headers && { headers }),
+        });
         return response.ok;
       },
       timeoutMs: this.config.healthCheckTimeoutMs,
@@ -423,6 +505,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     }
     if (!isRestart) {
       this.workspaces.delete(workspaceRef);
+      // A stopped workspace's next server gets a fresh password; a restart
+      // reuses the one the agent terminal already holds.
+      this.serverPasswords.delete(workspaceRef);
     }
 
     // Fire callback with isRestart flag

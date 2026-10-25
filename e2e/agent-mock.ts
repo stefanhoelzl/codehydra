@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Agent } from "./env.ts";
+import { projectAgent, projectOpenCodeMajor, type Agent } from "./env.ts";
 
 /** The title the fixtures tell the agent to set. Asserted on in the spec. */
 export const AGENT_SET_TITLE = "renamed by agent";
@@ -131,7 +131,8 @@ export function useAgentMock(options: AgentMockOptions = {}): AgentMockHandle {
   let history: ConfigHistory | undefined;
 
   test.beforeAll(async () => {
-    const agent = test.info().project.name as Agent;
+    const project = test.info().project.name;
+    const agent = projectAgent(project);
     // The long form: Windows runners' temp dir is an 8.3 short path
     // (C:\Users\RUNNER~1\...), and this becomes CLAUDE_CONFIG_DIR, which the
     // Claude extension watches from inside the IDE server. libuv before 1.53.0
@@ -162,7 +163,7 @@ export function useAgentMock(options: AgentMockOptions = {}): AgentMockHandle {
     const trusted = (options.trustedWorkspaces?.() ?? []).flatMap(pathSpellings);
     handle = {
       url,
-      env: agentEnv(agent, url, configDir, trusted),
+      env: agentEnv(agent, projectOpenCodeMajor(project), url, configDir, trusted),
       server,
       seenRequests: () => seen,
     };
@@ -208,6 +209,18 @@ export function useAgentMock(options: AgentMockOptions = {}): AgentMockHandle {
           request.tools.filter((name) => name.includes("codehydra"))
         )}`
       );
+    }
+    // How each request was answered: which fixture (by its position in the
+    // fixture file), or the status a miss got. The recorder above sees the
+    // requests; only the journal knows the outcome.
+    const fixtures = server.getFixtures();
+    for (const [index, entry] of server.getRequests().entries()) {
+      const served = entry.response.fixture;
+      const outcome =
+        served === null
+          ? `no fixture, ${entry.response.status}`
+          : `fixture ${fixtures.indexOf(served) - 1}`;
+      console.log(`[agent-mock] journal ${index}: ${entry.path} -> ${outcome}`);
     }
   });
 
@@ -257,6 +270,7 @@ function summarize(request: ChatCompletionRequest): SeenRequest {
 /** Everything the agent needs to run offline against `url`. */
 function agentEnv(
   agent: Agent,
+  opencodeMajor: 1 | 2,
   url: string,
   configDir: string,
   trusted: readonly string[]
@@ -268,21 +282,38 @@ function agentEnv(
     const configPath = join(configDir, "opencode.json");
     writeFileSync(
       configPath,
-      JSON.stringify({
-        provider: {
-          mock: {
-            npm: "@ai-sdk/openai-compatible",
-            options: { baseURL: `${url}/v1` },
-            models: { test: { name: "Mock Model" } },
-          },
-        },
-        model: "mock/test",
-        // OpenCode has no permission mode on its AgentSpec — the grant has to
-        // come from config, or the agent parks on a prompt no one will answer.
-        // Keys are wildcard patterns over tool names, and an MCP tool is named
-        // `<server>_<tool>`, so `*` is what `bypassPermissions` is for Claude.
-        permission: { "*": "allow" },
-      })
+      JSON.stringify(
+        opencodeMajor === 2
+          ? {
+              providers: {
+                mock: {
+                  package: "aisdk:@ai-sdk/openai-compatible",
+                  settings: { baseURL: `${url}/v1` },
+                  models: { test: { name: "Mock Model" } },
+                },
+              },
+              model: "mock/test",
+              // The grant the turn needs: OpenCode has no permission mode on
+              // its AgentSpec, so it comes from config or the agent parks on a
+              // prompt no one will answer. 2.x's base policy already allows
+              // everything; this says it explicitly.
+              permissions: [{ action: "*", resource: "*", effect: "allow" }],
+            }
+          : {
+              provider: {
+                mock: {
+                  npm: "@ai-sdk/openai-compatible",
+                  options: { baseURL: `${url}/v1` },
+                  models: { test: { name: "Mock Model" } },
+                },
+              },
+              model: "mock/test",
+              // Keys are wildcard patterns over tool names, and an MCP tool is
+              // named `<server>_<tool>`, so `*` is what `bypassPermissions` is
+              // for Claude.
+              permission: { "*": "allow" },
+            }
+      )
     );
     return { OPENCODE_CONFIG: configPath };
   }

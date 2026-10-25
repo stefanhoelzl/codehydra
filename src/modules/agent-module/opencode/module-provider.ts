@@ -85,7 +85,9 @@ export function createOpenCodeModuleProvider(
         if (workspacePath === undefined) {
           throw new Error(`No OpenCode server is tracked for ${workspaceRef}`);
         }
-        return new OpenCodeProvider(workspaceRef, workspacePath, logger);
+        return new OpenCodeProvider(workspaceRef, workspacePath, logger, () =>
+          serverManager.getWireInfo(workspaceRef)
+        );
       },
 
       connectProvider: async (provider, port) => {

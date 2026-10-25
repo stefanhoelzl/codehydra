@@ -16,7 +16,7 @@
 import { expect, test } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createConnection } from "node:net";
-import { freePort, resetDataState, type Agent } from "./env";
+import { freePort, projectAgent, resetDataState } from "./env";
 import { appLogEntries, failFastOnStartupFailure, launchApp, useApp } from "./fixtures";
 
 /** A process that holds `port` and nothing else, for the app to find and kill. */
@@ -100,7 +100,7 @@ test("offers to terminate whatever holds the IDE server port, then starts", asyn
     try {
       await Promise.race([
         launchApp(app(), {
-          agent: test.info().project.name as Agent,
+          agent: projectAgent(test.info().project.name),
           extraArgs: [`--ide-server.port=${port}`],
         }),
         startupFailure.promise,

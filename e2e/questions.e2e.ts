@@ -66,12 +66,18 @@ test("sets up a workspace whose editor is connected", async () => {
   await waitForWorkspaceFrame(app(), "questions");
   workspace = join(workspacesDir(), "questions");
   // Editor messages go through the workspace's sidekick extension, which
-  // connects some time after the frame shows; before that they fail.
+  // connects some time after the frame shows; before that they fail. The
+  // sidekick's connection, which logs no kind — not the agent's `ch mcp`
+  // (kind "mcp"), a guest that connects from the same workspace and usually
+  // first.
   await expect
     .poll(
       () =>
         appLogEntries().some(
-          (e) => e.message === "Client connected" && e.scope?.["ws"] === "questions"
+          (e) =>
+            e.message === "Client connected" &&
+            e.scope?.["ws"] === "questions" &&
+            e.context?.["kind"] === undefined
         ),
       { intervals: POLL_INTERVALS, timeout: 120_000 }
     )
